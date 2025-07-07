@@ -1,34 +1,35 @@
 # AI Procurement Agent Dependencies
 # Core web framework and API
-fastapi==0.104.1
-uvicorn==0.24.0
+fastapi
+uvicorn
 
 # Database and ORM
-sqlalchemy==2.0.23
-psycopg2-binary==2.9.9
-alembic==1.12.1
+sqlalchemy
+psycopg2-binary
+alembic
 
 # Data validation and serialization
-pydantic==2.5.0
+pydantic
 
 # OpenAI integration
-openai==1.3.5
+openai
 
 # HTTP requests and API clients
-requests==2.31.0
-httpx==0.25.2
+requests
+httpx
+aiohttp
 
 # Environment and configuration
-python-dotenv==1.0.0
+python-dotenv
 
 # Caching and session management
-redis==5.0.1
+redis
 
 # Testing framework
-pytest==7.4.3
-pytest-asyncio==0.21.1
+pytest
+pytest-asyncio
 
 # Development tools
-black==23.11.0
-flake8==6.1.0
-isort==5.12.0
+black
+flake8
+isort

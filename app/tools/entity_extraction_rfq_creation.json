@@ -1,0 +1,99 @@
+{
+    "type": "function",
+    "name": "extract_entities",
+    "description": "Extract structured entities from user message for RFQ creation workflow based on actual GMT/RFQ API fields",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "entities": {
+                "type": "object",
+                "properties": {
+                    "projectDesc": {
+                        "type": ["string", "null"],
+                        "description": "Project description for the RFQ (REQUIRED by GMT API)"
+                    },
+                    "description": {
+                        "type": ["string", "null"],
+                        "description": "Item description as required by RFQ API (REQUIRED)"
+                    },
+                    "quantity": {
+                        "type": ["number", "null"],
+                        "description": "Required quantity - numeric value (REQUIRED for RFQ)"
+                    },
+                    "unitofMeasures": {
+                        "type": ["string", "null"],
+                        "description": "Unit of measurement: pcs, kg, meters, etc. (REQUIRED for RFQ API)"
+                    },
+                    "deliveryDate": {
+                        "type": ["string", "null"],
+                        "description": "Required delivery date in ISO format (REQUIRED for RFQ creation)"
+                    },
+                    "division": {
+                        "type": ["string", "null"],
+                        "description": "Division from GMT API list: Admin & IT, CAPEX - Equipment & Machinery, Civil & Electrical Works, etc. (REQUIRED)"
+                    },
+                    "category": {
+                        "type": ["string", "null"],
+                        "description": "Product category: Agriculture Equipments, Air Logistics, Automotive, etc. (OPTIONAL - can be null initially)"
+                    },
+                    "brand": {
+                        "type": ["string", "null"],
+                        "description": "Preferred brand name (OPTIONAL - can be 'Any' or specific)"
+                    },
+                    "state": {
+                        "type": ["string", "null"],
+                        "description": "Delivery state location (OPTIONAL - part of delivery location)"
+                    },
+                    "city": {
+                        "type": ["string", "null"],
+                        "description": "Delivery city location (OPTIONAL - part of delivery location)"
+                    },
+                    "pincode": {
+                        "type": ["string", "null"],
+                        "description": "Delivery pincode (OPTIONAL - part of delivery location)"
+                    },
+                    "remarks": {
+                        "type": ["string", "null"],
+                        "description": "Additional remarks or requirements (OPTIONAL)"
+                    },
+                    "serialNo": {
+                        "type": ["number", "null"],
+                        "description": "Serial number for RFQ item (OPTIONAL - can be auto-generated)"
+                    }
+                },
+                "required": ["projectDesc", "description", "quantity", "unitofMeasures", "deliveryDate", "division", "category", "brand", "state", "city", "pincode", "remarks", "serialNo"],
+                "additionalProperties": false
+            },
+            "completeness": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Percentage of required RFQ API fields (projectDesc, description, quantity, unitofMeasures, deliveryDate, division) that have values"
+            },
+            "missing_required_fields": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of required GMT/RFQ API fields that are missing: projectDesc, description, quantity, unitofMeasures, deliveryDate, division"
+            },
+            "missing_optional_fields": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of optional RFQ API fields that could be helpful: category, brand, state, city, pincode, remarks"
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Confidence in the entity extraction accuracy"
+            },
+            "next_questions": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Suggested questions to ask user for missing required information"
+            }
+        },
+        "required": ["entities", "completeness", "missing_required_fields", "missing_optional_fields", "confidence", "next_questions"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

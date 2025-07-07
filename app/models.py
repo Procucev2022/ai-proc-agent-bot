@@ -16,6 +16,34 @@ Key responsibilities:
 - Provide query interfaces for service layer operations
 """
 
+from sqlalchemy import Column, String, Text, TIMESTAMP, Date, ForeignKey, Enum, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+import enum
+import uuid
+
+Base = declarative_base()
+
+# Enum definitions following DatabaseDoc.md
+class RFQStatus(enum.Enum):
+    collecting = "collecting"
+    ready = "ready"
+    submitted = "submitted"
+    failed = "failed"
+
+class WorkflowType(enum.Enum):
+    product_search = "product_search"
+    rfq_creation = "rfq_creation"
+    general_inquiry = "general_inquiry"
+
+class ConversationOutcome(enum.Enum):
+    completed = "completed"
+    abandoned = "abandoned"
+    escalated = "escalated"
+    timeout = "timeout"
+
 class User:
     """
     User model for managing registered users in the system.
@@ -25,7 +53,7 @@ class User:
     """
     pass
 
-class Vendor:
+class Vendor(Base):
     """
     Vendor model for managing vendor profiles and capabilities.
     
@@ -33,7 +61,29 @@ class Vendor:
     geographic coverage, performance metrics, and learned associations
     from Category Manager assignments.
     """
-    pass
+    __tablename__ = "vendors"
+    
+    vendor_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    vendor_name = Column(String(255), nullable=False)
+    geographic_coverage = Column(ARRAY(Text), nullable=False)
+    vendor_services = Column(ARRAY(Text), nullable=False)
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    
+    # Relationships
+    learned_associations = relationship("LearningRecord", back_populates="vendor")
+
+class ProductCategory(Base):
+    """
+    Product category model for standardized categorization.
+    
+    Maintains standardized product categories for consistent
+    vendor matching and search functionality.
+    """
+    __tablename__ = "product_categories"
+    
+    category_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    category_name = Column(String(255), unique=True, nullable=False)
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
 
 class Product:
     """
@@ -44,14 +94,24 @@ class Product:
     """
     pass
 
-class RFQ:
+class RFQ(Base):
     """
     RFQ (Request for Quotation) model for managing procurement requests.
     
     Tracks the complete lifecycle of RFQ creation, validation, submission,
     and vendor assignment process with all collected field information.
     """
-    pass
+    __tablename__ = "rfq_records"
+    
+    rfq_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    external_user_id = Column(String(255), nullable=False)
+    api_payload = Column(JSONB, nullable=False)
+    status = Column(Enum(RFQStatus), default=RFQStatus.collecting)
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    submitted_at = Column(TIMESTAMP, nullable=True)
+    
+    # Relationships
+    conversation_outcome = relationship("ConversationSession", back_populates="rfq", uselist=False)
 
 class RFQVendorAssignment:
     """
@@ -62,17 +122,30 @@ class RFQVendorAssignment:
     """
     pass
 
-class ConversationSession:
+class ConversationSession(Base):
     """
-    Model for managing user conversation sessions and context.
+    Model for managing user conversation sessions and outcomes.
     
     Stores conversation state, extracted entities, workflow progress,
     and session management information for maintaining context across
     multiple message exchanges.
     """
-    pass
+    __tablename__ = "conversation_outcomes"
+    
+    session_id = Column(String(255), primary_key=True)
+    external_user_id = Column(String(255), nullable=False)
+    workflow_type = Column(Enum(WorkflowType), nullable=True)
+    outcome = Column(Enum(ConversationOutcome), nullable=True)
+    rfq_id = Column(UUID(as_uuid=True), ForeignKey("rfq_records.rfq_id"), nullable=True)
+    extracted_entities = Column(JSONB, nullable=True)
+    conversation_messages = Column(JSONB, nullable=True)
+    retention_date = Column(Date, nullable=False)
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    
+    # Relationships
+    rfq = relationship("RFQ", back_populates="conversation_outcome")
 
-class LearningRecord:
+class LearningRecord(Base):
     """
     Model for tracking learning events and vendor categorization improvements.
     
@@ -80,4 +153,12 @@ class LearningRecord:
     Category Manager assignments, supporting continuous improvement of
     vendor matching accuracy.
     """
-    pass
+    __tablename__ = "learned_associations"
+    
+    association_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    vendor_id = Column(UUID(as_uuid=True), ForeignKey("vendors.vendor_id"), nullable=False)
+    category = Column(String(255), nullable=False)
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    
+    # Relationships
+    vendor = relationship("Vendor", back_populates="learned_associations")

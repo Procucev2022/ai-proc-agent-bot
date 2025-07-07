@@ -1,106 +1,138 @@
 """
 Database connection and session management for the AI Procurement Agent.
-
-This module handles database connectivity, session management, and provides
-the foundation for all database operations in the application. It configures
-SQLAlchemy connections, manages database sessions, and provides utilities
-for database initialization and migration support.
-
-Key responsibilities:
-- Configure SQLAlchemy database engine and connection pool
-- Manage database session lifecycle and cleanup
-- Provide database session dependency injection for FastAPI
-- Handle database initialization and table creation
-- Support database migration and schema updates
-- Implement connection pooling and performance optimization
-- Handle database connection errors and retry logic
 """
 
-def get_database_session():
-    """
-    Dependency function to get database session for FastAPI endpoints.
-    
-    Provides a database session that automatically handles cleanup
-    and error handling. Used as a dependency in FastAPI route handlers.
-    """
-    pass
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-def get_db_session():
-    """
-    Context manager for database sessions in service layer.
-    
-    Provides a database session with automatic transaction management
-    and cleanup for use in service layer operations.
-    """
-    pass
+from .config import get_settings
+from .models import Base, ProductCategory, Vendor
+
+engine = None
+SessionLocal = None
+
 
 def init_database():
-    """
-    Initialize database tables and schema.
-    
-    Creates all database tables defined in models if they don't exist.
-    Should be called during application startup or deployment.
-    """
-    pass
+    """Initialize database tables and create sample data."""
+    global engine, SessionLocal
 
-def check_database_connection():
-    """
-    Check if database connection is healthy.
-    
-    Performs a simple query to verify database connectivity.
-    Used for health checks and monitoring.
-    """
-    pass
+    settings = get_settings()
+    engine = create_engine(settings.get_database_url())
+    SessionLocal = sessionmaker(bind=engine)
 
-def create_test_database():
-    """
-    Create test database configuration for testing.
-    
-    Sets up an in-memory SQLite database for testing purposes
-    with isolated test data and fast operations.
-    """
-    pass
+    # Create all tables
+    Base.metadata.create_all(bind=engine)
+
+    # Add sample data
+    db = SessionLocal()
+    try:
+        # Check if data exists
+        if db.query(Vendor).count() == 0:
+            # Add sample categories from actual BFS API
+            categories = [
+                "Agriculture Equipments",
+                "Air Logistics",
+                "Automotive",
+                "Batteries & UPS",
+                "Bearings & Accessories",
+                "Building Works",
+                "Cables",
+                "CCTV & BMS",
+            ]
+            for cat in categories:
+                db.add(ProductCategory(category_name=cat))
+
+            # Add realistic vendors with API-based categories
+            vendors = [
+                Vendor(
+                    vendor_name="Chennai Motors & Equipment",
+                    geographic_coverage=["Chennai", "Bangalore", "Coimbatore"],
+                    vendor_services=[
+                        "Agriculture Equipments",
+                        "Automotive",
+                        "Bearings & Accessories",
+                    ],
+                ),
+                Vendor(
+                    vendor_name="Mumbai Industrial Solutions",
+                    geographic_coverage=["Mumbai", "Pune", "Nashik"],
+                    vendor_services=["Air Logistics", "Cables", "Building Works"],
+                ),
+                Vendor(
+                    vendor_name="Delhi Safety Systems",
+                    geographic_coverage=["Delhi", "Gurgaon", "Noida"],
+                    vendor_services=["CCTV & BMS", "Batteries & UPS"],
+                ),
+                Vendor(
+                    vendor_name="Hyderabad Tech Solutions",
+                    geographic_coverage=["Hyderabad", "Secunderabad", "Warangal"],
+                    vendor_services=["Agriculture Equipments", "CCTV & BMS", "Cables"],
+                ),
+                Vendor(
+                    vendor_name="Kolkata Engineering Works",
+                    geographic_coverage=["Kolkata", "Durgapur", "Asansol"],
+                    vendor_services=[
+                        "Automotive",
+                        "Building Works",
+                        "Bearings & Accessories",
+                    ],
+                ),
+            ]
+            for vendor in vendors:
+                db.add(vendor)
+
+            db.commit()
+    finally:
+        db.close()
+
+
+def get_db_session():
+    """Get database session."""
+    if SessionLocal is None:
+        init_database()
+    return SessionLocal()
+
 
 class DatabaseManager:
     """
     Database manager class for advanced database operations.
-    
+
     Provides utilities for database maintenance, monitoring,
     and administrative operations.
     """
-    
+
     def __init__(self, session=None):
         pass
-        
+
     def get_connection_pool_status(self):
         """
         Get current connection pool status and metrics.
-        
+
         Returns dictionary with pool statistics and health information.
         """
         pass
-        
+
     def execute_health_check(self):
         """
         Execute comprehensive database health check.
-        
+
         Returns health status with detailed information.
         """
         pass
-        
+
     def cleanup_expired_sessions(self, hours: int = 24):
         """
         Clean up expired conversation sessions.
-        
+
         Removes old conversation sessions and associated data
         to maintain database performance.
         """
         pass
-        
+
     def backup_learning_data(self):
         """
         Create backup of learning records and vendor associations.
-        
+
         Exports learning data for backup and analysis purposes.
         """
         pass
