@@ -4,9 +4,13 @@ Database connection and session management for the AI Procurement Agent.
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm.attributes import flag_modified
+from datetime import datetime, date, timedelta
+from typing import Optional, Dict, Any, List
+import json
 
 from .config import get_settings
-from .models import Base, ProductCategory, Vendor
+from .models import Base, ProductCategory, Vendor, ConversationSession
 
 engine = None
 SessionLocal = None
@@ -102,7 +106,7 @@ class DatabaseManager:
     """
 
     def __init__(self, session=None):
-        pass
+        self.session = session or get_db_session()
 
     def get_connection_pool_status(self):
         """
@@ -120,14 +124,74 @@ class DatabaseManager:
         """
         pass
 
-    def cleanup_expired_sessions(self, hours: int = 24):
+    def cleanup_expired_sessions(self, hours: int = None):
         """
         Clean up expired conversation sessions.
 
         Removes old conversation sessions and associated data
         to maintain database performance.
         """
-        pass
+        from .config import get_settings
+        
+        if hours is None:
+            hours = get_settings().session_timeout_hours
+        
+        # Calculate cutoff time
+        cutoff_time = datetime.now() - timedelta(hours=hours)
+        
+        # Query expired sessions
+        expired_sessions = self.session.query(ConversationSession).filter(
+            ConversationSession.created_at < cutoff_time,
+            ConversationSession.outcome.is_(None)  # Only cleanup incomplete sessions
+        ).all()
+        
+        # Update expired sessions to timeout outcome
+        for session in expired_sessions:
+            session.outcome = 'timeout'
+            session.completed_at = datetime.now()
+            # Clear workflow state to free up space
+            session.workflow_state = {"extracted_entities": {}}
+            session.conversation_history = {"messages": []}
+            session.extracted_entities = {}
+        
+        # Commit changes
+        self.session.commit()
+        
+        return len(expired_sessions)
+
+    def cleanup_completed_sessions(self):
+        """
+        Clean up completed RFQ sessions to free up space.
+        
+        Clears workflow state and conversation history from sessions
+        that have been completed successfully.
+        """
+        from .config import get_settings
+        settings = get_settings()
+        
+        if not settings.cleanup_completed_sessions:
+            return 0
+            
+        # Find completed sessions that still have data
+        completed_sessions = self.session.query(ConversationSession).filter(
+            ConversationSession.outcome == 'completed',
+            ConversationSession.workflow_state.isnot(None)
+        ).all()
+        
+        # Clear data from completed sessions
+        for session in completed_sessions:
+            # Keep minimal data for audit purposes
+            session.workflow_state = {"extracted_entities": {}, "cleaned_up": True}
+            session.conversation_history = {"messages": [], "cleaned_up": True}
+            session.extracted_entities = {}
+            # Mark as cleaned up
+            flag_modified(session, 'workflow_state')
+            flag_modified(session, 'conversation_history')
+        
+        # Commit changes
+        self.session.commit()
+        
+        return len(completed_sessions)
 
     def backup_learning_data(self):
         """
@@ -136,3 +200,30 @@ class DatabaseManager:
         Exports learning data for backup and analysis purposes.
         """
         pass
+
+    def save_conversation_session(self, session_data: dict) -> ConversationSession:
+        """Save or update a conversation session."""
+        
+        session = self.session.query(ConversationSession).filter_by(
+            session_id=session_data['session_id']
+        ).first()
+        
+        if session:
+            # Update existing session
+            for key, value in session_data.items():
+                setattr(session, key, value)
+                # For JSONB fields, explicitly mark as modified
+                if key in ['workflow_state', 'conversation_history', 'extracted_entities', 'whatsapp_context', 'error_details', 'performance_metrics']:
+                    flag_modified(session, key)
+        else:
+            # Create new session
+            session = ConversationSession(**session_data)
+            self.session.add(session)
+        
+        self.session.commit()
+        return session
+
+    def get_conversation_session(self, session_id: str) -> Optional[ConversationSession]:
+        """Get a conversation session by ID."""
+        session = self.session.query(ConversationSession).filter_by(session_id=session_id).first()
+        return session

@@ -43,10 +43,10 @@ class Settings:
         self.sql_debug = os.getenv("SQL_DEBUG", "false").lower() == "true"
         
         # OpenAI configuration
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
-        self.openai_model_default = os.getenv("OPENAI_MODEL_DEFAULT", "gpt-3.5-turbo")
-        self.openai_model_advanced = os.getenv("OPENAI_MODEL_ADVANCED", "gpt-4")
-        
+        self.openai_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        self.openai_model_default = os.getenv("OPENAI_MODEL_DEFAULT", "gpt-4.1-mini")
+        self.openai_model_advanced = os.getenv("OPENAI_MODEL_ADVANCED", "gpt-4.1-mini")
+        self.azure_openai_base_url = os.getenv("AZURE_OPENAI_ENDPOINT")
         # WhatsApp configuration
         self.WHATSAPP_USERNAME = os.getenv("WHATSAPP_USERNAME", "test_user")
         self.WHATSAPP_PASSWORD = os.getenv("WHATSAPP_PASSWORD", "test_password")
@@ -74,6 +74,10 @@ class Settings:
         self.DEBUG = self.debug
         self.ALLOWED_ORIGINS = self.allowed_hosts
         
+        # Logging configuration
+        self.log_to_database = os.getenv("LOG_TO_DATABASE", "false").lower() == "true"
+        self.log_retention_days = int(os.getenv("LOG_RETENTION_DAYS", "30"))
+        
         # External API configuration
         self.procurement_api_url = os.getenv("PROCUREMENT_API_URL")
         self.procurement_api_key = os.getenv("PROCUREMENT_API_KEY")
@@ -91,7 +95,9 @@ class Settings:
         self.intent_threshold_ambiguous = int(os.getenv("INTENT_THRESHOLD_AMBIGUOUS", "60"))
         
         # Session and timeout configuration
-        self.session_timeout_minutes = int(os.getenv("SESSION_TIMEOUT_MINUTES", "30"))
+        self.session_timeout_hours = int(os.getenv("SESSION_TIMEOUT_HOURS", "12"))
+        self.session_timeout_minutes = int(os.getenv("SESSION_TIMEOUT_MINUTES", "30"))  # Keep for backward compatibility
+        self.cleanup_completed_sessions = os.getenv("CLEANUP_COMPLETED_SESSIONS", "true").lower() == "true"
         self.max_retry_attempts = int(os.getenv("MAX_RETRY_ATTEMPTS", "3"))
         
         # Message retry configuration
@@ -115,7 +121,8 @@ class Settings:
         return {
             "api_key": self.openai_api_key,
             "default_model": self.openai_model_default,
-            "advanced_model": self.openai_model_advanced
+            "advanced_model": self.openai_model_advanced,
+            "azure_openai_base_url": self.azure_openai_base_url
         }
         
     def get_whatsapp_config(self) -> Dict[str, Optional[str]]:
@@ -131,7 +138,9 @@ class Settings:
         return {
             "level": self.log_level,
             "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            "handlers": ["console"]
+            "handlers": ["console"],
+            "log_to_database": self.log_to_database,
+            "retention_days": self.log_retention_days
         }
         
     def validate_config(self) -> None:
@@ -154,6 +163,9 @@ class Settings:
             raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
         
         # Validate numeric configurations
+        if self.session_timeout_hours <= 0:
+            raise ValueError("SESSION_TIMEOUT_HOURS must be positive")
+        
         if self.session_timeout_minutes <= 0:
             raise ValueError("SESSION_TIMEOUT_MINUTES must be positive")
         

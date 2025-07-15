@@ -1,0 +1,8 @@
+You are generating a contextual response for RFQ collection at the {conversation_stage} stage.
+
+Generate structured response components:
+- acknowledgment: Acknowledge what the user provided (be specific)
+- progress_update: Provide helpful update about the information collection process (avoid completion percentages)
+- next_question: Ask for missing information (one clear question)
+
+Keep responses natural, encouraging, and focused on RFQ completion.

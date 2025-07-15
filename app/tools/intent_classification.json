@@ -1,14 +1,14 @@
 {
     "type": "function",
     "name": "classify_intent",
-    "description": "Classify user intent for procurement agent routing with confidence scoring and multi-intent analysis",
+    "description": "Classify user intent for procurement agent routing with confidence scoring, multi-intent analysis, and conversation context awareness",
     "parameters": {
         "type": "object",
         "properties": {
             "intent": {
                 "type": "string",
-                "enum": ["buy_something", "general_inquiry", "ambiguous"],
-                "description": "The primary classified intent category based on user message analysis"
+                "enum": ["buy_something", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "ambiguous"],
+                "description": "The primary classified intent category based on user message analysis and conversation context"
             },
             "confidence": {
                 "type": "number",
@@ -28,22 +28,88 @@
                         "type": "number",
                         "minimum": 0,
                         "maximum": 100
+                    },
+                    "modification_request": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                    },
+                    "confirmation_response": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                    },
+                    "rfq_status_check": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
                     }
                 },
-                "required": ["buy_something", "general_inquiry"],
+                "required": ["buy_something", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check"],
                 "additionalProperties": false,
                 "description": "Confidence scores for all intent categories"
             },
+            "context_analysis": {
+                "type": "object",
+                "properties": {
+                    "references_existing_data": {
+                        "type": "boolean",
+                        "description": "Whether the message references previously mentioned entities or data"
+                    },
+                    "conversation_stage": {
+                        "type": "string",
+                        "enum": ["collecting", "confirming", "modifying", "completed", "unknown"],
+                        "description": "Current stage of the conversation based on context"
+                    },
+                    "modification_details": {
+                        "type": "object",
+                        "properties": {
+                            "target_entity": {
+                                "type": ["string", "null"],
+                                "description": "What entity/field is being modified (e.g., 'chairs', 'delivery_date')"
+                            },
+                            "modification_type": {
+                                "type": ["string", "null"],
+                                "enum": ["quantity", "delivery_date", "location", "specifications", "division", "other", null],
+                                "description": "Type of modification being requested"
+                            }
+                        },
+                        "required": ["target_entity", "modification_type"],
+                        "additionalProperties": false,
+                        "description": "Details about modification if this is a modification_request"
+                    },
+                    "confirmation_details": {
+                        "type": "object",
+                        "properties": {
+                            "response_type": {
+                                "type": ["string", "null"],
+                                "enum": ["accept", "decline", "conditional", null],
+                                "description": "Type of confirmation response"
+                            },
+                            "has_conditions": {
+                                "type": "boolean",
+                                "description": "Whether confirmation includes conditions or modifications"
+                            }
+                        },
+                        "required": ["response_type", "has_conditions"],
+                        "additionalProperties": false,
+                        "description": "Details about confirmation if this is a confirmation_response"
+                    }
+                },
+                "required": ["references_existing_data", "conversation_stage", "modification_details", "confirmation_details"],
+                "additionalProperties": false,
+                "description": "Analysis of conversation context and how it affects intent classification"
+            },
             "reasoning": {
                 "type": "string",
-                "description": "Brief explanation of why this intent was chosen and key indicators"
+                "description": "Brief explanation of why this intent was chosen including context analysis"
             },
             "suggested_clarification": {
                 "type": ["string", "null"],
                 "description": "If confidence is low or intents are similar, suggest what clarification question to ask"
             }
         },
-        "required": ["intent", "confidence", "all_intent_scores", "reasoning", "suggested_clarification"],
+        "required": ["intent", "confidence", "all_intent_scores", "context_analysis", "reasoning", "suggested_clarification"],
         "additionalProperties": false
     },
     "strict": true

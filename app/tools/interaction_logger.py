@@ -106,16 +106,46 @@ class InteractionLogger:
         
         self._write_log_entry(log_entry)
     
+    def log_response_generation(
+        self,
+        context: Dict[str, Any],
+        generated_response: str,
+        conversation_stage: str,
+        model_used: str,
+        processing_time: float = None
+    ):
+        """Log response generation interaction."""
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "interaction_type": "response_generation",
+            "context": context,
+            "model_used": model_used,
+            "conversation_stage": conversation_stage,
+            "response_data": {
+                "generated_response": generated_response,
+                "success": True
+            },
+            "processing_time": processing_time
+        }
+        
+        self._write_log_entry(log_entry)
+    
     def _write_log_entry(self, log_entry: Dict[str, Any]):
         """Write log entry to file."""
         try:
             with open(self.log_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+                f.write(json.dumps(log_entry, ensure_ascii=False, default=self._json_serializer) + '\n')
             
             logger.debug(f"Logged {log_entry['interaction_type']} interaction")
             
         except Exception as e:
             logger.error(f"Failed to write log entry: {e}")
+    
+    def _json_serializer(self, obj):
+        """JSON serializer for objects not serializable by default json code."""
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 
 # Global logger instance

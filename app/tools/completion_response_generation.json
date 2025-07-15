@@ -1,0 +1,20 @@
+{
+  "type": "function",
+  "name": "generate_completion_response",
+  "description": "Generate a structured response when RFQ collection is complete",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "celebration": {
+        "type": "string",
+        "description": "Congratulate the user on completing their RFQ. Be enthusiastic but professional."
+      },
+      "summary": {
+        "type": "string",
+        "description": "Brief summary of the key information collected (2-3 main points like item, quantity, location)."
+      }
+    },
+    "required": ["celebration", "summary"],
+    "additionalProperties": false
+  }
+}

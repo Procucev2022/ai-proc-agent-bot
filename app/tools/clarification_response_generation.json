@@ -1,0 +1,27 @@
+{
+  "type": "function",
+  "name": "generate_clarification_response",
+  "description": "Generate a structured response when multiple questions need to be asked for RFQ completion",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "progress_acknowledgment": {
+        "type": "string",
+        "description": "Acknowledge the progress made so far and what information has been collected."
+      },
+      "questions": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "List of questions to ask the user. Use the questions provided from the data model. Present them clearly and organized."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Brief explanation of why this information is needed. Focus on RFQ completion requirements, not vendor selection promises."
+      }
+    },
+    "required": ["progress_acknowledgment", "questions"],
+    "additionalProperties": false
+  }
+}

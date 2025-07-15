@@ -2,7 +2,8 @@
 # Core web framework and API
 fastapi
 uvicorn
-
+python-dateutil
+jinja2
 # Database and ORM
 sqlalchemy
 psycopg2-binary

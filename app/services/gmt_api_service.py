@@ -291,3 +291,32 @@ class GMTAPIService:
         except Exception as e:
             logger.error(f"Error getting categories: {e}")
             return {"success": False, "error": str(e)}
+    
+    async def get_rfq_details_by_client(self, client_id: str = "4004") -> Dict[str, Any]:
+        """Get detailed RFQ information with status for a client."""
+        try:
+            if not await self.ensure_authenticated():
+                return {"success": False, "error": "Authentication failed"}
+            
+            url = f"{self.base_url}/procucev/rest/rfq/getNoPrRfqByClient"
+            
+            headers = {
+                'Authorization': f'Bearer {self.token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+            
+            data = {"id": client_id}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=data, headers=headers, timeout=30) as response:
+                    if response.status == 200:
+                        rfq_details = await response.json()
+                        return {"success": True, "rfq_details": rfq_details}
+                    else:
+                        error_text = await response.text()
+                        return {"success": False, "error": f"HTTP {response.status}: {error_text}"}
+                        
+        except Exception as e:
+            logger.error(f"Error getting RFQ details: {e}")
+            return {"success": False, "error": str(e)}

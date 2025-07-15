@@ -1,0 +1,5 @@
+Generate a structured RFQ completion response with these components:
+- celebration: Congratulate the user on completing the RFQ
+- summary: Brief summary of what was collected (2-3 key points)
+
+Keep it professional but celebratory. Focus on RFQ completion, not vendor promises.

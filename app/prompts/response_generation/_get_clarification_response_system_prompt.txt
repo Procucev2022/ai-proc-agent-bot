@@ -1,0 +1,6 @@
+Generate a structured clarification response with these components:
+- progress_acknowledgment: Acknowledge progress made so far
+- questions: Present the questions clearly (use the provided questions)
+- reason: Simple explanation of why this information is needed (focus on RFQ completion)
+
+Keep it encouraging and organized. Don't make promises about vendor selection.

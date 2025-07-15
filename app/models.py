@@ -16,7 +16,7 @@ Key responsibilities:
 - Provide query interfaces for service layer operations
 """
 
-from sqlalchemy import Column, String, Text, TIMESTAMP, Date, ForeignKey, Enum, ARRAY
+from sqlalchemy import Column, String, Text, TIMESTAMP, Date, ForeignKey, Enum, ARRAY, Boolean, Integer, DECIMAL
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -36,6 +36,7 @@ class RFQStatus(enum.Enum):
 class WorkflowType(enum.Enum):
     product_search = "product_search"
     rfq_creation = "rfq_creation"
+    rfq_submitted = "rfq_submitted"
     general_inquiry = "general_inquiry"
 
 class ConversationOutcome(enum.Enum):
@@ -124,23 +125,28 @@ class RFQVendorAssignment:
 
 class ConversationSession(Base):
     """
-    Model for managing user conversation sessions and outcomes.
+    Enhanced model for managing user conversation sessions and outcomes.
     
-    Stores conversation state, extracted entities, workflow progress,
-    and session management information for maintaining context across
-    multiple message exchanges.
+    Stores comprehensive conversation state, extracted entities, workflow progress,
+    WhatsApp context, error details, performance metrics, and session management 
+    information for maintaining context across multiple message exchanges.
     """
-    __tablename__ = "conversation_outcomes"
+    __tablename__ = "conversation_sessions"
     
     session_id = Column(String(255), primary_key=True)
     external_user_id = Column(String(255), nullable=False)
     workflow_type = Column(Enum(WorkflowType), nullable=True)
     outcome = Column(Enum(ConversationOutcome), nullable=True)
     rfq_id = Column(UUID(as_uuid=True), ForeignKey("rfq_records.rfq_id"), nullable=True)
+    workflow_state = Column(JSONB, nullable=False)
+    conversation_history = Column(JSONB, nullable=False)
     extracted_entities = Column(JSONB, nullable=True)
-    conversation_messages = Column(JSONB, nullable=True)
+    whatsapp_context = Column(JSONB, nullable=True)
+    error_details = Column(JSONB, nullable=True)
+    performance_metrics = Column(JSONB, nullable=True)
     retention_date = Column(Date, nullable=False)
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    completed_at = Column(TIMESTAMP, nullable=True)
     
     # Relationships
     rfq = relationship("RFQ", back_populates="conversation_outcome")
@@ -162,3 +168,21 @@ class LearningRecord(Base):
     
     # Relationships
     vendor = relationship("Vendor", back_populates="learned_associations")
+
+class SystemLog(Base):
+    """
+    Simple system log model for storing application logs in database.
+    
+    Stores log entries with level, message, and optional context for
+    debugging and monitoring purposes.
+    """
+    __tablename__ = "system_logs"
+    
+    log_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    level = Column(String(20), nullable=False)  # INFO, ERROR, DEBUG, WARNING
+    message = Column(Text, nullable=False)
+    service = Column(String(100), nullable=True)  # chat_service, openai_service, etc.
+    user_id = Column(String(255), nullable=True)
+    session_id = Column(String(255), nullable=True)
+    context = Column(JSONB, nullable=True)  # Additional context data
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())

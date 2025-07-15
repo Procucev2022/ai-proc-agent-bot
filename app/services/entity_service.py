@@ -1,10 +1,14 @@
 """
 Entity extraction service for parsing structured data from user messages.
+
+This service focuses solely on extracting entities from user messages using OpenAI.
+It does not handle completeness checking or question generation - that's handled
+by the data model and orchestration layer.
 """
 
 import json
 import os
-from typing import Dict, List
+from typing import Dict
 
 from ..services.openai_service import OpenAIService
 
@@ -15,80 +19,219 @@ class EntityService:
     def __init__(self, openai_service=None):
         self.openai_service = openai_service or OpenAIService()
 
-        # Required fields for API calls - RFQ-first workflow
-        self.required_fields = {
-            "buy_something": [
-                "projectDesc",
-                "description",
-                "quantity",
-                "unitofMeasures",
-                "deliveryDate",
-                "division",
-                "location"
-            ],
-        }
-
     def extract_entities(self, message: str, context: dict = None, workflow_type: str = "buy_something") -> dict:
-        """Extract entities using OpenAI function calling."""
+        """
+        Extract entities using OpenAI function calling with modification context awareness.
+        
+        Args:
+            message: User message to extract entities from
+            context: Optional context with existing entities and pending confirmations
+            workflow_type: Type of workflow (buy_something, etc.)
+            
+        Returns:
+            Dict containing extracted entities, potentially merged with existing data for modifications
+        """
         try:
-            # Get schema from JSON file
-            schema = self._get_schema(workflow_type)
-            if not schema:
-                return {"entities": {}, "completeness": 0, "confidence": 0}
-
-            # Build prompt
-            prompt = f"Extract entities from: '{message}'"
-            if context and context.get("extracted_entities"):
-                prompt += f"\nExisting entities: {context['extracted_entities']}"
-
-            # Call OpenAI extract_entities method
-            response = self.openai_service.extract_entities(
-                message=prompt,
-                workflow_type=workflow_type
+            # Check if this is a modification request with pending confirmations
+            has_pending_confirmations = context and (
+                context.get("workflow_state", {}).get("pending_multiple_rfqs") or
+                context.get("workflow_state", {}).get("pending_rfq")
             )
-
-            # Merge with existing entities if present
-            if context and context.get("extracted_entities"):
-                existing = context["extracted_entities"]
-                for key, value in existing.items():
-                    if (
-                        key not in response.get("entities", {})
-                        or not response["entities"][key]
-                    ):
-                        response.setdefault("entities", {})[key] = value
-
-            return response
+            
+            if has_pending_confirmations:
+                print(f"EntityService: Detected modification context with pending confirmations")
+                return self._handle_modification_extraction(message, context, workflow_type)
+            else:
+                # Standard entity extraction for new requests
+                return self._handle_standard_extraction(message, context, workflow_type)
 
         except Exception as e:
             print(f"Entity extraction error: {e}")
-            return {"entities": {}, "completeness": 0, "confidence": 0}
+            return {"products": [], "confidence": 0, "success": False}
+    
+    def _handle_standard_extraction(self, message: str, context: dict = None, workflow_type: str = "buy_something") -> dict:
+        """Handle standard entity extraction for new requests."""
+        # Build prompt for entity extraction
+        prompt = f"Extract entities from: '{message}'"
+        if context and context.get("extracted_entities"):
+            prompt += f"\nExisting entities: {context['extracted_entities']}"
 
-    def check_entity_completeness(self, entities: dict, workflow_type: str) -> dict:
-        """Check if required fields are present."""
-        required = self.required_fields.get(workflow_type, [])
-        entity_data = entities.get("entities", {}) if entities else {}
+        # Call OpenAI extract_entities method
+        response = self.openai_service.extract_entities(
+            message=prompt,
+            workflow_type=workflow_type
+        )
 
-        missing = []
-        present = 0
-
-        for field in required:
-            if entity_data and entity_data.get(field):
-                present += 1
+        # Handle both old single entity format and new multi-product format
+        if "products" in response:
+            # New multi-product format
+            print(f"EntityService: Found products array with {len(response.get('products', []))} products")
+            for i, product in enumerate(response.get('products', [])):
+                print(f"  Product {i+1}: {product}")
+            return {
+                "products": response.get("products", []),
+                "confidence": response.get("confidence", 0),
+                "success": response.get("success", True)
+            }
+        else:
+            # Backward compatibility for old single entity format
+            print(f"EntityService: Using backward compatibility with entities: {response.get('entities', {})}")
+            return {
+                "entities": response.get("entities", {}),
+                "confidence": response.get("confidence", 0),
+                "success": response.get("success", True)
+            }
+    
+    def _handle_modification_extraction(self, message: str, context: dict, workflow_type: str = "buy_something") -> dict:
+        """Handle entity extraction for modification requests with existing pending confirmations."""
+        print(f"EntityService: Processing modification request: '{message}'")
+        
+        # Get existing pending confirmation data
+        workflow_state = context.get("workflow_state", {})
+        
+        # Get pending products with proper handling
+        pending_multiple = workflow_state.get("pending_multiple_rfqs")
+        pending_single = workflow_state.get("pending_rfq")
+        
+        if pending_multiple:
+            pending_products = pending_multiple
+        elif pending_single:
+            pending_products = [pending_single]
+        else:
+            pending_products = []
+        
+        # Debug: Print pending products info
+        print(f"EntityService: Found {len(pending_products)} pending products for modification")
+        if pending_products:
+            for i, product in enumerate(pending_products):
+                entities = product.get("entities", {})
+                desc = entities.get("description", f"Product {i+1}")
+                qty = entities.get("quantity", "unknown")
+                print(f"  Pending Product {i+1}: {desc} (quantity: {qty})")
+        
+        if not pending_products:
+            print(f"EntityService: No pending products found, falling back to standard extraction")
+            return self._handle_standard_extraction(message, context, workflow_type)
+        
+        # Extract modification details from the message
+        modification_prompt = f"""
+        Extract modification details from: '{message}'
+        
+        Context: User is modifying existing RFQ products:
+        {self._format_existing_products_for_prompt(pending_products)}
+        
+        Focus on identifying WHAT is being modified and the NEW VALUES only.
+        """
+        
+        # Call OpenAI to extract modification details
+        response = self.openai_service.extract_entities(
+            message=modification_prompt,
+            workflow_type=workflow_type
+        )
+        
+        print(f"EntityService: Modification extraction response: {response}")
+        
+        # Apply modifications to existing products
+        if "products" in response and response["products"]:
+            modified_products = self._apply_modifications_to_existing_products(
+                pending_products, response["products"], message
+            )
+            print(f"EntityService: Applied modifications, returning {len(modified_products)} updated products")
+            return {
+                "products": modified_products,
+                "confidence": response.get("confidence", 0),
+                "success": True,
+                "is_modification": True
+            }
+        else:
+            print(f"EntityService: No clear modification detected, falling back to standard extraction")
+            return self._handle_standard_extraction(message, context, workflow_type)
+    
+    def _format_existing_products_for_prompt(self, pending_products: list) -> str:
+        """Format existing products for modification prompt context."""
+        formatted = []
+        for i, product_info in enumerate(pending_products):
+            entities = product_info.get("entities", {})
+            description = entities.get("description", f"Product {i+1}")
+            quantity = entities.get("quantity", "unknown")
+            division = entities.get("division", "unknown")
+            delivery_date = entities.get("deliveryDate", "unknown")
+            formatted.append(f"- {description}: {quantity} units for {division}, delivery: {delivery_date}")
+        return "\n".join(formatted)
+    
+    def _apply_modifications_to_existing_products(self, existing_products: list, modifications: list, original_message: str) -> list:
+        """Apply modification details to existing products and return updated product list."""
+        print(f"EntityService: Applying {len(modifications)} modifications to {len(existing_products)} existing products")
+        
+        # Create a copy of existing products to modify
+        updated_products = []
+        for product_info in existing_products:
+            # Extract entities from the product info structure
+            if "entities" in product_info:
+                updated_products.append(product_info["entities"].copy())
             else:
-                missing.append(field)
-
-        completeness = (present / len(required)) * 100 if required else 100
-
-        return {
-            "completeness": completeness,
-            "is_complete": len(missing) == 0,
-            "missing_required_fields": missing,
-            "next_questions": self._get_questions_for_missing(missing, workflow_type),
-        }
+                # If it's already an entity dict, use it directly
+                updated_products.append(product_info.copy())
+        
+        # Apply each modification
+        for modification in modifications:
+            print(f"EntityService: Processing modification: {modification}")
+            
+            # Find which existing product this modification applies to
+            target_product_index = self._find_matching_product(updated_products, modification, original_message)
+            
+            if target_product_index is not None:
+                print(f"EntityService: Updating product {target_product_index}: {updated_products[target_product_index].get('description', 'Unknown')}")
+                # Update the matching product with modification data
+                for key, value in modification.items():
+                    if value is not None:  # Only update non-null values
+                        updated_products[target_product_index][key] = value
+                        print(f"  Updated {key}: {value}")
+            else:
+                print(f"EntityService: No matching product found for modification, treating as new product")
+                # If no match found, add as new product (shouldn't happen in modification context)
+                updated_products.append(modification)
+        
+        return updated_products
+    
+    def _find_matching_product(self, existing_products: list, modification: dict, original_message: str) -> int:
+        """Find which existing product the modification applies to."""
+        modification_description = modification.get("description", "").lower()
+        message_lower = original_message.lower()
+        
+        print(f"EntityService: Looking for product matching '{modification_description}' in message '{original_message}'")
+        
+        # Try to match by description
+        for i, product in enumerate(existing_products):
+            product_description = product.get("description", "").lower()
+            
+            # Direct description match
+            if modification_description and product_description and modification_description in product_description:
+                print(f"  Found match by description: {product_description}")
+                return i
+            
+            # Reverse match - product description in modification
+            if modification_description and product_description and product_description in modification_description:
+                print(f"  Found reverse match by description: {product_description}")
+                return i
+            
+            # Message contains product description (e.g., "change chairs to 53")
+            if product_description and product_description in message_lower:
+                print(f"  Found match by message content: {product_description}")
+                return i
+        
+        # If no description match, try by category or other fields
+        for i, product in enumerate(existing_products):
+            category = product.get("category", "").lower()
+            if modification_description and category and (modification_description in category or category in modification_description):
+                print(f"  Found match by category: {category}")
+                return i
+        
+        print(f"  No matching product found")
+        return None
 
     def _get_schema(self, workflow_type: str) -> dict:
-        """Load schema from JSON file."""
-
+        """Load schema from JSON file for reference."""
         schema_files = {
             "buy_something": "entity_extraction_rfq_creation.json",
         }
@@ -105,26 +248,3 @@ class EntityService:
         except FileNotFoundError:
             print(f"Schema file not found: {schema_path}")
             return {}
-
-    def _get_questions_for_missing(
-        self, missing_fields: List[str], workflow_type: str
-    ) -> List[str]:
-        """Generate questions for missing fields."""
-        questions = []
-        templates = {
-            "description": "What product are you looking for?",
-            "specification": "What are the technical specifications?",
-            "category": "What category is this product?",
-            "location": "Which city do you need this in?",
-            "unitofMeasures": "What unit of measurement?",
-            "projectDesc": "What is this RFQ for?",
-            "quantity": "How many do you need?",
-            "deliveryDate": "When do you need this delivered?",
-            "division": "Which division does this belong to?",
-        }
-
-        for field in missing_fields:
-            if field in templates:
-                questions.append(templates[field])
-
-        return questions
