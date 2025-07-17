@@ -138,6 +138,55 @@
             cursor: not-allowed;
         }
 
+        .file-upload-section {
+            margin-top: 10px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border: 2px dashed #ddd;
+        }
+
+        .file-upload-form {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .file-input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .upload-button {
+            background: #25d366;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+
+        .upload-button:hover {
+            background: #22c55e;
+        }
+
+        .upload-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .file-upload-title {
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #075e54;
+        }
+
         .typing-indicator {
             display: none;
             padding: 10px;
@@ -200,6 +249,20 @@
                 >
                 <button type="submit" class="send-button" id="sendButton">Send</button>
             </form>
+            
+            <div class="file-upload-section">
+                <div class="file-upload-title">Upload Excel File for RFQ</div>
+                <form class="file-upload-form" id="fileUploadForm" enctype="multipart/form-data">
+                    <input 
+                        type="file" 
+                        class="file-input" 
+                        id="fileInput" 
+                        accept=".xlsx,.xls,.xlsm"
+                        required
+                    >
+                    <button type="submit" class="upload-button" id="uploadButton">Upload Excel</button>
+                </form>
+            </div>
         </div>
     </div>
 
@@ -307,6 +370,67 @@
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 chatForm.dispatchEvent(new Event('submit'));
+            }
+        });
+
+        // File upload functionality
+        const fileUploadForm = document.getElementById('fileUploadForm');
+        const fileInput = document.getElementById('fileInput');
+        const uploadButton = document.getElementById('uploadButton');
+
+        async function uploadFile(file) {
+            uploadButton.disabled = true;
+            uploadButton.textContent = 'Uploading...';
+            
+            try {
+                // Add file upload message to chat
+                addMessage(`📎 Uploading Excel file: ${file.name}`, true);
+                
+                // Show typing indicator
+                typingIndicator.style.display = 'block';
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                // Create form data
+                const formData = new FormData();
+                formData.append('phone', '+1234567890'); // Mock phone number for testing
+                formData.append('file', file);
+
+                const response = await fetch('/api/upload-excel', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                
+                // Hide typing indicator
+                typingIndicator.style.display = 'none';
+
+                if (data.success) {
+                    // Add responses from the bot
+                    data.responses.forEach(response => {
+                        addMessage(response, false, true, data.debug_info);
+                    });
+                } else {
+                    addMessage(`Error: ${data.error}`, false);
+                }
+
+            } catch (error) {
+                typingIndicator.style.display = 'none';
+                addMessage(`Upload failed: ${error.message}`, false);
+                console.error('Upload error:', error);
+            } finally {
+                uploadButton.disabled = false;
+                uploadButton.textContent = 'Upload Excel';
+                fileInput.value = ''; // Clear file input
+            }
+        }
+
+        // Handle file upload form submission
+        fileUploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const file = fileInput.files[0];
+            if (file) {
+                await uploadFile(file);
             }
         });
     </script>

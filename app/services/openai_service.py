@@ -668,11 +668,134 @@ class OpenAIService:
                     return generated_response
             
             # Fallback response inline
-            questions_text = "\n".join(f"• {q}" for q in questions[:2])
+            questions_text = "\n".join(f"• {q}" for q in questions)
             return f"I need a bit more information:\n\n{questions_text}"
             
         except Exception as e:
             logger.error(f"Clarification response generation failed: {str(e)}")
             # Fallback response inline
-            questions_text = "\n".join(f"• {q}" for q in questions[:2])
+            questions_text = "\n".join(f"• {q}" for q in questions)
             return f"I need a bit more information:\n\n{questions_text}"
+    
+    @log_service_method("openai_service")
+    def detect_excel_header_row(self, sample_rows: List[List]) -> Dict[str, Any]:
+        """
+        Detect header row in Excel data using OpenAI.
+        
+        Args:
+            sample_rows: First few rows of Excel data as list of lists
+            
+        Returns:
+            Dict with header row index and confidence
+        """
+        start_time = time.time()
+        
+        try:
+            # Load Excel header detection tool
+            with open(self.tools_dir / "excel_header_detection.json", 'r') as f:
+                header_tool = json.load(f)
+            
+            # Prepare sample data for analysis
+            rows_text = ""
+            for i, row in enumerate(sample_rows):
+                row_str = [str(cell) if cell is not None else "" for cell in row]
+                rows_text += f"Row {i}: {row_str}\n"
+            
+            prompt = f"Analyze these Excel rows to detect the header row:\n\n{rows_text}"
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions=self._load_prompt("excel_analysis", "_get_excel_header_detection_prompt"),
+                tools=[header_tool],
+                tool_choice={"type": "function", "name": "detect_header_row"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    result = {
+                        "header_row_index": args.get("header_row_index"),
+                        "confidence": args.get("confidence", 0),
+                        "reasoning": args.get("reasoning", ""),
+                        "success": True
+                    }
+                    
+                    logger.info(f"Header detection: row {result['header_row_index']}, confidence {result['confidence']}")
+                    return result
+            
+            return {"header_row_index": 0, "confidence": 50, "reasoning": "Fallback to first row", "success": False}
+            
+        except Exception as e:
+            logger.error(f"Excel header detection failed: {str(e)}")
+            return {"header_row_index": 0, "confidence": 30, "reasoning": f"Error: {str(e)}", "success": False}
+    
+    @log_service_method("openai_service") 
+    def map_excel_columns(self, headers: List[str]) -> Dict[str, Any]:
+        """
+        Map Excel column headers to standard RFQ format using OpenAI.
+        
+        Args:
+            headers: List of Excel column headers
+            
+        Returns:
+            Dict with column mapping and confidence scores
+        """
+        start_time = time.time()
+        
+        try:
+            # Load Excel column mapping tool
+            with open(self.tools_dir / "excel_column_mapping.json", 'r') as f:
+                mapping_tool = json.load(f)
+            
+            headers_text = ", ".join([f'"{header}"' for header in headers])
+            target_columns = ['S.No', 'ItemDescription', 'Specification', 'Uom', 'Quantity', 'Remarks']
+            target_text = ", ".join(target_columns)
+            
+            prompt = f"""
+            Map these Excel headers to standard RFQ format:
+            
+            Excel headers: {headers_text}
+            Target columns: {target_text}
+            
+            Find the best matches for each target column.
+            """
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions=self._load_prompt("excel_analysis", "_get_excel_column_mapping_prompt"),
+                tools=[mapping_tool],
+                tool_choice={"type": "function", "name": "map_columns"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    logger.info(f"DEBUG: Raw function call arguments: {function_call.arguments}")
+                    args = json.loads(function_call.arguments)
+                    logger.info(f"DEBUG: Parsed args: {args}")
+                    result = {
+                        "column_mapping": args.get("column_mapping", {}),
+                        "confidence": args.get("confidence", 0),
+                        "unmapped_headers": args.get("unmapped_headers", []),
+                        "reasoning": args.get("reasoning", ""),
+                        "success": True
+                    }
+                    
+                    logger.info(f"Column mapping: {len(result['column_mapping'])} mappings found")
+                    logger.info(f"DEBUG: Final result: {result}")
+                    return result
+            
+            return {"column_mapping": {}, "confidence": 30, "unmapped_headers": headers, "reasoning": "No mapping found", "success": False}
+            
+        except Exception as e:
+            logger.error(f"Excel column mapping failed: {str(e)}")
+            return {"column_mapping": {}, "confidence": 20, "unmapped_headers": headers, "reasoning": f"Error: {str(e)}", "success": False}

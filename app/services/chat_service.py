@@ -29,6 +29,9 @@ from app.services.openai_service import OpenAIService
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.session_helpers import SessionHelpers
+from app.services.helpers.excel_helpers import ExcelHelpers
+from app.services.excel_validation_service import ExcelValidationService
+from app.services.excel_processing_service import ExcelProcessingService
 from app.services.gmt_api_service import GMTAPIService
 from app.database import SessionLocal, DatabaseManager
 from app.models import User, ConversationSession
@@ -85,6 +88,8 @@ class ChatService:
                 return await self._process_text_message(user, session, message_content)
             elif message_type == "interactive":
                 return await self._process_interactive_message(user, session, message_content)
+            elif message_type == "excel_upload":
+                return await self._process_excel_upload(user, session, message_content)
             else:
                 # Generate unsupported message type response
                 unsupported_context = {"message_type": message_type, "conversation_stage": "unsupported_input"}
@@ -116,7 +121,59 @@ class ChatService:
             # Also check if we have incomplete products or pending confirmations
             has_incomplete_products = bool(session.workflow_state.get("incomplete_products"))
             has_pending_confirmations = bool(session.workflow_state.get("pending_multiple_rfqs") or session.workflow_state.get("pending_rfq"))
-            print(f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}")
+            has_pending_optional = bool(session.workflow_state.get("pending_optional_rfq") or session.workflow_state.get("pending_optional_multiple_rfqs"))
+            print(f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}")
+            
+            # Handle pending optional field responses
+            if has_pending_optional:
+                # Check if user wants to skip optional fields
+                if any(keyword in message.lower() for keyword in ["no", "skip", "proceed", "continue", "next"]):
+                    # User wants to skip optional fields, proceed to confirmation
+                    if session.workflow_state.get("pending_optional_rfq"):
+                        # Single product
+                        product_info = session.workflow_state["pending_optional_rfq"]
+                        rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_info["entities"])
+                        
+                        summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
+                            "user_message": message,
+                            "extracted_entities": product_info["entities"]
+                        })
+                        await self.whatsapp_service.send_message(user.phone_number, summary_response)
+                        
+                        # Move to confirmation state
+                        session.workflow_state["pending_rfq"] = product_info
+                        del session.workflow_state["pending_optional_rfq"]
+                        
+                    elif session.workflow_state.get("pending_optional_multiple_rfqs"):
+                        # Multiple products
+                        complete_products = session.workflow_state["pending_optional_multiple_rfqs"]
+                        all_schemas = []
+                        all_entities = [prod["entities"] for prod in complete_products]
+                        
+                        for prod in complete_products:
+                            rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(prod["entities"])
+                            all_schemas.append(rfq_schema)
+                        
+                        summary_response = await self.response_helpers.generate_multiple_rfq_summary_and_confirmation(
+                            all_schemas, 
+                            {
+                                "user_message": message,
+                                "extracted_entities": all_entities,
+                                "total_products": len(complete_products)
+                            }
+                        )
+                        await self.whatsapp_service.send_message(user.phone_number, summary_response)
+                        
+                        # Move to confirmation state
+                        session.workflow_state["pending_multiple_rfqs"] = complete_products
+                        del session.workflow_state["pending_optional_multiple_rfqs"]
+                        
+                    await self._save_session(session, 'rfq_creation')
+                    return {"status": "optional_fields_skipped"}
+                
+                else:
+                    # User provided optional information, process it and then proceed to confirmation
+                    return await self._handle_purchase_intent(user, session, message)
             
             # Handle pending confirmations (user responding to "Would you like to proceed?")
             if has_pending_confirmations:
@@ -279,6 +336,223 @@ class ChatService:
                 
         except Exception as e:
             logger.error(f"Error processing interactive message: {e}")
+            raise
+    
+    async def _process_excel_upload(self, user: User, session: ConversationSession, content: Any) -> Dict[str, Any]:
+        """Process Excel file upload for RFQ creation."""
+        try:
+            # Check if user needs registration
+            if not user.is_registered:
+                registration_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'registration_required'}
+                registration_response = await self.response_helpers.generate_contextual_response(
+                    registration_context,
+                    ["Please complete your registration first before uploading files."],
+                    "registration_required"
+                )
+                await self.whatsapp_service.send_message(user.phone_number, registration_response)
+                return {"status": "handled", "response": "registration_required"}
+            
+            # Extract document information
+            if not isinstance(content, dict):
+                raise ValueError("Invalid Excel upload content format")
+            
+            document_info = content.get("document", {})
+            file_url = document_info.get("link")
+            filename = document_info.get("filename", "")
+            
+            if not file_url:
+                error_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'file_access_error'}
+                error_response = await self.response_helpers.generate_contextual_response(
+                    error_context,
+                    ["I couldn't access your Excel file. Please try uploading again."],
+                    "file_access_error"
+                )
+                await self.whatsapp_service.send_message(user.phone_number, error_response)
+                return {"status": "handled", "response": "file_access_error"}
+            
+            # Validate Excel file
+            validation_service = ExcelValidationService()
+            validation_result = await validation_service.validate_excel_file_from_url(file_url, filename)
+            
+            if not validation_result.get('valid'):
+                validation_error = validation_result.get('error', 'Invalid Excel file')
+                error_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'validation_failed', 'error': validation_error}
+                error_response = await self.response_helpers.generate_contextual_response(
+                    error_context,
+                    [validation_error],
+                    "validation_failed"
+                )
+                await self.whatsapp_service.send_message(user.phone_number, error_response)
+                return {"status": "handled", "response": "validation_failed"}
+            
+            # Process Excel file
+            processing_service = ExcelProcessingService(self.openai_service)
+            processing_result = await processing_service.process_excel_file(
+                content=validation_result['content'],
+                filename=filename
+            )
+            
+            if not processing_result.get('success'):
+                processing_error = processing_result.get('error', 'Failed to process Excel file')
+                error_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'processing_failed', 'error': processing_error}
+                error_response = await self.response_helpers.generate_contextual_response(
+                    error_context,
+                    [f"Error processing Excel: {processing_error}"],
+                    "processing_failed"
+                )
+                await self.whatsapp_service.send_message(user.phone_number, error_response)
+                return {"status": "handled", "response": "processing_failed"}
+            
+            # Prepare context using helpers
+            excel_context = ExcelHelpers.prepare_excel_context(processing_result, user.phone_number)
+            
+            # Update session  
+            session.workflow_type = 'rfq_creation'
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state.update(excel_context)
+            
+            # Determine flow based on completeness
+            completeness = excel_context['completeness']
+            items = processing_result.get('items', [])
+            
+            if ExcelHelpers.should_complete_immediately(completeness, items):
+                return await self._handle_complete_excel(user, session, processing_result)
+            else:
+                return await self._handle_incomplete_excel(user, session, excel_context)
+            
+        except Exception as e:
+            logger.error(f"Error processing Excel upload: {e}")
+            await self.whatsapp_service.send_message(
+                user.phone_number,
+                "Sorry, I encountered an error processing your Excel file. Please try again."
+            )
+            return {"status": "error", "response": str(e)}
+    
+    async def _handle_complete_excel(self, user: User, session: ConversationSession, processing_result: Dict) -> Dict[str, Any]:
+        """Handle complete Excel files that can create RFQ immediately."""
+        try:
+            # Generate processing response using OpenAI
+            context = {
+                'excel_data': processing_result,
+                'workflow_type': 'excel_rfq_upload',
+                'conversation_stage': 'excel_processing',
+                'total_items': processing_result.get('total_items', 0),
+                'filename': processing_result.get('filename', '')
+            }
+            
+            processing_response = await self.response_helpers.generate_contextual_response(
+                context,
+                [f"Processing {processing_result.get('total_items', 0)} items from Excel file"],
+                "excel_processing"
+            )
+            
+            await self.whatsapp_service.send_message(user.phone_number, processing_response)
+            
+            # Validate items before creating template
+            validation_result = processing_result.get('validation_result', {})
+            if not validation_result.get('valid', False):
+                # Items don't meet GMT API requirements
+                error_msg = "Excel file doesn't meet GMT API requirements:\n"
+                for error in validation_result.get('errors', []):
+                    error_msg += f"• {error}\n"
+                for warning in validation_result.get('warnings', []):
+                    error_msg += f"• {warning}\n"
+                
+                error_response = await self.response_helpers.generate_contextual_response(
+                    {**context, 'error': error_msg},
+                    ["Please check your Excel file format and try again."],
+                    "error"
+                )
+                await self.whatsapp_service.send_message(user.phone_number, error_response)
+                return {"status": "failed", "error": error_msg}
+            
+            # Create GMT template and submit
+            processing_service = ExcelProcessingService(self.openai_service)
+            template_bytes = processing_service.create_standard_template(processing_result['items'])
+            api_data = processing_service.encode_for_api(template_bytes, processing_result['filename'])
+            
+            # Submit to GMT API
+            gmt_service = GMTAPIService()
+            gmt_result = await gmt_service.bulk_upload_rfq(api_data)
+            
+            if gmt_result.get('success'):
+                # Generate completion response using OpenAI
+                rfq_data = {
+                    'items': processing_result['items'],
+                    'filename': processing_result['filename'],
+                    'total_items': processing_result['total_items']
+                }
+                
+                completion_response = self.openai_service.generate_completion_response(rfq_data, context)
+                await self.whatsapp_service.send_message(user.phone_number, completion_response)
+                
+                session.outcome = 'completed'
+                session.completed_at = datetime.now()
+                await self._save_session(session, 'rfq_submitted')
+                
+                return {"status": "completed", "response": "rfq_created"}
+            else:
+                # GMT API failed, fall back to conversation completion
+                error_context = {**context, 'error': gmt_result.get('error', 'Unknown error')}
+                error_response = await self.response_helpers.generate_contextual_response(
+                    error_context,
+                    ["There was an issue creating the RFQ. Let me help you complete it through conversation."],
+                    "error_recovery"
+                )
+                await self.whatsapp_service.send_message(user.phone_number, error_response)
+                return await self._handle_incomplete_excel(user, session, {"excel_data": processing_result})
+            
+        except Exception as e:
+            logger.error(f"Error handling complete Excel: {e}")
+            error_context = {'error': str(e), 'workflow_type': 'excel_rfq_upload'}
+            error_response = await self.response_helpers.generate_contextual_response(
+                error_context,
+                ["There was an issue processing your Excel file. Let me help you through conversation."],
+                "error_recovery"
+            )
+            await self.whatsapp_service.send_message(user.phone_number, error_response)
+            return await self._handle_incomplete_excel(user, session, {"excel_data": processing_result})
+    
+    async def _handle_incomplete_excel(self, user: User, session: ConversationSession, excel_context: Dict) -> Dict[str, Any]:
+        """Handle incomplete Excel files that need conversation completion."""
+        try:
+            processing_result = excel_context['excel_data']
+            missing_fields = excel_context['missing_fields']
+            
+            # Generate reupload instructions using helper
+            instructions = ExcelHelpers.generate_reupload_instructions(missing_fields, excel_context)
+            
+            # Prepare context for OpenAI response generation
+            context = {
+                'excel_data': processing_result,
+                'workflow_type': 'excel_rfq_upload',
+                'conversation_stage': 'excel_completion',
+                'missing_fields': missing_fields,
+                'total_items': processing_result.get('total_items', 0),
+                'filename': processing_result.get('filename', ''),
+                'completeness': excel_context.get('completeness', 0)
+            }
+            
+            # Generate clarification response using OpenAI with reupload instructions
+            clarification_response = self.openai_service.generate_clarification_response(
+                instructions, 
+                excel_context.get('completeness', 0), 
+                context
+            )
+            
+            await self.whatsapp_service.send_message(user.phone_number, clarification_response)
+            
+            # Update session state - waiting for excel reupload
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state['stage'] = 'excel_reupload_required'
+            session.workflow_state['pending_excel_reupload'] = True
+            session.workflow_state['last_excel_issues'] = missing_fields
+            await self._save_session(session, 'rfq_creation')
+            
+            return {"status": "excel_reupload_required", "response": "excel_reupload_instructions_sent"}
+            
+        except Exception as e:
+            logger.error(f"Error handling incomplete Excel: {e}")
             raise
     
     async def _get_or_create_user(self, phone_number: str) -> User:
@@ -574,14 +848,42 @@ class ChatService:
             else:
                 print(f"_handle_products_array: All {len(complete_products)} products are complete!")
             
-            # All products are complete - create RFQs and send confirmation
+            # All products are complete - check for optional fields or send confirmation
             if len(complete_products) == 1:
-                # Single product - use existing single product confirmation flow
+                # Single product - check for optional fields first
                 product_info = complete_products[0]
                 
                 # Recreate schema from entities
                 rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_info["entities"])
                 
+                # Check if user wants to provide optional information
+                optional_questions = rfq_schema.get_optional_questions()
+                
+                # Check if this is a response to optional questions (look for specific workflow state)
+                if optional_questions and not session.workflow_state.get("optional_fields_asked"):
+                    # Ask about optional fields first
+                    optional_intro = "Your mandatory information is complete! Would you like to provide any additional details?\n\n"
+                    optional_text = "\n".join(f"• {q}" for q in optional_questions)
+                    optional_message = f"{optional_intro}{optional_text}\n\nYou can skip this by saying 'no' or 'proceed'."
+                    
+                    await self.whatsapp_service.send_message(user.phone_number, optional_message)
+                    
+                    # Mark that we've asked about optional fields
+                    session.workflow_state["optional_fields_asked"] = True
+                    session.workflow_state["pending_optional_rfq"] = ChatServiceHelpers.serialize_products_for_session({
+                        "index": product_info["index"],
+                        "entities": product_info["entities"],
+                        "schema_data": rfq_schema.model_dump() if hasattr(rfq_schema, 'model_dump') else {}
+                    })
+                    
+                    await self._save_session(session, 'rfq_creation')
+                    
+                    return {
+                        "status": "optional_fields_inquiry",
+                        "total_products": 1
+                    }
+                
+                # Generate confirmation (either optional fields were completed or user declined)
                 summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
                     "user_message": message,
                     "extracted_entities": product_info["entities"]
@@ -601,6 +903,8 @@ class ChatService:
                     del session.workflow_state["incomplete_products"]
                 if "complete_products" in session.workflow_state:
                     del session.workflow_state["complete_products"]
+                if "optional_fields_asked" in session.workflow_state:
+                    del session.workflow_state["optional_fields_asked"]
                     
                 await self._save_session(session, 'rfq_creation')
                 
@@ -609,8 +913,7 @@ class ChatService:
                     "total_products": 1
                 }
             else:
-                # Multiple products - generate comprehensive summary using existing method
-                # Recreate schemas from entities
+                # Multiple products - check for optional fields first
                 all_schemas = []
                 all_entities = [prod["entities"] for prod in complete_products]
                 
@@ -618,7 +921,42 @@ class ChatService:
                     rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(prod["entities"])
                     all_schemas.append(rfq_schema)
                 
-                # Use existing method to generate comprehensive RFQ summary for all products
+                # Check if we should ask about optional fields
+                all_optional_questions = []
+                for i, schema in enumerate(all_schemas):
+                    optional_questions = schema.get_optional_questions()
+                    if optional_questions:
+                        product_name = f"Product {i+1}"
+                        all_optional_questions.extend([f"{product_name}: {q}" for q in optional_questions])
+                
+                # Check if this is a response to optional questions
+                if all_optional_questions and not session.workflow_state.get("optional_fields_asked"):
+                    # Ask about optional fields for all products
+                    optional_intro = "Your mandatory information is complete for all products! Would you like to provide any additional details?\n\n"
+                    optional_text = "\n".join(f"• {q}" for q in all_optional_questions)
+                    optional_message = f"{optional_intro}{optional_text}\n\nYou can skip this by saying 'no' or 'proceed'."
+                    
+                    await self.whatsapp_service.send_message(user.phone_number, optional_message)
+                    
+                    # Mark that we've asked about optional fields
+                    session.workflow_state["optional_fields_asked"] = True
+                    session.workflow_state["pending_optional_multiple_rfqs"] = ChatServiceHelpers.serialize_products_for_session([
+                        {
+                            "index": prod["index"],
+                            "entities": prod["entities"],
+                            "schema_data": all_schemas[i].model_dump() if hasattr(all_schemas[i], 'model_dump') else {}
+                        }
+                        for i, prod in enumerate(complete_products)
+                    ])
+                    
+                    await self._save_session(session, 'rfq_creation')
+                    
+                    return {
+                        "status": "optional_fields_inquiry",
+                        "total_products": len(complete_products)
+                    }
+                
+                # Generate confirmation for all products
                 summary_response = await self.response_helpers.generate_multiple_rfq_summary_and_confirmation(
                     all_schemas, 
                     {
@@ -648,6 +986,8 @@ class ChatService:
                     del session.workflow_state["incomplete_products"]
                 if "complete_products" in session.workflow_state:
                     del session.workflow_state["complete_products"]
+                if "optional_fields_asked" in session.workflow_state:
+                    del session.workflow_state["optional_fields_asked"]
                     
                 await self._save_session(session, 'rfq_creation')
                 

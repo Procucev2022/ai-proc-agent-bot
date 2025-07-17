@@ -12,6 +12,7 @@ from .rfq import (
     RFQOrganizationSchema,
     RFQValidationSchema,
     RFQStatusResponseSchema,
+    ExcelValidationSchema,
 )
 from .whatsapp import WhatsAppMessageSchema
 from .user import UserRegistrationSchema
@@ -28,6 +29,7 @@ __all__ = [
     "RFQOrganizationSchema",
     "RFQValidationSchema",
     "RFQStatusResponseSchema",
+    "ExcelValidationSchema",
     # WhatsApp schemas
     "WhatsAppMessageSchema",
     # User schemas

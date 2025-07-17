@@ -320,3 +320,102 @@ class GMTAPIService:
         except Exception as e:
             logger.error(f"Error getting RFQ details: {e}")
             return {"success": False, "error": str(e)}
+    
+    async def bulk_upload_rfq(self, excel_data: Dict[str, str]) -> Dict[str, Any]:
+        """
+        Upload RFQ data using GMT bulk upload API.
+        
+        Args:
+            excel_data: Dict with 'boqFileName' and 'boqfile' (base64 encoded Excel)
+            
+        Returns:
+            Dict with success status and response data
+        """
+        try:
+            # Ensure we're authenticated
+            if not await self.ensure_authenticated():
+                return {"success": False, "error": "Authentication failed"}
+            
+            url = f"{self.base_url}/procucev/rest/categoryManager/convertRfqBoq"
+            
+            headers = {
+                'Authorization': f'Bearer {self.token}',
+                'Accept': 'application/json'
+            }
+            
+            # Prepare data according to API specification
+            boq_filename = excel_data.get('boqFileName', 'rfq_items.xlsx')
+            boq_file_data = excel_data.get('boqfile')
+            
+            if not boq_file_data:
+                return {"success": False, "error": "Missing Excel file data"}
+            
+            logger.info(f"Submitting bulk RFQ upload: {boq_filename}")
+            
+            # Try both approaches - JSON first, then multipart/form-data if JSON fails
+            async with aiohttp.ClientSession() as session:
+                # First attempt: JSON format (as currently implemented)
+                json_data = {
+                    "boqFileName": boq_filename,
+                    "boqfile": boq_file_data
+                }
+                
+                json_headers = {**headers, 'Content-Type': 'application/json'}
+                async with session.post(url, json=json_data, headers=json_headers, timeout=60) as response:
+                    response_text = await response.text()
+                    
+                    if response.status == 200:
+                        try:
+                            response_data = await response.json() if response.content_type == 'application/json' else {"message": response_text}
+                            
+                            # Handle case where response might be a list
+                            if isinstance(response_data, list):
+                                response_data = response_data[0] if response_data else {}
+                            
+                            # Check if GMT API returned an error despite HTTP 200
+                            if (response_data.get('status') == 'Failure' or 
+                                response_data.get('errorCode') == 500 or
+                                'File format is not correct' in str(response_data.get('errorMessage', ''))):
+                                logger.error(f"GMT API returned error: {response_data}")
+                                return {"success": False, "error": response_data.get('errorMessage', 'GMT API error')}
+                            
+                            logger.info(f"Bulk upload successful: {response_data}")
+                            return {"success": True, "response": response_data}
+                        except json.JSONDecodeError:
+                            # Handle non-JSON success response
+                            return {"success": True, "response": {"message": response_text}}
+                    elif "File format is not correct" in response_text:
+                        # Try multipart/form-data format as fallback
+                        logger.info("JSON format failed, trying multipart/form-data...")
+                        
+                        # Decode base64 to actual file bytes
+                        import base64
+                        file_bytes = base64.b64decode(boq_file_data)
+                        
+                        # Create multipart form data
+                        form_data = aiohttp.FormData()
+                        form_data.add_field('boqFileName', boq_filename)
+                        form_data.add_field('boqfile', file_bytes, filename=boq_filename, 
+                                          content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                        
+                        # Try multipart upload
+                        async with session.post(url, data=form_data, headers=headers, timeout=60) as multipart_response:
+                            multipart_text = await multipart_response.text()
+                            
+                            if multipart_response.status == 200:
+                                try:
+                                    multipart_data = await multipart_response.json() if multipart_response.content_type == 'application/json' else {"message": multipart_text}
+                                    logger.info(f"Multipart upload successful: {multipart_data}")
+                                    return {"success": True, "response": multipart_data}
+                                except json.JSONDecodeError:
+                                    return {"success": True, "response": {"message": multipart_text}}
+                            else:
+                                logger.error(f"Multipart upload also failed: {multipart_response.status} - {multipart_text}")
+                                return {"success": False, "error": f"Both JSON and multipart failed. Last error: HTTP {multipart_response.status}: {multipart_text}"}
+                    else:
+                        logger.error(f"Bulk upload failed: {response.status} - {response_text}")
+                        return {"success": False, "error": f"HTTP {response.status}: {response_text}"}
+                        
+        except Exception as e:
+            logger.error(f"Error in bulk upload: {e}")
+            return {"success": False, "error": str(e)}

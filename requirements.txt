@@ -30,6 +30,11 @@ redis
 pytest
 pytest-asyncio
 
+# Excel processing
+pandas
+openpyxl
+xlrd
+
 # Development tools
 black
 flake8

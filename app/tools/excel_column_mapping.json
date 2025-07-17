@@ -1,0 +1,49 @@
+{
+  "type": "function", 
+  "name": "map_columns",
+  "description": "Map Excel column headers to standard RFQ format columns",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "column_mapping": {
+        "type": "object",
+        "description": "Mapping of Excel header names to target RFQ column names. Key = Excel header, Value = Target column (S.No, ItemDescription, Specification, Uom, Quantity, Remarks)",
+        "additionalProperties": {
+          "type": "string",
+          "enum": ["S.No", "ItemDescription", "Specification", "Uom", "Quantity", "Remarks"]
+        }
+      },
+      "confidence": {
+        "type": "integer",
+        "description": "Overall confidence percentage (0-100) in the column mapping",
+        "minimum": 0,
+        "maximum": 100
+      },
+      "unmapped_headers": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "List of Excel headers that could not be mapped to any target column"
+      },
+      "reasoning": {
+        "type": "string", 
+        "description": "Brief explanation of the mapping decisions made"
+      },
+      "mapping_details": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "excel_header": {"type": "string"},
+            "target_column": {"type": "string"},
+            "match_confidence": {"type": "integer", "minimum": 0, "maximum": 100},
+            "match_reason": {"type": "string"}
+          }
+        },
+        "description": "Detailed information about each mapping decision"
+      }
+    },
+    "required": ["column_mapping", "confidence", "reasoning"]
+  }
+}

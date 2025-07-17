@@ -200,6 +200,107 @@ class RFQStatusResponseSchema(BaseModel):
         extra = "allow"
 
 
+class ExcelValidationSchema(BaseModel):
+    """
+    Schema for Excel-specific field validation and completeness checking.
+    
+    Focuses only on Excel target fields: ['S.No', 'ItemDescription', 'Specification', 'Uom', 'Quantity', 'Remarks']
+    Used when processing Excel files to ask only relevant questions about missing Excel fields.
+    """
+    # Excel-specific fields (matching target_columns from excel_processing_service)
+    serial_no: Optional[str] = Field(None, description="Serial number (S.No)")
+    item_description: Optional[str] = Field(None, description="Item description")
+    specification: Optional[str] = Field(None, description="Item specification")
+    uom: Optional[str] = Field(None, description="Unit of measurement")
+    quantity: Optional[str] = Field(None, description="Quantity required")
+    remarks: Optional[str] = Field(None, description="Additional remarks")
+    
+    def get_missing_required_excel_fields(self) -> List[str]:
+        """Return list of missing required Excel fields."""
+        missing = []
+        
+        # Required fields for Excel processing (from excel_processing_service)
+        if not self.item_description:
+            missing.append("item_description")
+        if not self.specification:
+            missing.append("specification")
+        if not self.uom:
+            missing.append("uom")
+        if not self.quantity:
+            missing.append("quantity")
+            
+        return missing
+    
+    def get_missing_optional_excel_fields(self) -> List[str]:
+        """Return list of missing optional Excel fields."""
+        missing = []
+        
+        if not self.serial_no:
+            missing.append("serial_no")
+        if not self.remarks:
+            missing.append("remarks")
+            
+        return missing
+    
+    def get_excel_completion_percentage(self) -> float:
+        """Calculate completion percentage based on Excel fields."""
+        total_fields = 6  # All Excel fields
+        filled_fields = 0
+        
+        if self.serial_no:
+            filled_fields += 1
+        if self.item_description:
+            filled_fields += 1
+        if self.specification:
+            filled_fields += 1
+        if self.uom:
+            filled_fields += 1
+        if self.quantity:
+            filled_fields += 1
+        if self.remarks:
+            filled_fields += 1
+            
+        return (filled_fields / total_fields) * 100
+    
+    def is_excel_complete(self) -> bool:
+        """Check if all required Excel fields are filled."""
+        return len(self.get_missing_required_excel_fields()) == 0
+    
+    def get_excel_questions(self) -> List[str]:
+        """Generate questions for missing Excel fields."""
+        missing = self.get_missing_required_excel_fields()
+        questions = []
+        
+        if "item_description" in missing:
+            questions.append("What is the item description? Please provide a detailed description of the item.")
+        
+        if "specification" in missing:
+            questions.append("What are the specifications for this item? Please provide detailed specifications.")
+        
+        if "uom" in missing:
+            questions.append("What is the unit of measurement? (e.g., pcs, kg, liters, meters)")
+        
+        if "quantity" in missing:
+            questions.append("What quantity do you need? Please specify the number.")
+        
+        # Add optional field questions if required fields are complete
+        if not missing:
+            optional_missing = self.get_missing_optional_excel_fields()
+            if "serial_no" in optional_missing:
+                questions.append("Would you like to provide a serial number for this item?")
+            if "remarks" in optional_missing:
+                questions.append("Do you have any additional remarks or notes for this item?")
+        
+        return questions
+    
+    def get_next_excel_questions(self) -> List[str]:
+        """Generate intelligent next questions based on missing Excel fields."""
+        return self.get_excel_questions()
+    
+    class Config:
+        extra = "allow"
+
+
 class RFQValidationSchema(BaseModel):
     """
     Schema for RFQ field validation and completeness checking.
@@ -294,8 +395,8 @@ class RFQValidationSchema(BaseModel):
         """Check if all mandatory fields are filled."""
         return len(self.get_missing_mandatory_fields()) == 0
     
-    def get_next_questions(self) -> List[str]:
-        """Generate intelligent next questions based on missing fields."""
+    def get_mandatory_questions(self) -> List[str]:
+        """Generate ALL mandatory field questions at once."""
         missing = self.get_missing_mandatory_fields()
         questions = []
         
@@ -314,14 +415,36 @@ class RFQValidationSchema(BaseModel):
         if "delivery_locations" in missing:
             questions.append("Where should this be delivered? Please provide the complete address with state, city, and pincode.")
         
-        # Optional field questions
+        return questions
+    
+    def get_optional_questions(self) -> List[str]:
+        """Generate questions for optional fields."""
+        questions = []
+        
         if not self.category and self.project_desc:
             questions.append("What category does this product fall under?")
         
         if not self.preferred_brand and self.items:
             questions.append("Do you have any preferred brand or specifications?")
         
-        return questions[:2]  # Return max 2 questions at a time
+        if not self.remarks:
+            questions.append("Do you have any additional remarks or special requirements?")
+        
+        return questions
+    
+    def get_next_questions(self) -> List[str]:
+        """Generate intelligent next questions based on missing fields."""
+        # First, check if we have any mandatory fields missing
+        mandatory_questions = self.get_mandatory_questions()
+        if mandatory_questions:
+            return mandatory_questions  # Return ALL mandatory questions at once
+        
+        # If all mandatory fields are complete, ask about optional fields
+        optional_questions = self.get_optional_questions()
+        if optional_questions:
+            return optional_questions
+        
+        return []  # No questions needed if everything is complete
     
     class Config:
         extra = "allow"

@@ -44,7 +44,7 @@ class ResponseHelpers:
             return self.openai_service.generate_clarification_response(questions, completeness, context)
         except Exception as e:
             logger.error(f"Error generating clarification response: {e}")
-            questions_text = "\\n".join(f"• {q}" for q in questions[:2])
+            questions_text = "\\n".join(f"• {q}" for q in questions)
             return f"Your RFQ is {completeness}% complete. I need:\\n\\n{questions_text}"
     
     async def generate_rfq_summary_and_confirmation(self, rfq_schema, context: dict) -> str:

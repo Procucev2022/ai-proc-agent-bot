@@ -18,7 +18,6 @@ Key responsibilities:
 import os
 from dotenv import load_dotenv
 from typing import Optional, Dict, Any
-import logging
 
 class Settings:
     """
@@ -57,7 +56,7 @@ class Settings:
         self.WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "test_verify_token")
         self.WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY", "test_api_key")
         self.WHATSAPP_MOCK_MODE = os.getenv("WHATSAPP_MOCK_MODE", "true").lower() == "true"
-        
+            
         # Legacy fields for backward compatibility
         self.whatsapp_access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
         self.whatsapp_verify_token = self.WHATSAPP_VERIFY_TOKEN
@@ -69,6 +68,7 @@ class Settings:
         # Security configuration
         self.secret_key = os.getenv("SECRET_KEY")
         self.allowed_hosts = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+        self.allowed_ips = os.getenv("ALLOWED_IPS", "").split(",") if os.getenv("ALLOWED_IPS") else []
         
         # Additional fields needed by services
         self.DEBUG = self.debug

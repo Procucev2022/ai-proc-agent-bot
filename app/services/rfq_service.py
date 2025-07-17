@@ -95,7 +95,7 @@ class RFQService:
                     # Substantial progress, ask specific questions
                     return {
                         "needs_clarification": True,
-                        "questions": next_questions[:2],  # Limit to 2 questions
+                        "questions": next_questions,  # Ask all relevant questions
                         "missing_fields": missing_fields,
                         "updated_fields": updated_fields,
                         "completeness": completeness

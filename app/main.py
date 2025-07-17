@@ -13,7 +13,7 @@ Key responsibilities:
 - Health check endpoint for monitoring
 """
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,6 +21,7 @@ from fastapi.templating import Jinja2Templates
 import logging
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import get_settings
 from app.api.webhook import router as webhook_router
@@ -35,6 +36,29 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+class IPRestrictionMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, allowed_ips: list):
+        super().__init__(app)
+        self.allowed_ips = allowed_ips
+
+    async def dispatch(self, request: Request, call_next):
+        if self.allowed_ips:
+            client_ip = request.client.host
+            x_forwarded_for = request.headers.get("x-forwarded-for")
+            x_real_ip = request.headers.get("x-real-ip")
+            
+            real_ip = x_real_ip or (x_forwarded_for.split(",")[0] if x_forwarded_for else client_ip)
+            
+            if real_ip not in self.allowed_ips:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Access forbidden: IP not allowed"}
+                )
+        
+        response = await call_next(request)
+        return response
 
 
 @asynccontextmanager
@@ -63,6 +87,10 @@ app = FastAPI(
     lifespan=lifespan,
     debug=settings.DEBUG
 )
+
+# Add IP restriction middleware
+if settings.allowed_ips:
+    app.add_middleware(IPRestrictionMiddleware, allowed_ips=settings.allowed_ips)
 
 # Configure CORS middleware
 app.add_middleware(
@@ -150,4 +178,66 @@ async def process_chat_message(chat_message: ChatMessage):
             "success": False,
             "error": str(e),
             "responses": ["Sorry, there was an error processing your message."]
+        }
+
+
+@app.post("/api/upload-excel")
+async def upload_excel_file(
+    phone: str = Form(...),
+    file: UploadFile = File(...)
+):
+    """Process Excel file upload for testing."""
+    try:
+        # Read file content
+        file_content = await file.read()
+        
+        # Create mock document message structure (same as WhatsApp webhook)
+        document_content = {
+            "document": {
+                "filename": file.filename,
+                "link": "mock://uploaded-file"
+            }
+        }
+        
+        # Store captured WhatsApp messages
+        whatsapp_messages = []
+        
+        async def mock_send_message(recipient_id, message):
+            whatsapp_messages.append(message)
+            return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
+        
+        # Mock the validation service to use direct content
+        from app.services.excel_validation_service import ExcelValidationService
+        
+        async def mock_validate(self, file_url, filename):
+            return {
+                'valid': True,
+                'content': file_content,
+                'filename': filename,
+                'size': len(file_content),
+                'format': 'xlsx'
+            }
+        
+        # Process through ChatService with mocked services
+        from unittest.mock import patch
+        with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message), \
+             patch.object(ExcelValidationService, 'validate_excel_file_from_url', mock_validate):
+            
+            chat_result = await chat_service.process_message(phone, document_content, "excel_upload")
+        
+        return {
+            "success": True,
+            "responses": whatsapp_messages,
+            "status": chat_result.get("status", "processed"),
+            "filename": file.filename,
+            "size": len(file_content),
+            "debug_info": chat_result
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing Excel upload: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "responses": [f"Sorry, there was an error processing your Excel file: {str(e)}"]
         }

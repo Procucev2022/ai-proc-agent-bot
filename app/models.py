@@ -38,6 +38,7 @@ class WorkflowType(enum.Enum):
     rfq_creation = "rfq_creation"
     rfq_submitted = "rfq_submitted"
     general_inquiry = "general_inquiry"
+    excel_rfq_upload = "excel_rfq_upload"
 
 class ConversationOutcome(enum.Enum):
     completed = "completed"
