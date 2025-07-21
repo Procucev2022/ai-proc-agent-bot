@@ -1,0 +1,197 @@
+{
+  "test_configurations": {
+    "basic_message_test": {
+      "description": "Basic message handling load test",
+      "max_concurrent_requests": 10,
+      "total_requests": 50,
+      "request_timeout": 30.0,
+      "delay_between_requests": 0.1,
+      "warmup_requests": 5,
+      "test_duration": 180.0,
+      "collect_system_metrics": true,
+      "metrics_interval": 5.0,
+      "generate_charts": true,
+      "save_individual_results": true
+    },
+    "webhook_test": {
+      "description": "Webhook processing load test",
+      "max_concurrent_requests": 8,
+      "total_requests": 30,
+      "request_timeout": 25.0,
+      "delay_between_requests": 0.2,
+      "warmup_requests": 3,
+      "test_duration": 120.0,
+      "collect_system_metrics": true,
+      "metrics_interval": 3.0,
+      "generate_charts": true,
+      "save_individual_results": true
+    },
+    "dialogue_flow_test": {
+      "description": "Multi-turn dialogue flow test",
+      "max_concurrent_conversations": 5,
+      "total_conversations": 10,
+      "conversation_timeout": 60.0,
+      "delay_between_conversations": 1.0,
+      "warmup_conversations": 2,
+      "test_duration": 300.0,
+      "collect_system_metrics": true,
+      "metrics_interval": 5.0,
+      "generate_charts": true,
+      "save_individual_results": true
+    },
+    "stress_test": {
+      "description": "High-load stress test",
+      "max_concurrent_requests": 20,
+      "total_requests": 200,
+      "request_timeout": 45.0,
+      "delay_between_requests": 0.05,
+      "warmup_requests": 10,
+      "test_duration": 600.0,
+      "collect_system_metrics": true,
+      "metrics_interval": 2.0,
+      "generate_charts": true,
+      "save_individual_results": true
+    },
+    "endurance_test": {
+      "description": "Long-running endurance test",
+      "max_concurrent_requests": 5,
+      "total_requests": 1000,
+      "request_timeout": 30.0,
+      "delay_between_requests": 0.5,
+      "warmup_requests": 20,
+      "test_duration": 3600.0,
+      "collect_system_metrics": true,
+      "metrics_interval": 10.0,
+      "generate_charts": true,
+      "save_individual_results": true
+    }
+  },
+  "system_thresholds": {
+    "response_time": {
+      "acceptable": 2.0,
+      "warning": 5.0,
+      "critical": 10.0
+    },
+    "error_rate": {
+      "acceptable": 0.01,
+      "warning": 0.05,
+      "critical": 0.1
+    },
+    "cpu_usage": {
+      "acceptable": 70.0,
+      "warning": 85.0,
+      "critical": 95.0
+    },
+    "memory_usage": {
+      "acceptable": 70.0,
+      "warning": 85.0,
+      "critical": 95.0
+    },
+    "throughput": {
+      "minimum_acceptable": 1.0,
+      "target": 10.0,
+      "optimal": 20.0
+    }
+  },
+  "test_data": {
+    "base_phone_numbers": [
+      "+919876543001",
+      "+919876543002",
+      "+919876543003",
+      "+919876543004",
+      "+919876543005"
+    ],
+    "message_templates": {
+      "simple_rfq": [
+        "I need {quantity} {product} for my office",
+        "Looking for {product} with {specifications}",
+        "Required by {date}, deliver to {location}",
+        "Yes, create the RFQ"
+      ],
+      "complex_rfq": [
+        "I need office equipment - {products}",
+        "Specifications: {detailed_specs}",
+        "Budget: {budget}, Timeline: {timeline}",
+        "Additional requirements: {additional_info}",
+        "Please proceed with RFQ creation"
+      ],
+      "status_inquiry": [
+        "What's the status of my RFQ?",
+        "RFQ ID: {rfq_id}",
+        "Thank you for the update"
+      ],
+      "modification_request": [
+        "I want to modify my RFQ",
+        "Change {field} to {new_value}",
+        "Update the requirements",
+        "Confirm the changes"
+      ]
+    },
+    "product_categories": [
+      "laptops",
+      "desks",
+      "chairs",
+      "printers",
+      "monitors",
+      "servers",
+      "networking_equipment",
+      "office_supplies",
+      "furniture",
+      "electronics"
+    ],
+    "locations": [
+      "Bangalore",
+      "Mumbai",
+      "Delhi",
+      "Chennai",
+      "Hyderabad",
+      "Pune",
+      "Kolkata",
+      "Ahmedabad"
+    ]
+  },
+  "reporting": {
+    "output_directory": "load_test_results",
+    "report_formats": [
+      "json",
+      "csv",
+      "html"
+    ],
+    "include_charts": true,
+    "chart_types": [
+      "response_time_distribution",
+      "throughput_over_time",
+      "error_rate_over_time",
+      "system_metrics"
+    ],
+    "email_notifications": {
+      "enabled": false,
+      "recipients": [],
+      "smtp_server": "",
+      "smtp_port": 587,
+      "username": "",
+      "password": ""
+    }
+  },
+  "monitoring": {
+    "collect_system_metrics": true,
+    "metrics_interval": 5.0,
+    "monitor_endpoints": [
+      "/whatsapp",
+      "/delivery"
+    ],
+    "log_levels": {
+      "console": "INFO",
+      "file": "DEBUG"
+    },
+    "log_file": "load_test.log"
+  },
+  "environment": {
+    "test_environment": "development",
+    "base_url": "http://localhost:8000",
+    "api_version": "v1",
+    "timeout_multiplier": 1.0,
+    "retry_attempts": 3,
+    "retry_delay": 1.0
+  }
+}

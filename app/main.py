@@ -22,6 +22,9 @@ import logging
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
 from app.api.webhook import router as webhook_router
@@ -36,6 +39,13 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Initialize rate limiter
+limiter = Limiter(
+    key_func=get_remote_address,
+    storage_uri=settings.redis_url,
+    default_limits=[settings.rate_limit_default]
+)
 
 
 class IPRestrictionMiddleware(BaseHTTPMiddleware):
@@ -87,6 +97,10 @@ app = FastAPI(
     lifespan=lifespan,
     debug=settings.DEBUG
 )
+
+# Add rate limiting error handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Add IP restriction middleware
 if settings.allowed_ips:
@@ -149,7 +163,8 @@ async def chat_page(request: Request):
 
 
 @app.post("/api/chat")
-async def process_chat_message(chat_message: ChatMessage):
+@limiter.limit(settings.rate_limit_chat)
+async def process_chat_message(request: Request, chat_message: ChatMessage):
     """Process chat message through ChatService - works exactly like test_multi_turn_conversation.py"""
     try:
         # Store captured WhatsApp messages (same as terminal test)
@@ -182,7 +197,9 @@ async def process_chat_message(chat_message: ChatMessage):
 
 
 @app.post("/api/upload-excel")
+@limiter.limit(settings.rate_limit_upload)
 async def upload_excel_file(
+    request: Request,
     phone: str = Form(...),
     file: UploadFile = File(...)
 ):

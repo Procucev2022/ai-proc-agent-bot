@@ -100,6 +100,11 @@ class Settings:
         self.cleanup_completed_sessions = os.getenv("CLEANUP_COMPLETED_SESSIONS", "true").lower() == "true"
         self.max_retry_attempts = int(os.getenv("MAX_RETRY_ATTEMPTS", "3"))
         
+        # Rate limiting configuration
+        self.rate_limit_default = os.getenv("RATE_LIMIT_DEFAULT", "100/hour")
+        self.rate_limit_chat = os.getenv("RATE_LIMIT_CHAT", "20/minute")
+        self.rate_limit_upload = os.getenv("RATE_LIMIT_UPLOAD", "5/minute")
+        
         # Message retry configuration
         self.retry_max_attempts = int(os.getenv("RETRY_MAX_ATTEMPTS", "3"))
         self.retry_initial_delay = float(os.getenv("RETRY_INITIAL_DELAY", "1.0"))

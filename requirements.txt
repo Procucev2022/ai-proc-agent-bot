@@ -25,6 +25,7 @@ python-dotenv
 
 # Caching and session management
 redis
+slowapi
 
 # Testing framework
 pytest

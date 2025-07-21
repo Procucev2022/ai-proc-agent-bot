@@ -20,6 +20,8 @@ from urllib.parse import unquote
 import logging
 from typing import Dict, Any, Optional
 import json
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.config import get_settings
 from app.services.chat_service import ChatService
@@ -27,6 +29,10 @@ from app.services.chat_service import ChatService
 router = APIRouter()
 logger = logging.getLogger(__name__)
 chat_service = ChatService()
+
+# Initialize rate limiter for webhook endpoints
+settings = get_settings()
+limiter = Limiter(key_func=get_remote_address)
 
 
 @router.get("/whatsapp")
@@ -53,6 +59,7 @@ async def verify_webhook(
 
 
 @router.post("/whatsapp")
+@limiter.limit("60/minute")
 async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
     """
     Process incoming WhatsApp messages.
