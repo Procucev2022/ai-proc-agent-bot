@@ -7,7 +7,7 @@
         "properties": {
             "intent": {
                 "type": "string",
-                "enum": ["buy_something", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "ambiguous"],
+                "enum": ["buy_something", "sell_something", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "ambiguous"],
                 "description": "The primary classified intent category based on user message analysis and conversation context"
             },
             "confidence": {
@@ -20,6 +20,11 @@
                 "type": "object",
                 "properties": {
                     "buy_something": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                    },
+                    "sell_something": {
                         "type": "number",
                         "minimum": 0,
                         "maximum": 100
@@ -43,9 +48,14 @@
                         "type": "number",
                         "minimum": 0,
                         "maximum": 100
+                    },
+                    "reference_request": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
                     }
                 },
-                "required": ["buy_something", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check"],
+                "required": ["buy_something", "sell_something", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request"],
                 "additionalProperties": false,
                 "description": "Confidence scores for all intent categories"
             },
@@ -58,7 +68,7 @@
                     },
                     "conversation_stage": {
                         "type": "string",
-                        "enum": ["collecting", "confirming", "modifying", "completed", "unknown"],
+                        "enum": ["collecting", "confirming", "modifying", "referencing", "completed", "unknown"],
                         "description": "Current stage of the conversation based on context"
                     },
                     "modification_details": {
@@ -94,9 +104,26 @@
                         "required": ["response_type", "has_conditions"],
                         "additionalProperties": false,
                         "description": "Details about confirmation if this is a confirmation_response"
+                    },
+                    "reference_details": {
+                        "type": "object",
+                        "properties": {
+                            "reference_type": {
+                                "type": ["string", "null"],
+                                "enum": ["delivery_location", "division", "product_specs", "quantity", "general", null],
+                                "description": "Type of entity being referenced from previous data"
+                            },
+                            "has_history": {
+                                "type": "boolean",
+                                "description": "Whether user has relevant historical data available"
+                            }
+                        },
+                        "required": ["reference_type", "has_history"],
+                        "additionalProperties": false,
+                        "description": "Details about reference if this is a reference_request"
                     }
                 },
-                "required": ["references_existing_data", "conversation_stage", "modification_details", "confirmation_details"],
+                "required": ["references_existing_data", "conversation_stage", "modification_details", "confirmation_details", "reference_details"],
                 "additionalProperties": false,
                 "description": "Analysis of conversation context and how it affects intent classification"
             },

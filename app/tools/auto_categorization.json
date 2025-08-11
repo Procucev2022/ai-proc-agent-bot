@@ -1,0 +1,25 @@
+{
+  "type": "function",
+  "name": "categorize_item",
+  "description": "Categorize an RFQ item based on similar items and their categories",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "category": {
+        "type": "string",
+        "description": "The category for the item. Common categories include: Admin & IT, CAPEX Equipment, Civil Works, Electrical, Logistics, Mechanical, Safety, Packaging, Services, Raw Materials"
+      },
+      "confidence_score": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Confidence score between 0 and 1 for the categorization"
+      },
+      "reasoning": {
+        "type": "string",
+        "description": "Brief explanation of why this category was selected based on similar items"
+      }
+    },
+    "required": ["category", "confidence_score", "reasoning"]
+  }
+}

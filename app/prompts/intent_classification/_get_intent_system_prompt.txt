@@ -5,22 +5,30 @@ INTENT CATEGORIES:
 1. **buy_something** (75%+ confidence) - User wants to create an RFQ, request quotes, or buy something NEW
    Examples: "I want to create an RFQ", "Need quote for motors", "Want to buy generators", "I need 100 laptops"
 
-2. **general_inquiry** (60%+ confidence) - User asking how things work, general questions, help
+2. **sell_something** (75%+ confidence) - User wants to sell products, offer services, or become a vendor
+   Examples: "I want to sell generators", "We offer construction materials", "Can I become a vendor?", "I have office supplies to sell"
+
+3. **general_inquiry** (60%+ confidence) - User asking how things work, general questions, help
    Examples: "How does this work?", "What can you do?", "Help me understand"
 
-3. **modification_request** (80%+ confidence) - User wants to modify EXISTING RFQ data or previously mentioned items
+4. **modification_request** (80%+ confidence) - User wants to modify EXISTING RFQ data or previously mentioned items
    Examples: "Change chairs to 55", "Modify the delivery date to tomorrow", "Actually make that 20 printers instead"
    Context clues: References existing entities, uses modification verbs (change, modify, update, actually, instead)
 
-4. **confirmation_response** (85%+ confidence) - User responding to a confirmation request
+5. **confirmation_response** (85%+ confidence) - User responding to a confirmation request
    Examples: "Yes", "Confirm", "No, make changes", "Yes but change the delivery date"
    Context clues: Previous bot message asked for confirmation, simple yes/no responses
 
-5. **rfq_status_check** (70%+ confidence) - User checking status of existing RFQ or inquiry
-   Examples: "What's the status of my RFQ?", "Track my request", "Any updates on my order?", "Check progress"
-   Context clues: Status keywords (status, track, progress, update, submitted, pending, completed)
+6. **rfq_status_check** (70%+ confidence) - User checking status of existing RFQ or inquiry
+   Examples: "What's the status of my RFQ?", "Track my request", "Any updates on my order?", "When will I receive vendor responses?", "Has my quote been processed?", "Check my order status"
+   Context clues: Status keywords (status, track, progress, update, submitted, pending, completed, vendor responses, quote status)
 
-6. **ambiguous** (<60% confidence) - Unclear intent, mixed signals, or insufficient information
+7. **reference_request** (80%+ confidence) - User referencing previous orders/data and wants to reuse values
+   Examples: "Same location as last time", "Usual division", "Like before", "Same specs as previous order", "Regular delivery address"
+   Context clues: Reference phrases (same, usual, regular, like before, as last time), user has relevant historical data
+   IMPORTANT: Only classify as reference_request if user has relevant historical data available
+
+8. **ambiguous** (<60% confidence) - Unclear intent, mixed signals, or insufficient information
    Examples: "Hello", "Thanks", unclear mixed messages
 
 CONVERSATION CONTEXT ANALYSIS:
@@ -42,7 +50,7 @@ ANALYSIS REQUIREMENTS:
 - Determine current conversation stage from context
 - Identify specific entities being modified (if applicable)
 - Detect confirmation response patterns and conditions
-- Provide confidence scores for ALL FIVE main intents
+- Provide confidence scores for ALL SEVEN main intents
 - If confidence is low or intents overlap, suggest clarification
 
 IMPORTANT: Always consider conversation context when classifying. The same words can mean different things depending on what was discussed before.

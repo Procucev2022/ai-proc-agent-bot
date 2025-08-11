@@ -44,11 +44,11 @@ class IntentService:
             
         Returns:
             Dict containing:
-            - intent: classified intent (buy_something, general_inquiry, modification_request, confirmation_response, ambiguous)
+            - intent: classified intent (buy_something, general_inquiry, modification_request, confirmation_response, reference_request, ambiguous)
             - confidence: confidence score (0-100)
             - reasoning: explanation of classification including context analysis
             - all_intent_scores: scores for all possible intents
-            - context_analysis: detailed analysis of conversation context
+            - context_analysis: detailed analysis of conversation context including reference details
             - success: whether classification succeeded
         """
         try:
@@ -138,6 +138,7 @@ class IntentService:
         # Build all intent scores
         all_scores = {
             "buy_something": 20,
+            "sell_something": 10,
             "general_inquiry": 20,
             "modification_request": 10,
             "confirmation_response": 10,
@@ -157,10 +158,12 @@ class IntentService:
     
     def _get_general_fallback_intent(self, message_lower: str) -> tuple:
         """Get general intent classification without context."""
-        if any(keyword in message_lower for keyword in ["status", "track", "progress", "update", "rfq id", "reference", "submitted", "pending", "completed"]):
+        if any(keyword in message_lower for keyword in ["status", "track", "progress", "update", "rfq id", "reference", "submitted", "pending", "completed", "check my order", "my request", "my rfq", "order status", "quote status", "vendor responses", "response received", "when will i receive"]):
             return "rfq_status_check", 70
         elif any(keyword in message_lower for keyword in ["do you have", "available", "stock", "inventory", "search", "rfq", "quote", "buy", "purchase", "need to buy", "looking for", "need"]):
             return "buy_something", 60
+        elif any(keyword in message_lower for keyword in ["sell", "selling", "offer", "provide", "vendor", "supplier", "want to sell", "have to sell", "we offer", "can supply"]):
+            return "sell_something", 60
         elif any(keyword in message_lower for keyword in ["help", "how", "what can", "explain"]):
             return "general_inquiry", 60
         else:

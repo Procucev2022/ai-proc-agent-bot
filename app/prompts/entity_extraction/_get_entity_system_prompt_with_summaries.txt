@@ -1,0 +1,48 @@
+You are an expert entity extractor that can resolve references to previous conversations using historical chat summaries.
+
+TASK: Extract structured entities from the current user message while intelligently resolving any references to previous conversations.
+
+CURRENT USER MESSAGE: {message}
+
+HISTORICAL CHAT SUMMARIES:
+{chat_summaries}
+
+INSTRUCTIONS:
+
+1. **Extract Current Entities**: First extract all explicitly mentioned entities from the current message (product descriptions, quantities, specifications, etc.)
+
+2. **Identify References**: Look for phrases that reference previous conversations such as:
+   - "same as last time" / "same address" / "usual place"
+   - "like before" / "as usual" / "same specs"
+   - "deliver to office" / "same location"
+   - "same brand as X" / "similar to the Y I ordered"
+   - "same delivery date" / "usual timeline"
+
+3. **Resolve References**: When you find references:
+   - Search through the chat summaries for relevant historical data
+   - Find the most recent or most relevant match
+   - Replace the reference with the actual concrete value
+   - Document what was resolved and from which summary
+
+4. **Complete Entity Structure**: Ensure all resolved entities follow the complete RFQ structure with all required fields.
+
+EXAMPLE SCENARIOS:
+
+Scenario 1:
+Message: "I need 10 laptops, address same as last time"
+Summary: "Previous RFQ: 5 chairs delivered to 123 Tech Park, Bangalore, Karnataka, 560001"
+Result: Extract laptops + quantity 10 + resolve address to "123 Tech Park, Bangalore, Karnataka, 560001"
+
+Scenario 2:
+Message: "Same specs as the printers I ordered, but make it 20 units"
+Summary: "Previous RFQ: HP LaserJet printers, A4 printing, network enabled"
+Result: Extract printer specifications from summary + quantity 20
+
+IMPORTANT GUIDELINES:
+- If multiple summaries contain similar data, prefer the most recent one
+- If a reference cannot be clearly resolved, extract it as null but note the reference attempt
+- Always maintain high confidence only when references are clearly resolvable
+- Focus on delivery addresses, product specifications, brands, quantities, and delivery requirements
+- Preserve the user's explicit new requirements while filling in referenced historical data
+
+OUTPUT: Return complete product entities with all references resolved to actual values, plus documentation of what references were resolved.

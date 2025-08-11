@@ -22,7 +22,6 @@ class RFQItemSchema(BaseModel):
     brand: Optional[str] = Field(None, description="Preferred brand")
     remarks: Optional[str] = Field(None, description="Additional remarks")
     serial_no: Optional[float] = Field(None, description="Serial number for ordering")
-    category: Optional[str] = Field(None, description="Item category")
     created_by: Optional[str] = Field(None, description="Created by user")
     created_ts: Optional[datetime] = Field(None, alias="createdTS", description="Creation timestamp")
     itemcode: Optional[str] = Field(None, description="Item code")
@@ -126,7 +125,7 @@ class RFQCreateRequestSchema(BaseModel):
     created_by: str = Field(..., alias="createdBy", description="User who created the RFQ")
     project_desc: str = Field(..., alias="projectDesc", description="Project description")
     delivery_date: datetime = Field(..., alias="deliveryDate", description="Required delivery date")
-    division: str = Field(..., description="Division/department")
+    division: Optional[str] = Field(None, description="Division/department (auto-populated via categorization)")
     user: str = Field(..., description="User ID")
     org: RFQOrganizationSchema = Field(..., description="Organization details")
     rfq_item: List[RFQItemSchema] = Field(..., alias="rfqItem", min_items=1, description="RFQ items")
@@ -142,7 +141,6 @@ class RFQCreateRequestSchema(BaseModel):
     vendors: List[RFQVendorSchema] = Field(default_factory=list, description="Selected vendors")
     remarks: Optional[str] = Field("", description="Additional remarks")
     rfq_document: List[Dict[str, Any]] = Field(default_factory=list, alias="rfqDocument", description="RFQ documents")
-    category: Optional[str] = Field(None, description="Product category")
     
     @validator('delivery_date')
     def validate_delivery_date(cls, v):
@@ -162,19 +160,6 @@ class RFQCreateRequestSchema(BaseModel):
             raise ValueError('At least one delivery location is required')
         return v
     
-    @validator('division')
-    def validate_division(cls, v):
-        # Valid divisions from GMT API
-        valid_divisions = [
-            "Admin & IT", "CAPEX - Equipment & Machinery", "Civil & Electrical Works",
-            "Electrical - Engineering Items", "Logistics", "Mechanical - Engineering Items",
-            "Occuptional Safety & Health", "Packing Material", "Professional Services",
-            "Raw Materials"
-        ]
-        if v not in valid_divisions:
-            # Allow any division but log for reference
-            pass
-        return v
     
     class Config:
         allow_population_by_field_name = True
@@ -307,7 +292,7 @@ class RFQValidationSchema(BaseModel):
     
     Tracks which fields are mandatory vs optional and validates
     field values according to business rules. Used for intelligent
-    field collection and progress tracking.
+    field collection and progress tracking. Supports division auto-population.
     """
     # Core mandatory fields
     project_desc: Optional[str] = Field(None, description="Project description")
@@ -316,6 +301,7 @@ class RFQValidationSchema(BaseModel):
     user_id: Optional[str] = Field(None, description="User ID")
     organization_id: Optional[str] = Field(None, description="Organization ID")
     
+    
     # Item details (at least one item required)
     items: List[Dict[str, Any]] = Field(default_factory=list, description="RFQ items")
     
@@ -323,10 +309,10 @@ class RFQValidationSchema(BaseModel):
     delivery_locations: List[Dict[str, Any]] = Field(default_factory=list, description="Delivery locations")
     
     # Optional fields
-    category: Optional[str] = Field(None, description="Product category")
     remarks: Optional[str] = Field(None, description="Additional remarks")
     vendors: List[Dict[str, Any]] = Field(default_factory=list, description="Selected vendors")
     preferred_brand: Optional[str] = Field(None, description="Preferred brand")
+    
     
     def get_missing_mandatory_fields(self) -> List[str]:
         """Return list of missing mandatory fields based on GMT API requirements."""
@@ -337,12 +323,19 @@ class RFQValidationSchema(BaseModel):
             missing.append("project_desc")
         if not self.delivery_date:
             missing.append("delivery_date")
-        if not self.division:
-            missing.append("division")
+        
+        # Division is now auto-populated via categorization service - not required from user
+            
         if not self.items:
             missing.append("items")
         if not self.delivery_locations:
             missing.append("delivery_locations")
+        else:
+            # Check if delivery location has all required fields
+            for location in self.delivery_locations:
+                if not location.get("state") or not location.get("city") or not location.get("pincode"):
+                    missing.append("delivery_locations")
+                    break
             
         # Note: user_id and organization_id are system fields, auto-populated
         return missing
@@ -351,8 +344,6 @@ class RFQValidationSchema(BaseModel):
         """Return list of missing optional fields that could enhance the RFQ."""
         missing = []
         
-        if not self.category:
-            missing.append("category")
         if not self.preferred_brand:
             missing.append("preferred_brand")
         if not self.remarks:
@@ -362,7 +353,7 @@ class RFQValidationSchema(BaseModel):
     
     def get_completeness_percentage(self) -> float:
         """Calculate completeness percentage based on filled fields."""
-        total_fields = 10  # 7 mandatory + 3 optional
+        total_fields = 9  # 7 mandatory + 2 optional
         filled_fields = 0
         
         # Check mandatory fields
@@ -382,8 +373,6 @@ class RFQValidationSchema(BaseModel):
             filled_fields += 1
             
         # Check optional fields
-        if self.category:
-            filled_fields += 1
         if self.remarks:
             filled_fields += 1
         if self.vendors:
@@ -396,33 +385,34 @@ class RFQValidationSchema(BaseModel):
         return len(self.get_missing_mandatory_fields()) == 0
     
     def get_mandatory_questions(self) -> List[str]:
-        """Generate ALL mandatory field questions at once."""
+        """Generate question identifiers for missing mandatory fields."""
         missing = self.get_missing_mandatory_fields()
         questions = []
         
         if "project_desc" in missing:
-            questions.append("What product or service do you need to procure? Please provide a detailed description.")
+            questions.append("project_description")
         
         if "delivery_date" in missing:
-            questions.append("When do you need this delivered? Please provide a specific date.")
+            questions.append("delivery_date")
         
-        if "division" in missing:
-            questions.append("Which division or department is this for? (e.g., Admin & IT, CAPEX - Equipment & Machinery, etc.)")
+        if "division_confirmation" in missing:
+            questions.append("division_confirmation")
+        elif "division" in missing:
+            questions.append("division_selection")
         
         if "items" in missing:
-            questions.append("Can you provide details about the items you need? Include quantity and unit of measurement.")
+            questions.append("items_details")
         
         if "delivery_locations" in missing:
-            questions.append("Where should this be delivered? Please provide the complete address with state, city, and pincode.")
+            questions.append("delivery_location")
         
         return questions
+    
+    
     
     def get_optional_questions(self) -> List[str]:
         """Generate questions for optional fields."""
         questions = []
-        
-        if not self.category and self.project_desc:
-            questions.append("What category does this product fall under?")
         
         if not self.preferred_brand and self.items:
             questions.append("Do you have any preferred brand or specifications?")
@@ -459,7 +449,6 @@ class RFQUpdateSchema(BaseModel):
     project_desc: Optional[str] = Field(None, description="Project description")
     delivery_date: Optional[datetime] = Field(None, description="Required delivery date")
     division: Optional[str] = Field(None, description="Division/department")
-    category: Optional[str] = Field(None, description="Product category")
     remarks: Optional[str] = Field(None, description="Additional remarks")
     items: Optional[List[Dict[str, Any]]] = Field(None, description="RFQ items")
     delivery_locations: Optional[List[Dict[str, Any]]] = Field(None, description="Delivery locations")

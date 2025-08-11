@@ -327,6 +327,294 @@ class OpenAIService:
             logger.error(f"Entity extraction failed: {error_msg}")
             return {"products": [], "completeness": 0, "missing_fields": [], "confidence": 0, "next_questions": [], "success": False}
         
+    @log_service_method("openai_service")
+    def extract_entities_with_summary_context(self, message: str, chat_summaries: List[Dict], workflow_type: str = "rfq_creation") -> Dict[str, Any]:
+        """
+        Extract entities from current message while resolving references to previous conversations.
+        
+        Uses chat summaries to resolve references like "same as last time", "usual address", etc.
+        with actual values from historical conversations.
+        
+        Args:
+            message: User message to extract entities from
+            chat_summaries: List of recent chat summaries with historical context
+            workflow_type: Type of workflow (defaults to rfq_creation)
+            
+        Returns:
+            Dict with extracted entities, resolved references, and metadata
+        """
+        start_time = time.time()
+        
+        try:
+            # Load the new entity extraction tool for summaries
+            tool_file = "entity_extraction_with_summaries.json"
+            with open(self.tools_dir / tool_file, 'r') as f:
+                entity_tool = json.load(f)
+            
+            # Format chat summaries for the prompt
+            summaries_text = ""
+            for i, summary in enumerate(chat_summaries):
+                summaries_text += f"Summary {i+1} ({summary.get('date', 'unknown date')}):\n"
+                summaries_text += f"- Summary: {summary.get('summary', '')}\n"
+                summaries_text += f"- Entities: {json.dumps(summary.get('entities', {}))}\n"
+                summaries_text += f"- RFQ IDs: {summary.get('rfq_ids', [])}\n"
+                summaries_text += f"- Outcome: {summary.get('outcome', '')}\n\n"
+            
+            # Load prompt and format with message and summaries
+            prompt_content = self._load_prompt(
+                "entity_extraction", 
+                "_get_entity_system_prompt_with_summaries",
+                message=message,
+                chat_summaries=summaries_text
+            )
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": message}],
+                instructions=prompt_content,
+                tools=[entity_tool],
+                tool_choice={"type": "function", "name": "extract_entities_with_summaries"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    print(f"OpenAI summary-aware extraction args: {args}")
+                    
+                    result = {
+                        "products": args.get("products", []),
+                        "resolved_references": args.get("resolved_references", []),
+                        "confidence": args.get("confidence", 0),
+                        "success": True
+                    }
+                    
+                    # Log successful summary-aware entity extraction
+                    self.interaction_logger.log_entity_extraction(
+                        user_input=message,
+                        entities={"products": result["products"], "resolved_references": result["resolved_references"]},
+                        completeness=100,  # Will be calculated per product later
+                        workflow_type="summary_aware_" + workflow_type,
+                        model_used=self.default_model,
+                        processing_time=processing_time,
+                        missing_fields=[]
+                    )
+                    
+                    return result
+            
+            # Log failed entity extraction
+            self.interaction_logger.log_error(
+                interaction_type="summary_aware_entity_extraction",
+                user_input=message,
+                error_message="No function call in response",
+                model_used=self.default_model
+            )
+            return {"products": [], "resolved_references": [], "confidence": 0, "success": False}
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # Log error
+            self.interaction_logger.log_error(
+                interaction_type="summary_aware_entity_extraction",
+                user_input=message,
+                error_message=error_msg,
+                model_used=self.default_model
+            )
+            
+            logger.error(f"Summary-aware entity extraction failed: {error_msg}")
+            return {"products": [], "resolved_references": [], "confidence": 0, "success": False}
+        
+    @log_service_method("openai_service")
+    def analyze_reference_context(self, message: str) -> Dict[str, Any]:
+        """
+        Analyze if a message contains references to previous conversations.
+        
+        Uses AI to determine if the user is making references that would benefit
+        from historical context and summary-aware entity extraction.
+        
+        Args:
+            message: User message to analyze
+            
+        Returns:
+            Dict with has_references (bool), confidence (float), and analysis details
+        """
+        start_time = time.time()
+        
+        try:
+            # Load reference detection tool
+            tool_file = "reference_detection.json"
+            with open(self.tools_dir / tool_file, 'r') as f:
+                reference_tool = json.load(f)
+            
+            # Load reference detection prompt
+            prompt_content = self._load_prompt(
+                "reference_detection", 
+                "_get_reference_detection_prompt",
+                message=message
+            )
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": message}],
+                instructions=prompt_content,
+                tools=[reference_tool],
+                tool_choice={"type": "function", "name": "analyze_references"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    print(f"OpenAI reference analysis result: {args}")
+                    
+                    result = {
+                        "has_references": args.get("has_references", False),
+                        "confidence": args.get("confidence", 0),
+                        "reference_types": args.get("reference_types", []),
+                        "detected_phrases": args.get("detected_phrases", []),
+                        "reasoning": args.get("reasoning", ""),
+                        "success": True
+                    }
+                    
+                    # Log successful reference analysis
+                    self.interaction_logger.log_entity_extraction(
+                        user_input=message,
+                        entities={"reference_analysis": result},
+                        completeness=100,
+                        workflow_type="reference_detection",
+                        model_used=self.default_model,
+                        processing_time=processing_time,
+                        missing_fields=[]
+                    )
+                    
+                    return result
+            
+            # Log failed reference analysis
+            self.interaction_logger.log_error(
+                interaction_type="reference_analysis",
+                user_input=message,
+                error_message="No function call in response",
+                model_used=self.default_model
+            )
+            return {"has_references": False, "confidence": 0, "reference_types": [], "detected_phrases": [], "reasoning": "No analysis available", "success": False}
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # Log error
+            self.interaction_logger.log_error(
+                interaction_type="reference_analysis",
+                user_input=message,
+                error_message=error_msg,
+                model_used=self.default_model
+            )
+            
+            logger.error(f"Reference analysis failed: {error_msg}")
+            return {"has_references": False, "confidence": 0, "reference_types": [], "detected_phrases": [], "reasoning": f"Analysis failed: {error_msg}", "success": False}
+        
+    @log_service_method("openai_service")
+    def merge_resolved_references_with_entities(self, products: List[Dict], resolved_references: List[Dict], original_message: str) -> Dict[str, Any]:
+        """
+        Use AI to intelligently merge resolved references into product entities.
+        
+        Uses the established tool and prompt pattern to merge resolved reference data
+        into appropriate product entity fields.
+        
+        Args:
+            products: List of product entities to update
+            resolved_references: List of resolved reference objects
+            original_message: Original user message for context
+            
+        Returns:
+            Dict with success flag and updated_products list
+        """
+        start_time = time.time()
+        
+        try:
+            # Load reference merging tool
+            tool_file = "reference_merging.json"
+            with open(self.tools_dir / tool_file, 'r') as f:
+                merge_tool = json.load(f)
+            
+            # Format data for the prompt
+            products_text = json.dumps(products, indent=2)
+            references_text = json.dumps(resolved_references, indent=2)
+            
+            # Load prompt and format with data
+            prompt_content = self._load_prompt(
+                "reference_merging",
+                "_get_reference_merging_prompt",
+                original_message=original_message,
+                products=products_text,
+                resolved_references=references_text
+            )
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": original_message}],
+                instructions=prompt_content,
+                tools=[merge_tool],
+                tool_choice={"type": "function", "name": "merge_resolved_references"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    print(f"OpenAI reference merging result: {args}")
+                    
+                    result = {
+                        "success": args.get("success", True),
+                        "updated_products": args.get("updated_products", products),
+                        "merge_actions": args.get("merge_actions", [])
+                    }
+                    
+                    # Log successful merge
+                    self.interaction_logger.log_entity_extraction(
+                        user_input=original_message,
+                        entities={"merged_products": result["updated_products"]},
+                        completeness=100,
+                        workflow_type="reference_merging",
+                        model_used=self.default_model,
+                        processing_time=processing_time,
+                        missing_fields=[]
+                    )
+                    
+                    return result
+            
+            # Log failed merge
+            self.interaction_logger.log_error(
+                interaction_type="reference_merging",
+                user_input=original_message,
+                error_message="No function call in response",
+                model_used=self.default_model
+            )
+            return {"success": False, "updated_products": products, "merge_actions": []}
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # Log error
+            self.interaction_logger.log_error(
+                interaction_type="reference_merging",
+                user_input=original_message,
+                error_message=error_msg,
+                model_used=self.default_model
+            )
+            
+            logger.error(f"Reference merging failed: {error_msg}")
+            return {"success": False, "updated_products": products, "merge_actions": [], "error": error_msg}
+        
     def generate_response(self, context: dict, query_results: list = None) -> str:
         """
         Generate contextual response based on query results.
@@ -734,6 +1022,145 @@ class OpenAIService:
             logger.error(f"Excel header detection failed: {str(e)}")
             return {"header_row_index": 0, "confidence": 30, "reasoning": f"Error: {str(e)}", "success": False}
     
+    @log_service_method("openai_service")
+    def select_division(self, extracted_data: dict) -> Dict[str, Any]:
+        """
+        Select the most relevant division from predefined list based on extracted RFQ data.
+        
+        Args:
+            extracted_data: Dictionary containing extracted RFQ entities and product information
+            
+        Returns:
+            Dict with selected division, confidence score, and reasoning
+        """
+        start_time = time.time()
+        
+        try:
+            # Load division selection tool
+            with open(self.tools_dir / "division_selection.json", 'r') as f:
+                division_tool = json.load(f)
+            
+            # Build analysis prompt
+            prompt = f"""
+            Analyze the following RFQ data and select the most appropriate division:
+            
+            Extracted data: {json.dumps(extracted_data, indent=2)}
+            
+            Consider product descriptions, specifications, quantities, and any other relevant information to determine which division this procurement request should be assigned to.
+            """
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions=self._load_prompt("division_selection", "_get_division_selection_prompt"),
+                tools=[division_tool],
+                tool_choice={"type": "function", "name": "select_division"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    result = {
+                        "selected_division": args.get("selected_division"),
+                        "confidence": args.get("confidence", 0),
+                        "reasoning": args.get("reasoning", ""),
+                        "alternative_divisions": args.get("alternative_divisions", []),
+                        "product_category_analysis": args.get("product_category_analysis", {}),
+                        "success": True
+                    }
+                    
+                    logger.info(f"Division selected: {result['selected_division']} (confidence: {result['confidence']}%)")
+                    return result
+            
+            # Log failed division selection
+            self.interaction_logger.log_error(
+                interaction_type="division_selection",
+                user_input=str(extracted_data),
+                error_message="No function call in response",
+                model_used=self.default_model
+            )
+            return {
+                "selected_division": "Admin & IT",  # Fallback
+                "confidence": 30,
+                "reasoning": "No function call in response, using fallback",
+                "alternative_divisions": [],
+                "product_category_analysis": {},
+                "success": False
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # Log error
+            self.interaction_logger.log_error(
+                interaction_type="division_selection",
+                user_input=str(extracted_data),
+                error_message=error_msg,
+                model_used=self.default_model
+            )
+            
+            logger.error(f"Division selection failed: {error_msg}")
+            return {
+                "selected_division": "Admin & IT",  # Fallback
+                "confidence": 20,
+                "reasoning": f"Error occurred: {error_msg}",
+                "alternative_divisions": [],
+                "product_category_analysis": {},
+                "success": False
+            }
+    
+    @log_service_method("openai_service")
+    def generate_session_summary(self, session_data: Dict[str, Any]) -> str:
+        """
+        Generate session summary using OpenAI.
+        
+        Args:
+            session_data: Dictionary containing session information
+            
+        Returns:
+            Summary text string
+        """
+        try:
+            # Build prompt with session data
+            prompt = f"""
+            Summarize this chat session for future context:
+            
+            User: {session_data.get('user_id', 'Unknown')}
+            Workflow: {session_data.get('workflow_type', 'Unknown')}
+            Outcome: {session_data.get('outcome', 'Unknown')}
+            Entities: {json.dumps(session_data.get('extracted_entities', {}), indent=2)}
+            RFQ IDs: {session_data.get('rfq_ids', [])}
+            """
+            
+            # Add conversation history if available (keep it simple)
+            conversation_messages = session_data.get('conversation_messages', [])
+            if conversation_messages:
+                prompt += f"\n\nRecent conversation (last few messages):\n"
+                # Just include last 5 messages for context
+                recent_messages = conversation_messages[-5:]
+                for msg in recent_messages:
+                    sender = msg.get('sender', 'unknown')
+                    content = msg.get('content', '')[:100]  # Keep it short
+                    prompt += f"{sender}: {content}\n"
+            
+            prompt += "\n\nCreate a brief, clear summary of what the user wanted and what was accomplished."
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions=self._load_prompt("session_summary", "_get_session_summary_system_prompt")
+            )
+            
+            return response.output_text or "Session completed"
+            
+        except Exception as e:
+            logger.error(f"Session summary generation failed: {str(e)}")
+            return "Session completed"
+
     @log_service_method("openai_service") 
     def map_excel_columns(self, headers: List[str]) -> Dict[str, Any]:
         """
@@ -799,3 +1226,292 @@ class OpenAIService:
         except Exception as e:
             logger.error(f"Excel column mapping failed: {str(e)}")
             return {"column_mapping": {}, "confidence": 20, "unmapped_headers": headers, "reasoning": f"Error: {str(e)}", "success": False}
+
+    @log_service_method("openai_service")
+    def categorize_with_similar_items(self, item_description: str, similar_items: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Categorize an RFQ item using similar items from vector search.
+        
+        Uses OpenAI function calling to make final categorization decision based on
+        vector search results, with confidence scoring and reasoning.
+        
+        Args:
+            item_description: Description of the item to categorize
+            similar_items: List of similar items with category information and similarity scores
+            
+        Returns:
+            Dict with categorization result, confidence score, and reasoning
+        """
+        start_time = time.time()
+        
+        try:
+            # Load auto-categorization tool
+            with open(self.tools_dir / "auto_categorization.json", 'r') as f:
+                categorization_tool = json.load(f)
+            
+            # Format similar items for the prompt
+            similar_items_text = ""
+            for i, item in enumerate(similar_items, 1):
+                similar_items_text += f"""
+{i}. Item: "{item['item']}" (Similarity: {item['similarity_score']})
+   Category: {item['category']}
+"""
+            
+            prompt = f"""
+Item to categorize: "{item_description}"
+
+Top similar items from database (ranked by similarity):
+{similar_items_text}
+
+Determine the best category for the input item based on the similar items and their categories.
+"""
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions=self._load_prompt("auto_categorization", "_get_auto_categorization_system_prompt"),
+                tools=[categorization_tool],
+                tool_choice={"type": "function", "name": "categorize_item"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    result = {
+                        "category": args.get("category"),
+                        "confidence": args.get("confidence_score", 0),
+                        "reasoning": args.get("reasoning", ""),
+                        "success": True
+                    }
+                    
+                    # Log successful categorization
+                    self.interaction_logger.log_entity_extraction(
+                        user_input=item_description,
+                        entities=result["category"],
+                        completeness=100,
+                        workflow_type="auto_categorization",
+                        model_used=self.default_model,
+                        processing_time=processing_time,
+                        missing_fields=[]
+                    )
+                    
+                    logger.info(f"Auto-categorized item: {result['category']} (confidence: {result['confidence']})")
+                    return result
+            
+            # Log failed categorization
+            self.interaction_logger.log_error(
+                interaction_type="auto_categorization",
+                user_input=item_description,
+                error_message="No function call in response",
+                model_used=self.default_model
+            )
+            
+            # Fallback to first similar item
+            if similar_items:
+                fallback_item = similar_items[0]
+                return {
+                    "category": fallback_item["category"],
+                    "confidence_score": max(fallback_item["similarity_score"] * 0.7, 0.3),
+                    "reasoning": "Fallback to most similar item due to AI categorization failure",
+                    "success": False
+                }
+            
+            return {
+                "category": None,
+                "confidence_score": 0,
+                "reasoning": "No function call in response",
+                "success": False
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # Log error
+            self.interaction_logger.log_error(
+                interaction_type="auto_categorization",
+                user_input=item_description,
+                error_message=error_msg,
+                model_used=self.default_model
+            )
+            
+            logger.error(f"Auto-categorization failed: {error_msg}")
+            
+            # Fallback to first similar item
+            if similar_items:
+                fallback_item = similar_items[0]
+                return {
+                    "category": fallback_item["category"],
+                    "confidence_score": max(fallback_item["similarity_score"] * 0.5, 0.2),
+                    "reasoning": f"Fallback to most similar item due to error: {error_msg}",
+                    "success": False
+                }
+            
+            return {
+                "category": None,
+                "confidence_score": 0,
+                "reasoning": f"Error occurred: {error_msg}",
+                "success": False
+            }
+
+    @log_service_method("openai_service")
+    def generate_3_level_categorization(
+        self, 
+        item_description: str, 
+        similar_items: List[Dict[str, Any]], 
+        client_category: str = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a 3-level categorization for an item using OpenAI.
+        
+        Creates a structured 3-level hierarchy (Level 1 > Level 2 > Level 3)
+        based on item description and context from similar items.
+        
+        Args:
+            item_description: Description of the item to categorize
+            similar_items: List of similar items with categories for context
+            client_category: Original client category for reference
+            
+        Returns:
+            Dict with 3-level categorization and metadata
+        """
+        start_time = time.time()
+        
+        try:
+            # Load learning categorization tool
+            with open(self.tools_dir / "learning_categorization.json", 'r') as f:
+                learning_tool = json.load(f)
+            
+            # Format context information
+            context_text = f"Item to categorize: \"{item_description}\"\n"
+            
+            if client_category:
+                context_text += f"Current client category: {client_category}\n"
+            
+            if similar_items:
+                context_text += "\nSimilar items for context:\n"
+                for i, item in enumerate(similar_items[:3], 1):  # Use top 3 similar items
+                    context_text += f"{i}. \"{item.get('item', '')}\" -> {item.get('category', '')} (similarity: {item.get('similarity_score', 0):.2f})\n"
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": context_text}],
+                instructions=self._load_prompt("learning_categorization", "_generate_3_level_category"),
+                tools=[learning_tool],
+                tool_choice={"type": "function", "name": "generate_3_level_categorization"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    
+                    result = {
+                        "success": True,
+                        "categorization": {
+                            "level_1": args.get("level_1_category"),
+                            "level_2": args.get("level_2_category"),
+                            "level_3": args.get("level_3_category")
+                        },
+                        "confidence_score": args.get("confidence_score", 0.8),
+                        "reasoning": args.get("reasoning", ""),
+                        "processing_time_ms": int(processing_time * 1000)
+                    }
+                    
+                    logger.info(f"Generated 3-level categorization: {result['categorization']}")
+                    return result
+            
+            return {
+                "success": False,
+                "error": "No function call in response",
+                "processing_time_ms": int(processing_time * 1000)
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            processing_time = time.time() - start_time
+            
+            logger.error(f"3-level categorization failed: {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "processing_time_ms": int(processing_time * 1000)
+            }
+
+    @log_service_method("openai_service")
+    def validate_learning_category(
+        self, 
+        level_1: str, 
+        level_2: str, 
+        level_3: str, 
+        item_description: str
+    ) -> Dict[str, Any]:
+        """
+        Validate a 3-level learning category using OpenAI.
+        
+        Args:
+            level_1: Level 1 category
+            level_2: Level 2 category
+            level_3: Level 3 category
+            item_description: Item description for context
+            
+        Returns:
+            Dict with validation results
+        """
+        try:
+            # Load category validation tool
+            with open(self.tools_dir / "category_validation.json", 'r') as f:
+                validation_tool = json.load(f)
+            
+            validation_text = f"""
+            Validate this 3-level categorization:
+            
+            Item: "{item_description}"
+            Level 1: {level_1}
+            Level 2: {level_2} 
+            Level 3: {level_3}
+            
+            Check if this categorization makes logical sense and is appropriately specific.
+            """
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": validation_text}],
+                instructions=self._load_prompt("learning_categorization", "_validate_learning_category"),
+                tools=[validation_tool],
+                tool_choice={"type": "function", "name": "validate_categorization"}
+            )
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    return {
+                        "is_valid": args.get("is_valid", False),
+                        "confidence_score": args.get("confidence_score", 0.0),
+                        "validation_issues": args.get("validation_issues", []),
+                        "suggestions": args.get("suggestions", [])
+                    }
+            
+            return {
+                "is_valid": True,
+                "confidence_score": 0.5,
+                "validation_issues": [],
+                "suggestions": []
+            }
+            
+        except Exception as e:
+            logger.error(f"Category validation failed: {str(e)}")
+            return {
+                "is_valid": False,
+                "confidence_score": 0.0,
+                "validation_issues": [f"Validation error: {str(e)}"],
+                "suggestions": []
+            }

@@ -1,0 +1,52 @@
+{
+    "type": "function",
+    "name": "analyze_references",
+    "description": "Analyze a user message to detect references to previous conversations, historical data, or contextual information that would benefit from summary-aware processing.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "has_references": {
+                "type": "boolean",
+                "description": "True if the message contains references to previous conversations or historical context"
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Confidence level (0-100) in the reference detection analysis"
+            },
+            "reference_types": {
+                "type": "array",
+                "description": "Types of references detected in the message",
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "address_reference",
+                        "specification_reference", 
+                        "product_reference",
+                        "delivery_reference",
+                        "brand_reference",
+                        "quantity_reference",
+                        "timeline_reference",
+                        "location_reference",
+                        "general_reference"
+                    ]
+                }
+            },
+            "detected_phrases": {
+                "type": "array",
+                "description": "Specific phrases that indicate references to historical context",
+                "items": {
+                    "type": "string"
+                }
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation of why this message does or doesn't contain references"
+            }
+        },
+        "required": ["has_references", "confidence", "reference_types", "detected_phrases", "reasoning"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

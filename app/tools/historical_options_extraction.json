@@ -1,0 +1,74 @@
+{
+  "type": "function",
+  "name": "extract_historical_options",
+  "description": "Extract and format relevant historical options from user's chat history for a specific entity type",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "options": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "display_text": {
+              "type": "string",
+              "description": "User-friendly display text for this option"
+            },
+            "option_type": {
+              "type": "string",
+              "enum": ["delivery_location", "division", "product_specs", "quantity", "general"],
+              "description": "Type of option this represents"
+            },
+            "data": {
+              "type": "object",
+              "description": "Structured data for this option (location details, division name, product specs, etc.)"
+            },
+            "usage_info": {
+              "type": "object",
+              "properties": {
+                "frequency": {
+                  "type": "string",
+                  "description": "How often this was used (e.g., 'used 3 times', 'most recent')"
+                },
+                "last_used": {
+                  "type": "string", 
+                  "description": "When this was last used"
+                },
+                "context": {
+                  "type": "string",
+                  "description": "Brief context about when/why this was used"
+                }
+              }
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "Confidence that this option is relevant to current request"
+            }
+          },
+          "required": ["display_text", "option_type", "data", "confidence"]
+        },
+        "description": "List of relevant historical options, sorted by relevance and recency"
+      },
+      "summary": {
+        "type": "string",
+        "description": "Brief summary of the analysis and what options were found"
+      },
+      "recommendations": {
+        "type": "object",
+        "properties": {
+          "most_likely": {
+            "type": "string",
+            "description": "Which option is most likely what the user wants"
+          },
+          "reasoning": {
+            "type": "string", 
+            "description": "Why this option is recommended"
+          }
+        }
+      }
+    },
+    "required": ["options", "summary"]
+  }
+}

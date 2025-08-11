@@ -11,6 +11,7 @@ import json
 
 from .config import get_settings
 from .models import Base, ProductCategory, Vendor, ConversationSession
+from .utils.datetime_utils import utc_now
 
 engine = None
 SessionLocal = None
@@ -21,7 +22,21 @@ def init_database():
     global engine, SessionLocal
 
     settings = get_settings()
-    engine = create_engine(settings.get_database_url())
+    
+    # Configure SSL connection args for Azure MySQL
+    import os
+    ssl_cert_path = os.path.abspath('DigiCertGlobalRootCA.crt.pem')
+    connect_args = {
+        'ssl_ca': ssl_cert_path,
+        'ssl_disabled': False
+    }
+    
+    engine = create_engine(
+        settings.get_database_url(),
+        connect_args=connect_args,
+        pool_pre_ping=True,
+        pool_recycle=300
+    )
     SessionLocal = sessionmaker(bind=engine)
 
     # Create all tables
@@ -92,8 +107,27 @@ def init_database():
 
 def get_db_session():
     """Get database session."""
+    global engine, SessionLocal
     if SessionLocal is None:
-        init_database()
+        # Initialize with SSL configuration
+        settings = get_settings()
+        
+        # Configure SSL connection args for Azure MySQL
+        import os
+        ssl_cert_path = os.path.abspath('DigiCertGlobalRootCA.crt.pem')
+        connect_args = {
+            'ssl_ca': ssl_cert_path,
+            'ssl_disabled': False
+        }
+        
+        engine = create_engine(
+            settings.get_database_url(),
+            connect_args=connect_args,
+            pool_pre_ping=True,
+            pool_recycle=300
+        )
+        SessionLocal = sessionmaker(bind=engine)
+        
     return SessionLocal()
 
 
@@ -137,7 +171,7 @@ class DatabaseManager:
             hours = get_settings().session_timeout_hours
         
         # Calculate cutoff time
-        cutoff_time = datetime.now() - timedelta(hours=hours)
+        cutoff_time = utc_now().replace(tzinfo=None) - timedelta(hours=hours)
         
         # Query expired sessions
         expired_sessions = self.session.query(ConversationSession).filter(
@@ -148,7 +182,7 @@ class DatabaseManager:
         # Update expired sessions to timeout outcome
         for session in expired_sessions:
             session.outcome = 'timeout'
-            session.completed_at = datetime.now()
+            session.completed_at = utc_now().replace(tzinfo=None)
             # Clear workflow state to free up space
             session.workflow_state = {"extracted_entities": {}}
             session.conversation_history = {"messages": []}
@@ -213,7 +247,7 @@ class DatabaseManager:
             for key, value in session_data.items():
                 setattr(session, key, value)
                 # For JSONB fields, explicitly mark as modified
-                if key in ['workflow_state', 'conversation_history', 'extracted_entities', 'whatsapp_context', 'error_details', 'performance_metrics']:
+                if key in ['workflow_state', 'conversation_history', 'extracted_entities', 'whatsapp_context', 'error_details', 'performance_metrics', 'bfs_products_searched', 'bfs_price_accepted', 'bfs_counter_offers', 'products_bid_for', 'bids_received', 'bids_accepted', 'counter_offers_made', 'counter_offers_accepted', 'rfqs_with_response']:
                     flag_modified(session, key)
         else:
             # Create new session

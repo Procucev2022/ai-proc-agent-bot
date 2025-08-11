@@ -3,10 +3,11 @@
 fastapi
 uvicorn
 python-dateutil
+pytz
 jinja2
 # Database and ORM
 sqlalchemy
-psycopg2-binary
+PyMySQL
 alembic
 
 # Data validation and serialization
@@ -35,6 +36,10 @@ pytest-asyncio
 pandas
 openpyxl
 xlrd
+
+# Vector database for auto-categorization
+chromadb
+sentence-transformers
 
 # Development tools
 black

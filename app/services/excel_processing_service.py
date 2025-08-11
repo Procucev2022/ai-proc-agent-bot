@@ -24,9 +24,41 @@ class ExcelProcessingService:
     async def process_excel_file(self, content: bytes, filename: str) -> Dict[str, Any]:
         """Process Excel file and extract items data using OpenAI for intelligent analysis."""
         try:
+            # Validate file size (10MB limit)
+            max_size = 10 * 1024 * 1024  # 10MB in bytes
+            if len(content) > max_size:
+                return {
+                    'success': False,
+                    'error': f'File size ({len(content)} bytes) exceeds maximum allowed size of {max_size} bytes (10MB)'
+                }
+            
+            # Validate file format
+            if not self._is_valid_excel_file(content, filename):
+                return {
+                    'success': False,
+                    'error': 'Invalid Excel file format. Please upload a valid .xlsx or .xls file'
+                }
+            
             # Read Excel file
             file_obj = io.BytesIO(content)
-            df = pd.read_excel(file_obj, sheet_name=0, header=None)
+            
+            # Check if file has multiple sheets and validate
+            try:
+                excel_file = pd.ExcelFile(file_obj)
+                sheet_names = excel_file.sheet_names
+                
+                if len(sheet_names) > 1:
+                    logger.info(f"DEBUG: Multiple sheets found: {sheet_names}. Using first sheet: {sheet_names[0]}")
+                
+                # Use the first sheet
+                df = pd.read_excel(file_obj, sheet_name=0, header=None)
+                excel_file.close()
+                
+            except Exception as e:
+                return {
+                    'success': False,
+                    'error': f'Failed to read Excel file: {str(e)}'
+                }
             
             # Remove completely empty rows
             df = df.dropna(how='all')
@@ -101,6 +133,41 @@ class ExcelProcessingService:
                 'success': False,
                 'error': f'Failed to process Excel: {str(e)}'
             }
+    
+    def _is_valid_excel_file(self, content: bytes, filename: str) -> bool:
+        """Validate if the file is a valid Excel file."""
+        try:
+            # Check file extension
+            valid_extensions = ['.xlsx', '.xls']
+            if not any(filename.lower().endswith(ext) for ext in valid_extensions):
+                logger.warning(f"Invalid file extension for: {filename}")
+                return False
+            
+            # Check file signature/magic bytes
+            if len(content) < 8:
+                logger.warning(f"File too small to be valid Excel: {len(content)} bytes")
+                return False
+            
+            # Excel file signatures
+            xlsx_signature = b'PK\x03\x04'  # ZIP signature (XLSX files are ZIP archives)
+            xls_signature = b'\xd0\xcf\x11\xe0'  # OLE2 signature (XLS files)
+            
+            if content.startswith(xlsx_signature) or content.startswith(xls_signature):
+                # Additional validation: try to read with pandas
+                try:
+                    file_obj = io.BytesIO(content)
+                    pd.ExcelFile(file_obj).close()
+                    return True
+                except Exception as e:
+                    logger.warning(f"File failed pandas validation: {e}")
+                    return False
+            else:
+                logger.warning(f"Invalid file signature for: {filename}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error validating Excel file: {e}")
+            return False
     
     def _extract_items_with_mapping(self, df: pd.DataFrame, headers: List[str], column_mapping: Dict[str, str]) -> List[Dict[str, Any]]:
         """Extract items using the column mapping."""

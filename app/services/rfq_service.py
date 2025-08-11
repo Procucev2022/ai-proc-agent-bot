@@ -196,7 +196,7 @@ class RFQService:
                         return {
                             "success": True, 
                             "rfq_id": rfq_id,
-                            "backend_reference": submission_result.get("backend_reference", f"GMT_{rfq_id[:8]}"),
+                            "backend_reference": submission_result.get("rfq_id", f"GMT_{rfq_id[:8]}"),
                             "gmt_response": submission_result.get("response")
                         }
                     else:

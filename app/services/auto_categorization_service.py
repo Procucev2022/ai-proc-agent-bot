@@ -1,0 +1,496 @@
+"""
+Auto-categorization service for RFQ items using vector search and AI.
+
+This service implements a hybrid approach:
+1. Uses ChromaDB with Sentence Transformer embeddings for vector similarity search
+2. Re-ranks top results and passes to OpenAI for final categorization decision
+3. Maintains audit trail and confidence scores for monitoring
+
+The service operates as an offline process after RFQ submission to avoid
+impacting conversation flow performance.
+"""
+
+import chromadb
+import chromadb.utils.embedding_functions as embedding_functions
+import os
+import logging
+from typing import List, Dict, Any, Optional
+from sqlalchemy.orm import Session
+from sqlalchemy import text
+
+from ..database import get_db_session
+from ..models import CategoryMapping, AutoCategorizationLog
+from .openai_service import OpenAIService
+from .learning_categorization_service import LearningCategorizationService
+
+logger = logging.getLogger(__name__)
+
+class AutoCategorizationService:
+    """
+    Service for automatically categorizing RFQ items using vector search and AI.
+    
+    Uses ChromaDB with Sentence Transformer embeddings for fast similarity search,
+    then leverages OpenAI for intelligent final categorization decisions with
+    confidence scoring and reasoning.
+    """
+    
+    def __init__(self, persist_directory: Optional[str] = None):
+        """Initialize the auto-categorization service with ChromaDB."""
+        self.persist_directory = persist_directory or "/home/srujan/workspace/mohap-ai/procucev_proc_agent/chroma_db"
+        
+        # Initialize ChromaDB client with Sentence Transformer embeddings
+        self.chroma_client = chromadb.PersistentClient(path=self.persist_directory)
+        
+        # Use Sentence Transformer embedding function
+        self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name="all-MiniLM-L6-v2"
+        )
+        
+        # Get or create collection with embedding function
+        self.collection = self.chroma_client.get_or_create_collection(
+            name="category_items",
+            embedding_function=self.embedding_function
+        )
+        
+        # Initialize OpenAI service
+        self.openai_service = OpenAIService()
+        
+        # Initialize Learning Categorization service  
+        self.learning_service = LearningCategorizationService()
+    
+    def populate_embeddings_from_db(self) -> int:
+        """
+        Populate ChromaDB collection with category mappings from database.
+        
+        Returns:
+            Number of items added to the collection
+        """
+        db = get_db_session()
+        try:
+            # Get all category mappings
+            category_mappings = db.query(CategoryMapping).all()
+            
+            if not category_mappings:
+                logger.warning("No category mappings found in database")
+                return 0
+            
+            # Clear existing collection
+            try:
+                self.chroma_client.delete_collection(name="category_items")
+                self.collection = self.chroma_client.get_or_create_collection(
+                    name="category_items",
+                    embedding_function=self.embedding_function
+                )
+            except Exception as e:
+                logger.info(f"Collection didn't exist or couldn't be deleted: {e}")
+            
+            # Prepare data for ChromaDB
+            documents = []
+            metadatas = []
+            ids = []
+            
+            for mapping in category_mappings:
+                # Simple document text: item + category for better matching
+                doc_text = f"{mapping.item} {mapping.category}"
+                documents.append(doc_text)
+                metadatas.append({
+                    "category": mapping.category,
+                    "item": mapping.item,
+                    "mapping_id": mapping.id
+                })
+                ids.append(mapping.id)
+            
+            # Add to ChromaDB collection (embeddings generated automatically)
+            self.collection.add(
+                documents=documents,
+                metadatas=metadatas,
+                ids=ids
+            )
+            
+            logger.info(f"Successfully populated ChromaDB with {len(category_mappings)} category mappings")
+            return len(category_mappings)
+            
+        except Exception as e:
+            logger.error(f"Error populating embeddings from database: {str(e)}")
+            raise
+        finally:
+            db.close()
+    
+    def find_similar_items(self, item_description: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """
+        Find similar items using vector search in ChromaDB.
+        
+        Args:
+            item_description: Description of the item to categorize
+            top_k: Number of similar items to return
+            
+        Returns:
+            List of similar items with metadata and similarity scores
+        """
+        try:
+            # Query ChromaDB using text (embeddings generated automatically)
+            results = self.collection.query(
+                query_texts=[item_description],
+                n_results=top_k
+            )
+            
+            if not results['documents'][0]:
+                logger.warning(f"No similar items found for: {item_description}")
+                return []
+            
+            similar_items = []
+            for i, doc in enumerate(results['documents'][0]):
+                metadata = results['metadatas'][0][i]
+                distance = results['distances'][0][i]
+                
+                # Convert distance to similarity score (1 - distance for cosine similarity)
+                similarity_score = 1.0 - distance
+                
+                similar_items.append({
+                    "item_description": doc,
+                    "category": metadata['category'],
+                    "item": metadata['item'],
+                    "similarity_score": similarity_score
+                })
+            
+            logger.info(f"Found {len(similar_items)} similar items for categorization")
+            return similar_items
+            
+        except Exception as e:
+            logger.error(f"Error finding similar items: {str(e)}")
+            raise
+    
+    def _get_similar_items(self, item_description: str) -> List[Dict]:
+        """Get top 3 similar items from ChromaDB and re-rank by similarity."""
+        try:
+            # ChromaDB automatically generates embeddings for the query text
+            results = self.collection.query(
+                query_texts=[item_description],  # Use query_texts instead of query_embeddings
+                n_results=3,
+                include=['documents', 'metadatas', 'distances']
+            )
+            
+            if not results['distances'][0]:
+                return []
+            
+            # Convert distances to similarity scores and format
+            similar_items = []
+            for i in range(len(results['distances'][0])):
+                distance = results['distances'][0][i]
+                similarity_score = 1 - distance  # Convert distance to similarity
+                metadata = results['metadatas'][0][i]
+                
+                similar_items.append({
+                    "item": metadata["item"],
+                    "category": metadata["category"],
+                    "similarity_score": round(similarity_score, 4)
+                })
+            
+            # Re-rank by similarity score (should already be sorted, but ensure)
+            similar_items.sort(key=lambda x: x["similarity_score"], reverse=True)
+            
+            return similar_items
+            
+        except Exception as e:
+            raise Exception(f"Failed to get similar items: {str(e)}")
+    
+    def _handle_no_similar_items(self, item_description: str, user_id: str,
+                                session_id: Optional[str], rfq_id: Optional[str],
+                                processing_time: int) -> Dict:
+        """Handle case when no similar items found."""
+        
+        self._log_categorization(
+            item_description, user_id, session_id, rfq_id,
+            None, 0.0, 0.0, "no_similar_items", processing_time
+        )
+        
+        return {
+            "success": False,
+            "method": "hybrid_vector_ai",
+            "reason": "no_similar_items_found",
+            "message": "No similar items found in reference database",
+            "processing_time_ms": processing_time,
+            "suggestion": "Manual categorization required or expand reference database"
+        }
+    
+    def categorize_item(self, 
+                       item_description: str,
+                       user_id: str,
+                       session_id: Optional[str] = None,
+                       rfq_id: Optional[str] = None) -> Dict:
+        """
+        Categorize an item using hybrid approach: vector search + OpenAI final selection.
+        """
+        import time
+        start_time = time.time()
+        
+        try:
+            # Step 1: Vector search for top 3 similar items
+            similar_items = self._get_similar_items(item_description)
+            
+            if not similar_items:
+                return self._handle_no_similar_items(
+                    item_description, user_id, session_id, rfq_id, 
+                    int((time.time() - start_time) * 1000)
+                )
+            
+            # Step 2: OpenAI final selection with context
+            openai_result = self.openai_service.categorize_with_similar_items(
+                item_description, similar_items
+            )
+            
+            processing_time = int((time.time() - start_time) * 1000)
+            
+            if openai_result["success"]:
+                result = {
+                    "success": True,
+                    "method": "hybrid_vector_ai",
+                    "category": openai_result["category"],
+                    "confidence_score": openai_result.get("confidence", 0.8),
+                    "reasoning": openai_result.get("reasoning", ""),
+                    "similar_items_used": similar_items,
+                    "processing_time_ms": processing_time
+                }
+                
+                # Log successful categorization
+                self._log_categorization(
+                    item_description, user_id, session_id, rfq_id,
+                    result["category"],
+                    result["confidence_score"], similar_items[0]["similarity_score"],
+                    "hybrid_vector_ai", processing_time
+                )
+                
+                return result
+            else:
+                # OpenAI failed to categorize
+                return {
+                    "success": False,
+                    "method": "hybrid_vector_ai",
+                    "reason": "openai_categorization_failed",
+                    "error": openai_result.get("reasoning", "Unknown error"),
+                    "similar_items_found": similar_items,
+                    "processing_time_ms": processing_time
+                }
+                
+        except Exception as e:
+            processing_time = int((time.time() - start_time) * 1000)
+            return {
+                "success": False,
+                "method": "hybrid_vector_ai",
+                "error": str(e),
+                "processing_time_ms": processing_time
+            }
+    
+    def _log_categorization(self, input_description: str, user_id: str,
+                           session_id: Optional[str], rfq_id: Optional[str],
+                           predicted_category: Optional[str], confidence_score: float,
+                           similarity_score: Optional[float], method: str,
+                           processing_time: int):
+        """Log categorization attempt to database."""
+        db = get_db_session()
+        try:
+            log_entry = AutoCategorizationLog(
+                rfq_id=rfq_id,
+                session_id=session_id,
+                user_id=user_id,
+                input_description=input_description,
+                predicted_category=predicted_category,
+                confidence_score=confidence_score,
+                similarity_score=similarity_score,
+                method_used=method,
+                processing_time_ms=processing_time
+            )
+            db.add(log_entry)
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to log categorization: {e}")
+        finally:
+            db.close()
+    
+    def add_category_mapping(self, category: str, item: str) -> str:
+        """Add a new category mapping to both MySQL and ChromaDB."""
+        import uuid
+        
+        db = get_db_session()
+        try:
+            # Generate UUID manually
+            mapping_id = str(uuid.uuid4())
+            
+            # Create MySQL record
+            mapping = CategoryMapping(
+                id=mapping_id,
+                category=category,
+                item=item
+            )
+            db.add(mapping)
+            db.commit()
+            
+            # Add to ChromaDB - embeddings generated automatically by ChromaDB
+            doc_id = mapping_id
+            doc_text = f"{item} {category}"
+            
+            self.collection.upsert(
+                documents=[doc_text],
+                metadatas=[{
+                    "category": category,
+                    "item": item,
+                    "mapping_id": mapping_id
+                }],
+                ids=[doc_id]
+                # No need to pass embeddings - ChromaDB generates them automatically
+            )
+            
+            return mapping_id
+            
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"Failed to add category mapping: {str(e)}")
+        finally:
+            db.close()
+    
+    def clear_collection(self):
+        """Clear the ChromaDB collection."""
+        try:
+            self.chroma_client.delete_collection("category_items")
+            self.collection = self.chroma_client.get_or_create_collection(
+                name="category_items",
+                embedding_function=self.embedding_function
+            )
+        except Exception as e:
+            logger.error(f"Failed to clear collection: {e}")
+    
+    def add_item_embedding(self, item_id: str, category: str, item: str):
+        """Add a single item embedding to ChromaDB."""
+        doc_text = f"{item} {category}"
+        
+        self.collection.upsert(
+            documents=[doc_text],
+            metadatas=[{
+                "category": category,
+                "item": item,
+                "mapping_id": item_id
+            }],
+            ids=[item_id]
+        )
+    
+    def get_collection_stats(self) -> Dict:
+        """Get statistics about the ChromaDB collection."""
+        try:
+            count = self.collection.count()
+            return {
+                "count": count,
+                "collection_name": "category_items",
+                "embedding_model": "all-MiniLM-L6-v2"
+            }
+        except Exception as e:
+            return {"error": str(e)}
+    
+    def get_collection_stats(self) -> Dict[str, Any]:
+        """Get statistics about the ChromaDB collection."""
+        try:
+            count = self.collection.count()
+            return {
+                "total_items": count,
+                "collection_name": self.collection.name,
+                "persist_directory": self.persist_directory
+            }
+        except Exception as e:
+            logger.error(f"Error getting collection stats: {str(e)}")
+            return {"error": str(e)}
+    
+    def categorize_with_learning(
+        self, 
+        item_description: str,
+        user_id: str,
+        session_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Enhanced categorization that includes learning category creation.
+        
+        This method first performs normal auto-categorization, then creates
+        a 3-level learning category using the result as context.
+        
+        Args:
+            item_description: Description of the item to categorize
+            user_id: User ID for audit trail
+            session_id: Optional session ID for tracking
+            
+        Returns:
+            Dict with both auto-categorization and learning categorization results
+        """
+        try:
+            # Step 1: Perform regular auto-categorization
+            auto_result = self.categorize_item(
+                item_description=item_description,
+                user_id=user_id,
+                session_id=session_id
+            )
+            
+            # Step 2: Create learning category if auto-categorization succeeded
+            learning_result = None
+            if auto_result.get("success"):
+                client_category = auto_result.get("category")
+                similar_items = auto_result.get("similar_items_used", [])
+                
+                learning_result = self.learning_service.create_3_level_category(
+                    item_description=item_description,
+                    client_category=client_category,
+                    similar_items=similar_items,
+                    user_id=user_id,
+                    session_id=session_id
+                )
+            
+            # Combine results
+            return {
+                "success": auto_result.get("success", False),
+                "auto_categorization": auto_result,
+                "learning_categorization": learning_result,
+                "method": "auto_categorization_with_learning"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in categorize_with_learning: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "method": "auto_categorization_with_learning"
+            }
+    
+    def health_check(self) -> Dict[str, Any]:
+        """Perform health check on the auto-categorization service."""
+        try:
+            # Check ChromaDB connection
+            collection_stats = self.get_collection_stats()
+            
+            # Check database connection
+            db = get_db_session()
+            try:
+                category_count = db.query(CategoryMapping).count()
+                db.close()
+            except Exception as e:
+                return {
+                    "status": "unhealthy",
+                    "error": f"Database connection failed: {str(e)}"
+                }
+            
+            # Check OpenAI service
+            if not hasattr(self.openai_service, 'client'):
+                return {
+                    "status": "unhealthy",
+                    "error": "OpenAI service not properly initialized"
+                }
+            
+            return {
+                "status": "healthy",
+                "chromadb_items": collection_stats.get("total_items", 0),
+                "database_categories": category_count,
+                "persist_directory": self.persist_directory
+            }
+            
+        except Exception as e:
+            logger.error(f"Health check failed: {str(e)}")
+            return {
+                "status": "unhealthy",
+                "error": str(e)
+            }

@@ -27,46 +27,52 @@ class GMTAPIService:
     
     def __init__(self):
         self.settings = get_settings()
+        # Use new API configuration from settings
         self.base_url = self.settings.gmt_base_url
-        self.client_id = self.settings.gmt_client_id
-        self.client_secret = self.settings.gmt_client_secret
         self.username = self.settings.gmt_username
-        self.password = self.settings.gmt_password
+        self.phone = self.settings.gmt_phone
         self.token = None
         self.token_expires_at = None
+        logger.info(f"GMT API Service initialized with base_url: {self.base_url}")
+        logger.info(f"Username: {self.username}, Phone: {self.phone}")
         
     async def authenticate(self) -> bool:
-        """Authenticate with GMT API using OAuth2 password grant."""
-        token_url = f"{self.base_url}/procucev/oauth/token"
-        
-        # Create Basic Auth header for client credentials
-        client_auth = base64.b64encode(f"{self.client_id}:{self.client_secret}".encode()).decode()
+        """Authenticate with new GMT API using username/phone."""
+        auth_url = f"{self.base_url}/authenticate"
+        logger.info(f"Attempting authentication at: {auth_url}")
         
         headers = {
-            'Authorization': f'Basic {client_auth}',
-            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Type': 'application/json',
             'Accept': 'application/json'
         }
         
-        data = {
-            'username': self.username,
-            'password': self.password,
-            'grant_type': 'password'
+        auth_data = {
+            "username": self.username.strip('"') if self.username else "",
+            "phone": self.phone.strip('"') if self.phone else ""
         }
         
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(token_url, data=data, headers=headers, timeout=30) as response:
+                async with session.post(auth_url, json=auth_data, headers=headers, timeout=30) as response:
                     if response.status == 200:
-                        token_data = await response.json()
-                        self.token = token_data['access_token']
-                        
-                        # Calculate token expiry (subtract 5 minutes for safety)
-                        expires_in = token_data.get('expires_in', 7200) - 300
-                        self.token_expires_at = datetime.now().timestamp() + expires_in
-                        
-                        logger.info(f"GMT API authentication successful. Token expires in {expires_in} seconds")
-                        return True
+                        response_text = await response.text()
+                        try:
+                            auth_response = json.loads(response_text)
+                            
+                            if auth_response.get('status') == 'success':
+                                self.token = auth_response.get('access_token')
+                                expires_in = auth_response.get('expires_in', 36000) - 300  # Subtract 5 minutes for safety
+                                self.token_expires_at = datetime.now().timestamp() + expires_in
+                                
+                                logger.info(f"GMT API authentication successful. Token expires in {expires_in} seconds")
+                                return True
+                            else:
+                                logger.error(f"GMT API authentication failed: {auth_response}")
+                                return False
+                                
+                        except json.JSONDecodeError:
+                            logger.error(f"Invalid JSON response: {response_text}")
+                            return False
                     else:
                         error_text = await response.text()
                         logger.error(f"GMT API authentication failed: {response.status} - {error_text}")
@@ -101,7 +107,7 @@ class GMTAPIService:
             gmt_rfq_data = self._transform_rfq_to_gmt_format(rfq_data)
             
             # GMT API endpoint for creating RFQ
-            create_url = f"{self.base_url}/procucev/rest/categoryManager/createRFQForNoPrByClient"
+            create_url = f"{self.base_url}/rest/gmt/createRFQByClient"
             
             headers = {
                 'Authorization': f'Bearer {self.token}',
@@ -114,13 +120,20 @@ class GMTAPIService:
                     if response.status == 200:
                         response_data = await response.json()
                         
-                        # Check if GMT API indicates success
-                        if response_data.get('statusCode') == '1021':
+                        # Check if GMT API indicates success (new response format)
+                        if (response_data.get('statusCode') == '200' and 
+                            response_data.get('status') == 'Success'):
+                            # Extract RFQ ID from response data
+                            rfq_id = response_data.get('data', {}).get('rfqId') if response_data.get('data') else None
+                            
                             logger.info(f"RFQ successfully created in GMT system")
+                            if rfq_id:
+                                logger.info(f"RFQ ID: {rfq_id}")
+                            
                             return {
                                 "success": True,
                                 "response": response_data,
-                                "backend_reference": f"GMT_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                                "rfq_id": rfq_id
                             }
                         else:
                             logger.error(f"GMT API returned error: {response_data}")
@@ -150,9 +163,9 @@ class GMTAPIService:
         Returns:
             GMT API compatible RFQ data
         """
-        # Default values from successful test
-        default_org_id = "570f5874-0676-42c7-a4c4-1b1712642bc8"
-        default_user_id = "4004"
+        # Default values for new API (from test scripts)
+        default_org_id = "1001"
+        default_user_id = "10001"
         
         # Create GMT-compatible RFQ item
         rfq_item = {
@@ -204,8 +217,8 @@ class GMTAPIService:
             "clientdeliverylocationrfq": [delivery_location],
             "remarks": rfq_data.get("remarks", "Created via AI Procurement WhatsApp Bot"),
             "rfqDocument": [],
-            "user": default_user_id,
-            "division": rfq_data.get("division", "Admin & IT")
+            "user": default_user_id
+            # Note: division field removed as per new API - categories auto-populated
         }
         
         logger.info(f"Transformed RFQ data for GMT API: {json.dumps(gmt_payload, indent=2)}")
@@ -217,7 +230,7 @@ class GMTAPIService:
             if not await self.ensure_authenticated():
                 return {"success": False, "error": "Authentication failed"}
             
-            url = f"{self.base_url}/procucev/rest/client/getClientRfqIds"
+            url = f"{self.base_url}/rest/client/getClientRfqIds"
             
             headers = {
                 'Authorization': f'Bearer {self.token}',
@@ -246,7 +259,7 @@ class GMTAPIService:
             if not await self.ensure_authenticated():
                 return {"success": False, "error": "Authentication failed"}
             
-            url = f"{self.base_url}/procucev/rest/categoryManager/getAllDivisions"
+            url = f"{self.base_url}/rest/categoryManager/getAllDivisions"
             
             headers = {
                 'Authorization': f'Bearer {self.token}',
@@ -272,7 +285,7 @@ class GMTAPIService:
             if not await self.ensure_authenticated():
                 return {"success": False, "error": "Authentication failed"}
             
-            url = f"{self.base_url}/procucev/rest/categoryManager/getAllCategories"
+            url = f"{self.base_url}/rest/categoryManager/getAllCategories"
             
             headers = {
                 'Authorization': f'Bearer {self.token}',
@@ -298,7 +311,7 @@ class GMTAPIService:
             if not await self.ensure_authenticated():
                 return {"success": False, "error": "Authentication failed"}
             
-            url = f"{self.base_url}/procucev/rest/rfq/getNoPrRfqByClient"
+            url = f"{self.base_url}/rest/rfq/getNoPrRfqByClient"
             
             headers = {
                 'Authorization': f'Bearer {self.token}',
@@ -336,7 +349,7 @@ class GMTAPIService:
             if not await self.ensure_authenticated():
                 return {"success": False, "error": "Authentication failed"}
             
-            url = f"{self.base_url}/procucev/rest/categoryManager/convertRfqBoq"
+            url = f"{self.base_url}/rest/gmt/convertRfqBoq"
             
             headers = {
                 'Authorization': f'Bearer {self.token}',

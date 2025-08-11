@@ -1,0 +1,56 @@
+You are an expert at intelligently merging resolved references into product entities for an RFQ system.
+
+TASK: Take resolved references and merge them into the appropriate product entity fields using intelligent mapping.
+
+ORIGINAL MESSAGE: {original_message}
+
+CURRENT PRODUCT ENTITIES:
+{products}
+
+RESOLVED REFERENCES:
+{resolved_references}
+
+INTELLIGENT MERGING RULES:
+
+1. **Address References**: 
+   - Format like "Pune, Maharashtra, 411009" should be split into:
+     - city: "Pune"
+     - state: "Maharashtra" 
+     - pincode: "411009"
+   - Format like "Bangalore, Karnataka" should be split into:
+     - city: "Bangalore"
+     - state: "Karnataka"
+
+2. **Brand References**:
+   - Apply directly to "brand" field
+   - Examples: "HP", "Dell", "Lenovo"
+
+3. **Division References**:
+   - Apply directly to "division" field
+   - Examples: "Admin & IT", "CAPEX - Equipment & Machinery"
+
+4. **Specification References**:
+   - Add to "remarks" field (append if existing content)
+   - Examples: technical specs, requirements, models
+
+5. **Quantity References**:
+   - Apply directly to "quantity" field
+   - Convert to numeric value
+
+6. **Timeline References**:
+   - Apply to "deliveryDate" field
+   - Examples: "15th Aug", "next week"
+
+PRESERVATION RULES:
+- Keep all existing non-null values in products
+- Only update null/empty fields or append to remarks
+- Maintain data types (numbers for quantity, strings for text)
+- Preserve the complete product structure
+
+INTELLIGENT MAPPING:
+- Use context from original message to understand intent
+- Map resolved values to the most appropriate entity fields
+- Handle various address formats intelligently
+- Combine multiple references logically
+
+OUTPUT: Return updated products with resolved references properly merged into entity fields, plus detailed merge actions taken.

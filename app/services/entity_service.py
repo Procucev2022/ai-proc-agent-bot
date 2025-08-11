@@ -21,17 +21,31 @@ class EntityService:
 
     def extract_entities(self, message: str, context: dict = None, workflow_type: str = "buy_something") -> dict:
         """
-        Extract entities using OpenAI function calling with modification context awareness.
+        Extract entities using OpenAI function calling with modification context awareness and reference detection.
         
         Args:
             message: User message to extract entities from
-            context: Optional context with existing entities and pending confirmations
+            context: Optional context with existing entities, pending confirmations, and user history
             workflow_type: Type of workflow (buy_something, etc.)
             
         Returns:
-            Dict containing extracted entities, potentially merged with existing data for modifications
+            Dict containing extracted entities, potentially merged with existing data for modifications,
+            or historical options for reference phrases
         """
         try:
+            # Check if intent service already detected a reference request
+            intent_context = context.get("intent_result") if context else None
+            if intent_context and intent_context.get("intent") == "reference_request":
+                reference_details = intent_context.get("context_analysis", {}).get("reference_details", {})
+                if reference_details.get("reference_type") and reference_details.get("has_history"):
+                    print(f"EntityService: Using intent-detected reference: {reference_details}")
+                    return self._handle_reference_extraction(message, context, {
+                        "reference_type": reference_details.get("reference_type"),
+                        "confidence": intent_context.get("confidence", 0),
+                        "reasoning": intent_context.get("reasoning", ""),
+                        "detected_phrases": []  # Not available from intent service
+                    })
+            
             # Check if this is a modification request with pending confirmations
             has_pending_confirmations = context and (
                 context.get("workflow_state", {}).get("pending_multiple_rfqs") or
@@ -229,6 +243,145 @@ class EntityService:
         
         print(f"  No matching product found")
         return None
+
+    def _handle_reference_extraction(self, message: str, context: dict, reference_detection: dict) -> dict:
+        """
+        Handle entity extraction when reference phrases are detected using intelligent analysis.
+        
+        Args:
+            message: User message
+            context: Context with user history
+            reference_detection: OpenAI reference detection results
+            
+        Returns:
+            Dict with intelligently extracted historical options for user selection
+        """
+        reference_type = reference_detection.get("reference_type")
+        user_context = context.get("user_context", {}) if context else {}
+        chat_history = user_context.get("chat_history", [])
+        
+        print(f"EntityService: Handling intelligent reference for entity type: {reference_type}")
+        print(f"EntityService: Detection confidence: {reference_detection.get('confidence', 0)}%")
+        print(f"EntityService: Available chat history: {len(chat_history)} sessions")
+        
+        if not chat_history:
+            print(f"EntityService: No chat history available, falling back to standard extraction")
+            return self._handle_standard_extraction(message, context, "buy_something")
+        
+        # Use OpenAI to intelligently extract historical options
+        historical_result = self.openai_service.extract_historical_options(
+            entity_type=reference_type,
+            chat_history=chat_history,
+            current_message=message,
+            current_context=context.get("workflow_state", {})
+        )
+        
+        if historical_result.get("success") and historical_result.get("options"):
+            return {
+                "reference_detected": True,
+                "entity_type": reference_type,
+                "detected_phrases": reference_detection.get("detected_phrases", []),
+                "reference_confidence": reference_detection.get("confidence", 0),
+                "reasoning": reference_detection.get("reasoning", ""),
+                "historical_options": historical_result.get("options", []),
+                "analysis_summary": historical_result.get("summary", ""),
+                "recommendations": historical_result.get("recommendations", {}),
+                "requires_user_selection": True,
+                "success": True,
+                "message": f"Found {len(historical_result.get('options', []))} relevant options for {reference_type}"
+            }
+        else:
+            print(f"EntityService: No relevant historical options found, falling back to standard extraction")
+            return self._handle_standard_extraction(message, context, "buy_something")
+
+    def extract_entities_with_summary_context(self, message: str, context: dict = None) -> dict:
+        """
+        Extract entities using historical context from chat summaries.
+        
+        This method uses AI to resolve references like "same as last time", "usual address"
+        by analyzing previous conversation summaries and replacing references with actual values.
+        
+        Args:
+            message: User message to extract entities from
+            context: Context dictionary containing chat_summaries and other data
+            
+        Returns:
+            Dict containing extracted products with resolved references and metadata
+        """
+        try:
+            # Check if we have chat summaries for context
+            chat_summaries = context.get("chat_summaries", []) if context else []
+            
+            if not chat_summaries:
+                print("EntityService: No chat summaries available, falling back to standard extraction")
+                return self._handle_standard_extraction(message, context, "buy_something")
+            
+            print(f"EntityService: Using summary-aware extraction with {len(chat_summaries)} summaries")
+            
+            # Use new OpenAI method with summaries
+            response = self.openai_service.extract_entities_with_summary_context(
+                message=message,
+                chat_summaries=chat_summaries,
+                workflow_type="rfq_creation"
+            )
+            
+            print(f"EntityService: Summary-aware extraction response: {response}")
+            
+            # Log resolved references for debugging
+            resolved_refs = response.get("resolved_references", [])
+            if resolved_refs:
+                print(f"EntityService: Resolved {len(resolved_refs)} references:")
+                for ref in resolved_refs:
+                    print(f"  - '{ref.get('reference_phrase')}' -> {ref.get('resolved_field')}: {ref.get('resolved_value')}")
+                
+                # Use AI to intelligently apply resolved references to product entities
+                products = response.get("products", [])
+                updated_products = self._apply_resolved_references_intelligently(products, resolved_refs, message)
+                response["products"] = updated_products
+                print(f"EntityService: Applied resolved references to {len(updated_products)} products using AI")
+            
+            return response
+            
+        except Exception as e:
+            print(f"EntityService: Summary-aware extraction error: {e}")
+            # Fallback to standard extraction on error
+            return self._handle_standard_extraction(message, context, "buy_something")
+
+    def _apply_resolved_references_intelligently(self, products: list, resolved_refs: list, original_message: str) -> list:
+        """
+        Use AI to intelligently apply resolved references to product entities.
+        
+        Instead of hardcoding field mappings, this uses AI to determine how to merge
+        the resolved reference data into the appropriate product entity fields.
+        
+        Args:
+            products: List of product entities
+            resolved_refs: List of resolved reference objects
+            original_message: Original user message for context
+            
+        Returns:
+            Updated products list with resolved references applied intelligently
+        """
+        try:
+            if not resolved_refs or not products:
+                return products
+            
+            # Use OpenAI to intelligently merge the resolved references
+            merge_result = self.openai_service.merge_resolved_references_with_entities(
+                products=products,
+                resolved_references=resolved_refs,
+                original_message=original_message
+            )
+            
+            if merge_result.get("success") and merge_result.get("updated_products"):
+                return merge_result["updated_products"]
+            else:
+                print(f"EntityService: AI merge failed, returning original products")
+                return products
+                
+        except Exception as e:
+            print(f"EntityService: Error in AI reference merging: {e}")
+            return products
 
     def _get_schema(self, workflow_type: str) -> dict:
         """Load schema from JSON file for reference."""

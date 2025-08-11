@@ -82,11 +82,13 @@ class Settings:
         self.procurement_api_url = os.getenv("PROCUREMENT_API_URL")
         self.procurement_api_key = os.getenv("PROCUREMENT_API_KEY")
         
-        # GMT API configuration
-        self.gmt_base_url = os.getenv("GMT_BASE_URL", "https://devp2pindia-c5c7gfhhbsdxaycm.centralindia-01.azurewebsites.net")
+        # GMT API configuration - Updated for new API
+        self.gmt_base_url = os.getenv("GMT_BASE_URL", "https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net")
+        self.gmt_username = os.getenv("GMT_USERNAME")
+        self.gmt_phone = os.getenv("GMT_PHONE")
+        # Legacy OAuth fields (kept for backward compatibility)
         self.gmt_client_id = os.getenv("GMT_CLIENT_ID")
         self.gmt_client_secret = os.getenv("GMT_CLIENT_SECRET")
-        self.gmt_username = os.getenv("GMT_USERNAME")
         self.gmt_password = os.getenv("GMT_PASSWORD")
         
         # Intent Service configuration
@@ -95,10 +97,24 @@ class Settings:
         self.intent_threshold_ambiguous = int(os.getenv("INTENT_THRESHOLD_AMBIGUOUS", "60"))
         
         # Session and timeout configuration
-        self.session_timeout_hours = int(os.getenv("SESSION_TIMEOUT_HOURS", "12"))
+        self.session_timeout_hours = int(os.getenv("SESSION_TIMEOUT_HOURS", "3"))
         self.session_timeout_minutes = int(os.getenv("SESSION_TIMEOUT_MINUTES", "30"))  # Keep for backward compatibility
         self.cleanup_completed_sessions = os.getenv("CLEANUP_COMPLETED_SESSIONS", "true").lower() == "true"
         self.max_retry_attempts = int(os.getenv("MAX_RETRY_ATTEMPTS", "3"))
+        
+        # Chat summarization configuration
+        self.chat_summary_retention_days = int(os.getenv("CHAT_SUMMARY_RETENTION_DAYS", "90"))
+        self.daily_summary_retention_days = int(os.getenv("DAILY_SUMMARY_RETENTION_DAYS", "365"))
+        self.enable_session_summarization = os.getenv("ENABLE_SESSION_SUMMARIZATION", "true").lower() == "true"
+        self.enable_daily_summarization = os.getenv("ENABLE_DAILY_SUMMARIZATION", "true").lower() == "true"
+        self.max_chat_summaries_for_context = int(os.getenv("MAX_CHAT_SUMMARIES_FOR_CONTEXT", "3"))
+        self.summarization_model = os.getenv("SUMMARIZATION_MODEL", "gpt-4o-mini")
+        self.max_context_tokens = int(os.getenv("MAX_CONTEXT_TOKENS", "4000"))
+        
+        # Daily aggregation configuration
+        self.enable_daily_aggregation = os.getenv("ENABLE_DAILY_AGGREGATION", "true").lower() == "true"
+        self.aggregation_retention_days = int(os.getenv("AGGREGATION_RETENTION_DAYS", "730"))  # 2 years
+        self.aggregation_schedule_hour = int(os.getenv("AGGREGATION_SCHEDULE_HOUR", "2"))  # 2 AM
         
         # Rate limiting configuration
         self.rate_limit_default = os.getenv("RATE_LIMIT_DEFAULT", "100/hour")
@@ -116,6 +132,11 @@ class Settings:
         """Get database connection URL from environment."""
         if not self.database_url:
             raise ValueError("DATABASE_URL environment variable is required")
+        
+        # Validate that URL is for MySQL (not PostgreSQL)
+        if self.database_url.startswith("postgresql://"):
+            raise ValueError("PostgreSQL URL detected. Please use MySQL URL format: mysql+pymysql://...")
+        
         return self.database_url
         
     def get_openai_config(self) -> Dict[str, Any]:
@@ -153,10 +174,8 @@ class Settings:
         required_vars = [
             ("DATABASE_URL", self.database_url),
             ("OPENAI_API_KEY", self.openai_api_key),
-            ("GMT_CLIENT_ID", self.gmt_client_id),
-            ("GMT_CLIENT_SECRET", self.gmt_client_secret),
             ("GMT_USERNAME", self.gmt_username),
-            ("GMT_PASSWORD", self.gmt_password),
+            ("GMT_PHONE", self.gmt_phone),
         ]
         
         missing_vars = []

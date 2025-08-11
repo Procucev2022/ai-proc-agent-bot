@@ -16,9 +16,11 @@ Key responsibilities:
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 import json
+import asyncio
 from datetime import datetime, date, timedelta
+from app.utils.datetime_utils import utc_now
 from app.utils.logging_utils import log_service_method
 from app.services.intent_service import IntentService
 from app.services.entity_service import EntityService
@@ -30,9 +32,13 @@ from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.session_helpers import SessionHelpers
 from app.services.helpers.excel_helpers import ExcelHelpers
+from app.services.helpers.summarization_helpers import SummarizationHelpers
 from app.services.excel_validation_service import ExcelValidationService
 from app.services.excel_processing_service import ExcelProcessingService
 from app.services.gmt_api_service import GMTAPIService
+from app.services.chat_summary_service import ChatSummaryService
+from app.services.daily_summary_service import DailySummaryService
+from app.services.auto_categorization_service import AutoCategorizationService
 from app.database import SessionLocal, DatabaseManager
 from app.models import User, ConversationSession
 from app.schemas.rfq import RFQValidationSchema
@@ -55,6 +61,9 @@ class ChatService:
         self.openai_service = OpenAIService()
         self.db_manager = DatabaseManager()
         self.response_helpers = ResponseHelpers(self.openai_service)
+        self.chat_summary_service = ChatSummaryService()
+        self.daily_summary_service = DailySummaryService()
+        self.auto_categorization_service = AutoCategorizationService()
         
     @log_service_method("chat_service")
     async def process_message(self, user_phone: str, message_content: str, message_type: str = "text") -> Dict[str, Any]:
@@ -69,38 +78,40 @@ class ChatService:
             user = await self._get_or_create_user(user_phone)
             session = await self._get_conversation_context(user_phone)
             
-            # Check if session has expired (12 hours)
+            # Check if session has expired
             if await SessionHelpers.is_session_expired(session):
-                # Mark expired session as timed out
-                session.outcome = 'timeout'
-                session.completed_at = datetime.now()
-                await self._save_session(session, session.workflow_type or 'timeout')
+                # Only send expiration message if appropriate
+                if await SessionHelpers.should_send_expiration_message(session):
+                    await self.whatsapp_service.send_message(
+                        user_phone, 
+                        "Your session has expired. Let's start fresh! What can I help you with?"
+                    )
+                    
+                    # Generate enhanced session summary for timeout (non-blocking)
+                    await self._handle_session_completion_enhanced(session)
                 
-                await self.whatsapp_service.send_message(
-                    user_phone, 
-                    "Your session has expired. Let's start fresh! What can I help you with?"
-                )
-                # Get fresh session (reuse existing logic)
-                session = await self._get_conversation_context(user_phone)
+                # Handle session expiry properly
+                session = await SessionHelpers.handle_session_expiry(session, self.db_manager)
+            else:
+                # Session is active, renew its activity timestamp
+                session = await SessionHelpers.renew_session_activity(session)
+                await self._save_session(session, session.workflow_type or 'general_inquiry')
+            
+            # Track user message in conversation history
+            SummarizationHelpers.add_to_conversation_history(session, "user", message_content, message_type)
             
             # Handle different message types
             if message_type == "text":
-                return await self._process_text_message(user, session, message_content)
+                result = await self._process_text_message(user, session, message_content)
             elif message_type == "interactive":
-                return await self._process_interactive_message(user, session, message_content)
+                result = await self._process_interactive_message(user, session, message_content)
             elif message_type == "excel_upload":
-                return await self._process_excel_upload(user, session, message_content)
+                result = await self._process_excel_upload(user, session, message_content)
             else:
-                # Generate unsupported message type response
-                unsupported_context = {"message_type": message_type, "conversation_stage": "unsupported_input"}
-                unsupported_response = await self.response_helpers.generate_contextual_response(
-                    unsupported_context, 
-                    ["Please send your request as text"], 
-                    "unsupported_input"
-                )
-                await self.whatsapp_service.send_message(user_phone, unsupported_response)
-                return {"status": "handled", "response": "unsupported_message_type"}
-                
+                result = {"status": "error", "error": f"Unknown message type: {message_type}"}
+            
+            return result
+                                
         except Exception as e:
             return await self._handle_error_response(e, user_phone, "processing_message", "Please try again")
     
@@ -132,12 +143,15 @@ class ChatService:
                     if session.workflow_state.get("pending_optional_rfq"):
                         # Single product
                         product_info = session.workflow_state["pending_optional_rfq"]
-                        rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_info["entities"])
+                        rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_info["entities"], self.openai_service)
+                        
+                        # Load summaries for enhanced response generation
+                        chat_summaries = await self.chat_summary_service.load_user_context(user.phone_number)
                         
                         summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
                             "user_message": message,
                             "extracted_entities": product_info["entities"]
-                        })
+                        }, chat_summaries)
                         await self.whatsapp_service.send_message(user.phone_number, summary_response)
                         
                         # Move to confirmation state
@@ -151,8 +165,11 @@ class ChatService:
                         all_entities = [prod["entities"] for prod in complete_products]
                         
                         for prod in complete_products:
-                            rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(prod["entities"])
+                            rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(prod["entities"], self.openai_service)
                             all_schemas.append(rfq_schema)
+                        
+                        # Load summaries for enhanced response generation
+                        chat_summaries = await self.chat_summary_service.load_user_context(user.phone_number)
                         
                         summary_response = await self.response_helpers.generate_multiple_rfq_summary_and_confirmation(
                             all_schemas, 
@@ -160,7 +177,8 @@ class ChatService:
                                 "user_message": message,
                                 "extracted_entities": all_entities,
                                 "total_products": len(complete_products)
-                            }
+                            },
+                            chat_summaries
                         )
                         await self.whatsapp_service.send_message(user.phone_number, summary_response)
                         
@@ -211,7 +229,7 @@ class ChatService:
                                 rfq_schema = RFQValidationSchema(**schema_data)
                             else:
                                 # Create schema from entities
-                                rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_info["entities"])
+                                rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_info["entities"], self.openai_service)
                             gmt_result = await self._submit_rfq_to_backend(rfq_schema, user)
                             rfq_results.append(gmt_result)
                             if gmt_result.get("success"):
@@ -220,8 +238,8 @@ class ChatService:
                         # Generate completion response with RFQ IDs
                         rfq_ids = []
                         for result in rfq_results:
-                            if result.get("success") and result.get("backend_reference"):
-                                rfq_ids.append(result["backend_reference"])
+                            if result.get("success") and result.get("rfq_id"):
+                                rfq_ids.append(result["rfq_id"])
                         
                         if rfq_ids:
                             rfq_ids_text = "\n".join([f"• {rfq_id}" for rfq_id in rfq_ids])
@@ -231,13 +249,30 @@ class ChatService:
                         
                         await self.whatsapp_service.send_message(user.phone_number, response)
                         
+                        # Run auto-categorization for each successful RFQ (offline process)
+                        auto_cat = await self._run_auto_categorization_for_rfqs(rfq_results)
+                        await self.whatsapp_service.send_message(user.phone_number, auto_cat)
+
                         # Check BFS availability after successful RFQ creation
                         await self._check_bfs_availability(user.phone_number)
                         
-                        # Clear session
-                        session.workflow_state = {"extracted_entities": []}
+                        # Mark session as completed
                         session.outcome = 'completed'
-                        session.completed_at = datetime.now()
+                        session.completed_at = utc_now().replace(tzinfo=None)
+                        
+                        # Update core tracking fields (user type, categories, RFQ IDs)
+                        if rfq_ids:
+                            session.rfq_ids = rfq_ids
+                            # Set user type as buyer (since they're creating RFQs)
+                            session.user_type = 'buyer'
+                            # Calculate averages based on session data
+                            session = SessionHelpers.calculate_session_averages(session)
+                        
+                        # Generate enhanced session summary BEFORE clearing (non-blocking)
+                        await self._handle_session_completion_enhanced(session)
+                        
+                        # Clear session AFTER summarization data is captured
+                        session.workflow_state = {"extracted_entities": []}
                         await self._save_session(session, 'rfq_submitted')
                         
                         return {"status": "multiple_rfqs_created", "successful_count": successful_count}
@@ -288,16 +323,21 @@ class ChatService:
             
             # Route based on context-aware intent classification
             if intent == "buy_something" and confidence > 0.7:
-                return await self._handle_purchase_intent(user, session, message)
+                return await self._handle_purchase_intent(user, session, message, intent_result)
             elif intent == "modification_request" and confidence > 0.7:
                 # Handle modification requests using existing purchase intent flow with modification context
                 logger.info(f"Handling modification request with context: {intent_result.get('context_analysis', {})}")
-                return await self._handle_purchase_intent(user, session, message)
+                return await self._handle_purchase_intent(user, session, message, intent_result)
             elif intent == "confirmation_response" and confidence > 0.7:
                 # Handle confirmation responses - these should already be handled by pending confirmations check above
                 # But if we reach here, treat as continuation of existing workflow
                 logger.info(f"Handling confirmation response with context: {intent_result.get('context_analysis', {})}")
-                return await self._handle_purchase_intent(user, session, message)
+                return await self._handle_purchase_intent(user, session, message, intent_result)
+            elif intent == "reference_request" and confidence > 0.7:
+                # Handle reference requests by routing to purchase intent flow
+                # The EntityService will detect and handle the reference extraction
+                logger.info(f"Handling reference request with context: {intent_result.get('context_analysis', {})}")
+                return await self._handle_purchase_intent(user, session, message, intent_result)
             elif intent == "rfq_status_check" and confidence > 0.7:
                 return await self._handle_rfq_status_inquiry(user, message)
             elif intent == "general_inquiry":
@@ -487,7 +527,11 @@ class ChatService:
                 await self.whatsapp_service.send_message(user.phone_number, completion_response)
                 
                 session.outcome = 'completed'
-                session.completed_at = datetime.now()
+                session.completed_at = utc_now().replace(tzinfo=None)
+                
+                # Generate enhanced session summary (non-blocking)
+                await self._handle_session_completion_enhanced(session)
+                
                 await self._save_session(session, 'rfq_submitted')
                 
                 return {"status": "completed", "response": "rfq_created"}
@@ -570,8 +614,8 @@ class ChatService:
     
     async def _get_conversation_context(self, phone_number: str) -> ConversationSession:
         """Retrieve or create conversation context for user session."""
-        # Create session_id based on phone number and current date
-        session_id = f"whatsapp_{phone_number}_{datetime.now().strftime('%Y%m%d')}"
+        # Generate session ID using helper method (configurable strategy)
+        session_id = SessionHelpers.generate_session_id(phone_number, "daily")
     
         # Try to get existing session
         session = self.db_manager.get_conversation_session(session_id)
@@ -583,13 +627,14 @@ class ChatService:
                 'external_user_id': phone_number,
                 'workflow_type': None,
                 'outcome': None,
-                'workflow_state': {"extracted_entities": []},
+                'workflow_state': {"extracted_entities": [], "last_activity_at": utc_now().isoformat()},
                 'conversation_history': {"messages": []},
                 'extracted_entities': {},
                 'retention_date': date.today() + timedelta(days=30)
             }
             session = self.db_manager.save_conversation_session(session_data)
             
+            logger.info(f"Created new session: {session_id}")
             # Show authentication placeholder for new session
             await self._show_auth_placeholder(phone_number)
         else:
@@ -627,7 +672,7 @@ class ChatService:
         except Exception as e:
             return await self._handle_error_response(e, user.phone_number, "registration_workflow", "Please tell me your name to get started")
     
-    async def _handle_purchase_intent(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+    async def _handle_purchase_intent(self, user: User, session: ConversationSession, message: str, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """Handle purchase intent with data model driven orchestration."""
         try:
             # 1. Extract entities using EntityService (focused service)
@@ -657,20 +702,32 @@ class ChatService:
             else:
                 context_entities = existing_entities
                 
-            # Build comprehensive context for EntityService including pending confirmations
+            # Load user's recent summaries for enhanced context
+            chat_summaries = await self.chat_summary_service.load_user_context(user.phone_number)
+            print(f"ChatService: Loaded {len(chat_summaries)} chat summaries for context")
+            
+            # Build comprehensive context for EntityService including pending confirmations, intent result, and summaries
             entity_context = {
                 "extracted_entities": context_entities,
                 "workflow_state": session.workflow_state,
                 "session_metadata": {
                     "session_id": session.session_id,
                     "workflow_type": session.workflow_type
-                }
+                },
+                "intent_result": intent_result,  # Pass intent result to avoid duplicate OpenAI calls
+                "chat_summaries": chat_summaries,  # Add summaries for smart entity extraction
             }
             print(f"ChatService: Passing context to EntityService - has pending confirmations: {bool(session.workflow_state.get('pending_multiple_rfqs'))}")
             print(f"ChatService: Debug session.workflow_state keys: {list(session.workflow_state.keys()) if session.workflow_state else 'None'}")
             print(f"ChatService: Debug pending_multiple_rfqs: {session.workflow_state.get('pending_multiple_rfqs') if session.workflow_state else 'No workflow_state'}")
             
-            entity_result = self.entity_service.extract_entities(message, context=entity_context, workflow_type="buy_something")
+            # Use summary-aware entity extraction if we have summaries, otherwise use standard extraction
+            if chat_summaries and self._should_use_summary_aware_extraction(message):
+                print(f"ChatService: Using summary-aware entity extraction")
+                entity_result = self.entity_service.extract_entities_with_summary_context(message, context=entity_context)
+            else:
+                print(f"ChatService: Using standard entity extraction")
+                entity_result = self.entity_service.extract_entities(message, context=entity_context, workflow_type="buy_something")
             logger.info(f"EntityService result: {entity_result}")
             
             # Debug: Check which path we're taking
@@ -682,7 +739,7 @@ class ChatService:
                 logger.info(f"Taking PRODUCTS ARRAY path with {len(entity_result['products'])} products")
                 # Products array detected - process all products and create RFQs
                 products = entity_result["products"]
-                return await self._handle_products_array(user, session, message, products)
+                return await self._handle_products_array(user, session, message, products, chat_summaries)
             elif "entities" in entity_result:
                 print(f"ChatService: Taking BACKWARD COMPATIBILITY path with entities: {entity_result['entities']}")
                 logger.info(f"Taking BACKWARD COMPATIBILITY path with entities: {entity_result['entities']}")
@@ -703,8 +760,21 @@ class ChatService:
                 current_entities.append(new_entities)
                 session.workflow_state["extracted_entities"] = current_entities
                 
+                # Track categories from extracted entities in product_items
+                category = new_entities.get('category') or new_entities.get('description')
+                if category:
+                    if not session.product_items:
+                        session.product_items = []
+                    # Update or add category info to product_items
+                    product_info = {
+                        'category': category,
+                        'description': new_entities.get('description'),
+                        'added_at': utc_now().isoformat()
+                    }
+                    session.product_items.append(product_info)
+                
                 # Process this as a single product array
-                return await self._handle_products_array(user, session, message, current_entities)
+                return await self._handle_products_array(user, session, message, current_entities, chat_summaries)
             
             # If no new entities, just continue with existing flow
             return {
@@ -715,11 +785,26 @@ class ChatService:
         except Exception as e:
             return await self._handle_error_response(e, user.phone_number, "purchase_intent", "Could you tell me more about what you need?")
     
-    async def _handle_products_array(self, user: User, session: ConversationSession, message: str, products: list) -> Dict[str, Any]:
+    async def _handle_products_array(self, user: User, session: ConversationSession, message: str, products: list, chat_summaries: list = None) -> Dict[str, Any]:
         """Handle products array (single or multiple products)."""
         try:
             print(f"_handle_products_array: Processing {len(products)} products")
             logger.info(f"Handling {len(products)} products from message")
+            
+            # Track categories from all products in product_items
+            for product_entities in products:
+                if isinstance(product_entities, dict):
+                    category = product_entities.get('category') or product_entities.get('description')
+                    if category:
+                        if not session.product_items:
+                            session.product_items = []
+                        # Add product info with category to product_items
+                        product_info = {
+                            'category': category,
+                            'description': product_entities.get('description'),
+                            'added_at': utc_now().isoformat()
+                        }
+                        session.product_items.append(product_info)
             
             # Check completeness for each product and identify which ones need more info
             
@@ -729,7 +814,7 @@ class ChatService:
             for i, product_entities in enumerate(products):
                 try:
                     # Transform entities to schema format
-                    rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_entities)
+                    rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_entities, self.openai_service)
                     
                     # Check if this product has all mandatory fields
                     missing_mandatory = rfq_schema.get_missing_mandatory_fields()
@@ -785,7 +870,7 @@ class ChatService:
                 
                 if all_same_missing and len(incomplete_products) > 1:
                     # All products missing the same fields - ask once for all
-                    rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(incomplete_products[0]["entities"])
+                    rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(incomplete_products[0]["entities"], self.openai_service)
                     product_questions = rfq_schema.get_next_questions()
                     
                     if product_questions:
@@ -799,7 +884,7 @@ class ChatService:
                         print(f"  Processing incomplete product {prod['index']}: {prod['entities'].get('description', 'Unknown')}")
                         print(f"    Missing fields: {prod['missing_fields']}")
                         
-                        rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(prod["entities"])
+                        rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(prod["entities"], self.openai_service)
                         
                         # Get questions from data model
                         product_questions = rfq_schema.get_next_questions()
@@ -837,7 +922,7 @@ class ChatService:
                     incomplete_products=len(incomplete_products)
                 )
                 
-                response = await self.response_helpers.generate_clarification_response([clarification_message], completeness, context)
+                response = await self.response_helpers.generate_clarification_response([clarification_message], completeness, context, chat_summaries)
                 await self.whatsapp_service.send_message(user.phone_number, response)
                 
                 return {
@@ -887,7 +972,7 @@ class ChatService:
                 summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
                     "user_message": message,
                     "extracted_entities": product_info["entities"]
-                })
+                }, chat_summaries)
                 await self.whatsapp_service.send_message(user.phone_number, summary_response)
                 
                 # Store for confirmation (serialize schema to dict)
@@ -963,7 +1048,8 @@ class ChatService:
                         "user_message": message,
                         "extracted_entities": all_entities,
                         "total_products": len(complete_products)
-                    }
+                    },
+                    chat_summaries
                 )
                 await self.whatsapp_service.send_message(user.phone_number, summary_response)
                 
@@ -1086,20 +1172,97 @@ class ChatService:
     async def _save_session(self, session: ConversationSession, workflow_type: str) -> ConversationSession:
         """Save updated session to database."""
         try:
+            # Clean workflow_state to ensure JSON serialization
+            clean_workflow_state = self._clean_for_json_serialization(session.workflow_state) if session.workflow_state else {}
+            
             session_data = {
                 'session_id': session.session_id,
                 'external_user_id': session.external_user_id,
                 'workflow_type': workflow_type,
-                'outcome': session.outcome,
-                'workflow_state': session.workflow_state,
+                'outcome': session.outcome.value if session.outcome and hasattr(session.outcome, 'value') else session.outcome,
+                'workflow_state': clean_workflow_state,
                 'conversation_history': session.conversation_history,
                 'extracted_entities': session.extracted_entities,
-                'retention_date': session.retention_date
+                'retention_date': session.retention_date,
+                'last_activity_at': session.last_activity_at
             }
             return self.db_manager.save_conversation_session(session_data)
         except Exception as e:
             logger.error(f"Error saving session: {e}")
             return session
+
+    def _clean_for_json_serialization(self, obj):
+        """Recursively clean object for JSON serialization."""
+        import json
+        from datetime import datetime, date
+        
+        if obj is None:
+            return None
+        elif hasattr(obj, 'value'):  # Enum object
+            return obj.value
+        elif isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        elif isinstance(obj, dict):
+            return {key: self._clean_for_json_serialization(value) for key, value in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [self._clean_for_json_serialization(item) for item in obj]
+        elif isinstance(obj, (str, int, float, bool)):
+            return obj
+        else:
+            # Try to serialize to test, if it fails, convert to string
+            try:
+                json.dumps(obj)
+                return obj
+            except (TypeError, ValueError):
+                return str(obj)
+    
+    async def _handle_session_completion_enhanced(self, session: ConversationSession) -> None:
+        """
+        Handle session completion with enhanced summarization.
+        
+        Captures rich session data BEFORE clearing and runs summarization
+        in background to avoid blocking user experience.
+        """
+        try:
+            # Extract rich entities BEFORE session is cleared
+            rich_entities = SummarizationHelpers.extract_rich_entities_for_summary(session)
+            
+            # Store rich entities in session.extracted_entities for persistence
+            session.extracted_entities = rich_entities
+            
+            # Prepare enhanced summary data
+            enhanced_summary_data = SummarizationHelpers.prepare_enhanced_summary_data(session, rich_entities)
+            enhanced_summary_data.update({
+                'session_id': session.session_id,
+                'created_at': session.created_at,
+                'completed_at': session.completed_at,
+                'enhanced_entities': rich_entities
+            })
+            
+            # Start background summarization (non-blocking)
+            asyncio.create_task(
+                SummarizationHelpers.handle_session_completion_async(
+                    self.chat_summary_service,
+                    self.daily_summary_service,
+                    enhanced_summary_data
+                )
+            )
+            
+            logger.info(f"Started background summarization for session {session.session_id}")
+            
+        except Exception as e:
+            logger.error(f"Error starting enhanced session completion for {session.session_id}: {e}") 
+            # Fallback to original method
+            await self._handle_session_completion_fallback(session)
+    
+    async def _handle_session_completion_fallback(self, session: ConversationSession) -> None:
+        """Fallback session completion method (original logic)."""
+        try:
+            await self.chat_summary_service.generate_session_summary(session)
+            await self.daily_summary_service.generate_daily_summary(session.external_user_id)
+            logger.info(f"Generated summaries for completed session {session.session_id}")
+        except Exception as e:
+            logger.error(f"Error generating summaries for session {session.session_id}: {e}")
     
     async def _show_auth_placeholder(self, user_phone: str) -> None:
         """Show authentication placeholder message for new sessions."""
@@ -1172,6 +1335,21 @@ class ChatService:
             logger.info(f"GMT API Response: {result}")
             print(f"GMT API Response: {result}")
             
+            # Include original RFQ data for auto-categorization
+            if result.get("success"):
+                result["rfq_data"] = {
+                    "items": [
+                        {
+                            "description": rfq_data.get("specifications", ""),
+                            "product_name": rfq_data.get("product_name", ""),
+                            "quantity": rfq_data.get("quantity", 1),
+                            "unit_of_measure": rfq_data.get("unit_of_measure", "pcs"),
+                            "division": rfq_data.get("division", ""),
+                            "preferred_brand": rfq_data.get("preferred_brand", "")
+                        }
+                    ]
+                }
+            
             return result
             
         except Exception as e:
@@ -1180,3 +1358,128 @@ class ChatService:
                 "success": False,
                 "error": f"Failed to submit RFQ: {str(e)}"
             }
+    
+    def _should_use_summary_aware_extraction(self, message: str) -> bool:
+        """
+        Use AI to intelligently determine if we should use summary-aware entity extraction.
+        
+        This uses the OpenAI service to analyze the message and determine if the user is making
+        references to previous conversations that would benefit from historical context.
+        
+        Args:
+            message: User message to analyze
+            
+        Returns:
+            True if summary-aware extraction should be used
+        """
+        try:
+            # Use OpenAI service for intelligent reference detection
+            reference_analysis = self.openai_service.analyze_reference_context(message)
+            
+            has_references = reference_analysis.get("has_references", False)
+            confidence = reference_analysis.get("confidence", 0)
+            reference_types = reference_analysis.get("reference_types", [])
+            
+            # Use summary-aware extraction if we have high confidence references
+            should_use_summary = has_references and confidence >= 70
+            
+            print(f"ChatService: Reference analysis for '{message}':")
+            print(f"  - Has references: {has_references}")
+            print(f"  - Confidence: {confidence}%")
+            print(f"  - Reference types: {reference_types}")
+            print(f"  - Use summary-aware extraction: {should_use_summary}")
+            
+            return should_use_summary
+            
+        except Exception as e:
+            print(f"ChatService: Error in reference analysis: {e}")
+            # Fallback: if analysis fails, don't use summary-aware extraction
+            return False
+
+    async def _run_auto_categorization_for_rfqs(self, rfq_results: List[Dict[str, Any]]) -> str:
+        """
+        Run auto-categorization for successfully submitted RFQs.
+        
+        This is an offline process that runs after RFQ submission to categorize
+        items using vector search and AI, without impacting user experience.
+        
+        Args:
+            rfq_results: List of RFQ submission results with success status and RFQ IDs
+            
+        Returns:
+            User-friendly message about categorization results
+        """
+        try:
+            logger.info(f"Starting auto-categorization for {len(rfq_results)} RFQ results")
+            
+            categorization_summary = []
+            total_items_processed = 0
+            successful_categorizations = 0
+            
+            for rfq_result in rfq_results:
+                if not rfq_result.get("success"):
+                    continue
+                    
+                rfq_id = rfq_result.get("rfq_id")
+                if not rfq_id:
+                    logger.warning("RFQ result missing rfq_id, skipping auto-categorization")
+                    continue
+                
+                # Get RFQ data to extract item descriptions
+                rfq_data = rfq_result.get("rfq_data", {})
+                items = rfq_data.get("items", [])
+                
+                if not items:
+                    logger.warning(f"No items found in RFQ {rfq_id}, skipping auto-categorization")
+                    continue
+                
+                # Process each item in the RFQ
+                for item in items:
+                    item_description = item.get("description", "")
+                    if not item_description:
+                        logger.warning(f"Empty item description in RFQ {rfq_id}, skipping")
+                        continue
+                    
+                    total_items_processed += 1
+                    logger.info(f"Auto-categorizing item: '{item_description}' for RFQ {rfq_id}")
+                    
+                    # Run categorization with new simplified interface
+                    categorization_result = self.auto_categorization_service.categorize_item(
+                        item_description=item_description,
+                        user_id="system_auto_categorization",
+                        session_id=f"rfq_{rfq_id}",
+                        rfq_id=rfq_id
+                    )
+                    
+                    if categorization_result.get("success"):
+                        category = categorization_result.get("category")
+                        confidence = categorization_result.get("confidence_score", 0)
+                        successful_categorizations += 1
+                        
+                        # Add to summary for user
+                        categorization_summary.append(f"• {item_description[:50]}{'...' if len(item_description) > 50 else ''} → {category}")
+                        
+                        logger.info(f"Successfully categorized '{item_description}' as {category} (confidence: {confidence:.2f})")
+                    else:
+                        error_msg = categorization_result.get("error", "Unknown error")
+                        logger.error(f"Failed to categorize '{item_description}': {error_msg}")
+                
+                logger.info(f"Completed auto-categorization for RFQ {rfq_id}")
+            
+            logger.info("Auto-categorization process completed for all RFQs")
+            
+            # Generate user-friendly summary message
+            if total_items_processed == 0:
+                return "Auto-categorization completed, but no items were found to categorize."
+            elif successful_categorizations == 0:
+                return f"Auto-categorization completed for {total_items_processed} items, but categorization failed. Manual review may be needed."
+            elif successful_categorizations == total_items_processed:
+                summary_text = "\n".join(categorization_summary)
+                return f"Auto-categorization completed successfully!\n\nCategorized items:\n{summary_text}"
+            else:
+                summary_text = "\n".join(categorization_summary)
+                return f"Auto-categorization completed: {successful_categorizations}/{total_items_processed} items categorized successfully.\n\nSuccessfully categorized:\n{summary_text}"
+            
+        except Exception as e:
+            logger.error(f"Error in auto-categorization process: {str(e)}")
+            return "Auto-categorization encountered an error. Your RFQs have been created successfully, but manual categorization may be needed."

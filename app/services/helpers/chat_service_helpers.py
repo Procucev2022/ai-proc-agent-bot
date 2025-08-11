@@ -71,16 +71,15 @@ class ChatServiceHelpers:
                 schema_data["items"] = [item]
         
         # Handle delivery locations
-        if entities.get("location"):
-            location = entities["location"]
-            if isinstance(location, str):
-                schema_data["delivery_locations"] = [{"city": location, "state": "", "pincode": ""}]
-            elif isinstance(location, dict):
-                schema_data["delivery_locations"] = [location]
+        if entities.get("state") or entities.get("city") or entities.get("pincode"):
+            location_data = {
+                "state": entities.get("state", ""),
+                "city": entities.get("city", ""),
+                "pincode": entities.get("pincode", "")
+            }
+            schema_data["delivery_locations"] = [location_data]
         
         # Optional fields
-        if entities.get("category"):
-            schema_data["category"] = entities["category"]
         if entities.get("remarks"):
             schema_data["remarks"] = entities["remarks"]
         if entities.get("brand"):
@@ -89,10 +88,29 @@ class ChatServiceHelpers:
         return schema_data
     
     @staticmethod
-    def create_rfq_schema_from_entities(entities: dict):
-        """Create RFQValidationSchema from entities."""
+    def create_rfq_schema_from_entities(entities: dict, openai_service=None):
+        """Create RFQValidationSchema from entities with division auto-population."""
         schema_data = ChatServiceHelpers.transform_entities_to_schema(entities)
-        return RFQValidationSchema(**schema_data)
+        schema = RFQValidationSchema(**schema_data)
+        
+        # Attempt division auto-population if not already set and OpenAI service is available
+        if not schema.division and openai_service and entities:
+            logger.info("Attempting division auto-population...")
+            try:
+                success = schema.auto_populate_division(openai_service, entities)
+                if success:
+                    logger.info(f"Division auto-populated: {schema.division} (confidence: {schema.division_confidence}%)")
+                else:
+                    logger.warning("Division auto-population failed")
+            except Exception as e:
+                logger.error(f"Error during division auto-population: {e}")
+        
+        # Debug logging for optional questions
+        logger.info(f"Schema data: preferred_brand={schema.preferred_brand}, remarks={schema.remarks}, items={bool(schema.items)}")
+        optional_questions = schema.get_optional_questions()
+        logger.info(f"Optional questions generated: {optional_questions}")
+        
+        return schema
     
     @staticmethod
     def build_context(stage: str, message: str = "", entities: dict = None, completeness: int = 0, **kwargs) -> dict:
@@ -117,7 +135,7 @@ class ChatServiceHelpers:
             current_message: Current user message
             
         Returns:
-            Dict containing full conversation context including session state, history, and entities
+            Dict containing full conversation context including session state, history, entities, and user context
         """
         return {
             'current_message': current_message,
