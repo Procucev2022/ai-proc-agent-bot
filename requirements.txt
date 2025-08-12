@@ -45,3 +45,4 @@ sentence-transformers
 black
 flake8
 isort
+python-multipart

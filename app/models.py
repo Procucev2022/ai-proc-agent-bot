@@ -371,7 +371,7 @@ class LearningCategoryItem(Base):
     
     id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     learning_category_id = Column(CHAR(36), ForeignKey("learning_categories.id"), nullable=False)
-    item_description = Column(Text, nullable=False, index=True)  # Processed item description
+    item_description = Column(String(500), nullable=False, index=True)  # Processed item description
     normalized_keywords = Column(JSON, nullable=True)  # Extracted keywords for search
     confidence_score = Column(DECIMAL(5,4), default=0.0)  # Item-specific confidence
     user_feedback = Column(String(20), nullable=True)  # correct, incorrect, partial for future ML

@@ -41,7 +41,7 @@ class RFQItemSchema(BaseModel):
         return v
     
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
         extra = "allow"
 
 
@@ -98,7 +98,7 @@ class RFQVendorSchema(BaseModel):
         return v
     
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
         extra = "allow"
 
 
@@ -162,7 +162,7 @@ class RFQCreateRequestSchema(BaseModel):
     
     
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
         extra = "allow"
 
 
@@ -181,7 +181,7 @@ class RFQStatusResponseSchema(BaseModel):
     type: Optional[str] = Field(None, description="Response type")
     
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
         extra = "allow"
 
 

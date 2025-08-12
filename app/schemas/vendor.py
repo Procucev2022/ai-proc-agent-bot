@@ -21,7 +21,7 @@ class VendorSearchRequestSchema(BaseModel):
     vendor_category: Optional[str] = Field(None, alias="vendorcategory", description="Vendor category")
     
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
         extra = "allow"
 
 
@@ -47,7 +47,7 @@ class VendorResponseSchema(BaseModel):
         return v
     
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
         extra = "allow"
 
 
