@@ -16,6 +16,7 @@ class WorkflowType(str, Enum):
     RFQ_CREATION = "rfq_creation"
     GENERAL_INQUIRY = "general_inquiry"
     VENDOR_SEARCH = "vendor_search"
+    RFQ_STATUS_CHECK="rfq_status"
 
 
 class ConversationOutcome(str, Enum):

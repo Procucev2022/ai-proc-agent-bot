@@ -229,7 +229,8 @@ class OpenAIService:
             workflow_mapping = {
                 "buy_something": "rfq_creation",
                 "rfq_creation": "rfq_creation", 
-                "product_search": "product_search"
+                "product_search": "product_search",
+                "rfq_status_check": "rfq_status"
             }
             
             mapped_workflow = workflow_mapping.get(workflow_type, workflow_type)
@@ -266,6 +267,15 @@ class OpenAIService:
                             "confidence": args.get("confidence", 0),
                             "success": True
                         }
+                    elif "rfq_id" in args:
+                        # RFQ status check format
+                        print(f"OpenAI: Using RFQ status format")
+                        result = {
+                            "rfq_id": args.get("rfq_id"),
+                            "confidence": args.get("confidence", 0),
+                            "success": True
+                        }
+
                     else:
                         # Backward compatibility for old single entity format
                         print(f"OpenAI: Using OLD single entity format")
@@ -285,6 +295,17 @@ class OpenAIService:
                             user_input=message,
                             entities={"products": result["products"]},
                             completeness=100,  # Will be calculated per product later
+                            workflow_type=mapped_workflow,
+                            model_used=self.default_model,
+                            processing_time=processing_time,
+                            missing_fields=[]
+                        )
+                    elif "rfq_id" in result:
+                        # Log for RFQ status format
+                        self.interaction_logger.log_entity_extraction(
+                            user_input=message,
+                            entities={"rfq_id": result["rfq_id"]},
+                            completeness=100 if result["rfq_id"] else 0,
                             workflow_type=mapped_workflow,
                             model_used=self.default_model,
                             processing_time=processing_time,
@@ -647,7 +668,37 @@ class OpenAIService:
         except Exception as e:
             logger.error(f"Response generation failed: {str(e)}")
             return self._get_fallback_response(context, query_results or [])
-        
+
+    def generate_rfq_status_response(self, context: dict) -> str:
+        """
+            Generate contextual response for RFQ status check.
+
+            Constructs a natural language response summarizing RFQ statuses,
+            enforcing limits like `max_allowed`, and providing next steps or links.
+
+            Args:
+                context: Dictionary containing keys like 'rfq_statuses', 'rfq_ids', 'max_allowed', etc.
+
+            Returns:
+                A string response suitable for user-facing interfaces.
+            """
+        try:
+            # Build prompt inline
+            prompt = f"User context: {json.dumps(context)}\n\n"
+            prompt += "Generate an appropriate response for the user based on their context and any available results."
+
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions=self._load_prompt("response_generation", "_get_rfq_status_response_prompt")
+            )
+
+            return response.output_text or "I apologize, but I'm having trouble generating a response right now."
+
+        except Exception as e:
+            logger.error(f"Response generation failed: {str(e)}")
+            return self._get_fallback_response(context)
+
     def validate_field_value(self, field_name: str, value: str, context: dict) -> Dict[str, Any]:
         """
         Validate RFQ field value using OpenAI for complex validation.

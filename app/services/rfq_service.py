@@ -20,8 +20,12 @@ import uuid
 
 from app.database import SessionLocal
 from app.models import RFQ, User, ConversationSession
-from app.services.gmt_api_service import GMTAPIService
 from app.schemas.rfq import RFQCreateRequestSchema, RFQValidationSchema
+
+from app.services.openai_service import OpenAIService
+from app.services.helpers.response_helpers import ResponseHelpers
+from app.services.gmt_api_service import GMTAPIService
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +39,13 @@ class RFQService:
     """
     
     def __init__(self):
-        pass
+        self.settings = get_settings()
+        self.gmt_service = GMTAPIService()
+
+        self.openai_service = OpenAIService()
+
+        self.response_helpers = ResponseHelpers(self.openai_service)
+
         
     async def create_or_update_rfq(self, user_id: int, entity_result: Dict[str, Any], session_id: int) -> Dict[str, Any]:
         """
@@ -239,5 +249,50 @@ class RFQService:
             "remarks": rfq_data.get("remarks", ""),
             "rfqDocument": [],
             "category": rfq_data.get("category", "")
+        }
+
+    async def process_rfq_status_request(self, user: User, message: str) -> Dict[str, Any]:
+        """
+        Extract RFQ IDs, fetch status from API, and generate response.
+        """
+
+        # Step 1: Extract entities (RFQ IDs) via LLM
+        entity_result = self.openai_service.extract_entities(
+            message=message,
+            workflow_type="rfq_status_check"
+        )
+
+        print("enitiy result", entity_result)
+        rfq_ids = entity_result.get("rfq_id")
+
+        # Limit to only 5 RFQ IDs if there are more
+        if rfq_ids:
+            rfq_ids = rfq_ids[:self.settings.rfq_max_allowed]
+
+        # Step 2: Fetch from GMT API
+        gmt_service = GMTAPIService()
+        result = await gmt_service.get_rfq_status(client_id="4004", rfq_ids=rfq_ids)
+
+        rfq_data = result.get("data", {}).get("data", [])
+
+        # Step 3: Prepare context for AI message generation
+        context = {
+            "rfq_statuses": rfq_data,
+            "rfq_ids": rfq_ids or [],
+            "has_results": bool(rfq_data),
+            "max_allowed": self.settings.rfq_max_allowed,
+            "followup_note": self.settings.rfq_followup_note
+        }
+
+        # Step 4: Generate AI Response for the fetched results
+        response_message = await self.response_helpers.generate_rfq_status_contextual_response(
+            context=context
+        )
+
+        return {
+            "status": "rfq_status_found" if rfq_ids else "recent_rfqs_found",
+            "rfq_ids": rfq_ids or [],
+            "rfq_statuses": rfq_data,
+            "response_message": response_message
         }
     
