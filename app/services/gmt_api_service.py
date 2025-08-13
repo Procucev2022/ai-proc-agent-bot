@@ -432,3 +432,45 @@ class GMTAPIService:
         except Exception as e:
             logger.error(f"Error in bulk upload: {e}")
             return {"success": False, "error": str(e)}
+
+    async def get_rfq_status(self, client_id: str, rfq_ids: List[str] = None) -> Dict[str, Any]:
+
+        """
+        Get RFQ status for given RFQ IDs or last 3 recent RFQs if no IDs provided.
+
+        Args:
+            rfq_ids: List of RFQ IDs to check. If None, API returns last 3 recent RFQs.
+            client_id: Client ID
+
+        Returns:
+            Dict with success status and RFQ status details.
+        """
+        try:
+            if not await self.ensure_authenticated():
+                return {"success": False, "error": "Authentication failed"}
+
+            url = f"{self.base_url}/procucev/rest/rfq/getRfqStatusById"
+
+            headers = {
+                'Authorization': f'Bearer {self.token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+
+            data = {"clientId": client_id}
+            if rfq_ids:
+                data["rfqIds"] = rfq_ids
+            # If rfq_ids is None or empty, API will return last 3 RFQs automatically
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=data, headers=headers, timeout=30) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        return {"success": True, "data": result}
+                    else:
+                        error_text = await response.text()
+                        return {"success": False, "error": f"HTTP {response.status}: {error_text}"}
+
+        except Exception as e:
+            logger.error(f"Error calling unified RFQ status API: {e}")
+            return {"success": False, "error": str(e)}

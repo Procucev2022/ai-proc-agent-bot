@@ -1,0 +1,20 @@
+{
+  "type": "function",
+  "name": "extract_entities",
+  "description": "Extract RFQ ID and status inquiry details from user message for RFQ status check workflow.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "rfq_id": {
+        "type": "array",
+        "items": {
+          "type": ["string", "null"]
+        },
+        "description": "List of RFQ IDs or reference numbers mentioned in the message; null allowed for uncertain values"
+      }
+    },
+    "required": ["rfq_id"],
+    "additionalProperties": false
+  },
+  "strict": true
+}

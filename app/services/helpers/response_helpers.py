@@ -35,7 +35,14 @@ class ResponseHelpers:
                 return f"Thank you for the information! {base_questions[0]}"
             else:
                 return "Thank you for the information. Could you provide more details to help me assist you?"
-    
+
+    async def generate_rfq_status_contextual_response(self, context: dict) -> str:
+        """Generate contextual response using OpenAI."""
+        try:
+            return self.openai_service.generate_rfq_status_response(context)
+        except Exception as e:
+            logger.error(f"Error generating contextual response: {e}")
+
     async def generate_completion_response(self, rfq_schema, context: dict) -> str:
         """Generate completion response using OpenAI."""
         try:

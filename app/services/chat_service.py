@@ -1287,15 +1287,23 @@ class ChatService:
             logger.info(f"Sent BFS availability placeholder to {user_phone}")
         except Exception as e:
             logger.error(f"Error sending BFS availability placeholder: {e}")
-    
+
+
     async def _handle_rfq_status_inquiry(self, user: User, message: str) -> Dict[str, Any]:
+        # Help 1 : how to handle session here, like what data needs to be save in db and how to do it
         """Handle RFQ status inquiry requests."""
         try:
-            placeholder_message = "RFQ status update feature is in progress."
-            await self.whatsapp_service.send_message(user.phone_number, placeholder_message)
-            
-            logger.info(f"Sent RFQ status placeholder to {user.phone_number} for message: {message}")
-            return {"status": "rfq_status_placeholder_sent"}
+            result = await self.rfq_service.process_rfq_status_request(user=user, message=message)
+
+            # Step: Send WhatsApp message
+            await self.whatsapp_service.send_message(user.phone_number, result["response_message"])
+
+            return {
+                "status": result.get("status"),
+                "rfq_ids": result.get("rfq_ids"),
+                "rfq_statuses": result.get("rfq_statuses")
+            }
+
         except Exception as e:
             logger.error(f"Error sending RFQ status placeholder: {e}")
             return {"status": "error", "error": str(e)}

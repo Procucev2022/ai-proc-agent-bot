@@ -1,0 +1,8 @@
+*.pyc
+/.idea
+.sonar
+.scannerwork
+venv/
+.env
+# Ignore OpenAI interaction logs
+app/logs/openai_interactions/*.jsonl
