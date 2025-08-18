@@ -92,6 +92,8 @@ class Settings:
         self.gmt_client_id = os.getenv("GMT_CLIENT_ID")
         self.gmt_client_secret = os.getenv("GMT_CLIENT_SECRET")
         self.gmt_password = os.getenv("GMT_PASSWORD")
+        self.gmt_max_retries = int(os.getenv("GMT_MAX_RETRIES"))
+        self.gmt_retry_delay = int(os.getenv("GMT_RETRY_DELAY"))
         
         # Intent Service configuration
         self.intent_threshold_buy_something = int(os.getenv("INTENT_THRESHOLD_BUY_SOMETHING", "75"))
