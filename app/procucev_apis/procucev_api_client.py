@@ -27,7 +27,7 @@ class ProcucevAPIClient:
         self.base_url = self.settings.gmt_base_url
         self.username = self.settings.gmt_username
         self.password = self.settings.gmt_password
-        self.phone = self.settings.gmt_phone_number
+        self.phone = self.settings.gmt_phone
         self.client_id = self.settings.gmt_client_id
         self.client_secret = self.settings.gmt_client_secret
         self.max_retries = self.settings.gmt_max_retries or 3
