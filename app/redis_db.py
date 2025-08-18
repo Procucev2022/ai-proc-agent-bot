@@ -1,114 +1,105 @@
 """
-Scalable Redis service with connection pooling and specialized operations.
+Asynchronous Redis service with connection pooling and specialized operations.
 """
 
-import redis
+import redis.asyncio as aioredis
 import json
 import logging
-from typing import Optional, Dict, Any, Union
-from redis.connection import ConnectionPool
-
+from typing import Optional, Dict, Any
+from app.schemas.user import UserDetailsSchema
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-class RedisConnectionManager:
-    """Manages Redis connection pool for scalable operations."""
-    
-    _pool: Optional[ConnectionPool] = None
-    _client: Optional[redis.Redis] = None
-    
+class AsyncRedisConnectionManager:
+    """Manages async Redis connection pool."""
+    _pool: Optional[aioredis.Redis] = None
+
     @classmethod
-    def get_pool(cls) -> ConnectionPool:
-        """Get or create Redis connection pool."""
+    async def get_client(cls) -> aioredis.Redis:
+        """Get or create async Redis client with connection pooling."""
         if cls._pool is None:
             settings = get_settings()
-            cls._pool = redis.ConnectionPool.from_url(
+            cls._pool = await aioredis.from_url(
                 settings.redis_url,
                 decode_responses=True,
-                max_connections=20,
-                retry_on_timeout=True,
-                socket_keepalive=True,
-                socket_keepalive_options={}
+                max_connections=20
             )
         return cls._pool
-    
-    @classmethod
-    def get_client(cls) -> redis.Redis:
-        """Get Redis client with connection pooling."""
-        if cls._client is None:
-            cls._client = redis.Redis(connection_pool=cls.get_pool())
-        return cls._client
+
 
 class BaseRedisService:
-    """Base Redis service with common operations."""
+    """Base async Redis service with common operations."""
     
     def __init__(self):
-        self.client = RedisConnectionManager.get_client()
-    
-    def set(self, key: str, value: Union[str, dict], ex: Optional[int] = None) -> bool:
-        """Set key-value with optional expiration."""
+        self.client: Optional[aioredis.Redis] = None
+
+    async def init_client(self):
+        if self.client is None:
+            self.client = await AsyncRedisConnectionManager.get_client()
+
+    async def set(self, key: str, value: Any, ex: Optional[int] = None) -> bool:
+        await self.init_client()
         try:
             if isinstance(value, dict):
                 value = json.dumps(value)
-            
             if ex:
-                return bool(self.client.setex(key, ex, value))
-            return bool(self.client.set(key, value))
+                return await self.client.set(key, value, ex=ex)
+            return await self.client.set(key, value)
         except Exception as e:
             logger.error(f"Redis SET error for key {key}: {e}")
             return False
-    
-    def get(self, key: str, as_json: bool = False) -> Optional[Union[str, dict]]:
-        """Get value by key with optional JSON parsing."""
+
+    async def get(self, key: str, as_json: bool = False) -> Optional[Any]:
+        await self.init_client()
         try:
-            value = self.client.get(key)
+            value = await self.client.get(key)
             if value and as_json:
                 return json.loads(value)
             return value
         except Exception as e:
             logger.error(f"Redis GET error for key {key}: {e}")
             return None
-    
-    def delete(self, key: str) -> bool:
-        """Delete key if present."""
+
+    async def delete(self, key: str) -> bool:
+        await self.init_client()
         try:
-            return bool(self.client.delete(key))
+            return await self.client.delete(key) > 0
         except Exception as e:
             logger.error(f"Redis DELETE error for key {key}: {e}")
             return False
-    
-    def exists(self, key: str) -> bool:
-        """Check if key exists."""
+
+    async def exists(self, key: str) -> bool:
+        await self.init_client()
         try:
-            return bool(self.client.exists(key))
+            return await self.client.exists(key) > 0
         except Exception as e:
             logger.error(f"Redis EXISTS error for key {key}: {e}")
             return False
 
+
 class AuthRedisService(BaseRedisService):
-    """Specialized Redis service for authentication operations."""
-    
-    def store(self, phone_number: str, user_data: Dict[str, Any], 
-             expiry_seconds: int = 3600) -> bool:
-        """Store auth data with key format: auth:{phone_number}"""
+    """Specialized async Redis service for authentication."""
+
+    async def store(self, phone_number: str, user_data: Dict[str, Any], expiry_seconds: int = 3600) -> bool:
         key = f"auth:{phone_number}"
-        return self.set(key, user_data, expiry_seconds)
-    
-    def retrieve(self, phone_number: str) -> Optional[Dict[str, Any]]:
-        """Retrieve auth data by phone number."""
+        return await self.set(key, user_data, expiry_seconds)
+
+    async def retrieve(self, phone_number: str) -> Optional[UserDetailsSchema]:
         key = f"auth:{phone_number}"
-        return self.get(key, as_json=True)
-    
-    def delete_auth(self, phone_number: str) -> bool:
-        """Delete auth data by phone number."""
+        data = await self.get(key, as_json=True)
+        if data:
+            return UserDetailsSchema(**data)
+        return None
+
+    async def delete_auth(self, phone_number: str) -> bool:
         key = f"auth:{phone_number}"
-        return self.delete(key)
-    
-    def is_authenticated(self, phone_number: str) -> bool:
-        """Check if user is authenticated."""
+        return await self.delete(key)
+
+    async def is_authenticated(self, phone_number: str) -> bool:
         key = f"auth:{phone_number}"
-        return self.exists(key)
+        return await self.exists(key)
+
 
 # Singleton instances
 _redis_service: Optional[BaseRedisService] = None
@@ -122,7 +113,6 @@ def get_redis_service() -> BaseRedisService:
     return _redis_service
 
 def get_auth_redis_service() -> AuthRedisService:
-    """Get auth Redis service singleton."""
     global _auth_service
     if _auth_service is None:
         _auth_service = AuthRedisService()
