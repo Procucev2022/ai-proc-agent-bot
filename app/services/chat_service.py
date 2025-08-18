@@ -33,12 +33,22 @@ from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.session_helpers import SessionHelpers
 from app.services.helpers.excel_helpers import ExcelHelpers
 from app.services.helpers.summarization_helpers import SummarizationHelpers
+from app.services.helpers.rfq_processing_helpers import (
+    run_auto_categorization_for_rfqs,
+    run_seller_recommendation_for_rfqs
+)
+
 from app.services.excel_validation_service import ExcelValidationService
 from app.services.excel_processing_service import ExcelProcessingService
 from app.services.gmt_api_service import GMTAPIService
 from app.services.chat_summary_service import ChatSummaryService
 from app.services.daily_summary_service import DailySummaryService
 from app.services.auto_categorization_service import AutoCategorizationService
+from app.services.enhanced_auto_categorization_service import EnhancedAutoCategorizationService
+from app.services.seller_recommendation_service import SellerRecommendationService
+from app.services.enhanced_seller_matching_service import EnhancedSellerMatchingService
+from app.services.rfq_background_service import RFQBackgroundService
+
 from app.database import SessionLocal, DatabaseManager
 from app.models import User, ConversationSession
 from app.schemas.rfq import RFQValidationSchema
@@ -64,6 +74,11 @@ class ChatService:
         self.chat_summary_service = ChatSummaryService()
         self.daily_summary_service = DailySummaryService()
         self.auto_categorization_service = AutoCategorizationService()
+        self.enhanced_auto_categorization_service = EnhancedAutoCategorizationService()
+        self.seller_recommendation_service = SellerRecommendationService()
+        self.enhanced_seller_matching_service = EnhancedSellerMatchingService()
+        self.rfq_background_service = RFQBackgroundService()
+
         
     @log_service_method("chat_service")
     async def process_message(self, user_phone: str, message_content: str, message_type: str = "text") -> Dict[str, Any]:
@@ -250,8 +265,21 @@ class ChatService:
                         await self.whatsapp_service.send_message(user.phone_number, response)
                         
                         # Run auto-categorization for each successful RFQ (offline process)
-                        auto_cat = await self._run_auto_categorization_for_rfqs(rfq_results)
+                        auto_cat = await run_auto_categorization_for_rfqs(
+                            rfq_results, 
+                            self.auto_categorization_service, 
+                            self.enhanced_auto_categorization_service
+                        )
                         await self.whatsapp_service.send_message(user.phone_number, auto_cat)
+                        
+                        # Run seller recommendation for each successful RFQ (offline process)
+                        seller_match = await run_seller_recommendation_for_rfqs(
+                            rfq_results, 
+                            self.seller_recommendation_service,
+                            self.enhanced_seller_matching_service
+                        )
+                        await self.whatsapp_service.send_message(user.phone_number, seller_match)
+
 
                         # Check BFS availability after successful RFQ creation
                         await self._check_bfs_availability(user.phone_number)

@@ -328,14 +328,25 @@ class RFQValidationSchema(BaseModel):
             
         if not self.items:
             missing.append("items")
+        else:
+            # Check individual item fields for completeness
+            for i, item in enumerate(self.items):
+                if not item.get("description"):
+                    missing.append(f"item_{i}_description")
+                if not item.get("quantity") or item.get("quantity") <= 0:
+                    missing.append(f"item_{i}_quantity")
+        
         if not self.delivery_locations:
             missing.append("delivery_locations")
         else:
-            # Check if delivery location has all required fields
-            for location in self.delivery_locations:
-                if not location.get("state") or not location.get("city") or not location.get("pincode"):
-                    missing.append("delivery_locations")
-                    break
+            # Check individual delivery location fields
+            for i, location in enumerate(self.delivery_locations):
+                if not location.get("state"):
+                    missing.append(f"delivery_location_{i}_state")
+                if not location.get("city"):
+                    missing.append(f"delivery_location_{i}_city")
+                if not location.get("pincode"):
+                    missing.append(f"delivery_location_{i}_pincode")
             
         # Note: user_id and organization_id are system fields, auto-populated
         return missing
@@ -403,10 +414,27 @@ class RFQValidationSchema(BaseModel):
         if "items" in missing:
             questions.append("items_details")
         
+        # Handle specific item field questions
+        for missing_field in missing:
+            if missing_field.startswith("item_") and "_description" in missing_field:
+                questions.append("item_description")
+            elif missing_field.startswith("item_") and "_quantity" in missing_field:
+                questions.append("item_quantity")
+        
         if "delivery_locations" in missing:
             questions.append("delivery_location")
         
-        return questions
+        # Handle specific delivery location field questions
+        for missing_field in missing:
+            if missing_field.startswith("delivery_location_") and "_state" in missing_field:
+                questions.append("delivery_state")
+            elif missing_field.startswith("delivery_location_") and "_city" in missing_field:
+                questions.append("delivery_city")
+            elif missing_field.startswith("delivery_location_") and "_pincode" in missing_field:
+                questions.append("delivery_pincode")
+        
+        # Remove duplicates while preserving order
+        return list(dict.fromkeys(questions))
     
     
     

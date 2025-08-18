@@ -93,17 +93,6 @@ class ChatServiceHelpers:
         schema_data = ChatServiceHelpers.transform_entities_to_schema(entities)
         schema = RFQValidationSchema(**schema_data)
         
-        # Attempt division auto-population if not already set and OpenAI service is available
-        if not schema.division and openai_service and entities:
-            logger.info("Attempting division auto-population...")
-            try:
-                success = schema.auto_populate_division(openai_service, entities)
-                if success:
-                    logger.info(f"Division auto-populated: {schema.division} (confidence: {schema.division_confidence}%)")
-                else:
-                    logger.warning("Division auto-population failed")
-            except Exception as e:
-                logger.error(f"Error during division auto-population: {e}")
         
         # Debug logging for optional questions
         logger.info(f"Schema data: preferred_brand={schema.preferred_brand}, remarks={schema.remarks}, items={bool(schema.items)}")

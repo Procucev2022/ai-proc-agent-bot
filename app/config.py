@@ -38,7 +38,9 @@ class Settings:
         self.log_level = os.getenv("LOG_LEVEL", "INFO").upper()
         
         # Database configuration
-        self.database_url = os.getenv("DATABASE_URL")
+        self.local_database_url = os.getenv("LOCAL_DATABASE_URL")
+        self.client_database_url = os.getenv("CLIENT_DATABASE_URL")
+        self.database_mode = os.getenv("DATABASE_MODE", "local")
         self.sql_debug = os.getenv("SQL_DEBUG", "false").lower() == "true"
         
         # OpenAI configuration
@@ -125,19 +127,34 @@ class Settings:
         self.retry_max_attempts = int(os.getenv("RETRY_MAX_ATTEMPTS", "3"))
         self.retry_initial_delay = float(os.getenv("RETRY_INITIAL_DELAY", "1.0"))
         
+        # RFQ Status settings
+        self.rfq_max_allowed = int(os.getenv("RFQ_MAX_ALLOWED", "5"))
+        self.rfq_followup_note = os.getenv("RFQ_FOLLOWUP_NOTE",
+                                           "If you want to know the status for any other RFQ number or visit the link for details: https://procucev.com")
+        
         # Validate configuration
         self.validate_config()
         
     def get_database_url(self) -> str:
-        """Get database connection URL from environment."""
-        if not self.database_url:
-            raise ValueError("DATABASE_URL environment variable is required")
+        """Get database connection URL based on selected mode."""
+        if self.database_mode == "client":
+            if not self.client_database_url:
+                raise ValueError("CLIENT_DATABASE_URL environment variable is required for client mode")
+            database_url = self.client_database_url
+        else:
+            if not self.local_database_url:
+                raise ValueError("LOCAL_DATABASE_URL environment variable is required for local mode")
+            database_url = self.local_database_url
         
         # Validate that URL is for MySQL (not PostgreSQL)
-        if self.database_url.startswith("postgresql://"):
+        if database_url.startswith("postgresql://"):
             raise ValueError("PostgreSQL URL detected. Please use MySQL URL format: mysql+pymysql://...")
         
-        return self.database_url
+        return database_url
+    
+    def is_ssl_enabled(self) -> bool:
+        """Check if SSL should be enabled based on database mode."""
+        return self.database_mode == "client"
         
     def get_openai_config(self) -> Dict[str, Any]:
         """Get OpenAI API configuration and credentials."""
@@ -172,11 +189,16 @@ class Settings:
     def validate_config(self) -> None:
         """Validate that all required configuration is present."""
         required_vars = [
-            ("DATABASE_URL", self.database_url),
             ("OPENAI_API_KEY", self.openai_api_key),
             ("GMT_USERNAME", self.gmt_username),
             ("GMT_PHONE", self.gmt_phone),
         ]
+        
+        # Check database URL based on mode
+        if self.database_mode == "client" and not self.client_database_url:
+            required_vars.append(("CLIENT_DATABASE_URL", self.client_database_url))
+        elif self.database_mode == "local" and not self.local_database_url:
+            required_vars.append(("LOCAL_DATABASE_URL", self.local_database_url))
         
         missing_vars = []
         for var_name, var_value in required_vars:
@@ -195,6 +217,13 @@ class Settings:
         
         if self.max_retry_attempts <= 0:
             raise ValueError("MAX_RETRY_ATTEMPTS must be positive")
+    
+    def get_rfq_status_config(self) -> Dict[str, Any]:
+        """Get configuration for RFQ status logic."""
+        return {
+            "max_allowed": self.rfq_max_allowed,
+            "followup_note": self.rfq_followup_note
+        }
 
 # Global settings instance
 _settings: Optional[Settings] = None

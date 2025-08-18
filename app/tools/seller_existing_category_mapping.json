@@ -1,0 +1,25 @@
+{
+  "type": "function",
+  "name": "select_existing_category",
+  "description": "Select the best matching existing learning category for a seller's simple category",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "selected_category_id": {
+        "type": "string",
+        "description": "ID of the selected existing learning category that best matches the seller category"
+      },
+      "similarity_score": {
+        "type": "number",
+        "minimum": 0.0,
+        "maximum": 1.0,
+        "description": "How well the selected category matches the seller category (0.0-1.0)"
+      },
+      "reasoning": {
+        "type": "string",
+        "description": "Explanation of why this existing category was selected as the best match"
+      }
+    },
+    "required": ["selected_category_id", "similarity_score", "reasoning"]
+  }
+}

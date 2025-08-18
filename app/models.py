@@ -372,6 +372,7 @@ class LearningCategoryItem(Base):
     
     id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     learning_category_id = Column(CHAR(36), ForeignKey("learning_categories.id"), nullable=False)
+
     item_description = Column(String(500), nullable=False, index=True)  # Processed item description
     normalized_keywords = Column(JSON, nullable=True)  # Extracted keywords for search
     confidence_score = Column(DECIMAL(5,4), default=0.0)  # Item-specific confidence
@@ -385,6 +386,30 @@ class LearningCategoryItem(Base):
     # Relationships
     learning_category = relationship("LearningCategory", back_populates="category_items")
     client_mapping_cross_refs = relationship("ClientCategoryMapping", back_populates="learning_item")
+
+class LearningCategorySeller(Base):
+    """
+    Maps sellers to learning categories using AI analysis.
+    
+    Links sellers with their simple categories to the sophisticated 3-level learning
+    categorization system, enabling semantic search and better matching.
+    """
+    __tablename__ = "learning_category_sellers"
+    
+    id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    seller_id = Column(CHAR(36), ForeignKey("sellers.seller_id"), nullable=False)
+    learning_category_id = Column(CHAR(36), ForeignKey("learning_categories.id"), nullable=False)
+    original_seller_category = Column(String(255), nullable=False)  # Original simple category from seller
+    confidence_score = Column(DECIMAL(5,4), default=0.0)  # AI confidence in this mapping
+    ai_reasoning = Column(Text, nullable=True)  # OpenAI explanation for the mapping
+    mapping_method = Column(String(50), default="openai_analysis")  # openai_analysis, manual, etc.
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, default=func.current_timestamp(), onupdate=func.current_timestamp())
+    
+    # Relationships
+    seller = relationship("Seller")
+    learning_category = relationship("LearningCategory")
+
 
 class DailyAggregatedMetrics(Base):
     """
@@ -447,3 +472,222 @@ class ClientCategoryMapping(Base):
     
     # Relationships
     learning_item = relationship("LearningCategoryItem", back_populates="client_mapping_cross_refs")
+
+# ========================================
+# SELLER RECOMMENDATION SYSTEM MODELS
+# ========================================
+
+class SellerRanking(enum.Enum):
+    """Seller ranking categories for prioritization."""
+    Diamond = "Diamond"
+    Platinum = "Platinum"
+    Gold = "Gold"
+    Titanium = "Titanium"
+
+class NotificationType(enum.Enum):
+    """Types of RFQ notifications sent to sellers."""
+    initial_notification = "initial_notification"
+    reminder = "reminder"
+
+class ResponseType(enum.Enum):
+    """Seller response types to RFQ notifications."""
+    credit_purchase = "credit_purchase"
+    rfq_request = "rfq_request"
+    ignored = "ignored"
+
+class InteractionType(enum.Enum):
+    """Types of seller-RFQ interactions."""
+    notification_sent = "notification_sent"
+    credit_check = "credit_check"
+    payment_initiated = "payment_initiated"
+    rfq_requested = "rfq_requested"
+    email_sent = "email_sent"
+
+class SubscriptionPlan(enum.Enum):
+    """Available subscription plans for sellers."""
+    basic = "basic"
+    pro = "pro"
+
+class JobStatus(enum.Enum):
+    """Status of background categorization jobs."""
+    pending = "pending"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+
+class Seller(Base):
+    """
+    Seller model for managing seller profiles in the recommendation system.
+    
+    Stores seller information, categories, location, subscription status, and 
+    performance metrics for the RFQ notification system.
+    """
+    __tablename__ = "sellers"
+    
+    seller_id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    seller_name = Column(String(255), nullable=False)
+    phone_number = Column(String(15), unique=True, nullable=False)
+    email = Column(String(255), nullable=True)
+    categories = Column(JSON, nullable=False)  # Simple array: ["Electronics", "Medical Equipment"]
+    location = Column(JSON, nullable=False)    # {lat: 12.97, lng: 77.59, city: "Bangalore", state: "Karnataka"}
+    geographic_coverage_km = Column(Integer, default=200)
+    subscription_credits = Column(Integer, default=0)
+    ranking = Column(Enum(SellerRanking), default=SellerRanking.Gold)
+    last_active_at = Column(TIMESTAMP, nullable=True)
+    opted_out_notifications = Column(Boolean, default=False)
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, default=func.current_timestamp(), onupdate=func.current_timestamp())
+    
+    # Relationships
+    notifications = relationship("RFQSellerNotification", back_populates="seller")
+    interactions = relationship("SellerRFQInteraction", back_populates="seller")
+    subscriptions = relationship("SellerSubscription", back_populates="seller")
+    learning_mappings = relationship("SellerLearningMapping", back_populates="seller")
+
+class RFQSellerNotification(Base):
+    """
+    Track RFQ notifications sent to sellers.
+    
+    Records when notifications are sent, delivered, read, and responded to
+    for rate limiting and performance tracking.
+    """
+    __tablename__ = "rfq_seller_notifications"
+    
+    notification_id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    rfq_id = Column(CHAR(36), nullable=False)
+    seller_id = Column(CHAR(36), ForeignKey("sellers.seller_id"), nullable=False)
+    notification_type = Column(Enum(NotificationType), default=NotificationType.initial_notification)
+    sent_at = Column(TIMESTAMP, default=func.current_timestamp())
+    delivered_at = Column(TIMESTAMP, nullable=True)
+    read_at = Column(TIMESTAMP, nullable=True)
+    responded_at = Column(TIMESTAMP, nullable=True)
+    response_type = Column(Enum(ResponseType), nullable=True)
+    
+    # Relationships
+    seller = relationship("Seller", back_populates="notifications")
+
+class SellerRFQInteraction(Base):
+    """
+    Track detailed seller-RFQ interactions and conversation flow.
+    
+    Records each step in the seller notification and conversation process
+    for analytics and debugging.
+    """
+    __tablename__ = "seller_rfq_interactions"
+    
+    interaction_id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    seller_id = Column(CHAR(36), ForeignKey("sellers.seller_id"), nullable=False)
+    rfq_id = Column(CHAR(36), nullable=True)
+    session_id = Column(String(255), nullable=True)
+    interaction_type = Column(Enum(InteractionType), nullable=False)
+    interaction_data = Column(JSON, nullable=True)
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    
+    # Relationships
+    seller = relationship("Seller", back_populates="interactions")
+
+class SellerSubscription(Base):
+    """
+    Track seller subscription plans and credit usage.
+    
+    Manages seller subscription status, credit balances, and plan details
+    for the RFQ notification system.
+    """
+    __tablename__ = "seller_subscriptions"
+    
+    subscription_id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    seller_id = Column(CHAR(36), ForeignKey("sellers.seller_id"), nullable=False)
+    plan_type = Column(Enum(SubscriptionPlan), nullable=False)
+    credits_purchased = Column(Integer, nullable=False)
+    credits_remaining = Column(Integer, nullable=False)
+    purchased_at = Column(TIMESTAMP, default=func.current_timestamp())
+    expires_at = Column(TIMESTAMP, nullable=True)
+    
+    # Relationships
+    seller = relationship("Seller", back_populates="subscriptions")
+
+class SystemConfiguration(Base):
+    """
+    Store configurable system parameters for the seller recommendation system.
+    
+    Allows runtime configuration of business rules, thresholds, and
+    operational parameters without code changes.
+    """
+    __tablename__ = "system_configurations"
+    
+    config_key = Column(String(100), primary_key=True)
+    config_value = Column(JSON, nullable=False)
+    description = Column(Text, nullable=True)
+    updated_at = Column(TIMESTAMP, default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+class MockRFQ(Base):
+    """
+    Mock RFQ data for testing the seller recommendation system.
+    
+    Provides test RFQ data with categories, locations, and other
+    attributes needed for seller selection testing.
+    """
+    __tablename__ = "mock_rfqs"
+    
+    rfq_id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    rfq_title = Column(String(500), nullable=False)
+    rfq_description = Column(Text, nullable=True)
+    categories = Column(JSON, nullable=False)       # ["Electronics", "Medical Equipment"]
+    delivery_location = Column(JSON, nullable=False)  # {lat, lng, city, state}
+    quantity_info = Column(String(255), nullable=True)
+    deadline = Column(Date, nullable=True)
+    division = Column(String(100), nullable=True)
+    status = Column(Enum(RFQStatus), default=RFQStatus.ready)
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+
+# ========================================
+# OFFLINE CATEGORIZATION SYSTEM MODELS  
+# ========================================
+
+class SellerLearningMapping(Base):
+    """
+    Map sellers to 3-level learning categories through offline OpenAI processing.
+    
+    Links seller's simple categories to the sophisticated 3-level learning
+    categorization system for enhanced matching capabilities.
+    """
+    __tablename__ = "seller_learning_mappings"
+    
+    mapping_id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    seller_id = Column(CHAR(36), ForeignKey("sellers.seller_id"), nullable=False)
+    original_category = Column(String(255), nullable=False)  # Original simple category from seller
+    learning_category_id = Column(CHAR(36), ForeignKey("learning_categories.id"), nullable=True)
+    level_1_category = Column(String(255), nullable=True)
+    level_2_category = Column(String(255), nullable=True)
+    level_3_category = Column(String(255), nullable=True)
+    confidence_score = Column(DECIMAL(5,4), default=0.0)
+    ai_reasoning = Column(Text, nullable=True)
+    mapping_method = Column(String(50), default="openai_analysis")
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, default=func.current_timestamp(), onupdate=func.current_timestamp())
+    
+    # Relationships
+    seller = relationship("Seller", back_populates="learning_mappings")
+    learning_category = relationship("LearningCategory")
+
+class SellerCategorizationJob(Base):
+    """
+    Track background jobs for seller categorization processing.
+    
+    Manages the offline process of mapping sellers to the 3-level
+    learning categorization system using OpenAI.
+    """
+    __tablename__ = "seller_categorization_jobs"
+    
+    job_id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    seller_id = Column(CHAR(36), ForeignKey("sellers.seller_id"), nullable=False)
+    job_status = Column(Enum(JobStatus), default=JobStatus.pending)
+    input_categories = Column(JSON, nullable=False)  # Original seller categories
+    output_mappings = Column(JSON, nullable=True)    # Generated 3-level mappings
+    processing_time_ms = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    completed_at = Column(TIMESTAMP, nullable=True)
+    
+    # Relationships
+    seller = relationship("Seller")

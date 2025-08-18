@@ -5,10 +5,6 @@
   "parameters": {
     "type": "object",
     "properties": {
-      "progress_acknowledgment": {
-        "type": "string",
-        "description": "Acknowledge the progress made so far and what information has been collected."
-      },
       "questions": {
         "type": "array",
         "items": {
@@ -21,7 +17,7 @@
         "description": "Brief explanation of why this information is needed. Focus on RFQ completion requirements, not vendor selection promises."
       }
     },
-    "required": ["progress_acknowledgment", "questions"],
+    "required": ["questions"],
     "additionalProperties": false
   }
 }

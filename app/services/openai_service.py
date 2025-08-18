@@ -1566,3 +1566,241 @@ Determine the best category for the input item based on the similar items and th
                 "validation_issues": [f"Validation error: {str(e)}"],
                 "suggestions": []
             }
+
+    @log_service_method("openai_service")
+    def map_seller_category_to_existing_learning(
+        self, 
+        seller_category: str, 
+        existing_categories: List[Dict[str, Any]],
+        seller_name: str = None,
+        location_info: dict = None
+    ) -> Dict[str, Any]:
+        """
+        Map a seller's simple category to existing 3-level learning categories.
+        
+        Args:
+            seller_category: Simple seller category (e.g., "Electronics")
+            existing_categories: List of existing learning categories to choose from
+            seller_name: Seller name for context
+            location_info: Seller location for context
+            
+        Returns:
+            Dict with best matching existing category
+        """
+        start_time = time.time()
+        
+        try:
+            # Load seller mapping tool
+            with open(self.tools_dir / "seller_existing_category_mapping.json", 'r') as f:
+                mapping_tool = json.load(f)
+            
+            # Build context with existing categories
+            context_text = f"Seller category to map: \"{seller_category}\"\n\n"
+            
+            if seller_name:
+                context_text += f"Seller name: {seller_name}\n"
+            
+            if location_info and isinstance(location_info, dict):
+                city = location_info.get('city', '')
+                state = location_info.get('state', '')
+                if city or state:
+                    context_text += f"Location: {city}, {state}\n"
+            
+            # Add existing categories for selection
+            context_text += "\nExisting Learning Categories to choose from:\n"
+            for i, cat in enumerate(existing_categories, 1):
+                category_path = f"{cat['level_1_category']} > {cat['level_2_category']} > {cat['level_3_category']}"
+                context_text += f"{i}. {category_path} (ID: {cat['id']})\n"
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": context_text}],
+                instructions=self._load_prompt("seller_mapping", "_map_seller_to_existing_categories"),
+                tools=[mapping_tool],
+                tool_choice={"type": "function", "name": "select_existing_category"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    
+                    # Find the selected category by ID
+                    selected_category_id = args.get("selected_category_id")
+                    selected_category = None
+                    
+                    for cat in existing_categories:
+                        if cat['id'] == selected_category_id:
+                            selected_category = cat
+                            break
+                    
+                    if selected_category:
+                        result = {
+                            "success": True,
+                            "selected_category": selected_category,
+                            "similarity_score": args.get("similarity_score", 0.8),
+                            "reasoning": args.get("reasoning", ""),
+                            "processing_time_ms": int(processing_time * 1000)
+                        }
+                        
+                        category_path = f"{selected_category['level_1_category']} > {selected_category['level_2_category']} > {selected_category['level_3_category']}"
+                        logger.info(f"Mapped seller category '{seller_category}' to existing: {category_path}")
+                        return result
+                    else:
+                        return {
+                            "success": False,
+                            "error": f"Selected category ID {selected_category_id} not found",
+                            "processing_time_ms": int(processing_time * 1000)
+                        }
+            
+            return {
+                "success": False,
+                "error": "No function call in response",
+                "processing_time_ms": int(processing_time * 1000)
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            processing_time = time.time() - start_time
+            
+            logger.error(f"Seller category mapping failed: {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "processing_time_ms": int(processing_time * 1000)
+            }
+    
+    @log_service_method("openai_service")
+    def select_best_sellers(self, item_description: str, candidate_sellers: List[Dict[str, Any]], max_sellers: int = 10) -> Dict[str, Any]:
+        """
+        Use OpenAI to select and rank the best sellers from candidates for a specific item.
+        
+        Uses OpenAI function calling to intelligently select and rank sellers based on
+        category match, seller quality, location, and overall suitability.
+        
+        Args:
+            item_description: Description of the item needing sellers
+            candidate_sellers: List of candidate sellers with their match information
+            max_sellers: Maximum number of sellers to select
+            
+        Returns:
+            Dict with selected sellers and reasoning
+        """
+        start_time = time.time()
+        
+        try:
+            if not candidate_sellers:
+                return {
+                    "success": False,
+                    "error": "No candidate sellers provided",
+                    "processing_time_ms": int((time.time() - start_time) * 1000)
+                }
+            
+            # Load seller selection tool
+            with open(self.tools_dir / "seller_selection.json", 'r') as f:
+                selection_tool = json.load(f)
+            
+            # Build context for OpenAI
+            context_text = f"Item Description: {item_description}\n\n"
+            context_text += f"Please select and rank the best sellers for this item from the following {len(candidate_sellers)} candidates:\n\n"
+            
+            for i, seller in enumerate(candidate_sellers, 1):
+                context_text += f"{i}. Seller ID: {seller.get('seller_id', 'Unknown')}\n"
+                context_text += f"   Name: {seller.get('seller_name', 'Unknown')}\n"
+                context_text += f"   Ranking: {seller.get('ranking', 'Unknown')}\n"
+                context_text += f"   Category Match: {seller.get('category_match', {}).get('original_category', 'Unknown')}\n"
+                context_text += f"   Similarity Score: {seller.get('category_match', {}).get('similarity_score', 0):.3f}\n"
+                context_text += f"   Distance: {seller.get('distance_km', 'Unknown')} km\n"
+                context_text += f"   Phone: {seller.get('phone_number', 'Unknown')}\n"
+                context_text += f"   Location: {seller.get('location', {}).get('city', 'Unknown')}, {seller.get('location', {}).get('state', 'Unknown')}\n\n"
+            
+            context_text += f"\nSelect up to {max_sellers} sellers, ranked from best to worst match."
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": context_text}],
+                instructions=self._load_prompt("seller_selection", "_get_seller_selection_prompt", max_sellers=max_sellers),
+                tools=[selection_tool],
+                tool_choice={"type": "function", "name": "select_best_sellers"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    
+                    selected_ids = args.get("selected_seller_ids", [])
+                    reasoning = args.get("reasoning", "")
+                    confidence = args.get("confidence_score", 0.8)
+                    
+                    # Find selected sellers and maintain order
+                    selected_sellers = []
+                    seller_lookup = {seller["seller_id"]: seller for seller in candidate_sellers}
+                    
+                    for seller_id in selected_ids:
+                        if seller_id in seller_lookup:
+                            selected_sellers.append(seller_lookup[seller_id])
+                    
+                    result = {
+                        "success": True,
+                        "selected_sellers": selected_sellers,
+                        "total_selected": len(selected_sellers),
+                        "reasoning": reasoning,
+                        "confidence_score": confidence,
+                        "processing_time_ms": int(processing_time * 1000),
+                        "method": "openai_seller_selection"
+                    }
+                    
+                    # Log successful seller selection
+                    self.interaction_logger.log_entity_extraction(
+                        user_input=item_description,
+                        entities={"selected_sellers": [s["seller_id"] for s in selected_sellers]},
+                        completeness=100,
+                        workflow_type="seller_selection",
+                        model_used=self.default_model,
+                        processing_time=processing_time,
+                        missing_fields=[]
+                    )
+                    
+                    logger.info(f"Selected {len(selected_sellers)} sellers with confidence {confidence:.3f}")
+                    return result
+            
+            # Log failed seller selection
+            self.interaction_logger.log_error(
+                interaction_type="seller_selection",
+                user_input=item_description,
+                error_message="No function call in response",
+                model_used=self.default_model
+            )
+            
+            return {
+                "success": False,
+                "error": "No function call in response",
+                "processing_time_ms": int(processing_time * 1000)
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            processing_time = time.time() - start_time
+            
+            # Log error
+            self.interaction_logger.log_error(
+                interaction_type="seller_selection",
+                user_input=item_description,
+                error_message=error_msg,
+                model_used=self.default_model
+            )
+            
+            logger.error(f"Seller selection failed: {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "processing_time_ms": int(processing_time * 1000)
+            }
+
