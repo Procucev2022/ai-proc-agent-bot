@@ -24,7 +24,8 @@ from datetime import datetime
 from ..database import get_db_session
 from ..models import (
     LearningCategory, LearningCategoryItem, ClientCategoryMapping, 
-    CategoryMapping, AutoCategorizationLog
+    CategoryMapping, AutoCategorizationLog, LearningCategorySeller, Seller
+
 )
 from .openai_service import OpenAIService
 

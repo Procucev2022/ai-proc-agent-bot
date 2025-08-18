@@ -41,6 +41,14 @@ xlrd
 chromadb
 sentence-transformers
 
+# Background job processing for seller recommendation system
+celery
+redis
+
+# Geographic calculations for seller location matching
+geopy
+
+
 # Development tools
 black
 flake8

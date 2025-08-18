@@ -23,13 +23,8 @@ def init_database():
 
     settings = get_settings()
     
-    # Configure SSL connection args for Azure MySQL
-    import os
-    ssl_cert_path = os.path.abspath('DigiCertGlobalRootCA.crt.pem')
-    connect_args = {
-        'ssl_ca': ssl_cert_path,
-        'ssl_disabled': False
-    }
+    # SSL configuration handled in connection URL
+    connect_args = {}
     
     engine = create_engine(
         settings.get_database_url(),
@@ -109,16 +104,11 @@ def get_db_session():
     """Get database session."""
     global engine, SessionLocal
     if SessionLocal is None:
-        # Initialize with SSL configuration
+        # Initialize with SSL configuration based on database mode
         settings = get_settings()
         
-        # Configure SSL connection args for Azure MySQL
-        import os
-        ssl_cert_path = os.path.abspath('DigiCertGlobalRootCA.crt.pem')
-        connect_args = {
-            'ssl_ca': ssl_cert_path,
-            'ssl_disabled': False
-        }
+        # SSL configuration handled in connection URL
+        connect_args = {}
         
         engine = create_engine(
             settings.get_database_url(),

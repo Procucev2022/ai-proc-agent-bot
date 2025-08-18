@@ -7,11 +7,12 @@
     "properties": {
       "celebration": {
         "type": "string",
-        "description": "Congratulate the user on completing their RFQ. Be enthusiastic but professional."
+        "description": "Warmly congratulate the user on completing their RFQ. Be enthusiastic but professional and natural."
       },
       "summary": {
         "type": "string",
-        "description": "Brief summary of the key information collected (2-3 main points like item, quantity, location)."
+        "description": "Well-formatted summary using bullet points to show key details like:\n• Item/Product\n• Quantity\n• Delivery location\n• Delivery date\nMake it easy to scan and verify."
+
       }
     },
     "required": ["celebration", "summary"],

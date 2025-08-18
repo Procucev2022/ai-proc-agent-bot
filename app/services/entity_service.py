@@ -46,17 +46,13 @@ class EntityService:
                         "detected_phrases": []  # Not available from intent service
                     })
             
-            # Check if this is a modification request with pending confirmations
-            has_pending_confirmations = context and (
-                context.get("workflow_state", {}).get("pending_multiple_rfqs") or
-                context.get("workflow_state", {}).get("pending_rfq")
-            )
-            
-            if has_pending_confirmations:
-                print(f"EntityService: Detected modification context with pending confirmations")
+            # Check if this is a modification request based on workflow_type (set by intent classification)
+            if workflow_type == "modification_request":
+                print(f"EntityService: Workflow type is modification_request - handling as modification")
                 return self._handle_modification_extraction(message, context, workflow_type)
             else:
-                # Standard entity extraction for new requests
+                # Standard entity extraction for other workflow types
+                print(f"EntityService: Using standard extraction for workflow_type: {workflow_type}")
                 return self._handle_standard_extraction(message, context, workflow_type)
 
         except Exception as e:
@@ -103,14 +99,30 @@ class EntityService:
         # Get existing pending confirmation data
         workflow_state = context.get("workflow_state", {})
         
-        # Get pending products with proper handling
-        pending_multiple = workflow_state.get("pending_multiple_rfqs")
+        # Get pending products from any workflow state (confirmations, optional fields, or incomplete products)
+        pending_combined = workflow_state.get("pending_combined_rfq")
         pending_single = workflow_state.get("pending_rfq")
+        pending_optional_combined = workflow_state.get("pending_optional_combined_rfq")
+        pending_optional_single = workflow_state.get("pending_optional_rfq")
+        incomplete_products = workflow_state.get("incomplete_products")
+        extracted_entities = workflow_state.get("extracted_entities", [])
         
-        if pending_multiple:
-            pending_products = pending_multiple
+        if pending_combined:
+            pending_products = pending_combined.get("products", [])
         elif pending_single:
             pending_products = [pending_single]
+        elif pending_optional_combined:
+            pending_products = pending_optional_combined.get("products", [])
+        elif pending_optional_single:
+            pending_products = [pending_optional_single]
+        elif incomplete_products:
+            pending_products = incomplete_products
+        elif extracted_entities:
+            # Convert extracted_entities to proper format
+            if isinstance(extracted_entities, list) and extracted_entities:
+                pending_products = [{"entities": entity} for entity in extracted_entities]
+            else:
+                pending_products = []
         else:
             pending_products = []
         
@@ -129,15 +141,22 @@ class EntityService:
         
         # Extract modification details from the message
         modification_prompt = f"""
-        Extract modification details from: '{message}'
+        Extract ONLY the NEW modification values from: '{message}'
         
-        Context: User is modifying existing RFQ products:
+        Existing products context:
         {self._format_existing_products_for_prompt(pending_products)}
         
-        Focus on identifying WHAT is being modified and the NEW VALUES only.
+        IMPORTANT: 
+        - Only extract NEW values that the user wants to change
+        - Do NOT include existing values or copy over current data
+        - If no new values are provided, return empty/null fields
+        - Focus only on what the user explicitly wants to modify
+        
+        Example: If user says "change delivery address" without specifying new address, 
+        return null for state/city/pincode fields.
         """
         
-        # Call OpenAI to extract modification details
+        # Call OpenAI to extract modification details  
         response = self.openai_service.extract_entities(
             message=modification_prompt,
             workflow_type=workflow_type
@@ -145,21 +164,77 @@ class EntityService:
         
         print(f"EntityService: Modification extraction response: {response}")
         
-        # Apply modifications to existing products
-        if "products" in response and response["products"]:
-            modified_products = self._apply_modifications_to_existing_products(
-                pending_products, response["products"], message
-            )
-            print(f"EntityService: Applied modifications, returning {len(modified_products)} updated products")
-            return {
-                "products": modified_products,
-                "confidence": response.get("confidence", 0),
-                "success": True,
-                "is_modification": True
-            }
+        # Handle new modification extraction format
+        if response.get("is_modification_extraction"):
+            has_new_values = response.get("has_new_values", False)
+            modifications = response.get("modifications", [])
+            
+            if has_new_values and modifications:
+                print(f"EntityService: User provided new values, applying {len(modifications)} modifications")
+                # Convert modifications to products format for existing logic
+                converted_products = self._convert_modifications_to_products_format(modifications)
+                modified_products = self._apply_modifications_to_existing_products(
+                    pending_products, converted_products, message
+                )
+                print(f"EntityService: Applied modifications, returning {len(modified_products)} updated products")
+                return {
+                    "products": modified_products,
+                    "confidence": response.get("confidence", 0),
+                    "success": True,
+                    "is_modification": True
+                }
+            else:
+                print(f"EntityService: Modification intent detected but no new values provided")
+                modification_intent = response.get("modification_intent", "unknown field")
+                return {
+                    "modification_intent_detected": True,
+                    "requires_clarification": True,
+                    "existing_products": pending_products,
+                    "user_message": message,
+                    "modification_intent": modification_intent,
+                    "confidence": response.get("confidence", 0),
+                    "success": False,
+                    "message": f"User wants to modify {modification_intent} but didn't provide new values"
+                }
+        
+        # Fallback for old format (shouldn't happen with modification_request workflow_type)
+        elif "products" in response and response["products"]:
+            # Check if the extracted products contain meaningful modification values
+            has_meaningful_modifications = self._has_meaningful_modification_values(response["products"], message)
+            
+            if has_meaningful_modifications:
+                modified_products = self._apply_modifications_to_existing_products(
+                    pending_products, response["products"], message
+                )
+                print(f"EntityService: Applied modifications, returning {len(modified_products)} updated products")
+                return {
+                    "products": modified_products,
+                    "confidence": response.get("confidence", 0),
+                    "success": True,
+                    "is_modification": True
+                }
+            else:
+                print(f"EntityService: Modification intent detected but no meaningful new values provided")
+                return {
+                    "modification_intent_detected": True,
+                    "requires_clarification": True,
+                    "existing_products": pending_products,
+                    "user_message": message,
+                    "confidence": response.get("confidence", 0),
+                    "success": False,
+                    "message": "Modification intent detected but missing new values"
+                }
         else:
-            print(f"EntityService: No clear modification detected, falling back to standard extraction")
-            return self._handle_standard_extraction(message, context, workflow_type)
+            print(f"EntityService: No modifications extracted")
+            return {
+                "modification_intent_detected": True,
+                "requires_clarification": True,
+                "existing_products": pending_products,
+                "user_message": message,
+                "confidence": response.get("confidence", 0),
+                "success": False,
+                "message": "No modification values provided"
+            }
     
     def _format_existing_products_for_prompt(self, pending_products: list) -> str:
         """Format existing products for modification prompt context."""
@@ -241,8 +316,91 @@ class EntityService:
                 print(f"  Found match by category: {category}")
                 return i
         
+        # For modification requests, if no specific match found and we have only one product,
+        # default to updating that product (common case for delivery address changes, etc.)
+        if len(existing_products) == 1:
+            print(f"  No specific match found, but only one product exists - defaulting to update product 0")
+            return 0
+        
         print(f"  No matching product found")
         return None
+
+    def _convert_modifications_to_products_format(self, modifications: list) -> list:
+        """
+        Convert the new modification format to the old products format for compatibility.
+        
+        Args:
+            modifications: List of modification objects from new format
+            
+        Returns:
+            List of product-like objects compatible with existing logic
+        """
+        converted_products = []
+        
+        for modification in modifications:
+            product = {}
+            
+            # Map new field names to old field names
+            field_mapping = {
+                "new_project_desc": "projectDesc",
+                "new_description": "description", 
+                "new_quantity": "quantity",
+                "new_unit_of_measures": "unitofMeasures",
+                "new_delivery_date": "deliveryDate",
+                "new_division": "division",
+                "new_brand": "brand",
+                "new_state": "state",
+                "new_city": "city", 
+                "new_pincode": "pincode",
+                "new_remarks": "remarks"
+            }
+            
+            # Convert fields
+            for new_field, old_field in field_mapping.items():
+                value = modification.get(new_field)
+                if value is not None:
+                    product[old_field] = value
+                    print(f"EntityService: Converting {new_field} -> {old_field}: {value}")
+            
+            if product:  # Only add if we have some fields
+                converted_products.append(product)
+        
+        print(f"EntityService: Converted {len(modifications)} modifications to {len(converted_products)} products")
+        return converted_products
+
+    def _has_meaningful_modification_values(self, products: list, message: str) -> bool:
+        """
+        Check if the extracted products contain actual new values for modification.
+        
+        Simply check if any non-null values were extracted (excluding remarks).
+        
+        Args:
+            products: List of extracted product modifications
+            message: Original user message
+            
+        Returns:
+            True if products contain modification values, False if just modification intent
+        """
+        for product in products:
+            new_values_count = 0
+            
+            for key, value in product.items():
+                # Skip remarks as it typically contains intent statements
+                if key == "remarks":
+                    continue
+                    
+                # Check if this field has a non-null, non-empty value
+                if value is not None and str(value).strip() and str(value).strip().lower() not in ["none", "null", ""]:
+                    new_values_count += 1
+                    print(f"EntityService: Found modification value for {key}: {value}")
+            
+            print(f"EntityService: Product has {new_values_count} modification values")
+            
+            # If we have any values, consider it a valid modification
+            if new_values_count >= 1:
+                return True
+        
+        return False
 
     def _handle_reference_extraction(self, message: str, context: dict, reference_detection: dict) -> dict:
         """
@@ -294,27 +452,47 @@ class EntityService:
             print(f"EntityService: No relevant historical options found, falling back to standard extraction")
             return self._handle_standard_extraction(message, context, "buy_something")
 
-    def extract_entities_with_summary_context(self, message: str, context: dict = None) -> dict:
+    def extract_entities_with_summary_context(self, message: str, context: dict = None, workflow_type: str = "buy_something") -> dict:
         """
         Extract entities using historical context from chat summaries.
         
         This method uses AI to resolve references like "same as last time", "usual address"
         by analyzing previous conversation summaries and replacing references with actual values.
+        It also handles modification requests when workflow_type is "modification_request".
         
         Args:
             message: User message to extract entities from
             context: Context dictionary containing chat_summaries and other data
+            workflow_type: Type of workflow (buy_something, modification_request, etc.)
             
         Returns:
             Dict containing extracted products with resolved references and metadata
         """
         try:
+            # Check if intent service already detected a reference request
+            intent_context = context.get("intent_result") if context else None
+            if intent_context and intent_context.get("intent") == "reference_request":
+                reference_details = intent_context.get("context_analysis", {}).get("reference_details", {})
+                if reference_details.get("reference_type") and reference_details.get("has_history"):
+                    print(f"EntityService: Using intent-detected reference: {reference_details}")
+                    return self._handle_reference_extraction(message, context, {
+                        "reference_type": reference_details.get("reference_type"),
+                        "confidence": intent_context.get("confidence", 0),
+                        "reasoning": intent_context.get("reasoning", ""),
+                        "detected_phrases": []  # Not available from intent service
+                    })
+            
+            # Check if this is a modification request based on workflow_type (set by intent classification)
+            if workflow_type == "modification_request":
+                print(f"EntityService: Workflow type is modification_request - handling as modification with summary context")
+                return self._handle_modification_extraction(message, context, workflow_type)
+            
             # Check if we have chat summaries for context
             chat_summaries = context.get("chat_summaries", []) if context else []
             
             if not chat_summaries:
                 print("EntityService: No chat summaries available, falling back to standard extraction")
-                return self._handle_standard_extraction(message, context, "buy_something")
+                return self._handle_standard_extraction(message, context, workflow_type)
             
             print(f"EntityService: Using summary-aware extraction with {len(chat_summaries)} summaries")
             
@@ -345,7 +523,7 @@ class EntityService:
         except Exception as e:
             print(f"EntityService: Summary-aware extraction error: {e}")
             # Fallback to standard extraction on error
-            return self._handle_standard_extraction(message, context, "buy_something")
+            return self._handle_standard_extraction(message, context, workflow_type)
 
     def _apply_resolved_references_intelligently(self, products: list, resolved_refs: list, original_message: str) -> list:
         """

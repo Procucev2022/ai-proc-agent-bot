@@ -66,7 +66,7 @@ class ResponseHelpers:
         except Exception as e:
             logger.error(f"Error generating clarification response: {e}")
             questions_text = "\\n".join(f"• {q}" for q in questions)
-            return f"Your RFQ is {completeness}% complete. I need:\\n\\n{questions_text}"
+            return f"I need a few more details to complete your RFQ:\\n\\n{questions_text}"
     
     async def generate_rfq_summary_and_confirmation(self, rfq_schema, context: dict, chat_summaries: list = None) -> str:
         """Generate RFQ summary and ask for confirmation using OpenAI with optional chat summary context."""
@@ -85,47 +85,16 @@ class ResponseHelpers:
                 summary_context["has_historical_context"] = True
                 print(f"ResponseHelpers: Enhanced RFQ summary context with {len(chat_summaries)} chat summaries")
             
-            return self.openai_service.generate_contextual_response(
-                summary_context, 
-                ["Please review the RFQ details and confirm if you want to proceed"], 
-                "rfq_confirmation"
+            # Use specialized RFQ confirmation generation
+            return self.openai_service.generate_rfq_confirmation(
+                rfq_schema.dict() if hasattr(rfq_schema, 'dict') else {},
+                summary_context
             )
             
         except Exception as e:
             logger.error(f"Error generating RFQ summary: {e}")
             return "Your RFQ is ready! Would you like me to create it? Reply 'Yes' to confirm or 'No' to make changes."
     
-    async def generate_multiple_rfq_summary_and_confirmation(self, rfq_schemas: list, context: dict, chat_summaries: list = None) -> str:
-        """Generate comprehensive summary for multiple RFQs and ask for confirmation using OpenAI with optional chat summary context."""
-        try:
-            # Prepare data for all RFQs
-            all_rfq_data = []
-            for schema in rfq_schemas:
-                all_rfq_data.append(schema.dict() if hasattr(schema, 'dict') else {})
-            
-            # Use OpenAI to generate comprehensive summary and confirmation
-            summary_context = {
-                **context,
-                "conversation_stage": "multiple_rfq_summary_confirmation",
-                "all_rfq_data": all_rfq_data,
-                "action_needed": "Generate comprehensive summary for all RFQs and ask for user confirmation"
-            }
-            
-            # Add chat summaries if available
-            if chat_summaries:
-                summary_context["chat_summaries"] = chat_summaries
-                summary_context["has_historical_context"] = True
-                print(f"ResponseHelpers: Enhanced multiple RFQ summary context with {len(chat_summaries)} chat summaries")
-            
-            return self.openai_service.generate_contextual_response(
-                summary_context, 
-                ["Please review all RFQ details and confirm if you want to proceed with creating all RFQs"], 
-                "multiple_rfq_confirmation"
-            )
-            
-        except Exception as e:
-            logger.error(f"Error generating multiple RFQ summary: {e}")
-            return f"Your {len(rfq_schemas)} RFQs are ready! Would you like me to create them? Reply 'Yes' to confirm or 'No' to make changes."
     
     async def generate_rfq_result_response(self, gmt_result: dict, context: dict) -> str:
         """Generate response for RFQ creation result using OpenAI."""

@@ -4,7 +4,7 @@ Required fields for RFQ:
 - Item description
 - Technical specifications
 - Unit of measurement (UOM)
-- Quantity needed
+- Quantity needed (mandatory)
 - Delivery state (mandatory)
 - Delivery city (mandatory) 
 - Delivery pincode (mandatory)

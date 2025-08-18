@@ -5,10 +5,6 @@
   "parameters": {
     "type": "object",
     "properties": {
-      "progress_acknowledgment": {
-        "type": "string",
-        "description": "Acknowledge the progress made so far and what information has been collected."
-      },
       "questions": {
         "type": "array",
         "items": {
@@ -17,11 +13,11 @@
         "description": "List of questions to ask the user. Use the questions provided from the data model. Present them clearly and organized."
       },
       "reason": {
-        "type": "string",
-        "description": "Brief explanation of why this information is needed. Focus on RFQ completion requirements, not vendor selection promises."
+        "type": "string", 
+        "description": "Brief, friendly explanation of why this information is needed to help complete their procurement request. Keep it conversational and helpful."
       }
     },
-    "required": ["progress_acknowledgment", "questions"],
+    "required": ["questions"],
     "additionalProperties": false
   }
 }

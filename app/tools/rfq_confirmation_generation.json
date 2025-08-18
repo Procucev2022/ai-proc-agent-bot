@@ -1,0 +1,20 @@
+{
+  "type": "function",
+  "name": "generate_rfq_confirmation",
+  "description": "Generate a well-structured RFQ confirmation message with summary and outstanding questions",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "string",
+        "description": "A clear, bullet-pointed summary of the RFQ details collected so far. Format as:\n• Product: [product name]\n• Quantity: [number]\n• Delivery: [location]\n• Delivery Date: [date]\nInclude only the information that has been collected."
+      },
+      "confirmation_request": {
+        "type": "string",
+        "description": "A friendly request asking the user to confirm or make changes. Keep it natural and encouraging."
+      }
+    },
+    "required": ["summary", "confirmation_request"],
+    "additionalProperties": false
+  }
+}

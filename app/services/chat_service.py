@@ -19,7 +19,6 @@ import logging
 from typing import Dict, Any, List
 import json
 import asyncio
-from datetime import datetime, date, timedelta
 from app.utils.datetime_utils import utc_now
 from app.utils.logging_utils import log_service_method
 from app.services.intent_service import IntentService
@@ -30,18 +29,30 @@ from app.services.whatsapp_service import WhatsAppService
 from app.services.openai_service import OpenAIService
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.services.helpers.response_helpers import ResponseHelpers
-from app.services.helpers.session_helpers import SessionHelpers
 from app.services.helpers.excel_helpers import ExcelHelpers
 from app.services.helpers.summarization_helpers import SummarizationHelpers
+from app.services.helpers.attachment_helpers import AttachmentHelpers
+from app.services.session_management_service import SessionManagementService
+from app.services.handlers.confirmation_handler import ConfirmationHandler
+from app.services.handlers.products_array_handler import ProductsArrayHandler
+from app.services.handlers.purchase_intent_handler import PurchaseIntentHandler
+from app.services.handlers.attachment_decision_handler import AttachmentDecisionHandler
+from app.services.processors.image_message_processor import ImageMessageProcessor
+
+
 from app.services.excel_validation_service import ExcelValidationService
 from app.services.excel_processing_service import ExcelProcessingService
 from app.services.gmt_api_service import GMTAPIService
 from app.services.chat_summary_service import ChatSummaryService
 from app.services.daily_summary_service import DailySummaryService
 from app.services.auto_categorization_service import AutoCategorizationService
+from app.services.enhanced_auto_categorization_service import EnhancedAutoCategorizationService
+from app.services.seller_recommendation_service import SellerRecommendationService
+from app.services.enhanced_seller_matching_service import EnhancedSellerMatchingService
+from app.services.rfq_background_service import RFQBackgroundService
+
 from app.database import SessionLocal, DatabaseManager
 from app.models import User, ConversationSession
-from app.schemas.rfq import RFQValidationSchema
 logger = logging.getLogger(__name__)
 
 class ChatService:
@@ -64,6 +75,35 @@ class ChatService:
         self.chat_summary_service = ChatSummaryService()
         self.daily_summary_service = DailySummaryService()
         self.auto_categorization_service = AutoCategorizationService()
+        self.enhanced_auto_categorization_service = EnhancedAutoCategorizationService()
+        self.seller_recommendation_service = SellerRecommendationService()
+        self.enhanced_seller_matching_service = EnhancedSellerMatchingService()
+        self.rfq_background_service = RFQBackgroundService()
+        
+        # Initialize extracted services
+        self.session_manager = SessionManagementService(
+            self.db_manager, self.whatsapp_service, 
+            self.chat_summary_service, self.daily_summary_service
+        )
+        self.confirmation_handler = ConfirmationHandler(
+            self.whatsapp_service, self.response_helpers,
+            self.auto_categorization_service, self.enhanced_auto_categorization_service,
+            self.seller_recommendation_service, self.enhanced_seller_matching_service
+        )
+        self.products_array_handler = ProductsArrayHandler(
+            self.whatsapp_service, self.openai_service, 
+            self.response_helpers, self.session_manager
+        )
+        self.purchase_intent_handler = PurchaseIntentHandler(
+            self.whatsapp_service, self.response_helpers, self.entity_service,
+            self.chat_summary_service, self.products_array_handler, self.session_manager
+        )
+        self.attachment_decision_handler = AttachmentDecisionHandler(
+            self.whatsapp_service, self.response_helpers, 
+            self.purchase_intent_handler, self.session_manager
+        )
+        self.image_processor = ImageMessageProcessor(self.whatsapp_service, self.response_helpers)
+
         
     @log_service_method("chat_service")
     async def process_message(self, user_phone: str, message_content: str, message_type: str = "text") -> Dict[str, Any]:
@@ -74,31 +114,15 @@ class ChatService:
         workflow routing, and response generation.
         """
         try:
-            # Get or create user session
-            user = await self._get_or_create_user(user_phone)
-            session = await self._get_conversation_context(user_phone)
+            # Get or create user session using extracted service
+            user = await self.session_manager.get_or_create_user(user_phone)
+            session = await self.session_manager.get_conversation_context(user_phone)
             
-            # Check if session has expired
-            if await SessionHelpers.is_session_expired(session):
-                # Only send expiration message if appropriate
-                if await SessionHelpers.should_send_expiration_message(session):
-                    await self.whatsapp_service.send_message(
-                        user_phone, 
-                        "Your session has expired. Let's start fresh! What can I help you with?"
-                    )
-                    
-                    # Generate enhanced session summary for timeout (non-blocking)
-                    await self._handle_session_completion_enhanced(session)
-                
-                # Handle session expiry properly
-                session = await SessionHelpers.handle_session_expiry(session, self.db_manager)
-            else:
-                # Session is active, renew its activity timestamp
-                session = await SessionHelpers.renew_session_activity(session)
-                await self._save_session(session, session.workflow_type or 'general_inquiry')
+            # Handle session expiry using extracted service
+            session = await self.session_manager.handle_session_expiry_check(user_phone, session)
             
-            # Track user message in conversation history
-            SummarizationHelpers.add_to_conversation_history(session, "user", message_content, message_type)
+            # Track user message in conversation history using extracted service
+            self.session_manager.add_message_to_history(session, "user", message_content, message_type)
             
             # Handle different message types
             if message_type == "text":
@@ -107,6 +131,10 @@ class ChatService:
                 result = await self._process_interactive_message(user, session, message_content)
             elif message_type == "excel_upload":
                 result = await self._process_excel_upload(user, session, message_content)
+            elif message_type == "image" or message_type == "document":
+                result = await self.image_processor.process_image_message(user, session, message_content)
+                # Save session after image processing
+                await self.session_manager.save_session(session, "rfq_creation")
             else:
                 result = {"status": "error", "error": f"Unknown message type: {message_type}"}
             
@@ -131,189 +159,12 @@ class ChatService:
             
             # Also check if we have incomplete products or pending confirmations
             has_incomplete_products = bool(session.workflow_state.get("incomplete_products"))
-            has_pending_confirmations = bool(session.workflow_state.get("pending_multiple_rfqs") or session.workflow_state.get("pending_rfq"))
-            has_pending_optional = bool(session.workflow_state.get("pending_optional_rfq") or session.workflow_state.get("pending_optional_multiple_rfqs"))
-            print(f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}")
+            has_pending_confirmations = bool(session.workflow_state.get("pending_combined_rfq") or session.workflow_state.get("pending_rfq"))
+            has_pending_optional = bool(session.workflow_state.get("pending_optional_rfq") or session.workflow_state.get("pending_optional_combined_rfq"))
+            has_pending_attachment_decision = bool(session.workflow_state.get("awaiting_attachment_decision"))
+            print(f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}")
             
-            # Handle pending optional field responses
-            if has_pending_optional:
-                # Check if user wants to skip optional fields
-                if any(keyword in message.lower() for keyword in ["no", "skip", "proceed", "continue", "next"]):
-                    # User wants to skip optional fields, proceed to confirmation
-                    if session.workflow_state.get("pending_optional_rfq"):
-                        # Single product
-                        product_info = session.workflow_state["pending_optional_rfq"]
-                        rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_info["entities"], self.openai_service)
-                        
-                        # Load summaries for enhanced response generation
-                        chat_summaries = await self.chat_summary_service.load_user_context(user.phone_number)
-                        
-                        summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
-                            "user_message": message,
-                            "extracted_entities": product_info["entities"]
-                        }, chat_summaries)
-                        await self.whatsapp_service.send_message(user.phone_number, summary_response)
-                        
-                        # Move to confirmation state
-                        session.workflow_state["pending_rfq"] = product_info
-                        del session.workflow_state["pending_optional_rfq"]
-                        
-                    elif session.workflow_state.get("pending_optional_multiple_rfqs"):
-                        # Multiple products
-                        complete_products = session.workflow_state["pending_optional_multiple_rfqs"]
-                        all_schemas = []
-                        all_entities = [prod["entities"] for prod in complete_products]
-                        
-                        for prod in complete_products:
-                            rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(prod["entities"], self.openai_service)
-                            all_schemas.append(rfq_schema)
-                        
-                        # Load summaries for enhanced response generation
-                        chat_summaries = await self.chat_summary_service.load_user_context(user.phone_number)
-                        
-                        summary_response = await self.response_helpers.generate_multiple_rfq_summary_and_confirmation(
-                            all_schemas, 
-                            {
-                                "user_message": message,
-                                "extracted_entities": all_entities,
-                                "total_products": len(complete_products)
-                            },
-                            chat_summaries
-                        )
-                        await self.whatsapp_service.send_message(user.phone_number, summary_response)
-                        
-                        # Move to confirmation state
-                        session.workflow_state["pending_multiple_rfqs"] = complete_products
-                        del session.workflow_state["pending_optional_multiple_rfqs"]
-                        
-                    await self._save_session(session, 'rfq_creation')
-                    return {"status": "optional_fields_skipped"}
-                
-                else:
-                    # User provided optional information, process it and then proceed to confirmation
-                    return await self._handle_purchase_intent(user, session, message)
-            
-            # Handle pending confirmations (user responding to "Would you like to proceed?")
-            if has_pending_confirmations:
-                # Use context-aware intent classification to determine user's response
-                conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
-                confirmation_intent = self.intent_service.classify_intent(message, conversation_context)
-                
-                intent = confirmation_intent.get('intent')
-                confidence = confirmation_intent.get('confidence', 0)
-                context_analysis = confirmation_intent.get('context_analysis', {})
-                
-                print(f"Confirmation stage - Intent: {intent}, Confidence: {confidence}%, Context: {context_analysis}")
-                
-                if intent == "confirmation_response" and confidence > 0.7:
-                    response_type = context_analysis.get('confirmation_details', {}).get('response_type')
-                    has_conditions = context_analysis.get('confirmation_details', {}).get('has_conditions', False)
-                    
-                    if response_type == "accept" and not has_conditions:
-                        # User confirmed - create RFQs
-                        # Handle both single and multiple product confirmations
-                        if session.workflow_state.get("pending_multiple_rfqs"):
-                            complete_products = session.workflow_state["pending_multiple_rfqs"]
-                        elif session.workflow_state.get("pending_rfq"):
-                            complete_products = [session.workflow_state["pending_rfq"]]
-                        else:
-                            complete_products = []
-                        
-                        successful_count = 0
-                        rfq_results = []
-                        
-                        for product_info in complete_products:
-                            schema_data = product_info.get("schema_data", {})
-                            if schema_data:
-                                # Use existing schema data
-                                rfq_schema = RFQValidationSchema(**schema_data)
-                            else:
-                                # Create schema from entities
-                                rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_info["entities"], self.openai_service)
-                            gmt_result = await self._submit_rfq_to_backend(rfq_schema, user)
-                            rfq_results.append(gmt_result)
-                            if gmt_result.get("success"):
-                                successful_count += 1
-                        
-                        # Generate completion response with RFQ IDs
-                        rfq_ids = []
-                        for result in rfq_results:
-                            if result.get("success") and result.get("rfq_id"):
-                                rfq_ids.append(result["rfq_id"])
-                        
-                        if rfq_ids:
-                            rfq_ids_text = "\n".join([f"• {rfq_id}" for rfq_id in rfq_ids])
-                            response = f"Thank you! All {successful_count} RFQs have been created successfully.\n\nYour RFQ IDs are:\n{rfq_ids_text}\n\nYou can use these reference numbers to track your requests."
-                        else:
-                            response = f"Thank you! All {successful_count} RFQs have been created successfully."
-                        
-                        await self.whatsapp_service.send_message(user.phone_number, response)
-                        
-                        # Run auto-categorization for each successful RFQ (offline process)
-                        auto_cat = await self._run_auto_categorization_for_rfqs(rfq_results)
-                        await self.whatsapp_service.send_message(user.phone_number, auto_cat)
-
-                        # Check BFS availability after successful RFQ creation
-                        await self._check_bfs_availability(user.phone_number)
-                        
-                        # Mark session as completed
-                        session.outcome = 'completed'
-                        session.completed_at = utc_now().replace(tzinfo=None)
-                        
-                        # Update core tracking fields (user type, categories, RFQ IDs)
-                        if rfq_ids:
-                            session.rfq_ids = rfq_ids
-                            # Set user type as buyer (since they're creating RFQs)
-                            session.user_type = 'buyer'
-                            # Calculate averages based on session data
-                            session = SessionHelpers.calculate_session_averages(session)
-                        
-                        # Generate enhanced session summary BEFORE clearing (non-blocking)
-                        await self._handle_session_completion_enhanced(session)
-                        
-                        # Clear session AFTER summarization data is captured
-                        session.workflow_state = {"extracted_entities": []}
-                        await self._save_session(session, 'rfq_submitted')
-                        
-                        return {"status": "multiple_rfqs_created", "successful_count": successful_count}
-                    else:
-                        # User declined or has conditions - treat as modification request
-                        # Keep pending confirmations and process as modification
-                        logger.info("User declined or has conditions - treating as modification request")
-                        # Don't delete pending_multiple_rfqs - let the modification flow handle it
-                        return await self._handle_purchase_intent(user, session, message)
-                        
-                elif intent == "modification_request" and confidence > 0.7:
-                    # User wants to modify - process the modification
-                    logger.info("User requesting modification during confirmation stage")
-                    # Keep pending confirmations and process the modification
-                    return await self._handle_purchase_intent(user, session, message)
-                    
-                else:
-                    # Unclear response - ask for clarification while keeping context
-                    decline_context = {
-                        "conversation_stage": "confirmation_clarification",
-                        "user_message": message
-                    }
-                    
-                    response = await self.response_helpers.generate_contextual_response(
-                        decline_context,
-                        ["I didn't quite understand. Please say 'yes' to confirm the RFQs or tell me what you'd like to change."],
-                        "clarification_request"
-                    )
-                    
-                    await self.whatsapp_service.send_message(user.phone_number, response)
-                    # Keep pending confirmations for next attempt
-                    await self._save_session(session, 'rfq_creation')
-                    return {"status": "confirmation_clarification_requested"}
-            
-            
-            if has_existing_data or has_incomplete_products:
-                # Already in RFQ workflow, continue collecting
-                logger.info("Continuing existing RFQ workflow")
-                return await self._handle_purchase_intent(user, session, message)
-            
-            # Classify intent for new conversations with full context
+            # Classify intent FIRST - if modification_request is detected, handle immediately regardless of workflow state
             conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
             intent_result = self.intent_service.classify_intent(message, conversation_context)
             logger.info(f"Intent classification result: {intent_result}")
@@ -321,23 +172,63 @@ class ChatService:
             intent = intent_result.get('intent')
             confidence = intent_result.get('confidence', 0)
             
-            # Route based on context-aware intent classification
+            # Handle modification requests immediately if detected with sufficient confidence
+            if intent == "modification_request" and confidence > 0.7:
+                logger.info(f"Modification intent detected with {confidence}% confidence - handling immediately")
+                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result, self._should_use_summary_aware_extraction)
+            
+            # Handle pending attachment decisions
+            if has_pending_attachment_decision:
+                return await self.attachment_decision_handler.handle_attachment_decision(user, session, message, self._should_use_summary_aware_extraction)
+            
+            # Handle pending optional field responses
+            if has_pending_optional:
+                result = await self.confirmation_handler.handle_optional_fields_response(user, session, message)
+                
+                if result.get("status") == "continue_with_purchase_intent":
+                    # User provided optional information, process it and then proceed to confirmation
+                    return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None, self._should_use_summary_aware_extraction)
+                else:
+                    await self.session_manager.save_session(session, 'rfq_creation')
+                    return result
+            
+            # Handle pending confirmations (user responding to "Would you like to proceed?")
+            if has_pending_confirmations:
+                result = await self.confirmation_handler.handle_pending_confirmations(user, session, message, intent_result)
+                
+                # Handle session completion if RFQs were created
+                if result.get("status") == "multiple_rfqs_created":
+                    # Generate enhanced session summary BEFORE clearing (non-blocking)
+                    await self.session_manager.handle_session_completion_enhanced(session)
+                    await self.session_manager.save_session(session, 'rfq_submitted')
+                elif result.get("continue_with_purchase_intent"):
+                    # Continue with purchase intent flow for modifications
+                    return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None, self._should_use_summary_aware_extraction)
+
+                else:
+                    await self.session_manager.save_session(session, 'rfq_creation')
+                
+                return result
+            
+            
+            if has_existing_data or has_incomplete_products:
+                # Already in RFQ workflow, continue collecting
+                logger.info("Continuing existing RFQ workflow")
+                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None, self._should_use_summary_aware_extraction)
+            
+            # Route based on already classified intent (intent was classified earlier in the function)
             if intent == "buy_something" and confidence > 0.7:
-                return await self._handle_purchase_intent(user, session, message, intent_result)
-            elif intent == "modification_request" and confidence > 0.7:
-                # Handle modification requests using existing purchase intent flow with modification context
-                logger.info(f"Handling modification request with context: {intent_result.get('context_analysis', {})}")
-                return await self._handle_purchase_intent(user, session, message, intent_result)
+                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result, self._should_use_summary_aware_extraction)
             elif intent == "confirmation_response" and confidence > 0.7:
                 # Handle confirmation responses - these should already be handled by pending confirmations check above
                 # But if we reach here, treat as continuation of existing workflow
                 logger.info(f"Handling confirmation response with context: {intent_result.get('context_analysis', {})}")
-                return await self._handle_purchase_intent(user, session, message, intent_result)
+                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result, self._should_use_summary_aware_extraction)
             elif intent == "reference_request" and confidence > 0.7:
                 # Handle reference requests by routing to purchase intent flow
                 # The EntityService will detect and handle the reference extraction
                 logger.info(f"Handling reference request with context: {intent_result.get('context_analysis', {})}")
-                return await self._handle_purchase_intent(user, session, message, intent_result)
+                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result, self._should_use_summary_aware_extraction)
             elif intent == "rfq_status_check" and confidence > 0.7:
                 return await self._handle_rfq_status_inquiry(user, message)
             elif intent == "general_inquiry":
@@ -468,6 +359,7 @@ class ChatService:
             )
             return {"status": "error", "response": str(e)}
     
+    
     async def _handle_complete_excel(self, user: User, session: ConversationSession, processing_result: Dict) -> Dict[str, Any]:
         """Handle complete Excel files that can create RFQ immediately."""
         try:
@@ -591,7 +483,7 @@ class ChatService:
             session.workflow_state['stage'] = 'excel_reupload_required'
             session.workflow_state['pending_excel_reupload'] = True
             session.workflow_state['last_excel_issues'] = missing_fields
-            await self._save_session(session, 'rfq_creation')
+            await self.session_manager.save_session(session, 'rfq_creation')
             
             return {"status": "excel_reupload_required", "response": "excel_reupload_instructions_sent"}
             
@@ -599,48 +491,7 @@ class ChatService:
             logger.error(f"Error handling incomplete Excel: {e}")
             raise
     
-    async def _get_or_create_user(self, phone_number: str) -> User:
-        """Get existing user or create new one."""
-        # Mock user for testing without database
-        class MockUser:
-            def __init__(self, phone_number):
-                self.id = 1
-                self.phone_number = phone_number
-                self.name = "Test User"
-                self.is_registered = True
-                self.role = "buyer"
-        
-        return MockUser(phone_number)
     
-    async def _get_conversation_context(self, phone_number: str) -> ConversationSession:
-        """Retrieve or create conversation context for user session."""
-        # Generate session ID using helper method (configurable strategy)
-        session_id = SessionHelpers.generate_session_id(phone_number, "daily")
-    
-        # Try to get existing session
-        session = self.db_manager.get_conversation_session(session_id)
-        
-        if not session:
-            # Create new session
-            session_data = {
-                'session_id': session_id,
-                'external_user_id': phone_number,
-                'workflow_type': None,
-                'outcome': None,
-                'workflow_state': {"extracted_entities": [], "last_activity_at": utc_now().isoformat()},
-                'conversation_history': {"messages": []},
-                'extracted_entities': {},
-                'retention_date': date.today() + timedelta(days=30)
-            }
-            session = self.db_manager.save_conversation_session(session_data)
-            
-            logger.info(f"Created new session: {session_id}")
-            # Show authentication placeholder for new session
-            await self._show_auth_placeholder(phone_number)
-        else:
-            logger.info(f"Found existing session: {session_id}")
-        
-        return session
     
     async def _handle_registration_workflow(self, user: User, message: str) -> Dict[str, Any]:
         """Handle user registration process."""
@@ -672,418 +523,7 @@ class ChatService:
         except Exception as e:
             return await self._handle_error_response(e, user.phone_number, "registration_workflow", "Please tell me your name to get started")
     
-    async def _handle_purchase_intent(self, user: User, session: ConversationSession, message: str, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Handle purchase intent with data model driven orchestration."""
-        try:
-            # 1. Extract entities using EntityService (focused service)
-            # Include both existing entities and incomplete products in context
-            existing_entities = session.workflow_state.get("extracted_entities", [])
-            incomplete_products = session.workflow_state.get("incomplete_products", [])
-            
-            # Also check for pending confirmations that might need modification
-            pending_multiple = session.workflow_state.get("pending_multiple_rfqs")
-            pending_single = session.workflow_state.get("pending_rfq")
-            
-            if pending_multiple:
-                pending_confirmations = pending_multiple
-            elif pending_single:
-                pending_confirmations = [pending_single]
-            else:
-                pending_confirmations = []
-            
-            print(f"ChatService: _handle_purchase_intent - pending_confirmations: {len(pending_confirmations)} items")
-            if pending_confirmations:
-                print(f"ChatService: Found pending confirmations, this might be a modification request")
-            
-            # If we have incomplete products, use them as the base entities
-            if incomplete_products:
-                context_entities = [prod["entities"] for prod in incomplete_products]
-                print(f"ChatService: Using incomplete products as context: {len(context_entities)} products")
-            else:
-                context_entities = existing_entities
-                
-            # Load user's recent summaries for enhanced context
-            chat_summaries = await self.chat_summary_service.load_user_context(user.phone_number)
-            print(f"ChatService: Loaded {len(chat_summaries)} chat summaries for context")
-            
-            # Build comprehensive context for EntityService including pending confirmations, intent result, and summaries
-            entity_context = {
-                "extracted_entities": context_entities,
-                "workflow_state": session.workflow_state,
-                "session_metadata": {
-                    "session_id": session.session_id,
-                    "workflow_type": session.workflow_type
-                },
-                "intent_result": intent_result,  # Pass intent result to avoid duplicate OpenAI calls
-                "chat_summaries": chat_summaries,  # Add summaries for smart entity extraction
-            }
-            print(f"ChatService: Passing context to EntityService - has pending confirmations: {bool(session.workflow_state.get('pending_multiple_rfqs'))}")
-            print(f"ChatService: Debug session.workflow_state keys: {list(session.workflow_state.keys()) if session.workflow_state else 'None'}")
-            print(f"ChatService: Debug pending_multiple_rfqs: {session.workflow_state.get('pending_multiple_rfqs') if session.workflow_state else 'No workflow_state'}")
-            
-            # Use summary-aware entity extraction if we have summaries, otherwise use standard extraction
-            if chat_summaries and self._should_use_summary_aware_extraction(message):
-                print(f"ChatService: Using summary-aware entity extraction")
-                entity_result = self.entity_service.extract_entities_with_summary_context(message, context=entity_context)
-            else:
-                print(f"ChatService: Using standard entity extraction")
-                entity_result = self.entity_service.extract_entities(message, context=entity_context, workflow_type="buy_something")
-            logger.info(f"EntityService result: {entity_result}")
-            
-            # Debug: Check which path we're taking
-            print(f"ChatService debug: entity_result keys = {entity_result.keys()}")
-            print(f"ChatService debug: entity_result = {entity_result}")
-            
-            if "products" in entity_result and entity_result["products"]:
-                print(f"ChatService: Taking PRODUCTS ARRAY path with {len(entity_result['products'])} products")
-                logger.info(f"Taking PRODUCTS ARRAY path with {len(entity_result['products'])} products")
-                # Products array detected - process all products and create RFQs
-                products = entity_result["products"]
-                return await self._handle_products_array(user, session, message, products, chat_summaries)
-            elif "entities" in entity_result:
-                print(f"ChatService: Taking BACKWARD COMPATIBILITY path with entities: {entity_result['entities']}")
-                logger.info(f"Taking BACKWARD COMPATIBILITY path with entities: {entity_result['entities']}")
-            else:
-                print(f"ChatService: Taking NO ENTITIES path")
-                logger.info(f"Taking NO ENTITIES path")
-            
-            # 3. Handle single product (backward compatibility)
-            current_entities = session.workflow_state.get("extracted_entities", [])
-            new_entities = entity_result.get("entities", {})
-            
-            # Convert single entity to array format
-            if new_entities and not isinstance(current_entities, list):
-                current_entities = [current_entities] if current_entities else []
-            
-            # Add new entities as a product
-            if new_entities:
-                current_entities.append(new_entities)
-                session.workflow_state["extracted_entities"] = current_entities
-                
-                # Track categories from extracted entities in product_items
-                category = new_entities.get('category') or new_entities.get('description')
-                if category:
-                    if not session.product_items:
-                        session.product_items = []
-                    # Update or add category info to product_items
-                    product_info = {
-                        'category': category,
-                        'description': new_entities.get('description'),
-                        'added_at': utc_now().isoformat()
-                    }
-                    session.product_items.append(product_info)
-                
-                # Process this as a single product array
-                return await self._handle_products_array(user, session, message, current_entities, chat_summaries)
-            
-            # If no new entities, just continue with existing flow
-            return {
-                "status": "no_new_entities",
-                "message": "Could you provide more details about what you need?"
-            }
-                
-        except Exception as e:
-            return await self._handle_error_response(e, user.phone_number, "purchase_intent", "Could you tell me more about what you need?")
     
-    async def _handle_products_array(self, user: User, session: ConversationSession, message: str, products: list, chat_summaries: list = None) -> Dict[str, Any]:
-        """Handle products array (single or multiple products)."""
-        try:
-            print(f"_handle_products_array: Processing {len(products)} products")
-            logger.info(f"Handling {len(products)} products from message")
-            
-            # Track categories from all products in product_items
-            for product_entities in products:
-                if isinstance(product_entities, dict):
-                    category = product_entities.get('category') or product_entities.get('description')
-                    if category:
-                        if not session.product_items:
-                            session.product_items = []
-                        # Add product info with category to product_items
-                        product_info = {
-                            'category': category,
-                            'description': product_entities.get('description'),
-                            'added_at': utc_now().isoformat()
-                        }
-                        session.product_items.append(product_info)
-            
-            # Check completeness for each product and identify which ones need more info
-            
-            incomplete_products = []
-            complete_products = []
-            
-            for i, product_entities in enumerate(products):
-                try:
-                    # Transform entities to schema format
-                    rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_entities, self.openai_service)
-                    
-                    # Check if this product has all mandatory fields
-                    missing_mandatory = rfq_schema.get_missing_mandatory_fields()
-                    
-                    # Debug logging
-                    logger.info(f"Product {i+1} entities: {product_entities}")
-                    logger.info(f"Product {i+1} missing mandatory: {missing_mandatory}")
-                    
-                    if len(missing_mandatory) == 0:
-                        complete_products.append({
-                            "index": i + 1,
-                            "entities": product_entities
-                        })
-                    else:
-                        incomplete_products.append({
-                            "index": i + 1,
-                            "entities": product_entities,
-                            "missing_fields": missing_mandatory
-                        })
-                        
-                except Exception as e:
-                    logger.warning(f"Error validating product {i+1}: {e}")
-                    incomplete_products.append({
-                        "index": i + 1,
-                        "entities": product_entities,
-                        "missing_fields": ["project_desc", "delivery_date", "division"]
-                    })
-            
-            # If any product is incomplete, collect all questions from data model
-            if incomplete_products:
-                print(f"_handle_products_array: Found {len(incomplete_products)} incomplete products")
-                all_questions = []
-                all_missing_fields = []
-                
-                # Group missing fields across all products to avoid repetition
-                common_missing_fields = set()
-                for prod in incomplete_products:
-                    common_missing_fields.update(prod["missing_fields"])
-                
-                # Check if all products have the same missing fields
-                all_same_missing = True
-                first_missing = set(incomplete_products[0]["missing_fields"])
-                print(f"  First product missing fields: {first_missing}")
-                
-                for prod in incomplete_products[1:]:
-                    prod_missing = set(prod["missing_fields"])
-                    print(f"  Product {prod['index']} missing fields: {prod_missing}")
-                    if prod_missing != first_missing:
-                        all_same_missing = False
-                        break
-                
-                print(f"  All products have same missing fields: {all_same_missing}")
-                
-                if all_same_missing and len(incomplete_products) > 1:
-                    # All products missing the same fields - ask once for all
-                    rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(incomplete_products[0]["entities"], self.openai_service)
-                    product_questions = rfq_schema.get_next_questions()
-                    
-                    if product_questions:
-                        product_names = [prod["entities"].get("description", f"Product {prod['index']}") for prod in incomplete_products]
-                        all_questions.append(f"For all products ({', '.join(product_names)}):")
-                        all_questions.extend(product_questions)
-                        all_missing_fields.extend(incomplete_products[0]["missing_fields"])
-                else:
-                    # Products have different missing fields - ask individually
-                    for prod in incomplete_products:
-                        print(f"  Processing incomplete product {prod['index']}: {prod['entities'].get('description', 'Unknown')}")
-                        print(f"    Missing fields: {prod['missing_fields']}")
-                        
-                        rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(prod["entities"], self.openai_service)
-                        
-                        # Get questions from data model
-                        product_questions = rfq_schema.get_next_questions()
-                        product_desc = prod["entities"].get("description", f"Product {prod['index']}")
-                        
-                        print(f"    Data model questions: {product_questions}")
-                        
-                        # Format questions for this product
-                        if product_questions:
-                            if len(incomplete_products) > 1:
-                                all_questions.append(f"For {product_desc}:")
-                            all_questions.extend(product_questions)
-                            all_missing_fields.extend(prod["missing_fields"])
-                
-                print(f"  All questions to ask: {all_questions}")
-                
-                # Calculate overall completeness
-                total_mandatory_fields = sum(len(prod["missing_fields"]) for prod in incomplete_products)
-                filled_fields = len(products) * 5 - total_mandatory_fields  # Rough estimate
-                completeness = max(10, (filled_fields / (len(products) * 5)) * 100)
-                
-                # Store incomplete products for follow-up (serialize datetime objects)
-                session.workflow_state["incomplete_products"] = ChatServiceHelpers.serialize_products_for_session(incomplete_products)
-                session.workflow_state["complete_products"] = ChatServiceHelpers.serialize_products_for_session(complete_products)
-                await self._save_session(session, 'rfq_creation')
-                
-                # Generate and send clarification response directly with our specific questions
-                clarification_message = "\n".join(all_questions)
-                print(f"  Final clarification message: {clarification_message}")
-                
-                # Build context and send response directly
-                context = ChatServiceHelpers.build_context("clarification", message, {}, completeness,
-                    missing_fields=all_missing_fields,
-                    total_products=len(products),
-                    incomplete_products=len(incomplete_products)
-                )
-                
-                response = await self.response_helpers.generate_clarification_response([clarification_message], completeness, context, chat_summaries)
-                await self.whatsapp_service.send_message(user.phone_number, response)
-                
-                return {
-                    "status": "products_incomplete",
-                    "total_products": len(products),
-                    "incomplete_products": len(incomplete_products)
-                }
-            else:
-                print(f"_handle_products_array: All {len(complete_products)} products are complete!")
-            
-            # All products are complete - check for optional fields or send confirmation
-            if len(complete_products) == 1:
-                # Single product - check for optional fields first
-                product_info = complete_products[0]
-                
-                # Recreate schema from entities
-                rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_info["entities"])
-                
-                # Check if user wants to provide optional information
-                optional_questions = rfq_schema.get_optional_questions()
-                
-                # Check if this is a response to optional questions (look for specific workflow state)
-                if optional_questions and not session.workflow_state.get("optional_fields_asked"):
-                    # Ask about optional fields first
-                    optional_intro = "Your mandatory information is complete! Would you like to provide any additional details?\n\n"
-                    optional_text = "\n".join(f"• {q}" for q in optional_questions)
-                    optional_message = f"{optional_intro}{optional_text}\n\nYou can skip this by saying 'no' or 'proceed'."
-                    
-                    await self.whatsapp_service.send_message(user.phone_number, optional_message)
-                    
-                    # Mark that we've asked about optional fields
-                    session.workflow_state["optional_fields_asked"] = True
-                    session.workflow_state["pending_optional_rfq"] = ChatServiceHelpers.serialize_products_for_session({
-                        "index": product_info["index"],
-                        "entities": product_info["entities"],
-                        "schema_data": rfq_schema.model_dump() if hasattr(rfq_schema, 'model_dump') else {}
-                    })
-                    
-                    await self._save_session(session, 'rfq_creation')
-                    
-                    return {
-                        "status": "optional_fields_inquiry",
-                        "total_products": 1
-                    }
-                
-                # Generate confirmation (either optional fields were completed or user declined)
-                summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
-                    "user_message": message,
-                    "extracted_entities": product_info["entities"]
-                }, chat_summaries)
-                await self.whatsapp_service.send_message(user.phone_number, summary_response)
-                
-                # Store for confirmation (serialize schema to dict)
-                product_info_serializable = {
-                    "index": product_info["index"],
-                    "entities": product_info["entities"],
-                    "schema_data": rfq_schema.model_dump() if hasattr(rfq_schema, 'model_dump') else {}
-                }
-                session.workflow_state["pending_rfq"] = ChatServiceHelpers.serialize_products_for_session(product_info_serializable)
-                
-                # Clear incomplete products since we're now in confirmation phase
-                if "incomplete_products" in session.workflow_state:
-                    del session.workflow_state["incomplete_products"]
-                if "complete_products" in session.workflow_state:
-                    del session.workflow_state["complete_products"]
-                if "optional_fields_asked" in session.workflow_state:
-                    del session.workflow_state["optional_fields_asked"]
-                    
-                await self._save_session(session, 'rfq_creation')
-                
-                return {
-                    "status": "single_product_confirmation",
-                    "total_products": 1
-                }
-            else:
-                # Multiple products - check for optional fields first
-                all_schemas = []
-                all_entities = [prod["entities"] for prod in complete_products]
-                
-                for prod in complete_products:
-                    rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(prod["entities"])
-                    all_schemas.append(rfq_schema)
-                
-                # Check if we should ask about optional fields
-                all_optional_questions = []
-                for i, schema in enumerate(all_schemas):
-                    optional_questions = schema.get_optional_questions()
-                    if optional_questions:
-                        product_name = f"Product {i+1}"
-                        all_optional_questions.extend([f"{product_name}: {q}" for q in optional_questions])
-                
-                # Check if this is a response to optional questions
-                if all_optional_questions and not session.workflow_state.get("optional_fields_asked"):
-                    # Ask about optional fields for all products
-                    optional_intro = "Your mandatory information is complete for all products! Would you like to provide any additional details?\n\n"
-                    optional_text = "\n".join(f"• {q}" for q in all_optional_questions)
-                    optional_message = f"{optional_intro}{optional_text}\n\nYou can skip this by saying 'no' or 'proceed'."
-                    
-                    await self.whatsapp_service.send_message(user.phone_number, optional_message)
-                    
-                    # Mark that we've asked about optional fields
-                    session.workflow_state["optional_fields_asked"] = True
-                    session.workflow_state["pending_optional_multiple_rfqs"] = ChatServiceHelpers.serialize_products_for_session([
-                        {
-                            "index": prod["index"],
-                            "entities": prod["entities"],
-                            "schema_data": all_schemas[i].model_dump() if hasattr(all_schemas[i], 'model_dump') else {}
-                        }
-                        for i, prod in enumerate(complete_products)
-                    ])
-                    
-                    await self._save_session(session, 'rfq_creation')
-                    
-                    return {
-                        "status": "optional_fields_inquiry",
-                        "total_products": len(complete_products)
-                    }
-                
-                # Generate confirmation for all products
-                summary_response = await self.response_helpers.generate_multiple_rfq_summary_and_confirmation(
-                    all_schemas, 
-                    {
-                        "user_message": message,
-                        "extracted_entities": all_entities,
-                        "total_products": len(complete_products)
-                    },
-                    chat_summaries
-                )
-                await self.whatsapp_service.send_message(user.phone_number, summary_response)
-                
-                # Store for confirmation (serialize schemas to dicts)
-                complete_products_serializable = []
-                for i, product_info in enumerate(complete_products):
-                    # Get the corresponding schema we created earlier
-                    corresponding_schema = all_schemas[i]
-                    serializable_product = {
-                        "index": product_info["index"],
-                        "entities": product_info["entities"],
-                        "schema_data": corresponding_schema.dict() if hasattr(corresponding_schema, 'dict') else {}
-                    }
-                    complete_products_serializable.append(serializable_product)
-                
-                session.workflow_state["pending_multiple_rfqs"] = ChatServiceHelpers.serialize_products_for_session(complete_products_serializable)
-                
-                # Clear incomplete products since we're now in confirmation phase
-                if "incomplete_products" in session.workflow_state:
-                    del session.workflow_state["incomplete_products"]
-                if "complete_products" in session.workflow_state:
-                    del session.workflow_state["complete_products"]
-                if "optional_fields_asked" in session.workflow_state:
-                    del session.workflow_state["optional_fields_asked"]
-                    
-                await self._save_session(session, 'rfq_creation')
-                
-                return {
-                    "status": "multiple_products_confirmation",
-                    "total_products": len(products)
-                }
-                    
-        except Exception as e:
-            return await self._handle_error_response(e, user.phone_number, "products_handling", "Could you tell me more about what you need?")
     
     
     async def _handle_general_inquiry(self, user: User, message: str) -> Dict[str, Any]:
@@ -1311,61 +751,6 @@ class ChatService:
     
     
     
-    async def _submit_rfq_to_backend(self, rfq_schema, user) -> dict:  # noqa: ARG002
-        """Submit RFQ directly to backend via GMT API service."""
-        try:
-            
-            gmt_service = GMTAPIService()
-            
-            # Convert schema to dict using the newer method
-            schema_dict = rfq_schema.model_dump() if hasattr(rfq_schema, 'model_dump') else rfq_schema.dict()
-            
-            # Transform to format expected by GMT API service
-            # GMT service expects these fields based on its _transform_rfq_to_gmt_format method
-            rfq_data = {
-                "product_name": schema_dict.get("project_desc", "Unknown Product"),
-                "quantity": schema_dict.get("items", [{}])[0].get("quantity", 1) if schema_dict.get("items") else 1,
-                "unit_of_measure": schema_dict.get("items", [{}])[0].get("unit_of_measures", "pcs") if schema_dict.get("items") else "pcs",
-                "division": schema_dict.get("division", "Admin & IT"),
-                "specifications": schema_dict.get("items", [{}])[0].get("description", "") if schema_dict.get("items") else "",
-                "preferred_brand": schema_dict.get("preferred_brand", ""),
-                "delivery_state": schema_dict.get("delivery_locations", [{}])[0].get("state", "Karnataka") if schema_dict.get("delivery_locations") else "Karnataka",
-                "delivery_city": schema_dict.get("delivery_locations", [{}])[0].get("city", "Bangalore") if schema_dict.get("delivery_locations") else "Bangalore",
-                "delivery_pincode": schema_dict.get("delivery_locations", [{}])[0].get("pincode", "560001") if schema_dict.get("delivery_locations") else "560001",
-                "deadline": schema_dict.get("delivery_date"),
-                "remarks": schema_dict.get("remarks", "Created via AI Procurement WhatsApp Bot")
-            }
-            
-            # Submit to backend via GMT API
-            result = await gmt_service.create_rfq(rfq_data)
-            
-            # Log the GMT API response for debugging
-            logger.info(f"GMT API Response: {result}")
-            print(f"GMT API Response: {result}")
-            
-            # Include original RFQ data for auto-categorization
-            if result.get("success"):
-                result["rfq_data"] = {
-                    "items": [
-                        {
-                            "description": rfq_data.get("specifications", ""),
-                            "product_name": rfq_data.get("product_name", ""),
-                            "quantity": rfq_data.get("quantity", 1),
-                            "unit_of_measure": rfq_data.get("unit_of_measure", "pcs"),
-                            "division": rfq_data.get("division", ""),
-                            "preferred_brand": rfq_data.get("preferred_brand", "")
-                        }
-                    ]
-                }
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error submitting RFQ to backend: {e}")
-            return {
-                "success": False,
-                "error": f"Failed to submit RFQ: {str(e)}"
-            }
     
     def _should_use_summary_aware_extraction(self, message: str) -> bool:
         """
@@ -1403,91 +788,3 @@ class ChatService:
             print(f"ChatService: Error in reference analysis: {e}")
             # Fallback: if analysis fails, don't use summary-aware extraction
             return False
-
-    async def _run_auto_categorization_for_rfqs(self, rfq_results: List[Dict[str, Any]]) -> str:
-        """
-        Run auto-categorization for successfully submitted RFQs.
-        
-        This is an offline process that runs after RFQ submission to categorize
-        items using vector search and AI, without impacting user experience.
-        
-        Args:
-            rfq_results: List of RFQ submission results with success status and RFQ IDs
-            
-        Returns:
-            User-friendly message about categorization results
-        """
-        try:
-            logger.info(f"Starting auto-categorization for {len(rfq_results)} RFQ results")
-            
-            categorization_summary = []
-            total_items_processed = 0
-            successful_categorizations = 0
-            
-            for rfq_result in rfq_results:
-                if not rfq_result.get("success"):
-                    continue
-                    
-                rfq_id = rfq_result.get("rfq_id")
-                if not rfq_id:
-                    logger.warning("RFQ result missing rfq_id, skipping auto-categorization")
-                    continue
-                
-                # Get RFQ data to extract item descriptions
-                rfq_data = rfq_result.get("rfq_data", {})
-                items = rfq_data.get("items", [])
-                
-                if not items:
-                    logger.warning(f"No items found in RFQ {rfq_id}, skipping auto-categorization")
-                    continue
-                
-                # Process each item in the RFQ
-                for item in items:
-                    item_description = item.get("description", "")
-                    if not item_description:
-                        logger.warning(f"Empty item description in RFQ {rfq_id}, skipping")
-                        continue
-                    
-                    total_items_processed += 1
-                    logger.info(f"Auto-categorizing item: '{item_description}' for RFQ {rfq_id}")
-                    
-                    # Run categorization with new simplified interface
-                    categorization_result = self.auto_categorization_service.categorize_item(
-                        item_description=item_description,
-                        user_id="system_auto_categorization",
-                        session_id=f"rfq_{rfq_id}",
-                        rfq_id=rfq_id
-                    )
-                    
-                    if categorization_result.get("success"):
-                        category = categorization_result.get("category")
-                        confidence = categorization_result.get("confidence_score", 0)
-                        successful_categorizations += 1
-                        
-                        # Add to summary for user
-                        categorization_summary.append(f"• {item_description[:50]}{'...' if len(item_description) > 50 else ''} → {category}")
-                        
-                        logger.info(f"Successfully categorized '{item_description}' as {category} (confidence: {confidence:.2f})")
-                    else:
-                        error_msg = categorization_result.get("error", "Unknown error")
-                        logger.error(f"Failed to categorize '{item_description}': {error_msg}")
-                
-                logger.info(f"Completed auto-categorization for RFQ {rfq_id}")
-            
-            logger.info("Auto-categorization process completed for all RFQs")
-            
-            # Generate user-friendly summary message
-            if total_items_processed == 0:
-                return "Auto-categorization completed, but no items were found to categorize."
-            elif successful_categorizations == 0:
-                return f"Auto-categorization completed for {total_items_processed} items, but categorization failed. Manual review may be needed."
-            elif successful_categorizations == total_items_processed:
-                summary_text = "\n".join(categorization_summary)
-                return f"Auto-categorization completed successfully!\n\nCategorized items:\n{summary_text}"
-            else:
-                summary_text = "\n".join(categorization_summary)
-                return f"Auto-categorization completed: {successful_categorizations}/{total_items_processed} items categorized successfully.\n\nSuccessfully categorized:\n{summary_text}"
-            
-        except Exception as e:
-            logger.error(f"Error in auto-categorization process: {str(e)}")
-            return "Auto-categorization encountered an error. Your RFQs have been created successfully, but manual categorization may be needed."

@@ -99,7 +99,7 @@ class IntentService:
         # Context-aware fallback classification
         if context:
             # Check for modification requests using context
-            has_pending_confirmations = context.get('workflow_state', {}).get('pending_multiple_rfqs') or context.get('workflow_state', {}).get('pending_rfq')
+            has_pending_confirmations = context.get('workflow_state', {}).get('pending_combined_rfq') or context.get('workflow_state', {}).get('pending_rfq')
             existing_entities = context.get('extracted_entities', {}) or context.get('workflow_state', {}).get('extracted_entities', [])
             
             # Modification request detection

@@ -203,12 +203,43 @@ class GMTAPIService:
         else:
             delivery_date = "2025-12-31T18:30:00.000Z"
         
+        # Handle attachments if present
+        rfq_documents = []
+        attachments = rfq_data.get("attachments", [])
+        
+        if attachments:
+            logger.info(f"Processing {len(attachments)} attachment(s) for GMT API submission")
+        
+        for i, attachment in enumerate(attachments):
+            if attachment.get("file_content") and attachment.get("file_name"):
+                filename = attachment["file_name"]
+                file_type = attachment.get("file_type", "image/jpeg")
+                content_size = len(attachment["file_content"])
+                
+                rfq_documents.append({
+                    "fileName": filename,
+                    "fileType": file_type,
+                    "fileContent": attachment["file_content"],
+                    "documentType": "specification",
+                    "uploadedAt": attachment.get("uploaded_at", datetime.now().strftime('%Y-%m-%dT%H:%M:%S.000Z'))
+                })
+                
+                logger.info(f"Added attachment {i+1} to GMT RFQ: {filename} ({file_type}, {content_size} chars base64)")
+            else:
+                logger.warning(f"Skipping attachment {i+1} - missing file_content or file_name")
+        
+        if attachments and not rfq_documents:
+            logger.error("All attachments were skipped due to missing data")
+        elif rfq_documents:
+            logger.info(f"Successfully prepared {len(rfq_documents)} attachments for GMT API")
+
         # Build GMT API payload
         gmt_payload = {
             "createdBy": "AI_Procurement_Agent",
             "projectDesc": rfq_data.get("product_name", f"RFQ_{datetime.now().strftime('%Y%m%d_%H%M%S')}"),
             "deliveryDate": delivery_date,
             "noPrFlag": True,
+            "procurementFlag": True,  # Added procurement flag as requested
             "org": {
                 "id": default_org_id
             },
@@ -216,12 +247,24 @@ class GMTAPIService:
             "vendors": [],  # Will be populated later
             "clientdeliverylocationrfq": [delivery_location],
             "remarks": rfq_data.get("remarks", "Created via AI Procurement WhatsApp Bot"),
-            "rfqDocument": [],
+            "rfqDocument": rfq_documents,
             "user": default_user_id
             # Note: division field removed as per new API - categories auto-populated
         }
         
-        logger.info(f"Transformed RFQ data for GMT API: {json.dumps(gmt_payload, indent=2)}")
+        # Log final payload summary (without sensitive content)
+        payload_summary = {
+            "projectDesc": gmt_payload.get("projectDesc"),
+            "rfqItem_count": len(gmt_payload.get("rfqItem", [])),
+            "rfqDocument_count": len(gmt_payload.get("rfqDocument", [])),
+            "deliveryLocation_count": len(gmt_payload.get("clientdeliverylocationrfq", []))
+        }
+        logger.info(f"GMT API payload summary: {json.dumps(payload_summary, indent=2)}")
+        
+        if rfq_documents:
+            doc_summary = [{"fileName": doc["fileName"], "fileType": doc["fileType"]} for doc in rfq_documents]
+            logger.info(f"Attachments in payload: {json.dumps(doc_summary, indent=2)}")
+        
         return gmt_payload
     
     async def get_client_rfqs(self, client_id: str = "4004") -> Dict[str, Any]:
