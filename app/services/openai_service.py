@@ -117,7 +117,7 @@ class OpenAIService:
                     workflow_state = context['workflow_state']
                     context_info += f"\n\nCURRENT SESSION STATE:"
                     context_info += f"\n- Workflow Type: {context.get('workflow_type', 'unknown')}"
-                    context_info += f"\n- Has Pending Confirmations: {bool(workflow_state.get('pending_multiple_rfqs') or workflow_state.get('pending_rfq'))}"
+                    context_info += f"\n- Has Pending Confirmations: {bool(workflow_state.get('pending_combined_rfq') or workflow_state.get('pending_rfq'))}"
                     
                     # Add extracted entities information
                     if workflow_state.get('extracted_entities'):
@@ -229,23 +229,38 @@ class OpenAIService:
             workflow_mapping = {
                 "buy_something": "rfq_creation",
                 "rfq_creation": "rfq_creation", 
+                "modification_request": "modification",  # Use dedicated modification extraction tool
                 "product_search": "product_search",
                 "rfq_status_check": "rfq_status"
             }
             
             mapped_workflow = workflow_mapping.get(workflow_type, workflow_type)
             
-            # Load appropriate entity extraction tool
-            tool_file = f"entity_extraction_{mapped_workflow}.json"
+            # Load appropriate tool (entity extraction or modification extraction)
+            if mapped_workflow == "modification":
+                tool_file = "modification_extraction.json"
+                tool_function_name = "extract_modification_values"
+            else:
+                tool_file = f"entity_extraction_{mapped_workflow}.json"
+                tool_function_name = "extract_entities"
+            
             with open(self.tools_dir / tool_file, 'r') as f:
                 entity_tool = json.load(f)
+            
+            # Load appropriate prompt and set tool choice
+            if mapped_workflow == "modification":
+                prompt_category = "modification_extraction"
+                prompt_name = "_get_modification_system_prompt"
+            else:
+                prompt_category = "entity_extraction"
+                prompt_name = f"_get_entity_system_prompt_{mapped_workflow}"
             
             response = self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": message}],
-                instructions=self._load_prompt("entity_extraction", f"_get_entity_system_prompt_{mapped_workflow}"),
+                instructions=self._load_prompt(prompt_category, prompt_name),
                 tools=[entity_tool],
-                tool_choice={"type": "function", "name": "extract_entities"}
+                tool_choice={"type": "function", "name": tool_function_name}
             )
             
             processing_time = time.time() - start_time
@@ -257,8 +272,21 @@ class OpenAIService:
                     args = json.loads(function_call.arguments)
                     print(f"OpenAI raw function call args: {args}")
                     
-                    # Handle both old single entity format and new multi-product format
-                    if "products" in args:
+                    # Handle different response formats based on tool used
+                    if "modifications" in args:
+                        # Modification extraction format
+                        modifications = args.get("modifications", [])
+                        has_new_values = args.get("has_new_values", False)
+                        print(f"OpenAI: Using modification format with {len(modifications)} modifications, has_new_values: {has_new_values}")
+                        result = {
+                            "modifications": modifications,
+                            "has_new_values": has_new_values,
+                            "modification_intent": args.get("modification_intent"),
+                            "confidence": args.get("confidence", 0),
+                            "success": True,
+                            "is_modification_extraction": True
+                        }
+                    elif "products" in args:
                         # New multi-product format
                         products = args.get("products", [])
                         print(f"OpenAI: Using NEW multi-product format with {len(products)} products")
@@ -289,39 +317,54 @@ class OpenAIService:
                         }
                     
                     # Log successful entity extraction
-                    if "products" in result:
-                        # Log for multi-product format
-                        self.interaction_logger.log_entity_extraction(
-                            user_input=message,
-                            entities={"products": result["products"]},
-                            completeness=100,  # Will be calculated per product later
-                            workflow_type=mapped_workflow,
-                            model_used=self.default_model,
-                            processing_time=processing_time,
-                            missing_fields=[]
-                        )
-                    elif "rfq_id" in result:
-                        # Log for RFQ status format
-                        self.interaction_logger.log_entity_extraction(
-                            user_input=message,
-                            entities={"rfq_id": result["rfq_id"]},
-                            completeness=100 if result["rfq_id"] else 0,
-                            workflow_type=mapped_workflow,
-                            model_used=self.default_model,
-                            processing_time=processing_time,
-                            missing_fields=[]
-                        )
-                    else:
-                        # Log for single entity format
-                        self.interaction_logger.log_entity_extraction(
-                            user_input=message,
-                            entities=result["entities"],
-                            completeness=result["completeness"],
-                            workflow_type=mapped_workflow,
-                            model_used=self.default_model,
-                            processing_time=processing_time,
-                            missing_fields=result["missing_fields"]
-                        )
+                    try:
+                        if "products" in result:
+                            # Log for multi-product format
+                            self.interaction_logger.log_entity_extraction(
+                                user_input=message,
+                                entities={"products": result["products"]},
+                                completeness=100,  # Will be calculated per product later
+                                workflow_type=mapped_workflow,
+                                model_used=self.default_model,
+                                processing_time=processing_time,
+                                missing_fields=[]
+                            )
+                        elif "rfq_id" in result:
+                            # Log for RFQ status format
+                            self.interaction_logger.log_entity_extraction(
+                                user_input=message,
+                                entities={"rfq_id": result["rfq_id"]},
+                                completeness=100 if result["rfq_id"] else 0,
+                                workflow_type=mapped_workflow,
+                                model_used=self.default_model,
+                                processing_time=processing_time,
+                                missing_fields=[]
+                            )
+                        elif "is_modification_extraction" in result:
+                            # Log for modification extraction format
+                            self.interaction_logger.log_entity_extraction(
+                                user_input=message,
+                                entities={"modifications": result["modifications"], "modification_intent": result["modification_intent"]},
+                                completeness=100 if result["has_new_values"] else 0,
+                                workflow_type=mapped_workflow,
+                                model_used=self.default_model,
+                                processing_time=processing_time,
+                                missing_fields=[]
+                            )
+                        else:
+                            # Log for single entity format
+                            self.interaction_logger.log_entity_extraction(
+                                user_input=message,
+                                entities=result["entities"],
+                                completeness=result["completeness"],
+                                workflow_type=mapped_workflow,
+                                model_used=self.default_model,
+                                processing_time=processing_time,
+                                missing_fields=result["missing_fields"]
+                            )
+                    except Exception as log_error:
+                        print(f"OpenAI: Logging error (non-critical): {log_error}")
+                        # Continue with the main result even if logging fails
                     
                     return result
             
@@ -990,7 +1033,7 @@ class OpenAIService:
                         generated_response += args["progress_acknowledgment"]
                     if args.get("questions"):
                         questions_text = "\n".join(f"• {q}" for q in args["questions"])
-                        generated_response += f"\n\nI need a bit more information:\n{questions_text}"
+                        generated_response += f"\n\nI need a few more details:\n\n{questions_text}"
                     if args.get("reason"):
                         generated_response += f"\n\n{args['reason']}"
                     generated_response = generated_response.strip()
@@ -1008,13 +1051,13 @@ class OpenAIService:
             
             # Fallback response inline
             questions_text = "\n".join(f"• {q}" for q in questions)
-            return f"I need a bit more information:\n\n{questions_text}"
+            return f"I need a few more details:\n\n{questions_text}"
             
         except Exception as e:
             logger.error(f"Clarification response generation failed: {str(e)}")
             # Fallback response inline
             questions_text = "\n".join(f"• {q}" for q in questions)
-            return f"I need a bit more information:\n\n{questions_text}"
+            return f"I need a few more details:\n\n{questions_text}"
     
     @log_service_method("openai_service")
     def detect_excel_header_row(self, sample_rows: List[List]) -> Dict[str, Any]:
@@ -1803,4 +1846,199 @@ Determine the best category for the input item based on the similar items and th
                 "error": error_msg,
                 "processing_time_ms": int(processing_time * 1000)
             }
+
+
+    @log_service_method("openai_service")
+    def generate_rfq_confirmation(self, rfq_data: dict, context: dict) -> str:
+        """
+        Generate well-structured RFQ confirmation message with proper formatting.
+        
+        Creates a clear confirmation with summary, outstanding questions, and
+        confirmation request using structured formatting.
+        
+        Args:
+            rfq_data: RFQ data to summarize
+            context: Conversation context
+            
+        Returns:
+            Generated RFQ confirmation message string
+        """
+        start_time = time.time()
+        
+        try:
+            # Load RFQ confirmation tool
+            with open(self.tools_dir / "rfq_confirmation_generation.json", "r") as f:
+                confirmation_tool = json.load(f)
+            
+            # Build context for OpenAI
+            context_text = "Generate RFQ confirmation for the following data:\n\n"
+            # Clean RFQ data for JSON serialization
+            clean_rfq_data = self._clean_for_json_serialization(rfq_data)
+            context_text += f"RFQ Data: {json.dumps(clean_rfq_data, indent=2)}\n"
+            
+            if context.get("user_message"):
+                context_text += f"User Message: {context['user_message']}\n"
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": context_text}],
+                instructions=self._load_prompt("response_generation", "_get_rfq_confirmation_system_prompt"),
+                tools=[confirmation_tool],
+                tool_choice={"type": "function", "name": "generate_rfq_confirmation"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    
+                    # Format the response with proper sections
+                    formatted_response = ""
+                    
+                    # Summary section
+                    if args.get("summary"):
+                        formatted_response += "Here's a summary of your RFQ:\n\n"
+                        formatted_response += args["summary"]
+                        formatted_response += "\n\n"
+                    
+                    
+                    # Confirmation request section
+                    if args.get("confirmation_request"):
+                        formatted_response += args["confirmation_request"]
+                    
+                    return formatted_response.strip()
+            
+            # Fallback response
+            return "Here's a summary of your RFQ. Would you like to proceed with creating it?"
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"RFQ confirmation generation failed: {error_msg}")
+            return "Here's a summary of your RFQ. Would you like to proceed with creating it?"
+    
+    def _clean_for_json_serialization(self, obj):
+        """Recursively clean object for JSON serialization."""
+        from datetime import datetime, date
+        
+        if obj is None:
+            return None
+        elif hasattr(obj, 'value'):  # Enum object
+            return obj.value
+        elif isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        elif isinstance(obj, dict):
+            return {key: self._clean_for_json_serialization(value) for key, value in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [self._clean_for_json_serialization(item) for item in obj]
+        elif isinstance(obj, (str, int, float, bool)):
+            return obj
+        else:
+            # Try to serialize to test, if it fails, convert to string
+            try:
+                json.dumps(obj)
+                return obj
+            except (TypeError, ValueError):
+                return str(obj)
+
+    @log_service_method("openai_service")
+    def generate_opt_out_confirmation(self, seller_name: str) -> str:
+        """Generate opt-out confirmation message for sellers."""
+        try:
+            prompt = f"Generate a brief WhatsApp message confirming that seller '{seller_name}' has been opted out of RFQ notifications. Include how to opt back in (reply 'opt-in'). Keep friendly, under 50 words."
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions="You are a helpful assistant generating confirmation messages for sellers who opt out of notifications. Be brief, clear, and professional."
+            )
+            
+            return response.output_text or f"Hi {seller_name}, you're now opted out of RFQ notifications. To opt back in, reply 'opt-in'."
+            
+        except Exception as e:
+            logger.error(f"Error generating opt-out confirmation: {str(e)}")
+            return f"Hi {seller_name}, you're now opted out of RFQ notifications. To opt back in, reply 'opt-in'."
+    
+    @log_service_method("openai_service")
+    def generate_opt_in_confirmation(self, seller_name: str, categories: list) -> str:
+        """Generate opt-in confirmation message for sellers."""
+        try:
+            categories_text = ', '.join(categories) if categories else 'your business categories'
+            prompt = f"Generate a brief WhatsApp welcome back message for seller '{seller_name}' who opted in for RFQ notifications. Mention their categories: {categories_text}. Include how to opt out (reply 'opt-out'). Keep friendly, under 60 words."
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions="You are a helpful assistant generating welcome back messages for sellers who opt in to notifications. Be brief, clear, and professional."
+            )
+            
+            return response.output_text or f"Hi {seller_name}, welcome back! You'll receive RFQ notifications for {categories_text}. To opt out, reply 'opt-out'."
+            
+        except Exception as e:
+            logger.error(f"Error generating opt-in confirmation: {str(e)}")
+            return f"Hi {seller_name}, welcome back! You'll receive RFQ notifications for {categories_text}. To opt out, reply 'opt-out'."
+    
+    @log_service_method("openai_service")
+    def detect_opt_out_intent(self, message: str) -> Dict[str, Any]:
+        """Detect opt-out/opt-in intent in seller messages using function calling."""
+        start_time = time.time()
+        
+        try:
+            # Load opt-out intent detection tool
+            with open(self.tools_dir / "opt_out_intent_detection.json", 'r') as f:
+                intent_tool = json.load(f)
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": message}],
+                instructions=self._load_prompt("opt_out_detection", "_get_opt_out_detection_prompt"),
+                tools=[intent_tool],
+                tool_choice={"type": "function", "name": "detect_opt_out_intent"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    result = {
+                        "intent": args.get("intent"),
+                        "confidence": args.get("confidence"),
+                        "reasoning": args.get("reasoning", ""),
+                        "detected_phrases": args.get("detected_phrases", []),
+                        "success": True
+                    }
+                    
+                    logger.info(f"Opt-out intent detected: {result['intent']} (confidence: {result['confidence']}%)")
+                    return result
+            
+            return {"intent": "none", "confidence": 30, "reasoning": "No function call in response", "detected_phrases": [], "success": False}
+            
+        except Exception as e:
+            logger.error(f"Opt-out intent detection failed: {str(e)}")
+            return {"intent": "none", "confidence": 20, "reasoning": f"Error: {str(e)}", "detected_phrases": [], "success": False}
+
+    @log_service_method("openai_service")
+    def generate_permission_request(self, seller_name: str, categories: list) -> str:
+        """Generate permission request message for new sellers."""
+        try:
+            categories_text = ', '.join(categories) if categories else 'your business categories'
+            prompt = f"Generate a brief WhatsApp message asking seller '{seller_name}' for permission to send RFQ notifications. Mention their categories: {categories_text}. Ask them to reply 'yes' or 'no'. Keep friendly, under 70 words."
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions="You are a helpful assistant generating permission request messages for new sellers. Be brief, clear, and professional."
+            )
+            
+            return response.output_text or f"Hi {seller_name}! We found an RFQ matching {categories_text}. Can we send you RFQ notifications? Reply 'yes' or 'no'."
+            
+        except Exception as e:
+            logger.error(f"Error generating permission request: {str(e)}")
+            return f"Hi {seller_name}! We found an RFQ matching {categories_text}. Can we send you RFQ notifications? Reply 'yes' or 'no'."
+
 

@@ -16,6 +16,7 @@ Key responsibilities:
 import logging
 from typing import Dict, Any, Optional
 from app.services.chat_service import ChatService
+from app.services.opt_out_service import OptOutService
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class WhatsAppWebhookService:
     def __init__(self):
         """Initialize the WhatsApp webhook service."""
         self.chat_service = ChatService()
+        self.opt_out_service = OptOutService()
     
     async def process_webhook(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -55,7 +57,32 @@ class WhatsAppWebhookService:
             # Log incoming message for debugging
             logger.info(f"Processing webhook - Type: {message_type}, From: {from_number}")
             
-            # Process through chat service
+            # First check if this is an opt-out/opt-in message (for text messages only)
+            if message_type == "text" and isinstance(content, str):
+                opt_out_result = self.opt_out_service.detect_opt_out_intent(content)
+                
+                if opt_out_result.get("intent") in ["opt_out", "opt_in"] and opt_out_result.get("confidence", 0) > 60:
+                    logger.info(f"Detected {opt_out_result['intent']} intent from {from_number}")
+                    
+                    # Handle opt-out/opt-in request
+                    if opt_out_result["intent"] == "opt_out":
+                        opt_result = await self.opt_out_service.handle_opt_out_request(from_number)
+                    else:  # opt_in
+                        opt_result = await self.opt_out_service.handle_opt_in_request(from_number)
+                    
+                    return {
+                        "status": "success",
+                        "response": opt_result,
+                        "processed_message": {
+                            "type": message_type,
+                            "from": from_number,
+                            "content_length": len(str(content)),
+                            "handled_by": "opt_out_service",
+                            "intent_detected": opt_out_result["intent"]
+                        }
+                    }
+            
+            # Process through chat service (normal flow)
             response = await self.chat_service.process_message(
                 user_phone=from_number,
                 message_content=content,
@@ -69,7 +96,8 @@ class WhatsAppWebhookService:
                 "processed_message": {
                     "type": message_type,
                     "from": from_number,
-                    "content_length": len(str(content))
+                    "content_length": len(str(content)),
+                    "handled_by": "chat_service"
                 }
             }
             
@@ -96,7 +124,7 @@ class WhatsAppWebhookService:
                     return False
             
             # Validate message type
-            valid_types = ["text", "document", "interactive"]
+            valid_types = ["text", "document", "interactive", "image", "video"]
             if webhook_data["type"] not in valid_types:
                 logger.warning(f"Invalid message type: {webhook_data['type']}")
                 return False
@@ -123,6 +151,6 @@ class WhatsAppWebhookService:
         # This could be enhanced with actual metrics tracking
         return {
             "service_status": "active",
-            "supported_message_types": ["text", "document", "interactive"],
+            "supported_message_types": ["text", "document", "interactive", "image", "video"],
             "chat_service_available": bool(self.chat_service)
         }

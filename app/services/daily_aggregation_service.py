@@ -70,16 +70,17 @@ class DailyAggregationService:
         """
         Calculate buyer summary metrics matching the B2B WhatsApp Insights Report.
         
-        Metrics:
+        Metrics (refined based on Excel requirements):
         - Number of Chats Initiated By Buyers
         - Unique Buyers
         - Total RFQs Submitted
+        - Unique Buyers Submitted RFQ (NEW)
         - Average Products per RFQ
         - Average Categories per RFQ
-        - BFS Products Searched
-        - Products Bid For
-        - Bids Accepted by Buyers
-        - RFQs with Response
+        - RFQs with At Least One Response
+        - Total RFQ Responses (NEW)
+        - No of Products Searched by Buyers (NEW)
+        - BFS-related metrics
         """
         buyer_sessions = [s for s in sessions if s.user_type == UserType.buyer]
         
@@ -91,12 +92,19 @@ class DailyAggregationService:
         
         # 3. Total RFQs Submitted
         total_rfqs = 0
+        
+        # 4. Unique Buyers Submitted RFQ (NEW)
+        buyers_with_rfqs = set()
+        
+        # Additional tracking variables
         all_products = []
         all_categories = []
         bfs_searches = 0
+        products_searched_total = 0  # NEW
+        total_rfq_responses = 0  # NEW
+        rfqs_with_at_least_one_response = 0  # RENAMED
         products_bid_for = 0
         bids_accepted = 0
-        rfqs_with_response = 0
         
         for session in buyer_sessions:
             # Count RFQs
@@ -108,6 +116,10 @@ class DailyAggregationService:
             
             total_rfqs += session_rfqs
             
+            # Track unique buyers who submitted RFQs
+            if session_rfqs > 0:
+                buyers_with_rfqs.add(session.external_user_id)
+            
             # Count products and categories per session
             if session.product_items:
                 products = session.product_items
@@ -117,6 +129,14 @@ class DailyAggregationService:
                     for product in products:
                         if isinstance(product, dict) and product.get('category'):
                             all_categories.append(product['category'])
+            
+            # Products searched count (NEW)
+            if session.products_searched_count:
+                products_searched_total += session.products_searched_count
+            
+            # Total RFQ responses received (NEW)
+            if session.total_rfq_responses_received:
+                total_rfq_responses += session.total_rfq_responses_received
             
             # BFS searches
             if session.bfs_search_count:
@@ -136,17 +156,17 @@ class DailyAggregationService:
                 elif isinstance(session.bids_accepted, dict):
                     bids_accepted += session.bids_accepted.get('count', 0)
             
-            # RFQs with response
+            # RFQs with at least one response (count unique RFQs, not total responses)
             if session.rfqs_with_response:
                 if isinstance(session.rfqs_with_response, list):
-                    rfqs_with_response += len(session.rfqs_with_response)
+                    rfqs_with_at_least_one_response += len(set(session.rfqs_with_response))  # Count unique RFQs
                 elif isinstance(session.rfqs_with_response, dict):
-                    rfqs_with_response += session.rfqs_with_response.get('count', 0)
+                    rfqs_with_at_least_one_response += session.rfqs_with_response.get('unique_rfqs', 0)
         
-        # 4. Average Products per RFQ
+        # 5. Average Products per RFQ
         avg_products_per_rfq = len(all_products) / total_rfqs if total_rfqs > 0 else 0
         
-        # 5. Average Categories per RFQ  
+        # 6. Average Categories per RFQ  
         unique_categories = len(set(all_categories))
         avg_categories_per_rfq = unique_categories / total_rfqs if total_rfqs > 0 else 0
         
@@ -154,24 +174,26 @@ class DailyAggregationService:
             'chats_initiated_by_buyers': chats_initiated,
             'unique_buyers': unique_buyers,
             'total_rfqs_submitted': total_rfqs,
+            'unique_buyers_submitted_rfq': len(buyers_with_rfqs),  # Can be calculated from existing data
             'avg_products_per_rfq': round(avg_products_per_rfq, 2),
             'avg_categories_per_rfq': round(avg_categories_per_rfq, 2),
+            'rfqs_with_at_least_one_response': rfqs_with_at_least_one_response,  # Renamed from existing
+            'total_rfq_responses': 0,  # TODO: Implement total RFQ responses tracking in chat service
+            'products_searched_by_buyers': 0,  # TODO: Implement products searched tracking in chat service
             'bfs_products_searched': bfs_searches,
             'products_bid_for': products_bid_for,
-            'bids_accepted_by_buyers': bids_accepted,
-            'rfqs_with_response': rfqs_with_response
+            'bids_accepted_by_buyers': bids_accepted
         }
     
     async def _calculate_seller_summary_metrics(self, sessions: List, target_date: date) -> Dict[str, Any]:
         """
         Calculate seller summary metrics matching the B2B WhatsApp Insights Report.
         
-        Metrics:
+        Metrics (refined based on Excel requirements):
         - Seller Chats Initiated
         - Unique Sellers
         - RFQs Requested
-        - RFQs Responded
-        - Bids Accepted
+        - Subscription Plans Requested (NEW)
         - Counter Offers Accepted
         """
         seller_sessions = [s for s in sessions if s.user_type == UserType.seller]
@@ -185,13 +207,10 @@ class DailyAggregationService:
         # 3. RFQs Requested
         rfqs_requested = 0
         
-        # 4. RFQs Responded
-        rfqs_responded = 0
+        # 4. Subscription Plans Requested (NEW - placeholder)
+        subscription_plans_requested = 0
         
-        # 5. Bids Accepted
-        bids_accepted = 0
-        
-        # 6. Counter Offers Accepted
+        # 5. Counter Offers Accepted
         counter_offers_accepted = 0
         
         for session in seller_sessions:
@@ -226,8 +245,7 @@ class DailyAggregationService:
             'seller_chats_initiated': seller_chats,
             'unique_sellers': unique_sellers,
             'rfqs_requested': rfqs_requested,
-            'rfqs_responded': rfqs_responded,
-            'bids_accepted': bids_accepted,
+            'subscription_plans_requested': 0,  # TODO: Implement subscription plans tracking in chat service
             'counter_offers_accepted': counter_offers_accepted
         }
     
@@ -235,22 +253,31 @@ class DailyAggregationService:
         """
         Calculate category summary metrics matching the B2B WhatsApp Insights Report.
         
-        Metrics per category:
+        Metrics per category (updated based on Excel requirements):
         - RFQs Uploaded
+        - RFQ Requested (kept for existing functionality)
         - RFQs w/ Response
         - BFS Products Searched
         - BFS Price Accepted by Buyers
+        - BFS Counter Offer By Buyer (NEW)
         - Counter Offers Accepted By Sellers
         - New Counter Offer By Seller
+        - BFS Products Searched by Unregistered Users (NEW)
         """
         category_data = defaultdict(lambda: {
             'rfqs_uploaded': 0,
+            'rfq_requested': 0,  # Keep existing for backward compatibility
             'rfqs_with_response': 0,
             'bfs_products_searched': 0,
             'bfs_price_accepted': 0,
+            'bfs_counter_offer_by_buyer': 0,  # TODO: Implement BFS counter offers by buyer tracking
             'counter_offers_accepted_by_sellers': 0,
-            'new_counter_offer_by_seller': 0
+            'new_counter_offer_by_seller': 0,
+            'bfs_products_searched_by_unregistered_users': 0  # TODO: Implement unregistered user BFS tracking
         })
+        
+        # TODO: Implement Multi Category tracking - sessions with len(categories) > 1 should be 
+        # tracked separately in a "Multi Category" bucket instead of individual categories
         
         for session in sessions:
             # Extract categories from session
@@ -426,10 +453,13 @@ class DailyAggregationService:
             'chats_initiated_by_buyers': 0,
             'unique_buyers': 0,  # This should be recalculated, not summed
             'total_rfqs_submitted': 0,
+            'unique_buyers_submitted_rfq': 0,  # This should be recalculated, not summed
+            'rfqs_with_at_least_one_response': 0,  # Renamed
+            'total_rfq_responses': 0,  # New placeholder
+            'products_searched_by_buyers': 0,  # New placeholder
             'bfs_products_searched': 0,
             'products_bid_for': 0,
-            'bids_accepted_by_buyers': 0,
-            'rfqs_with_response': 0
+            'bids_accepted_by_buyers': 0
         }
         
         total_products = 0
@@ -466,8 +496,7 @@ class DailyAggregationService:
             'seller_chats_initiated': 0,
             'unique_sellers': 0,  # This should be recalculated, not summed
             'rfqs_requested': 0,
-            'rfqs_responded': 0,
-            'bids_accepted': 0,
+            'subscription_plans_requested': 0,  # New placeholder
             'counter_offers_accepted': 0
         }
         

@@ -7,7 +7,7 @@
     "properties": {
       "next_question": {
         "type": "string",
-        "description": "Ask for the most important missing information. Use the questions provided from the data model. Keep it conversational and clear."
+        "description": "Ask for the most important missing information in a natural, friendly way. Use proper spacing and formatting to make it easy to read."
       }
     },
     "required": ["next_question"],

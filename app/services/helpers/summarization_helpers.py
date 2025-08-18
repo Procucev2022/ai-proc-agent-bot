@@ -83,8 +83,8 @@ class SummarizationHelpers:
                 if session.workflow_state.get("pending_rfq"):
                     rich_entities["rfq_details"] = session.workflow_state["pending_rfq"]
                 
-                if session.workflow_state.get("pending_multiple_rfqs"):
-                    rich_entities["multiple_rfqs"] = session.workflow_state["pending_multiple_rfqs"]
+                if session.workflow_state.get("pending_combined_rfq"):
+                    rich_entities["combined_rfq"] = session.workflow_state["pending_combined_rfq"]
                 
                 # Extract product information
                 if session.workflow_state.get("complete_products"):

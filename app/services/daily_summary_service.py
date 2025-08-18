@@ -53,6 +53,13 @@ class DailySummaryService:
                 session_continuation_count = 0
                 user_types = []
                 
+                # TODO: Add new fields based on Excel Buyer Details requirements:
+                # - bfs_searches_count (BFS Searches)
+                # - products_bid_for_count (Products Bid For) 
+                # - bids_accepted_count (Bids Accepted)
+                # - rfqs_with_response_count (RFQs w/ Response)
+                # - rfq_started_not_submitted_count (RFQ Started But not Submitted)
+                
                 for session in sessions:
                     # Count RFQs
                     if session.rfq_ids:

@@ -181,6 +181,13 @@ class ConversationSession(Base):
     avg_products_per_rfq = Column(DECIMAL(5,2), nullable=True)  # Average products per RFQ
     avg_categories_per_rfq = Column(DECIMAL(5,2), nullable=True)  # Average categories per RFQ
     
+    # New metrics based on Excel requirements - COMMENTED OUT until database migration
+    # subscription_plans_requested = Column(Integer, default=0)  # For sellers requesting subscription info
+    # products_searched_count = Column(Integer, default=0)  # For buyers searching products
+    # total_rfq_responses_received = Column(Integer, default=0)  # Total responses received on user's RFQs
+    # bfs_counter_offers_by_buyer = Column(JSON, nullable=True)  # Counter offers made by buyers on BFS
+    # unregistered_user_bfs_searches = Column(JSON, nullable=True)  # BFS searches by unregistered users
+    
     # Existing fields
     workflow_state = Column(JSON, nullable=False)
     conversation_history = Column(JSON, nullable=False)
@@ -534,7 +541,8 @@ class Seller(Base):
     subscription_credits = Column(Integer, default=0)
     ranking = Column(Enum(SellerRanking), default=SellerRanking.Gold)
     last_active_at = Column(TIMESTAMP, nullable=True)
-    opted_out_notifications = Column(Boolean, default=False)
+    opted_out_notifications = Column(Boolean, nullable=True, default=None)
+
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, default=func.current_timestamp(), onupdate=func.current_timestamp())
     

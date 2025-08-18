@@ -102,6 +102,46 @@ class ChatServiceHelpers:
         return schema
     
     @staticmethod
+    def create_combined_rfq_schema_from_multiple_products(products_list: list):
+        """Create a single RFQValidationSchema from multiple product entities."""
+        if not products_list:
+            return None
+        
+        # Use the first product's common fields (delivery, project desc, etc.)
+        base_entities = products_list[0]["entities"]
+        schema_data = ChatServiceHelpers.transform_entities_to_schema(base_entities)
+        
+        # Combine all products into items array
+        combined_items = []
+        for prod in products_list:
+            entities = prod["entities"]
+            if entities.get("description") or entities.get("quantity"):
+                item = {}
+                if entities.get("description"):
+                    item["description"] = entities["description"]
+                if entities.get("quantity"):
+                    item["quantity"] = entities["quantity"]
+                if entities.get("unitofMeasures"):
+                    item["unit_of_measures"] = entities["unitofMeasures"]
+                if entities.get("brand"):
+                    item["brand"] = entities["brand"]
+                if entities.get("remarks"):
+                    item["remarks"] = entities["remarks"]
+                
+                if item:
+                    combined_items.append(item)
+        
+        # Update schema with combined items
+        schema_data["items"] = combined_items
+        
+        # Use the project description from the first product or create a combined one
+        if not schema_data.get("project_desc") and combined_items:
+            descriptions = [item.get("description", "") for item in combined_items]
+            schema_data["project_desc"] = f"RFQ for {', '.join(descriptions)}"
+        
+        return RFQValidationSchema(**schema_data)
+    
+    @staticmethod
     def build_context(stage: str, message: str = "", entities: dict = None, completeness: int = 0, **kwargs) -> dict:
         """Build standard context dictionary for response generation."""
         context = {
@@ -140,7 +180,7 @@ class ChatServiceHelpers:
             'whatsapp_context': session.whatsapp_context or {},
             'session_status': {
                 'has_pending_confirmations': bool(
-                    session.workflow_state.get("pending_multiple_rfqs") or 
+                    session.workflow_state.get("pending_combined_rfq") or
                     session.workflow_state.get("pending_rfq")
                 ),
                 'has_extracted_entities': bool(
@@ -157,7 +197,7 @@ class ChatServiceHelpers:
         """Determine current conversation stage based on session state."""
         workflow_state = session.workflow_state or {}
         
-        if workflow_state.get("pending_multiple_rfqs") or workflow_state.get("pending_rfq"):
+        if workflow_state.get("pending_combined_rfq") or workflow_state.get("pending_rfq"):
             return "confirming"
         elif workflow_state.get("incomplete_products"):
             return "collecting_details"

@@ -31,6 +31,8 @@ from app.models import (
     Seller, SellerRFQInteraction, RFQSellerNotification, 
     InteractionType, ResponseType, RFQ, MockRFQ, SystemConfiguration
 )
+from app.services.opt_out_service import OptOutService
+
 from app.services.whatsapp_service import WhatsAppService, MessageResponse
 from app.config import get_settings
 from app.utils.logging_utils import log_service_method
@@ -49,6 +51,8 @@ class RFQIntimationService:
         self.db_session = db_session or get_db_session()
         self.settings = get_settings()
         self.whatsapp_service = WhatsAppService()
+        self.opt_out_service = OptOutService(db_session)
+
         self.mock_procurev = None  # Lazy load
         
         # Subscription plan details
@@ -87,10 +91,25 @@ class RFQIntimationService:
             if not seller:
                 return {"success": False, "error": "Seller not found"}
             
-            # Check if seller is opted out
-            if seller.opted_out_notifications:
-                logger.info(f"Seller {seller_id} has opted out of notifications")
-                return {"success": False, "error": "Seller opted out of notifications"}
+            # Check seller notification eligibility using three-state consent logic
+            eligibility = await self.opt_out_service.check_seller_notification_eligibility(seller_id)
+            
+            if not eligibility["eligible"]:
+                if eligibility.get("action") == "send_permission_request":
+                    # Seller needs permission - send permission request instead of RFQ
+                    logger.info(f"Seller {seller_id} needs permission - sending permission request")
+                    permission_result = await self.opt_out_service.send_permission_request(seller_id)
+                    return {
+                        "success": False, 
+                        "error": "Permission needed", 
+                        "action": "permission_request_sent",
+                        "permission_result": permission_result
+                    }
+                else:
+                    # Seller opted out or other issue
+                    logger.info(f"Seller {seller_id} not eligible: {eligibility['reason']}")
+                    return {"success": False, "error": eligibility["reason"]}
+
             
             # Generate RFQ description for notification
             rfq_brief = await self._generate_rfq_brief(rfq_data)
@@ -184,12 +203,12 @@ class RFQIntimationService:
                 # Send payment message to seller
                 payment_message = f"""Thanks for selecting the *{plan_type.title()} Plan*! 
 
-💳 *Amount*: ₹{plan_details['price']} for {plan_details['credits']} RFQs
+ *Amount*: ₹{plan_details['price']} for {plan_details['credits']} RFQs
 
 Click the link below to pay. We've also emailed it to you.
 {payment_response['payment_link']}
 
-⏰ This conversation will automatically close in 5 minutes."""
+ This conversation will automatically close in 5 minutes."""
                 
                 whatsapp_response = await self.whatsapp_service.send_message(
                     recipient_id=seller.phone_number,
@@ -249,7 +268,7 @@ Click the link below to pay. We've also emailed it to you.
             # Validate RFQ ID exists
             rfq_exists = await self._validate_rfq_id(rfq_id)
             if not rfq_exists:
-                error_message = f"""❌ Sorry, RFQ ID "{rfq_id}" is not valid or not found.
+                error_message = f""" Sorry, RFQ ID "{rfq_id}" is not valid or not found.
 
 Please check the RFQ ID and try again, or contact support@procurev.com for assistance."""
                 
@@ -258,7 +277,7 @@ Please check the RFQ ID and try again, or contact support@procurev.com for assis
             
             # Check if seller has credits
             if seller.subscription_credits <= 0:
-                no_credits_message = """❌ You don't have enough credits to request this RFQ.
+                no_credits_message = """ You don't have enough credits to request this RFQ.
 
 Please purchase a subscription plan first:
 • *Basic Plan* – ₹499 for 5 RFQs
@@ -277,12 +296,12 @@ Reply with "Basic" or "Pro" to subscribe."""
                 await self._deduct_seller_credit(seller_id)
                 
                 # Send confirmation message
-                confirmation_message = f"""✅ Thank you! Your RFQ ID *{rfq_id}* has been emailed to you.
+                confirmation_message = f"""Thank you! Your RFQ ID *{rfq_id}* has been emailed to you.
 
-📧 Check your email: {seller.email}
-💳 Credits remaining: {seller.subscription_credits - 1}
+ Check your email: {seller.email}
+ Credits remaining: {seller.subscription_credits - 1}
 
-⏰ This conversation will automatically close in 5 minutes."""
+ This conversation will automatically close in 5 minutes."""
                 
                 whatsapp_response = await self.whatsapp_service.send_message(
                     recipient_id=seller.phone_number,
@@ -317,7 +336,7 @@ Reply with "Basic" or "Pro" to subscribe."""
                 else:
                     return {"success": False, "error": "Failed to send confirmation message"}
             else:
-                error_message = f"""❌ Sorry, there was an error sending the RFQ email.
+                error_message = f"""Sorry, there was an error sending the RFQ email.
 
 Please contact support@procurev.com with RFQ ID: {rfq_id}
 
@@ -359,7 +378,7 @@ We'll resolve this issue and send you the RFQ manually."""
                     # Create reminder message with pending bids
                     reminder_message = f"""Thanks for chatting with us! You still have live RFQs for which bids haven't been submitted.
 
-📝 *Your Pending RFQs:*
+*Your Pending RFQs:*
 """
                     
                     for i, bid in enumerate(pending_bids[:3], 1):  # Show max 3
@@ -371,7 +390,7 @@ We'll resolve this issue and send you the RFQ manually."""
                     
                     reminder_message += """We encourage you to submit bids. For help, contact@procurev.com
 
-Have a great day! 👋"""
+Have a great day! """
                 else:
                     # No pending bids
                     reminder_message = f"""Thanks for chatting with us!
@@ -380,7 +399,7 @@ You're all caught up with your RFQs. We'll notify you when new opportunities mat
 
 For any assistance, contact@procurev.com
 
-Have a great day! 👋"""
+Have a great day! """
             else:
                 # Fallback message if pending bids API fails
                 reminder_message = f"""Thanks for chatting with us!
@@ -445,20 +464,20 @@ Have a great day! 👋"""
     
     async def _create_credited_seller_message(self, seller: Seller, rfq_brief: str, rfq_data: Dict[str, Any]) -> str:
         """Create notification message for sellers with credits."""
-        return f"""🔔 Hi {seller.seller_name}, there is a New RFQ available in your category.
+        return f"""Hi {seller.seller_name}, there is a New RFQ available in your category.
 
-📋 *RFQ Brief*: {rfq_brief}
+*RFQ Brief*: {rfq_brief}
 
-💳 Credits remaining: {seller.subscription_credits}
+Credits remaining: {seller.subscription_credits}
 
 Please enter the RFQ ID so that we can email this to you:
 *{rfq_data.get('rfq_id')}*"""
     
     async def _create_uncredited_seller_message(self, seller: Seller, rfq_brief: str) -> str:
         """Create notification message for sellers without credits."""
-        return f"""🔔 Hi {seller.seller_name}, there is a New RFQ available in your category.
+        return f"""Hi {seller.seller_name}, there is a New RFQ available in your category.
 
-📋 *RFQ Brief*: {rfq_brief}
+*RFQ Brief*: {rfq_brief}
 
 Looks like your request credits are over. Here are our subscription plans:
 

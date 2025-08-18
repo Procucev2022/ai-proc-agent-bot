@@ -25,7 +25,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-
+from typing import Dict, Any
 from app.config import get_settings
 from app.api.webhook import router as webhook_router
 from app.database import init_database
@@ -126,8 +126,9 @@ app.include_router(webhook_router, prefix="/webhook", tags=["webhook"])
 chat_service = ChatService()
 
 # Pydantic models for chat API
+from typing import Union
 class ChatMessage(BaseModel):
-    message: str
+    message: Union[str, Dict[str, Any]]
     phone: str = "919876543229"
 
 
@@ -175,10 +176,18 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
             whatsapp_messages.append(message)
             return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
         
+        # Determine message type based on content structure
+        message_type = "text"
+        content = chat_message.message
+        
+        # Check if message contains image data (from UI image upload)
+        if isinstance(content, dict) and "image" in content:
+            message_type = "image"
+        
         # Process message through ChatService with mocked WhatsApp (same as terminal test)
         from unittest.mock import patch
         with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message):
-            chat_result = await chat_service.process_message(chat_message.phone, chat_message.message, "text")
+            chat_result = await chat_service.process_message(chat_message.phone, content, message_type)
         
         return {
             "success": True,
@@ -258,3 +267,14 @@ async def upload_excel_file(
             "error": str(e),
             "responses": [f"Sorry, there was an error processing your Excel file: {str(e)}"]
         }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=settings.DEBUG,
+        log_level="debug" if settings.DEBUG else "info"
+    )

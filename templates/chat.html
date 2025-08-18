@@ -207,6 +207,39 @@
             overflow-y: auto;
         }
 
+        .debug-dropdown {
+            margin-top: 10px;
+        }
+
+        .debug-toggle {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            transition: background-color 0.3s;
+        }
+
+        .debug-toggle:hover {
+            background: #5a6268;
+        }
+
+        .debug-content {
+            display: none;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 10px;
+            margin-top: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #6c757d;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+
         .phone-display {
             background: #f8f9fa;
             padding: 8px 12px;
@@ -250,6 +283,7 @@
                 <button type="submit" class="send-button" id="sendButton">Send</button>
             </form>
             
+            <!-- Excel Upload Section -->
             <div class="file-upload-section">
                 <div class="file-upload-title">Upload Excel File for RFQ</div>
                 <form class="file-upload-form" id="fileUploadForm" enctype="multipart/form-data">
@@ -263,10 +297,31 @@
                     <button type="submit" class="upload-button" id="uploadButton">Upload Excel</button>
                 </form>
             </div>
+            
+            <!-- Image Upload Section -->
+            <div class="file-upload-section">
+                <div class="file-upload-title">Upload Image/Document for RFQ</div>
+                <form class="file-upload-form" id="imageUploadForm" enctype="multipart/form-data">
+                    <input 
+                        type="file" 
+                        class="file-input" 
+                        id="imageInput" 
+                        accept=".jpg,.jpeg,.png,.gif,.pdf"
+                        required
+                    >
+                    <button type="submit" class="upload-button" id="imageUploadButton">Upload Image</button>
+                </form>
+                <div style="font-size: 12px; color: #666; margin-top: 5px;">
+                    Supported: JPG, PNG, GIF, PDF (max 10MB)
+                </div>
+            </div>
         </div>
     </div>
 
     <script>
+        // Configuration
+        const PHONE_NUMBER = '919876543224';
+        
         // Set welcome message time
         document.getElementById('welcomeTime').textContent = new Date().toLocaleTimeString();
 
@@ -291,10 +346,30 @@
             bubbleDiv.appendChild(timeDiv);
             
             if (showDebug && debugInfo) {
-                const debugDiv = document.createElement('div');
-                debugDiv.className = 'debug-info';
-                debugDiv.textContent = JSON.stringify(debugInfo, null, 2);
-                bubbleDiv.appendChild(debugDiv);
+                const debugDropdown = document.createElement('div');
+                debugDropdown.className = 'debug-dropdown';
+                
+                const toggleButton = document.createElement('button');
+                toggleButton.className = 'debug-toggle';
+                toggleButton.textContent = 'Show Debug Info ▼';
+                
+                const debugContent = document.createElement('div');
+                debugContent.className = 'debug-content';
+                debugContent.textContent = JSON.stringify(debugInfo, null, 2);
+                
+                toggleButton.addEventListener('click', function() {
+                    if (debugContent.style.display === 'none' || debugContent.style.display === '') {
+                        debugContent.style.display = 'block';
+                        toggleButton.textContent = 'Hide Debug Info ▲';
+                    } else {
+                        debugContent.style.display = 'none';
+                        toggleButton.textContent = 'Show Debug Info ▼';
+                    }
+                });
+                
+                debugDropdown.appendChild(toggleButton);
+                debugDropdown.appendChild(debugContent);
+                bubbleDiv.appendChild(debugDropdown);
             }
             
             messageDiv.appendChild(bubbleDiv);
@@ -330,7 +405,7 @@
                     },
                     body: JSON.stringify({
                         message: message,
-                        phone: '919876543229'
+                        phone: PHONE_NUMBER
                     })
                 });
 
@@ -384,7 +459,7 @@
             
             try {
                 // Add file upload message to chat
-                addMessage(`📎 Uploading Excel file: ${file.name}`, true);
+                addMessage(`Uploading Excel file: ${file.name}`, true);
                 
                 // Show typing indicator
                 typingIndicator.style.display = 'block';
@@ -392,7 +467,7 @@
 
                 // Create form data
                 const formData = new FormData();
-                formData.append('phone', '+1234567890'); // Mock phone number for testing
+                formData.append('phone', PHONE_NUMBER);
                 formData.append('file', file);
 
                 const response = await fetch('/api/upload-excel', {
@@ -431,6 +506,96 @@
             const file = fileInput.files[0];
             if (file) {
                 await uploadFile(file);
+            }
+        });
+
+        // Image upload functionality
+        const imageUploadForm = document.getElementById('imageUploadForm');
+        const imageInput = document.getElementById('imageInput');
+        const imageUploadButton = document.getElementById('imageUploadButton');
+
+        async function uploadImage(file) {
+            imageUploadButton.disabled = true;
+            imageUploadButton.textContent = 'Uploading...';
+            
+            try {
+                // Validate file size (max 10MB)
+                const maxSize = 10 * 1024 * 1024; // 10MB
+                if (file.size > maxSize) {
+                    addMessage(`Error: File size exceeds 10MB limit`, false);
+                    return;
+                }
+                
+                // Add image upload message to chat
+                addMessage(`Uploading image: ${file.name}`, true);
+                
+                // Show typing indicator
+                typingIndicator.style.display = 'block';
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                // Convert image to base64
+                const base64Data = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const base64 = reader.result.split(',')[1]; // Remove data:image/...;base64, prefix
+                        resolve(base64);
+                    };
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+
+                // Create image message content (similar to WhatsApp webhook structure)
+                const imageContent = {
+                    image: {
+                        filename: file.name,
+                        mime_type: file.type,
+                        data: base64Data
+                    }
+                };
+
+                // Send through chat API
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: imageContent,
+                        phone: PHONE_NUMBER
+                    })
+                });
+
+                const data = await response.json();
+                
+                // Hide typing indicator
+                typingIndicator.style.display = 'none';
+
+                if (data.success && data.responses) {
+                    // Add responses from the bot
+                    data.responses.forEach(response => {
+                        addMessage(response, false, true, data.debug_info);
+                    });
+                } else {
+                    addMessage(`Error: ${data.error}`, false);
+                }
+
+            } catch (error) {
+                typingIndicator.style.display = 'none';
+                addMessage(`Upload failed: ${error.message}`, false);
+                console.error('Image upload error:', error);
+            } finally {
+                imageUploadButton.disabled = false;
+                imageUploadButton.textContent = 'Upload Image';
+                imageInput.value = ''; // Clear file input
+            }
+        }
+
+        // Handle image upload form submission
+        imageUploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const file = imageInput.files[0];
+            if (file) {
+                await uploadImage(file);
             }
         });
     </script>

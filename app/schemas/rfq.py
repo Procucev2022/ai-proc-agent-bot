@@ -312,6 +312,7 @@ class RFQValidationSchema(BaseModel):
     remarks: Optional[str] = Field(None, description="Additional remarks")
     vendors: List[Dict[str, Any]] = Field(default_factory=list, description="Selected vendors")
     preferred_brand: Optional[str] = Field(None, description="Preferred brand")
+    attachments: List[Dict[str, Any]] = Field(default_factory=list, description="Document attachments")
     
     
     def get_missing_mandatory_fields(self) -> List[str]:
@@ -359,12 +360,14 @@ class RFQValidationSchema(BaseModel):
             missing.append("preferred_brand")
         if not self.remarks:
             missing.append("remarks")
+        if not self.attachments:
+            missing.append("attachments")
             
         return missing
     
     def get_completeness_percentage(self) -> float:
         """Calculate completeness percentage based on filled fields."""
-        total_fields = 9  # 7 mandatory + 2 optional
+        total_fields = 10  # 7 mandatory + 3 optional
         filled_fields = 0
         
         # Check mandatory fields
@@ -388,6 +391,8 @@ class RFQValidationSchema(BaseModel):
             filled_fields += 1
         if self.vendors:
             filled_fields += 1
+        if self.attachments:
+            filled_fields += 1
             
         return (filled_fields / total_fields) * 100
     
@@ -396,23 +401,45 @@ class RFQValidationSchema(BaseModel):
         return len(self.get_missing_mandatory_fields()) == 0
     
     def get_mandatory_questions(self) -> List[str]:
-        """Generate question identifiers for missing mandatory fields."""
+        """Generate user-friendly questions for missing mandatory fields."""
         missing = self.get_missing_mandatory_fields()
         questions = []
         
+        # Question mapping for better user experience
+        question_map = {
+            "project_description": "What is the project description or item name?",
+            "delivery_date": "What is the required delivery date?",
+            "division_confirmation": "Please confirm the division for this request",
+            "division_selection": "Which division or department is this for?",
+            "items_details": "What are the item details?",
+            "item_description": "What is the item description?",
+            "item_quantity": "How many items do you need (quantity)?",
+            "delivery_location": "Where should the items be delivered? (Please provide State, City, and Pincode)",
+            "delivery_state": "What is the delivery state?",
+            "delivery_city": "What is the delivery city?", 
+            "delivery_pincode": "What is the delivery pincode?"
+        }
+        
         if "project_desc" in missing:
-            questions.append("project_description")
+            questions.append(question_map["project_description"])
         
         if "delivery_date" in missing:
-            questions.append("delivery_date")
+            questions.append(question_map["delivery_date"])
         
         if "division_confirmation" in missing:
-            questions.append("division_confirmation")
+            questions.append(question_map["division_confirmation"])
         elif "division" in missing:
-            questions.append("division_selection")
+            questions.append(question_map["division_selection"])
         
         if "items" in missing:
-            questions.append("items_details")
+            questions.append(question_map["items_details"])
+        
+        # Handle specific item field questions
+        for missing_field in missing:
+            if missing_field.startswith("item_") and "_description" in missing_field:
+                questions.append(question_map["item_description"])
+            elif missing_field.startswith("item_") and "_quantity" in missing_field:
+                questions.append(question_map["item_quantity"])
         
         # Handle specific item field questions
         for missing_field in missing:
@@ -422,16 +449,18 @@ class RFQValidationSchema(BaseModel):
                 questions.append("item_quantity")
         
         if "delivery_locations" in missing:
-            questions.append("delivery_location")
+            questions.append(question_map["delivery_location"])
         
         # Handle specific delivery location field questions
         for missing_field in missing:
             if missing_field.startswith("delivery_location_") and "_state" in missing_field:
-                questions.append("delivery_state")
+
+                questions.append(question_map["delivery_state"])
             elif missing_field.startswith("delivery_location_") and "_city" in missing_field:
-                questions.append("delivery_city")
+                questions.append(question_map["delivery_city"])
             elif missing_field.startswith("delivery_location_") and "_pincode" in missing_field:
-                questions.append("delivery_pincode")
+                questions.append(question_map["delivery_pincode"])
+
         
         # Remove duplicates while preserving order
         return list(dict.fromkeys(questions))
@@ -447,6 +476,9 @@ class RFQValidationSchema(BaseModel):
         
         if not self.remarks:
             questions.append("Do you have any additional remarks or special requirements?")
+            
+        if not self.attachments:
+            questions.append("Would you like to add any specification documents or images to your RFQ? You can send an image now or reply 'no' to continue.")
         
         return questions
     
@@ -463,6 +495,21 @@ class RFQValidationSchema(BaseModel):
             return optional_questions
         
         return []  # No questions needed if everything is complete
+    
+    def get_combined_questions(self, include_optional: bool = True) -> Dict[str, List[str]]:
+        """
+        Generate both mandatory and optional questions in one response.
+        Returns a dict with 'mandatory' and 'optional' question lists.
+        """
+        mandatory_questions = self.get_mandatory_questions()
+        optional_questions = self.get_optional_questions() if include_optional else []
+        
+        return {
+            "mandatory": mandatory_questions,
+            "optional": optional_questions,
+            "has_mandatory": len(mandatory_questions) > 0,
+            "has_optional": len(optional_questions) > 0
+        }
     
     class Config:
         extra = "allow"
