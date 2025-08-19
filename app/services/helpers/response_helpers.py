@@ -42,6 +42,13 @@ class ResponseHelpers:
             return self.openai_service.generate_rfq_status_response(context)
         except Exception as e:
             logger.error(f"Error generating contextual response: {e}")
+    
+    async def generate_seller_contextual_response(self, context: dict) -> str:
+        """Generate seller RFQ overview contextual response using OpenAI."""
+        try:
+            return self.openai_service.generate_seller_rfq_overview_response(context)
+        except Exception as e:
+            logger.error(f"Error generating seller contextual response: {e}")
 
     async def generate_completion_response(self, rfq_schema, context: dict) -> str:
         """Generate completion response using OpenAI."""

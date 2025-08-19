@@ -740,7 +740,38 @@ class OpenAIService:
 
         except Exception as e:
             logger.error(f"Response generation failed: {str(e)}")
-            return self._get_fallback_response(context)
+            return self._get_fallback_response(context,[])
+
+    def generate_seller_rfq_overview_response(self, context: dict) -> str:
+        """
+            Generate contextual response for seller RFQ overview flow.
+
+            Builds a concise message for sellers showing count of live RFQs,
+            lists latest RFQs, and tailors CTA based on credits/subscription.
+
+            Args:
+                context: Dictionary containing keys like 'total_count', 'latest_rfqs',
+                         'credits_available', 'plans', and 'workflow_step'.
+
+            Returns:
+                A string response suitable for user-facing interfaces.
+        """
+        try:
+            # Build prompt inline
+            prompt = f"User context: {json.dumps(context)}\n\n"
+            prompt += "Generate an appropriate response for the user based on their context and any available results."
+
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions=self._load_prompt("response_generation", "_get_seller_rfq_overview_prompt")
+            )
+
+            return response.output_text or "I apologize, but I'm having trouble generating a response right now."
+
+        except Exception as e:
+            logger.error(f"Response generation failed: {str(e)}")
+            return self._get_fallback_response(context,[])
 
     def validate_field_value(self, field_name: str, value: str, context: dict) -> Dict[str, Any]:
         """

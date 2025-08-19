@@ -50,7 +50,7 @@ from app.services.enhanced_auto_categorization_service import EnhancedAutoCatego
 from app.services.seller_recommendation_service import SellerRecommendationService
 from app.services.enhanced_seller_matching_service import EnhancedSellerMatchingService
 from app.services.rfq_background_service import RFQBackgroundService
-
+from app.services.seller_service import SellerService
 from app.database import SessionLocal, DatabaseManager
 from app.models import User, ConversationSession
 logger = logging.getLogger(__name__)
@@ -67,6 +67,7 @@ class ChatService:
         self.intent_service = IntentService()
         self.entity_service = EntityService()
         self.vendor_service = VendorService()
+        self.seller_service = SellerService()
         self.rfq_service = RFQService()
         self.whatsapp_service = WhatsAppService()
         self.openai_service = OpenAIService()
@@ -231,6 +232,8 @@ class ChatService:
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result, self._should_use_summary_aware_extraction)
             elif intent == "rfq_status_check" and confidence > 0.7:
                 return await self._handle_rfq_status_inquiry(user, message)
+            elif intent == "sell_something" and confidence > 0.7:
+                return await self._handle_seller_flow(user, message)
             elif intent == "general_inquiry":
                 return await self._handle_general_inquiry(user, message)
             elif confidence < 0.5:
@@ -747,11 +750,20 @@ class ChatService:
         except Exception as e:
             logger.error(f"Error sending RFQ status placeholder: {e}")
             return {"status": "error", "error": str(e)}
-    
-    
-    
-    
-    
+
+    async def _handle_seller_flow(self, user: User, message: str) -> Dict[str, Any]:
+        """Handle RFQ status inquiry requests."""
+        try:
+            result = await self.seller_service.handle_seller_workflow(user, message)
+            response_message = result.get("message") or result.get("response_message")
+            if response_message:
+                await self.whatsapp_service.send_message(user.phone_number, response_message)
+            return {"status": result.get("workflow_step", "seller_flow"), **result}
+
+        except Exception as e:
+            logger.error(f"Error handle_seller_flow: {e}")
+            return {"status": "error", "error": str(e)}
+
     def _should_use_summary_aware_extraction(self, message: str) -> bool:
         """
         Use AI to intelligently determine if we should use summary-aware entity extraction.
