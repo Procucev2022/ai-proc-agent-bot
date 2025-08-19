@@ -19,6 +19,9 @@ import logging
 from typing import Dict, Any, List
 import json
 import asyncio
+
+from app.services.authentication_service import AuthenticationService
+from app.services.registration_service import RegistrationService
 from app.utils.datetime_utils import utc_now
 from app.utils.logging_utils import log_service_method
 from app.services.intent_service import IntentService
@@ -53,6 +56,7 @@ from app.services.rfq_background_service import RFQBackgroundService
 
 from app.database import SessionLocal, DatabaseManager
 from app.models import User, ConversationSession
+from app.schemas.user import UserDetailsSchema
 logger = logging.getLogger(__name__)
 
 class ChatService:
@@ -79,6 +83,8 @@ class ChatService:
         self.seller_recommendation_service = SellerRecommendationService()
         self.enhanced_seller_matching_service = EnhancedSellerMatchingService()
         self.rfq_background_service = RFQBackgroundService()
+        self.authentication_service = AuthenticationService()
+        self.registration_service = RegistrationService()
         
         # Initialize extracted services
         self.session_manager = SessionManagementService(
@@ -114,8 +120,17 @@ class ChatService:
         workflow routing, and response generation.
         """
         try:
+            
+            #  Token Validation and Authenticate User
+            user = await self.process_auth(user_phone)
+            print(f"ChatService: User details after authentication: {user}")
+            
+            if not user or not user.is_registered:
+                logger.info("ChatService -----------------------Proceeding with registration workflow.")
+                user = await self.process_registration(user_phone)
+
+
             # Get or create user session using extracted service
-            user = await self.session_manager.get_or_create_user(user_phone)
             session = await self.session_manager.get_conversation_context(user_phone)
             
             # Handle session expiry using extracted service
@@ -747,10 +762,87 @@ class ChatService:
         except Exception as e:
             logger.error(f"Error sending RFQ status placeholder: {e}")
             return {"status": "error", "error": str(e)}
-    
-    
-    
-    
+        
+    async def process_auth(self, user_phone: str) -> UserDetailsSchema:
+        try:
+            # 1. Redis Cache
+            user = await self.authentication_service.validate_token(user_phone)
+            if user:
+                logger.info(f"ChatService: User details from cache: {user.dict()}")
+                return user
+
+            # 2. Fallback to Auth API
+            auth_result = await self.authentication_service.authenticate_user(user_phone)
+            if not auth_result.get("success"):
+                return UserDetailsSchema(id="", username="", name="", self_client=False, is_registered=False)
+
+            user_details = auth_result.get("user_details")
+            if user_details: #Multiple Email Confirmaton
+                message = "Multiple Email confirmation - Pending with Client"
+                await self.whatsapp_service.send_message(user_phone, message)
+                
+            if not user_details.self_client: #Seller Email Confirmaton
+                message = "Seller Email confirmation - Pending with Client"
+                await self.whatsapp_service.send_message(user_phone, message)
+                
+            
+            if user_details:
+                await self.authentication_service.store_user_session(user_phone, user_details)
+                return user_details
+
+            return UserDetailsSchema(id="", username="", name="", self_client=False, is_registered=False)
+
+        except Exception as e:
+            logger.error(f"Authentication error for {user_phone}: {e}")
+            return UserDetailsSchema(id="", username="", name="", self_client=False, is_registered=False)
+
+    async def process_registration(self, user_phone: str) -> UserDetailsSchema:
+        """
+        Handle user registration if authentication fails.
+        Creates a new user record or triggers registration workflow.
+        """
+        try:
+            # Call registration API or internal logic
+            registration_result = await self.authentication_service.register_user(user_phone)
+            
+            if not registration_result.get("success"):
+                logger.warning(f"Registration failed for {user_phone}")
+                return UserDetailsSchema(
+                    id="",
+                    username="",
+                    name="",
+                    self_client=False,
+                    is_registered=False,
+                    email_list=[]
+                )
+            
+            user_details = registration_result.get("user_details")
+            if user_details:
+                await self.authentication_service.store_user_session(user_phone, user_details)
+                logger.info(f"User registered and session stored: {user_details.dict()}")
+                return user_details
+            
+            return UserDetailsSchema(
+                id="",
+                username="",
+                name="",
+                self_client=False,
+                is_registered=False,
+                email_list=[]
+            )
+        
+        except Exception as e:
+            logger.error(f"Registration error for {user_phone}: {e}")
+            return UserDetailsSchema(
+                id="",
+                username="",
+                name="",
+                self_client=False,
+                is_registered=False,
+                email_list=[]
+            )
+
+
     
     def _should_use_summary_aware_extraction(self, message: str) -> bool:
         """
@@ -788,3 +880,5 @@ class ChatService:
             print(f"ChatService: Error in reference analysis: {e}")
             # Fallback: if analysis fails, don't use summary-aware extraction
             return False
+
+    

@@ -1,94 +1,143 @@
-"""
-User registration and authentication Pydantic schemas.
-
-This module contains schemas for user management, registration, and authentication.
-"""
-
-from pydantic import BaseModel, Field, validator
+import re
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from enum import Enum
 
 
+# -------------------------------
+# Enums
+# -------------------------------
+
 class UserRole(str, Enum):
-    """Enum for user roles."""
     BUYER = "buyer"
-    VENDOR = "vendor"
-    CATEGORY_MANAGER = "category_manager"
+    SELLER = "seller"
+    UNKNOWN = "unknown" #fallback
 
 
-class UserRegistrationSchema(BaseModel):
-    """
-    Schema for user registration requests.
-    
-    Validates user registration data including contact information,
-    company details, and role assignments.
-    """
-    phone_number: str = Field(..., description="WhatsApp phone number")
-    name: str = Field(..., description="User's full name")
-    company_name: Optional[str] = Field(None, description="Company name")
-    role: UserRole = Field(UserRole.BUYER, description="User role")
-    email: Optional[str] = Field(None, description="Email address")
-    
-    @validator('phone_number')
-    def validate_phone_number(cls, v):
-        # Remove any non-digit characters
-        digits_only = ''.join(filter(str.isdigit, v))
-        if len(digits_only) < 10:
-            raise ValueError('Phone number must have at least 10 digits')
+# -------------------------------
+# Validators (Regex)
+# -------------------------------
+
+EMAIL_REGEX = re.compile(r"^[\w\.-]+@[\w\.-]+\.\w+$")
+PHONE_REGEX = re.compile(r"^[6-9]\d{9}$")
+PINCODE_REGEX = re.compile(r"^\d{6}$")
+GSTIN_REGEX = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$")
+
+
+# -------------------------------
+# Schemas
+# -------------------------------
+
+class BuyerRegistrationSchema(BaseModel):
+    name: str = Field(..., description="Full name")
+    company_name: str = Field(..., description="Company name")
+    email: str = Field(..., description="Organization email")
+    pincode: str = Field(..., description="Pincode")
+    organizationPhonenumber: Optional[str] = Field(None, description="Phone number")
+    whatsapp: Optional[bool] = Field(None, description="WhatsApp flag")
+
+    @field_validator("email")
+    def validate_email(cls, v: str) -> str:
+        if not EMAIL_REGEX.match(v):
+            raise ValueError("Invalid email format")
+        return v.lower()
+
+    @field_validator("organizationPhonenumber")
+    def validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        if v and not PHONE_REGEX.match(v):
+            raise ValueError("Invalid phone number format")
         return v
-    
-    @validator('email')
-    def validate_email(cls, v):
-        if v and ('@' not in v or '.' not in v):
-            raise ValueError('Invalid email format')
+
+    @field_validator("pincode")
+    def validate_pincode(cls, v: str) -> str:
+        if not PINCODE_REGEX.match(v):
+            raise ValueError("Pincode must be 6 digits")
         return v
-    
-    @validator('name')
-    def validate_name(cls, v):
-        if len(v.strip()) < 2:
-            raise ValueError('Name must be at least 2 characters long')
-        return v.strip()
-    
-    class Config:
-        extra = "allow"
 
 
-class UserProfileSchema(BaseModel):
-    """
-    Schema for user profile information.
-    """
-    id: str = Field(..., description="User ID")
-    phone_number: str = Field(..., description="WhatsApp phone number")
-    name: str = Field(..., description="User's full name")
-    company_name: Optional[str] = Field(None, description="Company name")
-    role: UserRole = Field(..., description="User role")
-    email: Optional[str] = Field(None, description="Email address")
-    created_at: Optional[str] = Field(None, description="Account creation timestamp")
-    is_active: bool = Field(True, description="Whether user account is active")
-    
-    class Config:
-        extra = "allow"
+class SellerRegistrationSchema(BaseModel):
+    full_name: str
+    company_name: str
+    email: str
+    location: str
+    pincode: str
+    gstin: str
+    products_services: str
+    organizationPhonenumber: Optional[str] = None
+    whatsapp: Optional[bool] = None
 
+    @field_validator("email")
+    def validate_email(cls, v: str) -> str:
+        if not EMAIL_REGEX.match(v):
+            raise ValueError("Invalid email format")
+        return v.lower()
 
-class UserUpdateSchema(BaseModel):
-    """
-    Schema for updating user profile information.
-    """
-    name: Optional[str] = Field(None, description="User's full name")
-    company_name: Optional[str] = Field(None, description="Company name")
-    email: Optional[str] = Field(None, description="Email address")
-    
-    @validator('email')
-    def validate_email(cls, v):
-        if v and ('@' not in v or '.' not in v):
-            raise ValueError('Invalid email format')
+    @field_validator("organizationPhonenumber")
+    def validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        if v and not PHONE_REGEX.match(v):
+            raise ValueError("Invalid phone number format")
         return v
-    
-    @validator('name')
-    def validate_name(cls, v):
-        if v and len(v.strip()) < 2:
-            raise ValueError('Name must be at least 2 characters long')
-        return v.strip() if v else v
-    
-    class Config:
-        extra = "allow"
+
+    @field_validator("pincode")
+    def validate_pincode(cls, v: str) -> str:
+        if not PINCODE_REGEX.match(v):
+            raise ValueError("Pincode must be 6 digits")
+        return v
+
+    @field_validator("gstin")
+    def validate_gstin(cls, v: str) -> str:
+        if not GSTIN_REGEX.match(v):
+            raise ValueError("Invalid GSTIN format")
+        return v
+
+
+class APIUserSchema(BaseModel):
+    id: str
+    username: str
+    fullName: str
+    selfClient: bool
+    phone: Optional[str] = None
+    companyName: Optional[str] = None
+    orgId: Optional[str] = None
+    uniqueId: Optional[str] = None
+    active: Optional[bool] = None
+    approved: Optional[bool] = None
+
+
+class UserDetailsSchema(BaseModel):
+    id: str
+    username: str
+    name: str
+    self_client: bool
+    role: UserRole = UserRole.UNKNOWN  
+    is_registered: bool = False
+    phone_number: Optional[str] = None
+    company_name: Optional[str] = None
+    org_id: Optional[str] = None
+    active: bool = False
+    approved: bool = False
+
+    @classmethod
+    def from_api_response(cls, api_data: dict) -> 'UserDetailsSchema':
+        """Create UserDetailsSchema from API response."""
+        # Decide role
+        if api_data.get("selfClient") is True:
+            role = UserRole.BUYER
+        elif api_data.get("selfClient") is False:
+            role = UserRole.SELLER
+        else:
+            role = UserRole.UNKNOWN
+            
+        return cls(
+            id=str(api_data.get("id", "")),
+            username=api_data.get("username", ""),
+            name=api_data.get("fullName", ""),
+            self_client=api_data.get("selfClient", False),
+            role=role,
+            is_registered=bool(api_data.get("id")),  
+            phone_number=api_data.get("phone"),
+            company_name=api_data.get("companyName"),
+            org_id=api_data.get("orgId"),
+            active=api_data.get("active", False),
+            approved=api_data.get("approved", False)
+        )

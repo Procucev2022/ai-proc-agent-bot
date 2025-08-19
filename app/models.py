@@ -34,6 +34,8 @@ class RFQStatus(enum.Enum):
     failed = "failed"
 
 class WorkflowType(enum.Enum):
+    authentication = "authentication"
+    registration = "registration"
     product_search = "product_search"
     rfq_creation = "rfq_creation"
     rfq_submitted = "rfq_submitted"
