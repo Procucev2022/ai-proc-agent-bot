@@ -90,54 +90,64 @@ class SellerRegistrationSchema(BaseModel):
             raise ValueError("Invalid GSTIN format")
         return v
 
-
 class APIUserSchema(BaseModel):
     id: str
-    username: str
-    fullName: str
-    selfClient: bool
+    username: Optional[str] = None
+    fullName: Optional[str] = None
+    selfClient: Optional[bool] = None
+    email: Optional[str] = None
     phone: Optional[str] = None
     companyName: Optional[str] = None
-    orgId: Optional[str] = None
     uniqueId: Optional[str] = None
-    active: Optional[bool] = None
-    approved: Optional[bool] = None
-
+    
 
 class UserDetailsSchema(BaseModel):
     id: str
-    username: str
-    name: str
-    self_client: bool
-    role: UserRole = UserRole.UNKNOWN  
+    name: Optional[str] = None
+    email: Optional[str] = None
+    self_client: bool = False
+    role: UserRole = UserRole.UNKNOWN
     is_registered: bool = False
     phone_number: Optional[str] = None
     company_name: Optional[str] = None
-    org_id: Optional[str] = None
-    active: bool = False
-    approved: bool = False
+    unique_id: Optional[str] = None
 
     @classmethod
-    def from_api_response(cls, api_data: dict) -> 'UserDetailsSchema':
+    def from_api_response(cls, api_data: dict) -> "UserDetailsSchema":
         """Create UserDetailsSchema from API response."""
-        # Decide role
-        if api_data.get("selfClient") is True:
-            role = UserRole.BUYER
-        elif api_data.get("selfClient") is False:
-            role = UserRole.SELLER
-        else:
-            role = UserRole.UNKNOWN
-            
+
+        # Determine role
+        match api_data.get("selfClient"):
+            case True:
+                role = UserRole.BUYER
+            case False:
+                role = UserRole.SELLER
+            case _:
+                role = UserRole.UNKNOWN
+
         return cls(
             id=str(api_data.get("id", "")),
-            username=api_data.get("username", ""),
-            name=api_data.get("fullName", ""),
+            name=api_data.get("fullName"),
+            email=api_data.get("username"),
             self_client=api_data.get("selfClient", False),
             role=role,
-            is_registered=bool(api_data.get("id")),  
+            is_registered=bool(api_data.get("id")),
             phone_number=api_data.get("phone"),
             company_name=api_data.get("companyName"),
-            org_id=api_data.get("orgId"),
-            active=api_data.get("active", False),
-            approved=api_data.get("approved", False)
+           
+        )
+
+    @classmethod
+    def invalid_user(cls, phone_number: str) -> "UserDetailsSchema":
+        """Returns a dummy user for test environments or invalid cases."""
+        return cls(
+            id="invalid",
+            name="shubham",
+            email="shubham@mohap.ai",
+            self_client=True,
+            role=UserRole.UNKNOWN,
+            is_registered=False,
+            phone_number=phone_number,
+            company_name="mohap ai solutin",
+           
         )

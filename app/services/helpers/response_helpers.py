@@ -123,3 +123,58 @@ class ResponseHelpers:
             except Exception as e:
                 logger.error(f"Error generating RFQ failure response: {e}")
                 return f"There was an issue creating your RFQ: {gmt_result.get('error', 'Unknown error')}. Please try again."
+    
+    def generate_registration_confirmation(self, entities: Dict[str, Any], context: Dict[str, Any]) -> str:
+        """Generate registration confirmation message using OpenAI."""
+        try:
+            return self.openai_service.generate_contextual_response(
+                context, 
+                ["Please confirm your registration details"], 
+                "registration_confirmation"
+            )
+        except Exception as e:
+            logger.error(f"Error generating registration confirmation: {e}")
+            # Fallback to simple confirmation
+            field_labels = {
+                "name": "Name", "companyName": "Company", "email": "Email", 
+                "pincode": "Pincode", "gstin": "GSTIN", "products_services": "Products/Services"
+            }
+            
+            confirmation_lines = []
+            for field, value in entities.items():
+                if value and field in field_labels:
+                    confirmation_lines.append(f"• {field_labels[field]}: {value}")
+            
+            return (
+                "Please confirm your registration details:\n\n" +
+                "\n".join(confirmation_lines) +
+                "\n\nIs this information correct? Reply 'Yes' to confirm or provide corrections."
+            )
+    
+    async def generate_registration_clarification(self, missing_fields: List[str], completeness: float, context: Dict[str, Any]) -> str:
+        """Generate registration clarification message using OpenAI."""
+        try:
+            return self.openai_service.generate_clarification_response(
+                missing_fields, completeness, context
+            )
+        except Exception as e:
+            logger.error(f"Error generating registration clarification: {e}")
+            # Fallback to simple clarification
+            field_mapping = {
+                "name": "What's your full name?",
+                "companyName": "What's your company name?",
+                "email": "What's your organization email address?",
+                "pincode": "What's your pincode?",
+                "gstin": "What's your GSTIN number?",
+                "products_services": "What products or services do you offer?"
+            }
+            
+            questions = []
+            for field in missing_fields:
+                if field in field_mapping:
+                    questions.append(field_mapping[field])
+            
+            if questions:
+                return "I still need a few more details:\n\n" + "\n".join(f"• {q}" for q in questions)
+            else:
+                return "Please provide the remaining registration details."

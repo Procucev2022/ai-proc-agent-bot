@@ -54,6 +54,8 @@ from app.services.enhanced_auto_categorization_service import EnhancedAutoCatego
 from app.services.seller_recommendation_service import SellerRecommendationService
 from app.services.enhanced_seller_matching_service import EnhancedSellerMatchingService
 from app.services.rfq_background_service import RFQBackgroundService
+from app.services.authentication_service import AuthenticationService
+from app.services.registration_service import RegistrationService
 
 from app.database import SessionLocal, DatabaseManager
 from app.models import User, ConversationSession
@@ -84,8 +86,14 @@ class ChatService:
         self.seller_recommendation_service = SellerRecommendationService()
         self.enhanced_seller_matching_service = EnhancedSellerMatchingService()
         self.rfq_background_service = RFQBackgroundService()
-        self.authentication_service = AuthenticationService()
-        self.registration_service = RegistrationService()
+        
+        # Initialize authentication and registration services
+        self.authentication_service = AuthenticationService(
+            self.whatsapp_service, self.openai_service, self.response_helpers
+        )
+        self.registration_service = RegistrationService(
+            self.whatsapp_service, self.openai_service, self.entity_service, self.response_helpers
+        )
         
         # Initialize extracted services
         self.session_manager = SessionManagementService(
@@ -124,35 +132,32 @@ class ChatService:
         workflow routing, and response generation.
         """
         try:
-            
-            #  Token Validation and Authenticate User
-            user = await self.process_auth(user_phone)
-            print(f"ChatService: User details after authentication: {user}")
-            
-            if not user or not user.is_registered:
-                logger.info("ChatService -----------------------Proceeding with registration workflow.")
-                user = await self.process_registration(user_phone)
-
-
-            # Get or create user session using extracted service
+            # Step 1: Get or create user session
             session = await self.session_manager.get_conversation_context(user_phone)
-            
-            # Handle session expiry using extracted service
             session = await self.session_manager.handle_session_expiry_check(user_phone, session)
-            
-            # Track user message in conversation history using extracted service
             self.session_manager.add_message_to_history(session, "user", message_content, message_type)
             
-            # Handle different message types
+            # Step 2: Token Validation & Authentication Check
+            user_details = await self._validate_user_authentication(user_phone)
+            
+            if not user_details or not user_details.is_registered:
+                # Token validation failed or user not registered
+                return await self._handle_authentication_and_registration_flow(
+                    user_phone, message_content, session
+                )
+            
+            # Step 3: User is authenticated and registered, proceed with main flow
+            # Create mock user object for compatibility
+            mock_user = self._create_user_from_details(user_details)
+            
             if message_type == "text":
-                result = await self._process_text_message(user, session, message_content)
+                result = await self._process_text_message(mock_user, session, message_content)
             elif message_type == "interactive":
-                result = await self._process_interactive_message(user, session, message_content)
+                result = await self._process_interactive_message(mock_user, session, message_content)
             elif message_type == "excel_upload":
-                result = await self._process_excel_upload(user, session, message_content)
+                result = await self._process_excel_upload(mock_user, session, message_content)
             elif message_type == "image" or message_type == "document":
-                result = await self.image_processor.process_image_message(user, session, message_content)
-                # Save session after image processing
+                result = await self.image_processor.process_image_message(mock_user, session, message_content)
                 await self.session_manager.save_session(session, "rfq_creation")
             else:
                 result = {"status": "error", "error": f"Unknown message type: {message_type}"}
@@ -162,12 +167,154 @@ class ChatService:
         except Exception as e:
             return await self._handle_error_response(e, user_phone, "processing_message", "Please try again")
     
+    async def _validate_user_authentication(self, user_phone: str) -> UserDetailsSchema:
+        """Validate user authentication from Redis token storage."""
+        try:
+            # Check Redis for authenticated user session
+            user_details = await self.authentication_service.validate_token(user_phone)
+            if user_details and user_details.is_registered:
+                logger.info(f"User authenticated from token: {user_details.id}")
+                return user_details
+            
+            logger.info(f"No valid token found for user: {user_phone}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Token validation error for {user_phone}: {e}")
+            return None
+    
+    async def _handle_authentication_and_registration_flow(self, user_phone: str, message: str,
+                                                         session: ConversationSession) -> Dict[str, Any]:
+        """Handle complete authentication and registration flow."""
+        try:
+            current_stage = session.workflow_state.get("authentication_stage")
+            registration_stage = session.workflow_state.get("registration_stage")
+            
+            # Check if we're in registration flow
+            if session.workflow_type == "registration":
+                return await self._handle_registration_workflow_routing(user_phone, message, session)
+            
+            # Check if we're in authentication flow
+            elif current_stage:
+                return await self._handle_authentication_workflow_routing(user_phone, message, session, current_stage)
+            
+            # New user - start authentication flow
+            else:
+                return await self.authentication_service.validate_token_and_authenticate(
+                    user_phone, message, session
+                )
+                
+        except Exception as e:
+            logger.error(f"Authentication/Registration flow error: {e}")
+            return await self._handle_error_response(e, user_phone, "auth_reg_flow", "Please try again")
+    
+    async def _handle_authentication_workflow_routing(self, user_phone: str, message: str,
+                                                    session: ConversationSession, stage: str) -> Dict[str, Any]:
+        """Route authentication workflow based on current stage."""
+        try:
+            if stage == "intent_clarification":
+                result = await self.authentication_service.handle_intent_clarification_response(
+                    user_phone, message, session
+                )
+            elif stage == "email_confirmation":
+                result = await self.authentication_service.handle_email_confirmation_response(
+                    user_phone, message, session
+                )
+            elif stage == "email_otp":
+                result = await self.authentication_service.handle_otp_verification(
+                    user_phone, message, session
+                )
+            elif stage == "redirect_to_registration":
+                # Transition to registration flow
+                user_intent = session.workflow_state.get("registration_intent", "buy")
+                result = await self.registration_service.initiate_registration(
+                    user_phone, session, user_intent, message
+                )
+            else:
+                # Unknown stage, restart authentication
+                result = await self.authentication_service.validate_token_and_authenticate(
+                    user_phone, message, session
+                )
+            
+            # Save session after authentication workflow
+            await self.session_manager.save_session(session, session.workflow_type or "authentication")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Authentication workflow routing error: {e}")
+            return await self._handle_error_response(e, user_phone, "auth_workflow", "Please try again")
+    
+    async def _handle_registration_workflow_routing(self, user_phone: str, message: str,
+                                                  session: ConversationSession) -> Dict[str, Any]:
+        """Route registration workflow based on current stage."""
+        try:
+            registration_stage = session.workflow_state.get("registration_stage")
+            
+            if registration_stage == "data_collection":
+                result = await self.registration_service.handle_registration_data_collection(
+                    user_phone, message, session
+                )
+            elif registration_stage == "confirmation":
+                result = await self.registration_service.handle_registration_confirmation(
+                    user_phone, message, session
+                )
+            elif registration_stage == "email_otp":
+                result = await self.registration_service.handle_registration_otp_verification(
+                    user_phone, message, session
+                )
+            else:
+                # Unknown stage, restart registration
+                user_intent = session.workflow_state.get("registration_intent", "buy")
+                result = await self.registration_service.initiate_registration(
+                    user_phone, session, user_intent, message
+                )
+            
+            # Check if registration completed and user is ready for main flow
+            if result.get("ready_for_main_flow"):
+                # Create mock authenticated user and proceed to main flow
+                mock_user = self._create_mock_authenticated_user(user_phone, session)
+                session.workflow_type = None  # Reset workflow type
+                session.workflow_state = {"extracted_entities": []}  # Reset state
+                
+                # Process the message through main flow
+                return await self._process_text_message(mock_user, session, message)
+            
+            # Save session after registration workflow
+            await self.session_manager.save_session(session, "registration")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Registration workflow routing error: {e}")
+            return await self._handle_error_response(e, user_phone, "reg_workflow", "Please try again")
+    
+    def _create_mock_authenticated_user(self, user_phone: str, session: ConversationSession) -> User:
+        """Create mock authenticated user after successful registration."""
+        class MockUser:
+            def __init__(self, phone_number, user_type):
+                self.id = 1
+                self.phone_number = phone_number
+                self.name = "Registered User"
+                self.is_registered = True
+                self.role = "buyer" if user_type == "buyer" else "seller"
+        
+        user_type = session.user_type.value if session.user_type else "buyer"
+        return MockUser(user_phone, user_type)
+    
+    def _create_user_from_details(self, user_details: UserDetailsSchema) -> User:
+        """Create user object from UserDetailsSchema."""
+        class AuthenticatedUser:
+            def __init__(self, details):
+                self.id = details.id
+                self.phone_number = details.phone_number
+                self.name = details.name
+                self.is_registered = details.is_registered
+                self.role = details.role
+        
+        return AuthenticatedUser(user_details)
+    
     async def _process_text_message(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """Process text message through intent classification and routing."""
         try:
-            # Check if user needs registration
-            if not user.is_registered:
-                return await self._handle_registration_workflow(user, message)
             
             # Handle pending intent switch choices FIRST (user responding to "1. Continue or 2. Switch")
             if session.workflow_state.get("pending_intent_switch"):
@@ -798,6 +945,15 @@ class ChatService:
             logger.info(f"Sent authentication placeholder to {user_phone}")
         except Exception as e:
             logger.error(f"Error sending authentication placeholder: {e}")
+    
+    async def _show_seller_flow_placeholder(self, user_phone: str) -> None:
+        """Show seller flow placeholder message."""
+        try:
+            message = "Seller flow is in progress. Our team will contact you shortly with RFQ opportunities."
+            await self.whatsapp_service.send_message(user_phone, message)
+            logger.info(f"Sent seller flow placeholder to {user_phone}")
+        except Exception as e:
+            logger.error(f"Error sending seller flow placeholder: {e}")
     
     async def _check_bfs_availability(self, user_phone: str) -> None:
         """Check BFS availability after successful RFQ creation."""
