@@ -1,0 +1,59 @@
+{
+  "type": "function",
+  "function": {
+    "name": "extract_buyer_registration_entities",
+    "description": "Extract buyer registration information from user message",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "entities": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Full name of the buyer"
+            },
+            "company_name": {
+              "type": "string", 
+              "description": "Company or organization name"
+            },
+            "email": {
+              "type": "string",
+              "description": "Organization email address"
+            },
+            "pincode": {
+              "type": "string",
+              "description": "6-digit pincode"
+            },
+            "organizationPhonenumber": {
+              "type": "string",
+              "description": "Organization phone number"
+            },
+            "whatsapp": {
+              "type": "boolean",
+              "description": "Whether they use WhatsApp for business"
+            }
+          }
+        },
+        "completeness": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of required fields collected"
+        },
+        "missing_fields": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of missing required fields"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Confidence in extracted entities"
+        }
+      },
+      "required": ["entities", "completeness", "missing_fields", "confidence"]
+    }
+  }
+}
