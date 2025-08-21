@@ -250,4 +250,18 @@ class DatabaseManager:
     def get_conversation_session(self, session_id: str) -> Optional[ConversationSession]:
         """Get a conversation session by ID."""
         session = self.session.query(ConversationSession).filter_by(session_id=session_id).first()
+        
+        # Fix potential JSON deserialization issues
+        if session and session.workflow_state:
+            try:
+                # Ensure workflow_state is properly deserialized as dict
+                if isinstance(session.workflow_state, str):
+                    session.workflow_state = json.loads(session.workflow_state)
+            except (json.JSONDecodeError, TypeError) as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to deserialize workflow_state for session {session_id}: {e}")
+                # Reset to empty dict to prevent further errors
+                session.workflow_state = {"extracted_entities": []}
+        
         return session

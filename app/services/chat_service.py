@@ -40,6 +40,7 @@ from app.services.handlers.confirmation_handler import ConfirmationHandler
 from app.services.handlers.products_array_handler import ProductsArrayHandler
 from app.services.handlers.purchase_intent_handler import PurchaseIntentHandler
 from app.services.handlers.attachment_decision_handler import AttachmentDecisionHandler
+from app.services.handlers.intent_switch_handler import IntentSwitchHandler
 from app.services.processors.image_message_processor import ImageMessageProcessor
 
 
@@ -95,6 +96,9 @@ class ChatService:
             self.whatsapp_service, self.response_helpers,
             self.auto_categorization_service, self.enhanced_auto_categorization_service,
             self.seller_recommendation_service, self.enhanced_seller_matching_service
+        )
+        self.intent_switch_handler = IntentSwitchHandler(
+            self.whatsapp_service, self.response_helpers
         )
         self.products_array_handler = ProductsArrayHandler(
             self.whatsapp_service, self.openai_service, 
@@ -165,6 +169,62 @@ class ChatService:
             if not user.is_registered:
                 return await self._handle_registration_workflow(user, message)
             
+            # Handle pending intent switch choices FIRST (user responding to "1. Continue or 2. Switch")
+            if session.workflow_state.get("pending_intent_switch"):
+                result = await self.intent_switch_handler.handle_intent_switch_response(user, session, message)
+                
+                # Handle corrupted intent switch data
+                if result.get("status") == "corrupted_intent_switch_data":
+                    logger.error("Corrupted intent switch data detected, continuing with normal flow")
+                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    # Fall through to normal intent processing below
+                elif result.get("status") == "continue_current_workflow":
+                    # User chose to continue with current workflow
+                    await self.session_manager.save_session(session, session.workflow_type or 'rfq_creation')
+                    return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None, self._should_use_summary_aware_extraction)
+                elif result.get("status") == "switch_to_new_intent":
+                    # User chose to switch to new intent, route to appropriate handler
+                    new_intent = result["new_intent"]
+                    new_message = result["new_message"]
+                    intent_result = result["intent_result"]
+                    
+                    # Map intent to valid workflow type (following pattern used by other handlers)
+                    if new_intent == "buy_something":
+                        workflow_type = "rfq_creation"
+                    elif new_intent == "rfq_status_check":
+                        workflow_type = "rfq_status_check"
+                    elif new_intent == "general_inquiry":
+                        workflow_type = "general_inquiry"
+                    else:
+                        workflow_type = "general_inquiry"  # Safe default
+                    
+                    await self.session_manager.save_session(session, workflow_type)
+                    
+                    # Route to appropriate handler based on new intent
+                    if new_intent == "buy_something":
+                        return await self.purchase_intent_handler.handle_purchase_intent(user, session, new_message, intent_result, self._should_use_summary_aware_extraction)
+                    elif new_intent == "rfq_status_check":
+                        return await self._handle_rfq_status_inquiry(user, new_message)
+                    elif new_intent == "general_inquiry":
+                        return await self._handle_general_inquiry(user, new_message)
+                    else:
+                        return await self._handle_fallback(user, new_message)
+                elif result.get("status") == "error":
+                    # Handle intent switch errors
+                    logger.error(f"Intent switch error: {result.get('error')}")
+                    error_response = await self.response_helpers.generate_contextual_response(
+                        {"error_type": "intent_switch_error", "conversation_stage": "error"}, 
+                        ["Sorry, there was an issue processing your request. What would you like to do?"], 
+                        "error"
+                    )
+                    await self.whatsapp_service.send_message(user.phone_number, error_response)
+                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    return result
+                else:
+                    # Clarification requested or other status
+                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    return result
+            
             # Check if we're already in an RFQ workflow
             existing_entities = session.workflow_state.get("extracted_entities", [])
             has_existing_data = len(existing_entities) > 0 and any(
@@ -196,6 +256,12 @@ class ChatService:
             if has_pending_attachment_decision:
                 return await self.attachment_decision_handler.handle_attachment_decision(user, session, message, self._should_use_summary_aware_extraction)
             
+            # Check for intent switch during pending optional/confirmation states BEFORE handling them
+            if (has_pending_optional or has_pending_confirmations) and await self.intent_switch_handler.should_handle_intent_switch(session, intent, confidence):
+                result = await self.intent_switch_handler.handle_intent_switch_choice(user, session, message, intent, intent_result)
+                await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                return result
+            
             # Handle pending optional field responses
             if has_pending_optional:
                 result = await self.confirmation_handler.handle_optional_fields_response(user, session, message)
@@ -225,8 +291,13 @@ class ChatService:
                 
                 return result
             
-            
             if has_existing_data or has_incomplete_products:
+                # Check for intent switch during active workflow BEFORE continuing
+                if await self.intent_switch_handler.should_handle_intent_switch(session, intent, confidence):
+                    result = await self.intent_switch_handler.handle_intent_switch_choice(user, session, message, intent, intent_result)
+                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    return result
+                
                 # Already in RFQ workflow, continue collecting
                 logger.info("Continuing existing RFQ workflow")
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None, self._should_use_summary_aware_extraction)
