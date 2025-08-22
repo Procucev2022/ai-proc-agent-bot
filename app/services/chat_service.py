@@ -180,6 +180,7 @@ class ChatService:
         try:
             # Check Redis for authenticated user session
             user_details = await self.authentication_service.validate_token(user_phone)
+            logger.info(f"User Token Validation for user: {user_details}")
             if user_details and user_details.is_registered:
                 logger.info(f"User authenticated from token: {user_details.id}")
                 return user_details
