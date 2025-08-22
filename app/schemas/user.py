@@ -138,7 +138,7 @@ class UserDetailsSchema(BaseModel):
         )
 
     @classmethod
-    def invalid_user(cls, phone_number: str) -> "UserDetailsSchema":
+    def invalid_user(cls, user_phone: str) -> "UserDetailsSchema":
         """Returns a dummy user for test environments or invalid cases."""
         return cls(
             id="invalid",
@@ -147,7 +147,7 @@ class UserDetailsSchema(BaseModel):
             self_client=True,
             role=UserRole.UNKNOWN,
             is_registered=False,
-            phone_number=phone_number,
+            phone_number=user_phone,
             company_name="mohap ai solutin",
            
         )

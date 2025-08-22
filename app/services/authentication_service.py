@@ -84,7 +84,7 @@ class AuthenticationService:
                     await self.store_user_session(user_phone, user_details)
                     logger.info(f"Session stored for user {user_phone} ")
                     return {"success": True, "user_details": user_details, "raw_response": auth_response.get("response")}
-                return {"success": False, "message": "No valid user details found"}
+                return {"success": False, "message": "User details not found"}
 
             return auth_response
 
