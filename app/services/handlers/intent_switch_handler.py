@@ -10,6 +10,7 @@ from typing import Dict, Any
 from app.models import User, ConversationSession
 from app.services.whatsapp_service import WhatsAppService
 from app.services.helpers.response_helpers import ResponseHelpers
+from app.services.openai_service import OpenAIService
 from app.utils.datetime_utils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ class IntentSwitchHandler:
     def __init__(self, whatsapp_service: WhatsAppService, response_helpers: ResponseHelpers):
         self.whatsapp_service = whatsapp_service
         self.response_helpers = response_helpers
+        self.openai_service = OpenAIService()
     
     async def should_handle_intent_switch(self, session: ConversationSession, intent: str, confidence: float) -> bool:
         """
@@ -148,61 +150,82 @@ class IntentSwitchHandler:
                 del session.workflow_state["pending_intent_switch"]
             return {"status": "corrupted_intent_switch_data"}
         
-        # Parse user choice
-        message_lower = message.lower()
+        # Use OpenAI to analyze user's intent switch response
+        try:
+            analysis_result = self.openai_service.analyze_intent_switch_response(
+                message=message,
+                pending_switch_context=pending_switch
+            )
+            
+            logger.info(f"OpenAI intent switch analysis: {analysis_result}")
+            
+            if analysis_result.get("chosen_action") == "continue_current":
+                # User wants to continue with current workflow
+                logger.info("User chose to continue with current workflow")
+                
+                # Clear pending switch state
+                if "pending_intent_switch" in session.workflow_state:
+                    del session.workflow_state["pending_intent_switch"]
+                
+                # Continue with original workflow
+                return {
+                    "status": "continue_current_workflow",
+                    "continue_with_purchase_intent": True
+                }
+                
+            elif analysis_result.get("chosen_action") == "switch_to_new":
+                # User wants to switch to new intent - proceed to switch handling below
+                logger.info("User chose to switch to new intent")
+                
+        except Exception as e:
+            logger.error(f"OpenAI intent switch analysis failed: {str(e)}")
+            # Fallback to simple keyword matching if OpenAI fails
+            message_lower = message.lower()
+            if any(keyword in message_lower for keyword in ["1", "continue current", "current", "first"]) and "new" not in message_lower:
+                # User wants to continue with current workflow
+                logger.info("User chose to continue with current workflow (fallback)")
+                
+                # Clear pending switch state
+                if "pending_intent_switch" in session.workflow_state:
+                    del session.workflow_state["pending_intent_switch"]
+                
+                # Continue with original workflow
+                return {
+                    "status": "continue_current_workflow", 
+                    "continue_with_purchase_intent": True
+                }
+            # If fallback doesn't match continue, assume they want to switch
         
-        if any(keyword in message_lower for keyword in ["1", "continue", "current", "first"]):
-            # User wants to continue with current workflow
-            logger.info("User chose to continue with current workflow")
-            
-            # Clear pending switch state
-            if "pending_intent_switch" in session.workflow_state:
-                del session.workflow_state["pending_intent_switch"]
-            
-            # Continue with original workflow
-            return {
-                "status": "continue_current_workflow",
-                "continue_with_purchase_intent": True
-            }
-            
-        elif any(keyword in message_lower for keyword in ["2", "abandon", "switch", "new", "second"]):
-            # User wants to switch to new intent
-            logger.info("User chose to switch to new intent")
-            logger.info(f"Accessing pending_switch keys: {list(pending_switch.keys())}")
-            
-            # Validate required keys exist before accessing them
-            required_keys = ["new_intent", "new_intent_message", "intent_result"]
-            missing_keys = [key for key in required_keys if key not in pending_switch]
-            
-            if missing_keys:
-                logger.error(f"Missing required keys in pending_switch: {missing_keys}")
-                # Clear the incomplete pending switch state
-                del session.workflow_state["pending_intent_switch"]
-                return {"status": "error", "error": f"Incomplete intent switch data: missing {missing_keys}"}
-            
-            new_intent = pending_switch["new_intent"]
-            new_message = pending_switch["new_intent_message"]
-            intent_result = pending_switch["intent_result"]
-            
-            # Clear pending switch state BEFORE abandoning workflow (since abandon clears workflow_state)
-            if "pending_intent_switch" in session.workflow_state:
-                del session.workflow_state["pending_intent_switch"]
-            
-            # Clear current workflow state (abandon current request)
-            self._abandon_current_workflow(session)
-            
-            return {
-                "status": "switch_to_new_intent",
-                "new_intent": new_intent,
-                "new_message": new_message,
-                "intent_result": intent_result
-            }
-        else:
-            # Unclear response, ask again
-            clarification_response = "Please choose:\n1. Continue with current request\n2. Start new request (abandon current)"
-            await self.whatsapp_service.send_message(user.phone_number, clarification_response)
-            
-            return {"status": "intent_switch_clarification_requested"}
+        # Handle switch to new intent (OpenAI determined switch_to_new or fallback default)
+        logger.info(f"Accessing pending_switch keys: {list(pending_switch.keys())}")
+        
+        # Validate required keys exist before accessing them
+        required_keys = ["new_intent", "new_intent_message", "intent_result"]
+        missing_keys = [key for key in required_keys if key not in pending_switch]
+        
+        if missing_keys:
+            logger.error(f"Missing required keys in pending_switch: {missing_keys}")
+            # Clear the incomplete pending switch state
+            del session.workflow_state["pending_intent_switch"]
+            return {"status": "error", "error": f"Incomplete intent switch data: missing {missing_keys}"}
+        
+        new_intent = pending_switch["new_intent"]
+        new_message = pending_switch["new_intent_message"]
+        intent_result = pending_switch["intent_result"]
+        
+        # Clear pending switch state BEFORE abandoning workflow (since abandon clears workflow_state)
+        if "pending_intent_switch" in session.workflow_state:
+            del session.workflow_state["pending_intent_switch"]
+        
+        # Clear current workflow state (abandon current request)
+        self._abandon_current_workflow(session)
+        
+        return {
+            "status": "switch_to_new_intent",
+            "new_intent": new_intent,
+            "new_message": new_message,
+            "intent_result": intent_result
+        }
     
     def _get_workflow_description(self, session: ConversationSession) -> str:
         """Get human-readable description of current workflow."""
