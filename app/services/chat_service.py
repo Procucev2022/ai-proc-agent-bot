@@ -132,17 +132,22 @@ class ChatService:
         workflow routing, and response generation.
         """
         try:
-            # Step 1: Get or create user session
+            # Get or create user session using extracted service
             session = await self.session_manager.get_conversation_context(user_phone)
+            
+            # Handle session expiry using extracted service
             session = await self.session_manager.handle_session_expiry_check(user_phone, session)
+            
+            # Track user message in conversation history using extracted service
             self.session_manager.add_message_to_history(session, "user", message_content, message_type)
             
-            # Step 2: Token Validation & Authentication Check
-            user_details = await self.user_token_validate(user_phone)
-            
+            # User Token Validation using redis
+            user_details = await self.validate_user_token(user_phone)
+
+            # User Token Expired and reauthentication required or registration required            
             if not user_details or not user_details.is_registered:
-                # Token validation failed or user not registered
-                return await self._handle_authentication_and_registration_flow(
+                logger.info(f"User Token Expired for user: {user_phone}")
+                return await self.process_authentication_and_registration_flow(
                     user_phone, message_content, session
                 )
             
@@ -167,7 +172,7 @@ class ChatService:
         except Exception as e:
             return await self._handle_error_response(e, user_phone, "processing_message", "Please try again")
     
-    async def user_token_validate(self, user_phone: str) -> UserDetailsSchema:
+    async def validate_user_token(self, user_phone: str) -> UserDetailsSchema:
         """Validate user authentication from Redis token storage."""
         try:
             # Check Redis for authenticated user session
@@ -183,26 +188,20 @@ class ChatService:
             logger.error(f"Token validation error for {user_phone}: {e}")
             return None
     
-    async def _handle_authentication_and_registration_flow(self, user_phone: str, message: str,
+    async def process_authentication_and_registration_flow(self, user_phone: str, message: str,
                                                          session: ConversationSession) -> Dict[str, Any]:
         """Handle complete authentication and registration flow."""
         try:
-            current_stage = session.workflow_state.get("authentication_stage")
-            registration_stage = session.workflow_state.get("registration_stage")
-            
-            # Check if we're in registration flow
-            if session.workflow_type == "registration":
-                return await self._handle_registration_workflow_routing(user_phone, message, session)
-            
-            # Check if we're in authentication flow
-            elif current_stage:
-                return await self._handle_authentication_workflow_routing(user_phone, message, session, current_stage)
-            
-            # New user - start authentication flow
-            else:
-                return await self.authentication_service.validate_token_and_authenticate(
-                    user_phone, message, session
-                )
+
+            conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
+            intent_result = self.intent_service.classify_intent(message, conversation_context)
+            logger.info(f"Intent classification result: {intent_result}")
+            logger.info(f"Session: {session}")
+
+            user = await self.authentication_service.user_authenticate(user_phone, message, session)
+           
+            return user
+           
                 
         except Exception as e:
             logger.error(f"Authentication/Registration flow error: {e}")
@@ -232,7 +231,7 @@ class ChatService:
                 )
             else:
                 # Unknown stage, restart authentication
-                result = await self.authentication_service.validate_token_and_authenticate(
+                result = await self.authentication_service.user_authenticate(
                     user_phone, message, session
                 )
             
@@ -940,7 +939,7 @@ class ChatService:
     async def _show_auth_placeholder(self, user_phone: str) -> None:
         """Show authentication placeholder message for new sessions."""
         try:
-            message = "Authentication system is in progress, continuing with your request..."
+            message = "Registration system is in progress, continuing with your request..."
             await self.whatsapp_service.send_message(user_phone, message)
             logger.info(f"Sent authentication placeholder to {user_phone}")
         except Exception as e:
