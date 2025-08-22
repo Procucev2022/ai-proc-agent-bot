@@ -138,7 +138,7 @@ class ChatService:
             self.session_manager.add_message_to_history(session, "user", message_content, message_type)
             
             # Step 2: Token Validation & Authentication Check
-            user_details = await self._validate_user_authentication(user_phone)
+            user_details = await self.user_token_validate(user_phone)
             
             if not user_details or not user_details.is_registered:
                 # Token validation failed or user not registered
@@ -148,16 +148,16 @@ class ChatService:
             
             # Step 3: User is authenticated and registered, proceed with main flow
             # Create mock user object for compatibility
-            mock_user = self._create_user_from_details(user_details)
+            user = self._create_user_from_details(user_details)
             
             if message_type == "text":
-                result = await self._process_text_message(mock_user, session, message_content)
+                result = await self._process_text_message(user, session, message_content)
             elif message_type == "interactive":
-                result = await self._process_interactive_message(mock_user, session, message_content)
+                result = await self._process_interactive_message(user, session, message_content)
             elif message_type == "excel_upload":
-                result = await self._process_excel_upload(mock_user, session, message_content)
+                result = await self._process_excel_upload(user, session, message_content)
             elif message_type == "image" or message_type == "document":
-                result = await self.image_processor.process_image_message(mock_user, session, message_content)
+                result = await self.image_processor.process_image_message(user, session, message_content)
                 await self.session_manager.save_session(session, "rfq_creation")
             else:
                 result = {"status": "error", "error": f"Unknown message type: {message_type}"}
@@ -167,7 +167,7 @@ class ChatService:
         except Exception as e:
             return await self._handle_error_response(e, user_phone, "processing_message", "Please try again")
     
-    async def _validate_user_authentication(self, user_phone: str) -> UserDetailsSchema:
+    async def user_token_validate(self, user_phone: str) -> UserDetailsSchema:
         """Validate user authentication from Redis token storage."""
         try:
             # Check Redis for authenticated user session
@@ -176,7 +176,7 @@ class ChatService:
                 logger.info(f"User authenticated from token: {user_details.id}")
                 return user_details
             
-            logger.info(f"No valid token found for user: {user_phone}")
+            logger.info(f"Token Valdiation failed for user: {user_phone}")
             return None
             
         except Exception as e:
