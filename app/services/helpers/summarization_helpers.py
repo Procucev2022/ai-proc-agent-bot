@@ -157,7 +157,7 @@ class SummarizationHelpers:
                 # Basic session info
                 'user_id': session.external_user_id,
                 'workflow_type': str(session.workflow_type),
-                'outcome': str(session.outcome),
+                'outcome': session.outcome.value if hasattr(session.outcome, 'value') else str(session.outcome) if session.outcome else None,
                 'session_duration_minutes': session_duration,
                 'rfq_ids': [session.rfq_id] if session.rfq_id else [],
                 
@@ -192,7 +192,7 @@ class SummarizationHelpers:
             return {
                 'user_id': session.external_user_id,
                 'workflow_type': str(session.workflow_type),
-                'outcome': str(session.outcome),
+                'outcome': session.outcome.value if hasattr(session.outcome, 'value') else str(session.outcome) if session.outcome else None,
                 'extracted_entities': rich_entities,
                 'rfq_ids': [session.rfq_id] if session.rfq_id else []
             }

@@ -2,19 +2,26 @@
 Database connection and session management for the AI Procurement Agent.
 """
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.attributes import flag_modified
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List
 import json
+import logging
 
 from .config import get_settings
 from .models import Base, ProductCategory, Vendor, ConversationSession
 from .utils.datetime_utils import utc_now
 
+logger = logging.getLogger(__name__)
+
 engine = None
 SessionLocal = None
+
+# Remote database connection for item categorization
+remote_engine = None
+RemoteSessionLocal = None
 
 
 def init_database():
@@ -119,6 +126,145 @@ def get_db_session():
         SessionLocal = sessionmaker(bind=engine)
         
     return SessionLocal()
+
+
+def get_remote_db_session():
+    """Get remote database session for item categorization."""
+    global remote_engine, RemoteSessionLocal
+    
+    settings = get_settings()
+    
+    # Check if remote categorization is enabled
+    if not settings.enable_remote_categorization:
+        raise ValueError("Remote categorization is not enabled. Set ENABLE_REMOTE_CATEGORIZATION=true in .env")
+    
+    if RemoteSessionLocal is None:
+        remote_database_url = settings.get_remote_database_url()
+        
+        if not remote_database_url:
+            raise ValueError("Remote database URL not configured")
+        
+        # Create remote engine with connection pooling
+        remote_engine = create_engine(
+            remote_database_url,
+            pool_pre_ping=True,
+            pool_recycle=300,
+            pool_size=5,
+            max_overflow=10,
+            echo=settings.sql_debug
+        )
+        
+        RemoteSessionLocal = sessionmaker(bind=remote_engine)
+        
+        logger.info("Remote database connection initialized for item categorization")
+        
+    return RemoteSessionLocal()
+
+
+def execute_remote_query(query: str, params: Optional[Dict] = None) -> List[Dict[str, Any]]:
+    """
+    Execute a query on the remote database and return results as dictionaries.
+    
+    Args:
+        query: SQL query to execute
+        params: Query parameters (optional)
+        
+    Returns:
+        List of dictionaries with column names as keys
+    """
+    db = get_remote_db_session()
+    try:
+        result = db.execute(text(query), params or {})
+        # Convert result to list of dictionaries
+        columns = result.keys()
+        return [dict(zip(columns, row)) for row in result.fetchall()]
+    except Exception as e:
+        logger.error(f"Remote query execution failed: {e}")
+        raise
+    finally:
+        db.close()
+
+
+def get_remote_item_categories(limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    Get item categories from remote database for auto-categorization.
+    
+    Args:
+        limit: Optional limit on number of records
+        
+    Returns:
+        List of item category records with uuid, category, item, division, serial_no
+    """
+    query = """
+        SELECT uuid, category, item, division, serial_no, 
+               created_by, created_ts, last_modified_by, last_modified_ts
+        FROM item_category 
+        ORDER BY serial_no
+    """
+    
+    params = {}
+    if limit:
+        query += " LIMIT :limit"
+        params['limit'] = limit
+    
+    return execute_remote_query(query, params)
+
+
+def get_remote_category_stats() -> Dict[str, Any]:
+    """
+    Get statistics about the remote item_category table.
+    
+    Returns:
+        Dictionary with category statistics
+    """
+    stats = {}
+    
+    # Total count
+    count_result = execute_remote_query("SELECT COUNT(*) as total FROM item_category")
+    stats['total_items'] = count_result[0]['total'] if count_result else 0
+    
+    # Unique categories
+    category_result = execute_remote_query(
+        "SELECT COUNT(DISTINCT category) as unique_categories FROM item_category"
+    )
+    stats['unique_categories'] = category_result[0]['unique_categories'] if category_result else 0
+    
+    # Unique divisions
+    division_result = execute_remote_query(
+        "SELECT COUNT(DISTINCT division) as unique_divisions FROM item_category"
+    )
+    stats['unique_divisions'] = division_result[0]['unique_divisions'] if division_result else 0
+    
+    # Top categories
+    stats['top_categories'] = execute_remote_query("""
+        SELECT category, COUNT(*) as item_count 
+        FROM item_category 
+        GROUP BY category 
+        ORDER BY item_count DESC 
+        LIMIT 10
+    """)
+    
+    return stats
+
+
+def test_remote_connection() -> bool:
+    """
+    Test remote database connection.
+    
+    Returns:
+        True if connection successful, False otherwise
+    """
+    try:
+        settings = get_settings()
+        if not settings.enable_remote_categorization:
+            return False
+            
+        result = execute_remote_query("SELECT 1 as test")
+        return len(result) > 0 and result[0].get('test') == 1
+        
+    except Exception as e:
+        logger.error(f"Remote connection test failed: {e}")
+        return False
 
 
 class DatabaseManager:
