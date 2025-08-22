@@ -141,7 +141,7 @@ class UserDetailsSchema(BaseModel):
     def invalid_user(cls, user_phone: str) -> "UserDetailsSchema":
         """Returns a dummy user for test environments or invalid cases."""
         return cls(
-            id="invalid",
+            id="1428bbb9-a0ba-459d-b1e8-23d7c49455e8",
             name="shubham",
             email="shubham@mohap.ai",
             self_client=True,
@@ -149,5 +149,6 @@ class UserDetailsSchema(BaseModel):
             is_registered=False,
             phone_number=user_phone,
             company_name="mohap ai solutin",
+            
            
         )

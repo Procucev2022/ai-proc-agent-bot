@@ -216,6 +216,9 @@ class ChatService:
         """Handle invalid user authentication by creating mock user."""
         try:
             mock_user_details = UserDetailsSchema.invalid_user(user_phone)
+
+            # store token in redis
+            await self.authentication_service.store_user_session(user_phone , mock_user_details)
             # Registration prompt message
             registration_msg = (
                 "Hello, it looks like you're not registered yet. "
