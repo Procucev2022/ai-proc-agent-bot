@@ -132,32 +132,40 @@ class ChatService:
         workflow routing, and response generation.
         """
         try:
-            # Step 1: Get or create user session
+            # Get or create user session using extracted service
             session = await self.session_manager.get_conversation_context(user_phone)
+            
+            # Handle session expiry using extracted service
             session = await self.session_manager.handle_session_expiry_check(user_phone, session)
+            
+            # Track user message in conversation history using extracted service
             self.session_manager.add_message_to_history(session, "user", message_content, message_type)
             
-            # Step 2: Token Validation & Authentication Check
-            user_details = await self._validate_user_authentication(user_phone)
-            
+            # User Token Validation using redis
+            user_details = await self.validate_user_token(user_phone)
+
+            # User Token Expired and reauthentication required or registration required            
             if not user_details or not user_details.is_registered:
-                # Token validation failed or user not registered
-                return await self._handle_authentication_and_registration_flow(
+                logger.info(f"User Token Expired for user: {user_phone}")
+                return await self.process_authentication_and_registration_flow(
                     user_phone, message_content, session
                 )
             
             # Step 3: User is authenticated and registered, proceed with main flow
             # Create mock user object for compatibility
-            mock_user = self._create_user_from_details(user_details)
+        
+            user = self._create_user_from_details(user_details)
+            logger.info(f"User authenticated: {user}")
+            logger.info(f"User Details: {user_details}")
             
             if message_type == "text":
-                result = await self._process_text_message(mock_user, session, message_content)
+                result = await self._process_text_message(user, session, message_content)
             elif message_type == "interactive":
-                result = await self._process_interactive_message(mock_user, session, message_content)
+                result = await self._process_interactive_message(user, session, message_content)
             elif message_type == "excel_upload":
-                result = await self._process_excel_upload(mock_user, session, message_content)
+                result = await self._process_excel_upload(user, session, message_content)
             elif message_type == "image" or message_type == "document":
-                result = await self.image_processor.process_image_message(mock_user, session, message_content)
+                result = await self.image_processor.process_image_message(user, session, message_content)
                 await self.session_manager.save_session(session, "rfq_creation")
             else:
                 result = {"status": "error", "error": f"Unknown message type: {message_type}"}
@@ -167,7 +175,7 @@ class ChatService:
         except Exception as e:
             return await self._handle_error_response(e, user_phone, "processing_message", "Please try again")
     
-    async def _validate_user_authentication(self, user_phone: str) -> UserDetailsSchema:
+    async def validate_user_token(self, user_phone: str) -> UserDetailsSchema:
         """Validate user authentication from Redis token storage."""
         try:
             # Check Redis for authenticated user session
@@ -176,37 +184,53 @@ class ChatService:
                 logger.info(f"User authenticated from token: {user_details.id}")
                 return user_details
             
-            logger.info(f"No valid token found for user: {user_phone}")
+            logger.info(f"Token Valdiation failed for user: {user_phone}")
             return None
             
         except Exception as e:
             logger.error(f"Token validation error for {user_phone}: {e}")
             return None
     
-    async def _handle_authentication_and_registration_flow(self, user_phone: str, message: str,
+    async def process_authentication_and_registration_flow(self, user_phone: str, message: str,
                                                          session: ConversationSession) -> Dict[str, Any]:
         """Handle complete authentication and registration flow."""
         try:
-            current_stage = session.workflow_state.get("authentication_stage")
-            registration_stage = session.workflow_state.get("registration_stage")
-            
-            # Check if we're in registration flow
-            if session.workflow_type == "registration":
-                return await self._handle_registration_workflow_routing(user_phone, message, session)
-            
-            # Check if we're in authentication flow
-            elif current_stage:
-                return await self._handle_authentication_workflow_routing(user_phone, message, session, current_stage)
-            
-            # New user - start authentication flow
-            else:
-                return await self.authentication_service.validate_token_and_authenticate(
-                    user_phone, message, session
-                )
+
+            conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
+            intent_result = self.intent_service.classify_intent(message, conversation_context)
+            logger.info(f"Intent classification result: {intent_result}")
+            logger.info(f"Session: {session}")
+
+            user = await self.authentication_service.user_authenticate(user_phone, message, session)
+            if not user.get("success"):
+                logger.info(f"Authentication failed for user: {user_phone}, redirecting to mock flow")
+                return await self._handle_invalid_user_flow(user_phone)
+            return user
+           
                 
         except Exception as e:
             logger.error(f"Authentication/Registration flow error: {e}")
             return await self._handle_error_response(e, user_phone, "auth_reg_flow", "Please try again")
+    
+    async def _handle_invalid_user_flow(self, user_phone: str) -> Dict[str, Any]:
+        """Handle invalid user authentication by creating mock user."""
+        try:
+            mock_user_details = UserDetailsSchema.invalid_user(user_phone)
+            # Registration prompt message
+            registration_msg = (
+                "Hello, it looks like you're not registered yet. "
+                "Let’s get started — please share the details below to complete your registration. "
+                "You will also get complementary RFQs after registration."
+            )
+            await self.whatsapp_service.send_message(
+                user_phone, 
+                registration_msg
+            )
+            await self._show_auth_placeholder(user_phone)
+            return {"status": "mock_user_created", "user_details": mock_user_details}
+        except Exception as e:
+            logger.error(f"Error handling invalid user flow: {e}")
+            return {"status": "error", "error": str(e)}
     
     async def _handle_authentication_workflow_routing(self, user_phone: str, message: str,
                                                     session: ConversationSession, stage: str) -> Dict[str, Any]:
@@ -232,7 +256,7 @@ class ChatService:
                 )
             else:
                 # Unknown stage, restart authentication
-                result = await self.authentication_service.validate_token_and_authenticate(
+                result = await self.authentication_service.user_authenticate(
                     user_phone, message, session
                 )
             
@@ -940,7 +964,7 @@ class ChatService:
     async def _show_auth_placeholder(self, user_phone: str) -> None:
         """Show authentication placeholder message for new sessions."""
         try:
-            message = "Authentication system is in progress, continuing with your request..."
+            message = "Registration system is in progress, continuing with your request..."
             await self.whatsapp_service.send_message(user_phone, message)
             logger.info(f"Sent authentication placeholder to {user_phone}")
         except Exception as e:
