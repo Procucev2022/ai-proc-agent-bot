@@ -44,6 +44,7 @@ class AuthenticationService:
         """
         try:
             user_data = await self.auth_redis_service.retrieve(user_phone)
+            logger.info(f"User Token Validation for user: {user_data}")
             if user_data:
                 # user_data is already a UserDetailsSchema
                 return user_data

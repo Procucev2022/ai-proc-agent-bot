@@ -146,9 +146,9 @@ class UserDetailsSchema(BaseModel):
             email="shubham@mohap.ai",
             self_client=True,
             role=UserRole.UNKNOWN,
-            is_registered=False,
+            is_registered=True,
             phone_number=user_phone,
             company_name="mohap ai solutin",
-            
+
            
         )
