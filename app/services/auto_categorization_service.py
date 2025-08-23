@@ -36,7 +36,7 @@ class AutoCategorizationService:
     
     def __init__(self, persist_directory: Optional[str] = None):
         """Initialize the auto-categorization service with ChromaDB."""
-        self.persist_directory = persist_directory or "/home/srujan/workspace/mohap-ai/procucev_proc_agent/chroma_db"
+        self.persist_directory = persist_directory
         
         # Initialize ChromaDB client with Sentence Transformer embeddings
         self.chroma_client = chromadb.PersistentClient(path=self.persist_directory)
