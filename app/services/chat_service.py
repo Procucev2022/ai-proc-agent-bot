@@ -205,15 +205,22 @@ class ChatService:
             user = await self.authentication_service.user_authenticate(user_phone, message, session)
             if not user.get("success"):
                 logger.info(f"Authentication failed for user: {user_phone}, redirecting to mock flow")
-                return await self._handle_invalid_user_flow(user_phone)
-            return user
+                return await self._handle_invalid_user_flow(user_phone, message, session)
+            
+            # Authentication successful - process the user's original message
+            logger.info(f"Authentication successful for user: {user_phone}, processing original message")
+            user_details = user.get("user_details")
+            authenticated_user = self._create_user_from_details(user_details)
+            
+            # Process the message through the main flow
+            return await self._process_text_message(authenticated_user, session, message)
            
                 
         except Exception as e:
             logger.error(f"Authentication/Registration flow error: {e}")
             return await self._handle_error_response(e, user_phone, "auth_reg_flow", "Please try again")
     
-    async def _handle_invalid_user_flow(self, user_phone: str) -> Dict[str, Any]:
+    async def _handle_invalid_user_flow(self, user_phone: str, message: str = None, session: ConversationSession = None) -> Dict[str, Any]:
         """Handle invalid user authentication by creating mock user."""
         try:
             mock_user_details = UserDetailsSchema.invalid_user(user_phone)
@@ -222,15 +229,21 @@ class ChatService:
             await self.authentication_service.store_user_session(user_phone , mock_user_details)
             # Registration prompt message
             registration_msg = (
-                "Hello, it looks like you're not registered yet. "
-                "Let’s get started — please share the details below to complete your registration. "
-                "You will also get complementary RFQs after registration."
+                "You are not registered yet. "
+                "please share the details below to start your registration process."
             )
             await self.whatsapp_service.send_message(
                 user_phone, 
                 registration_msg
             )
             await self._show_auth_placeholder(user_phone)
+            
+            # If we have the original message and session, process it with the mock user
+            if message and session:
+                logger.info(f"Processing original message after registration placeholder for user: {user_phone}")
+                mock_user = self._create_user_from_details(mock_user_details)
+                return await self._process_text_message(mock_user, session, message)
+
             return {"status": "mock_user_created", "user_details": mock_user_details}
         except Exception as e:
             logger.error(f"Error handling invalid user flow: {e}")
