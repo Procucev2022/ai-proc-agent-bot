@@ -90,7 +90,7 @@ class AuthRedisService(BaseRedisService):
         data = await self.get(key, as_json=True)
         if data:
             return UserDetailsSchema(**data)
-        return None
+        return False
 
     async def delete_auth(self, phone_number: str) -> bool:
         key = f"auth:{phone_number}"
