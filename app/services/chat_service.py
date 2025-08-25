@@ -365,28 +365,11 @@ class ChatService:
             if not user.is_registered:
                 return await self._handle_registration_workflow(user, message)
             # Handle seller RFQ selection workflow BEFORE intent classification
-            print("session work flow type ", session.workflow_type, " session work flow state", session.workflow_state)
             if session.workflow_type.value == "seller_rfq_view":
                 workflow_state = session.workflow_state or {}
                 current_seller_state = workflow_state.get("seller_workflow_state")
-                print("cuurent seller state", current_seller_state)
-
-                # if current_seller_state == "seller_respond_to_rfq_list":
-                #     print("calling seller flow gaian")
-                    # Seller is responding to RFQ list - handle this immediately
+                # Seller is responding to RFQ list - handle this immediately
                 return await self._handle_seller_flow(user, session, message)
-
-            # Handle pending seller RFQ selection BEFORE intent classification
-            # try:
-            #     workflow_state = session.workflow_state or {}
-            #     seller_next_step = workflow_state.get("seller_next_step")
-            #     candidate_rfqs = workflow_state.get("seller_candidate_rfqs", [])
-            #     candidate_rfq_ids = workflow_state.get("seller_candidate_rfq_ids", [])
-            #     if seller_next_step == "awaiting_rfq_selection" and (candidate_rfqs or candidate_rfq_ids):
-            #         return await self._handle_seller_rfq_selection(user, session, message)
-            # except Exception as _seller_state_err:
-            #     logger.error(f"Error checking seller selection state: {_seller_state_err}")
-
             
             # Handle pending intent switch choices FIRST (user responding to "1. Continue or 2. Switch")
             if session.workflow_state.get("pending_intent_switch"):
