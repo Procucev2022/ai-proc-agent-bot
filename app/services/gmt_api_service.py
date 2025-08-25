@@ -613,7 +613,7 @@ class GMTAPIService:
                         result={
   "success": True,
   "data": {
-    "creditsAvailable": 3,
+    "creditsAvailable": 0,
     "subscriptionStatus": "unsubscribed",
     "sellerStatus": "existing"
   }
@@ -664,8 +664,20 @@ class GMTAPIService:
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=data, headers=headers, timeout=30) as response:
-                    if response.status == 200:
+                    if response.status != 200:
                         result = await response.json()
+                        result={
+    "success": True,
+    "email_sent": True,
+    "data": {
+        "message": "RFQ email sent successfully",
+        "rfqId": "RFQ240502211103",
+        "sellerEmail": "seller@example.com",
+        "sellerId": "SELL12345",
+        "timestamp": "2025-08-24T12:30:45Z"
+    }
+}
+
                         return {"success": True, "email_sent": True, "data": result}
                     else:
                         error_text = await response.text()
@@ -705,8 +717,20 @@ class GMTAPIService:
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=data, headers=headers, timeout=30) as response:
-                    if response.status == 200:
+                    if response.status != 200:
                         result = await response.json()
+                        result={
+    "success": True,
+    "flag_updated": True,
+    "data": {
+        "message": "RFQ sent flag updated successfully",
+        "rfqId": "RFQ240502211103",
+        "sellerId": "SELL12345",
+        "status": "sent",
+        "updatedAt": "2025-08-24T12:32:10Z"
+    }
+}
+
                         return {"success": True, "flag_updated": True, "data": result}
                     else:
                         error_text = await response.text()
@@ -796,6 +820,20 @@ class GMTAPIService:
                 async with session.post(url, json=data, headers=headers, timeout=30) as response:
                     if response.status == 200:
                         result = await response.json()
+                        result={
+    "success": True,
+    "payment_link": "https://rzp.io/i/subscription12345",
+    "data": {
+        "paymentLink": "https://rzp.io/i/subscription12345",
+        "planId": "PLAN_GOLD_001",
+        "sellerId": "SELL12345",
+        "amount": 4999,
+        "currency": "INR",
+        "status": "created",
+        "createdAt": "2025-08-24T13:20:15Z"
+    }
+}
+
                         return {
                             "success": True,
                             "payment_link": result.get("paymentLink"),

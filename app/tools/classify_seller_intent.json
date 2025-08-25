@@ -1,0 +1,44 @@
+{
+  "type": "function",
+  "name": "classify_seller_intent",
+  "description": "Analyze the seller's message and classify their intent based on the conversation context.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "intent": {
+        "type": "string",
+        "enum": [
+          "plan_upgrade_request",
+          "rfq_access_request",
+          "general_question",
+          "affirmative_response",
+          "negative_response",
+          "clarification_needed",
+          "rfq_status_check"
+        ],
+        "description": "The classified intent of the seller's current message."
+      },
+      "confidence": {
+        "type": "integer",
+        "description": "Confidence score (0-100) indicating how certain the classification is."
+      },
+      "reasoning": {
+        "type": "string",
+        "description": "Explanation of why this intent was chosen, referencing the context."
+      },
+      "context_clues": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Key words, phrases, or contextual signals that influenced the classification."
+      },
+      "suggested_response": {
+        "type": "string",
+        "description": "A brief, natural response suggestion for the classified intent."
+      }
+    },
+    "required": ["intent", "confidence", "reasoning", "context_clues", "suggested_response"],
+    "additionalProperties": false
+  }
+}
