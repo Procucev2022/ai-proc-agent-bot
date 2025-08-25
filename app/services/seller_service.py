@@ -326,7 +326,7 @@ class SellerService:
 
                 }
 
-                return await self._handle_general_seller_response(user,session, message)
+                return await self._generate_general_seller_response(context)
 
             elif intent_type == "affirmative_response" and confidence > 0.7:
                 # Handle contextual "yes" responses based on previous bot message
@@ -611,8 +611,8 @@ class SellerService:
             return await self._handle_workflow_error(user, session, str(e))
 
     async def _process_rfq_email_requests(self, user: User, session: ConversationSession,
-                                          selected_rfq_ids: List[str], seller_info: Dict[str, Any]) -> Dict[str, Any]:
-        """Process RFQ email requests after credit verification."""
+                                         selected_rfq_ids: List[str], seller_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Process RFQ email requests after credit verification using batch API."""
         try:
             seller_email = seller_info.get("email")
             seller_id = seller_info.get("seller_id")
@@ -627,30 +627,75 @@ class SellerService:
             ack_message = await self.response_helpers.generate_seller_contextual_response(ack_context)
             await self.whatsapp_service.send_message(user.phone_number, ack_message)
 
-
-
+            # Send batch RFQ email request
             try:
-                email_result = await self.gmt_api_service.send_rfq_email(selected_rfq_ids, seller_email, seller_id)
+                batch_result = await self.gmt_api_service.send_rfq_emails(
+                    rfq_ids=selected_rfq_ids,
+                    seller_email=seller_email,
+                    seller_id=seller_id
+                )
 
+                if batch_result.get("success"):
+                    # Process successful results
+                    successful_results = batch_result.get("results", {}).get("successful", [])
+                    failed_results = batch_result.get("results", {}).get("failed", [])
 
-                if email_result.get("success"):
-                    # Update sent flag
-                    try:
-                        await self.gmt_api_service.update_rfq_seller_sent_flag(selected_rfq_ids, seller_id)
-                    except Exception as e:
-                        logger.error(f"Error updating rfq status flag for RFQ's {selected_rfq_ids}: {e}")
+                    # Update sent flags for successful emails
+                    successful_rfq_ids = [result["rfq_id"] for result in successful_results]
+                    if successful_rfq_ids:
+                        await self.gmt_api_service.update_rfq_seller_sent_flags(
+                            successful_rfq_ids, seller_id
+                        )
 
+                    # Format results for consistency
+                    email_results = []
 
+                    # Add successful results
+                    for result in successful_results:
+                        email_results.append({
+                            "rfq_id": result["rfq_id"],
+                            "success": True,
+                            "error": None
+                        })
+
+                    # Add failed results
+                    for result in failed_results:
+                        email_results.append({
+                            "rfq_id": result["rfq_id"],
+                            "success": False,
+                            "error": result.get("error", "Unknown error")
+                        })
+
+                    successful_emails = len(successful_results)
+
+                else:
+                    # Handle batch failure - all emails failed
+                    logger.error(f"Batch email request failed: {batch_result.get('error')}")
+                    email_results = []
+                    for rfq_id in selected_rfq_ids:
+                        email_results.append({
+                            "rfq_id": rfq_id,
+                            "success": False,
+                            "error": batch_result.get("error", "Batch request failed")
+                        })
+                    successful_emails = 0
 
             except Exception as e:
-                logger.error(f"Error sending email for RFQ {selected_rfq_ids}: {e}")
-
+                logger.error(f"Error in batch RFQ email request: {e}")
+                # Fallback: mark all as failed
+                email_results = []
+                for rfq_id in selected_rfq_ids:
+                    email_results.append({
+                        "rfq_id": rfq_id,
+                        "success": False,
+                        "error": f"Batch request error: {str(e)}"
+                    })
+                successful_emails = 0
 
             # Send final status message
             status_context = {
                 "workflow_state": "rfq_email_status",
                 "email_results": email_results,
-                "successful_emails": successful_emails,
                 "total_requested": len(selected_rfq_ids)
             }
 
