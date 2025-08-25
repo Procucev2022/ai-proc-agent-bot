@@ -154,15 +154,10 @@ class ChatService:
             if not user.is_registered:
                 return await self._handle_registration_workflow(user, message)
             # Handle seller RFQ selection workflow BEFORE intent classification
-            print("session work flow type ", session.workflow_type, " session work flow state", session.workflow_state)
             if session.workflow_type.value == "seller_rfq_view":
                 workflow_state = session.workflow_state or {}
                 current_seller_state = workflow_state.get("seller_workflow_state")
-                print("cuurent seller state", current_seller_state)
-
-                # if current_seller_state == "seller_respond_to_rfq_list":
-                #     print("calling seller flow gaian")
-                    # Seller is responding to RFQ list - handle this immediately
+                # Seller is responding to RFQ list - handle this immediately
                 return await self._handle_seller_flow(user, session, message)
 
             # Handle pending seller RFQ selection BEFORE intent classification
