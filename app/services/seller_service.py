@@ -296,15 +296,12 @@ class SellerService:
             # Use AI to classify seller's intent with context awareness
             seller_intent = await self._classify_seller_intent(message, conversation_context, session)
 
-
             credits = await self._check_seller_credits(seller_info.get("seller_id"))
             credits_available = credits.get("credits_available")
 
             # Route based on AI-classified intent
             intent_type = seller_intent.get("intent")
             confidence = seller_intent.get("confidence", 0)
-
-            logger.info(f"seller intent is {seller_intent}")
 
             if intent_type == "plan_upgrade_request" and confidence > 0.7:
                 return await self._handle_plan_upgrade_request(user, session, message)

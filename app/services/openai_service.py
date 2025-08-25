@@ -775,6 +775,8 @@ class OpenAIService:
                 tools=[merge_tool],
                 instructions=self._load_prompt("response_generation", "_get_seller_intent_response_prompt")
             )
+            print("response from opmeia", response)
+
 
             tool_call = response.output[0]
             arguments_str = tool_call.arguments
