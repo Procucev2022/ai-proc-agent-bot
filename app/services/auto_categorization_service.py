@@ -17,13 +17,30 @@ import logging
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from pathlib import Path
 
-from ..database import get_db_session
+from ..database import get_db_session, get_remote_item_categories, test_remote_connection
 from ..models import CategoryMapping, AutoCategorizationLog
+from ..config import get_settings
 from .openai_service import OpenAIService
 from .learning_categorization_service import LearningCategorizationService
 
 logger = logging.getLogger(__name__)
+
+def get_project_root() -> Path:
+    """
+    Find the project root directory by looking for the 'app' folder.
+    This ensures ChromaDB is always stored in the project root regardless of where the script is run from.
+    """
+    current_dir = Path(__file__).resolve().parent
+    
+    # Walk up the directory tree to find the project root (directory containing 'app')
+    for parent in [current_dir] + list(current_dir.parents):
+        if (parent / 'app').exists():
+            return parent
+    
+    # Fallback: use the directory containing this file
+    return current_dir.parent.parent
 
 class AutoCategorizationService:
     """
@@ -36,7 +53,12 @@ class AutoCategorizationService:
     
     def __init__(self, persist_directory: Optional[str] = None):
         """Initialize the auto-categorization service with ChromaDB."""
-        self.persist_directory = persist_directory
+        if persist_directory:
+            self.persist_directory = persist_directory
+        else:
+            # Always use project root + chroma_db for consistent storage location
+            project_root = get_project_root()
+            self.persist_directory = str(project_root / "chroma_db")
         
         # Initialize ChromaDB client with Sentence Transformer embeddings
         self.chroma_client = chromadb.PersistentClient(path=self.persist_directory)
@@ -61,19 +83,14 @@ class AutoCategorizationService:
     def populate_embeddings_from_db(self) -> int:
         """
         Populate ChromaDB collection with category mappings from database.
+        Uses remote item_category data if enabled, otherwise local CategoryMapping.
         
         Returns:
             Number of items added to the collection
         """
-        db = get_db_session()
+        settings = get_settings()
+        
         try:
-            # Get all category mappings
-            category_mappings = db.query(CategoryMapping).all()
-            
-            if not category_mappings:
-                logger.warning("No category mappings found in database")
-                return 0
-            
             # Clear existing collection
             try:
                 self.chroma_client.delete_collection(name="category_items")
@@ -84,21 +101,43 @@ class AutoCategorizationService:
             except Exception as e:
                 logger.info(f"Collection didn't exist or couldn't be deleted: {e}")
             
+            # Get data from appropriate source
+            if settings.enable_remote_categorization:
+                logger.info("Using remote item_category data for categorization")
+                items_data = self._get_remote_category_data()
+            else:
+                logger.info("Using local CategoryMapping data for categorization")
+                items_data = self._get_local_category_data()
+            
+            if not items_data:
+                logger.warning("No category data found")
+                return 0
+            
             # Prepare data for ChromaDB
             documents = []
             metadatas = []
             ids = []
             
-            for mapping in category_mappings:
+            for item in items_data:
                 # Simple document text: item + category for better matching
-                doc_text = f"{mapping.item} {mapping.category}"
+                doc_text = f"{item['item']} {item['category']}"
                 documents.append(doc_text)
-                metadatas.append({
-                    "category": mapping.category,
-                    "item": mapping.item,
-                    "mapping_id": mapping.id
-                })
-                ids.append(mapping.id)
+                
+                # Metadata includes division for remote data but isn't used in search
+                metadata = {
+                    "category": item['category'],
+                    "item": item['item'],
+                    "mapping_id": item['id']
+                }
+                
+                # Add division for remote data (stored but not used in search)
+                if 'division' in item:
+                    metadata["division"] = item['division']
+                if 'serial_no' in item:
+                    metadata["serial_no"] = item['serial_no']
+                
+                metadatas.append(metadata)
+                ids.append(item['id'])
             
             # Add to ChromaDB collection (embeddings generated automatically)
             self.collection.add(
@@ -107,11 +146,67 @@ class AutoCategorizationService:
                 ids=ids
             )
             
-            logger.info(f"Successfully populated ChromaDB with {len(category_mappings)} category mappings")
-            return len(category_mappings)
+            source = "remote item_category" if settings.enable_remote_categorization else "local CategoryMapping"
+            logger.info(f"Successfully populated ChromaDB with {len(items_data)} items from {source}")
+            return len(items_data)
             
         except Exception as e:
             logger.error(f"Error populating embeddings from database: {str(e)}")
+            # If remote fails, try fallback to local data
+            if settings.enable_remote_categorization:
+                logger.warning("Remote categorization failed, attempting fallback to local data")
+                try:
+                    settings.enable_remote_categorization = False  # Temporarily disable
+                    return self.populate_embeddings_from_db()
+                except Exception as fallback_error:
+                    logger.error(f"Fallback to local data also failed: {str(fallback_error)}")
+            raise
+    
+    def _get_remote_category_data(self) -> List[Dict[str, Any]]:
+        """Get category data from remote database."""
+        try:
+            # Test connection first
+            if not test_remote_connection():
+                raise Exception("Remote database connection test failed")
+            
+            remote_items = get_remote_item_categories()
+            
+            # Convert to standard format
+            formatted_items = []
+            for item in remote_items:
+                formatted_items.append({
+                    'id': item['uuid'],
+                    'category': item['category'],
+                    'item': item['item'],
+                    'division': item.get('division', ''),
+                    'serial_no': item.get('serial_no', 0)
+                })
+            
+            return formatted_items
+            
+        except Exception as e:
+            logger.error(f"Failed to get remote category data: {str(e)}")
+            raise
+    
+    def _get_local_category_data(self) -> List[Dict[str, Any]]:
+        """Get category data from local database."""
+        db = get_db_session()
+        try:
+            category_mappings = db.query(CategoryMapping).all()
+            
+            # Convert to standard format
+            formatted_items = []
+            for mapping in category_mappings:
+                formatted_items.append({
+                    'id': mapping.id,
+                    'category': mapping.category,
+                    'item': mapping.item
+                })
+            
+            return formatted_items
+            
+        except Exception as e:
+            logger.error(f"Failed to get local category data: {str(e)}")
             raise
         finally:
             db.close()

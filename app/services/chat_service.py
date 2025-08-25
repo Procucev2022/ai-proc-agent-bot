@@ -19,6 +19,9 @@ import logging
 from typing import Dict, Any, List
 import json
 import asyncio
+
+from app.services.authentication_service import AuthenticationService
+from app.services.registration_service import RegistrationService
 from app.utils.datetime_utils import utc_now
 from app.utils.logging_utils import log_service_method
 from app.services.intent_service import IntentService
@@ -37,6 +40,7 @@ from app.services.handlers.confirmation_handler import ConfirmationHandler
 from app.services.handlers.products_array_handler import ProductsArrayHandler
 from app.services.handlers.purchase_intent_handler import PurchaseIntentHandler
 from app.services.handlers.attachment_decision_handler import AttachmentDecisionHandler
+from app.services.handlers.intent_switch_handler import IntentSwitchHandler
 from app.services.processors.image_message_processor import ImageMessageProcessor
 
 
@@ -53,8 +57,12 @@ from app.services.rfq_background_service import RFQBackgroundService
 from app.services.rfq_status_service import RFQStatusService
 from app.config import get_settings
 from app.services.seller_service import SellerService
+from app.services.authentication_service import AuthenticationService
+from app.services.registration_service import RegistrationService
+
 from app.database import SessionLocal, DatabaseManager
 from app.models import User, ConversationSession
+from app.schemas.user import UserDetailsSchema
 logger = logging.getLogger(__name__)
 
 class ChatService:
@@ -84,6 +92,14 @@ class ChatService:
         self.enhanced_seller_matching_service = EnhancedSellerMatchingService()
         self.rfq_background_service = RFQBackgroundService()
         
+        # Initialize authentication and registration services
+        self.authentication_service = AuthenticationService(
+            self.whatsapp_service, self.openai_service, self.response_helpers
+        )
+        self.registration_service = RegistrationService(
+            self.whatsapp_service, self.openai_service, self.entity_service, self.response_helpers
+        )
+        
         # Initialize extracted services
         self.session_manager = SessionManagementService(
             self.db_manager, self.whatsapp_service, 
@@ -93,6 +109,9 @@ class ChatService:
             self.whatsapp_service, self.response_helpers,
             self.auto_categorization_service, self.enhanced_auto_categorization_service,
             self.seller_recommendation_service, self.enhanced_seller_matching_service
+        )
+        self.intent_switch_handler = IntentSwitchHandler(
+            self.whatsapp_service, self.response_helpers
         )
         self.products_array_handler = ProductsArrayHandler(
             self.whatsapp_service, self.openai_service, 
@@ -119,7 +138,6 @@ class ChatService:
         """
         try:
             # Get or create user session using extracted service
-            user = await self.session_manager.get_or_create_user(user_phone)
             session = await self.session_manager.get_conversation_context(user_phone)
             
             # Handle session expiry using extracted service
@@ -128,7 +146,23 @@ class ChatService:
             # Track user message in conversation history using extracted service
             self.session_manager.add_message_to_history(session, "user", message_content, message_type)
             
-            # Handle different message types
+            # User Token Validation using redis
+            user_details = await self.validate_user_token(user_phone)
+
+            # User Token Expired and reauthentication required or registration required            
+            if not user_details or not user_details.is_registered:
+                logger.info(f"User Token Expired for user: {user_phone}")
+                return await self.process_authentication_and_registration_flow(
+                    user_phone, message_content, session
+                )
+            
+            # Step 3: User is authenticated and registered, proceed with main flow
+            # Create mock user object for compatibility
+        
+            user = self._create_user_from_details(user_details)
+            logger.info(f"User authenticated: {user}")
+            logger.info(f"User Details: {user_details}")
+            
             if message_type == "text":
                 result = await self._process_text_message(user, session, message_content)
             elif message_type == "interactive":
@@ -137,7 +171,6 @@ class ChatService:
                 result = await self._process_excel_upload(user, session, message_content)
             elif message_type == "image" or message_type == "document":
                 result = await self.image_processor.process_image_message(user, session, message_content)
-                # Save session after image processing
                 await self.session_manager.save_session(session, "rfq_creation")
             else:
                 result = {"status": "error", "error": f"Unknown message type: {message_type}"}
@@ -146,6 +179,184 @@ class ChatService:
                                 
         except Exception as e:
             return await self._handle_error_response(e, user_phone, "processing_message", "Please try again")
+    
+    async def validate_user_token(self, user_phone: str) -> UserDetailsSchema:
+        """Validate user authentication from Redis token storage."""
+        try:
+            # Check Redis for authenticated user session
+            user_details = await self.authentication_service.validate_token(user_phone)
+            logger.info(f"User Token Validation for user: {user_details}")
+            if user_details and user_details.is_registered:
+                logger.info(f"User authenticated from token: {user_details.id}")
+                return user_details
+            
+            logger.info(f"Token Valdiation failed for user: {user_phone}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Token validation error for {user_phone}: {e}")
+            return None
+    
+    async def process_authentication_and_registration_flow(self, user_phone: str, message: str,
+                                                         session: ConversationSession) -> Dict[str, Any]:
+        """Handle complete authentication and registration flow."""
+        try:
+
+            conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
+            intent_result = self.intent_service.classify_intent(message, conversation_context)
+            logger.info(f"Intent classification result: {intent_result}")
+            logger.info(f"Session: {session}")
+
+            user = await self.authentication_service.user_authenticate(user_phone, message, session)
+            if not user.get("success"):
+                logger.info(f"Authentication failed for user: {user_phone}, redirecting to mock flow")
+                return await self._handle_invalid_user_flow(user_phone, message, session)
+            
+            # Authentication successful - process the user's original message
+            logger.info(f"Authentication successful for user: {user_phone}, processing original message")
+            user_details = user.get("user_details")
+            authenticated_user = self._create_user_from_details(user_details)
+            
+            # Process the message through the main flow
+            return await self._process_text_message(authenticated_user, session, message)
+           
+                
+        except Exception as e:
+            logger.error(f"Authentication/Registration flow error: {e}")
+            return await self._handle_error_response(e, user_phone, "auth_reg_flow", "Please try again")
+    
+    async def _handle_invalid_user_flow(self, user_phone: str, message: str = None, session: ConversationSession = None) -> Dict[str, Any]:
+        """Handle invalid user authentication by creating mock user."""
+        try:
+            mock_user_details = UserDetailsSchema.invalid_user(user_phone)
+
+            # store token in redis
+            await self.authentication_service.store_user_session(user_phone , mock_user_details)
+            # Registration prompt message
+            registration_msg = (
+                "You are not registered yet. "
+                "please share the details below to start your registration process."
+            )
+            await self.whatsapp_service.send_message(
+                user_phone, 
+                registration_msg
+            )
+            await self._show_auth_placeholder(user_phone)
+            
+            # If we have the original message and session, process it with the mock user
+            if message and session:
+                logger.info(f"Processing original message after registration placeholder for user: {user_phone}")
+                mock_user = self._create_user_from_details(mock_user_details)
+                return await self._process_text_message(mock_user, session, message)
+
+            return {"status": "mock_user_created", "user_details": mock_user_details}
+        except Exception as e:
+            logger.error(f"Error handling invalid user flow: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def _handle_authentication_workflow_routing(self, user_phone: str, message: str,
+                                                    session: ConversationSession, stage: str) -> Dict[str, Any]:
+        """Route authentication workflow based on current stage."""
+        try:
+            if stage == "intent_clarification":
+                result = await self.authentication_service.handle_intent_clarification_response(
+                    user_phone, message, session
+                )
+            elif stage == "email_confirmation":
+                result = await self.authentication_service.handle_email_confirmation_response(
+                    user_phone, message, session
+                )
+            elif stage == "email_otp":
+                result = await self.authentication_service.handle_otp_verification(
+                    user_phone, message, session
+                )
+            elif stage == "redirect_to_registration":
+                # Transition to registration flow
+                user_intent = session.workflow_state.get("registration_intent", "buy")
+                result = await self.registration_service.initiate_registration(
+                    user_phone, session, user_intent, message
+                )
+            else:
+                # Unknown stage, restart authentication
+                result = await self.authentication_service.user_authenticate(
+                    user_phone, message, session
+                )
+            
+            # Save session after authentication workflow
+            await self.session_manager.save_session(session, session.workflow_type or "authentication")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Authentication workflow routing error: {e}")
+            return await self._handle_error_response(e, user_phone, "auth_workflow", "Please try again")
+    
+    async def _handle_registration_workflow_routing(self, user_phone: str, message: str,
+                                                  session: ConversationSession) -> Dict[str, Any]:
+        """Route registration workflow based on current stage."""
+        try:
+            registration_stage = session.workflow_state.get("registration_stage")
+            
+            if registration_stage == "data_collection":
+                result = await self.registration_service.handle_registration_data_collection(
+                    user_phone, message, session
+                )
+            elif registration_stage == "confirmation":
+                result = await self.registration_service.handle_registration_confirmation(
+                    user_phone, message, session
+                )
+            elif registration_stage == "email_otp":
+                result = await self.registration_service.handle_registration_otp_verification(
+                    user_phone, message, session
+                )
+            else:
+                # Unknown stage, restart registration
+                user_intent = session.workflow_state.get("registration_intent", "buy")
+                result = await self.registration_service.initiate_registration(
+                    user_phone, session, user_intent, message
+                )
+            
+            # Check if registration completed and user is ready for main flow
+            if result.get("ready_for_main_flow"):
+                # Create mock authenticated user and proceed to main flow
+                mock_user = self._create_mock_authenticated_user(user_phone, session)
+                session.workflow_type = None  # Reset workflow type
+                session.workflow_state = {"extracted_entities": []}  # Reset state
+                
+                # Process the message through main flow
+                return await self._process_text_message(mock_user, session, message)
+            
+            # Save session after registration workflow
+            await self.session_manager.save_session(session, "registration")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Registration workflow routing error: {e}")
+            return await self._handle_error_response(e, user_phone, "reg_workflow", "Please try again")
+    
+    def _create_mock_authenticated_user(self, user_phone: str, session: ConversationSession) -> User:
+        """Create mock authenticated user after successful registration."""
+        class MockUser:
+            def __init__(self, phone_number, user_type):
+                self.id = 1
+                self.phone_number = phone_number
+                self.name = "Registered User"
+                self.is_registered = True
+                self.role = "buyer" if user_type == "buyer" else "seller"
+        
+        user_type = session.user_type.value if session.user_type else "buyer"
+        return MockUser(user_phone, user_type)
+    
+    def _create_user_from_details(self, user_details: UserDetailsSchema) -> User:
+        """Create user object from UserDetailsSchema."""
+        class AuthenticatedUser:
+            def __init__(self, details):
+                self.id = details.id
+                self.phone_number = details.phone_number
+                self.name = details.name
+                self.is_registered = details.is_registered
+                self.role = details.role
+        
+        return AuthenticatedUser(user_details)
     
     async def _process_text_message(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """Process text message through intent classification and routing."""
@@ -176,6 +387,63 @@ class ChatService:
             # except Exception as _seller_state_err:
             #     logger.error(f"Error checking seller selection state: {_seller_state_err}")
 
+            
+            # Handle pending intent switch choices FIRST (user responding to "1. Continue or 2. Switch")
+            if session.workflow_state.get("pending_intent_switch"):
+                result = await self.intent_switch_handler.handle_intent_switch_response(user, session, message)
+                
+                # Handle corrupted intent switch data
+                if result.get("status") == "corrupted_intent_switch_data":
+                    logger.error("Corrupted intent switch data detected, continuing with normal flow")
+                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    # Fall through to normal intent processing below
+                elif result.get("status") == "continue_current_workflow":
+                    # User chose to continue with current workflow
+                    await self.session_manager.save_session(session, session.workflow_type or 'rfq_creation')
+                    return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None, self._should_use_summary_aware_extraction)
+                elif result.get("status") == "switch_to_new_intent":
+                    # User chose to switch to new intent, route to appropriate handler
+                    new_intent = result["new_intent"]
+                    new_message = result["new_message"]
+                    intent_result = result["intent_result"]
+                    
+                    # Map intent to valid workflow type (following pattern used by other handlers)
+                    if new_intent == "buy_something":
+                        workflow_type = "rfq_creation"
+                    elif new_intent == "rfq_status_check":
+                        workflow_type = "rfq_status_check"
+                    elif new_intent == "general_inquiry":
+                        workflow_type = "general_inquiry"
+                    else:
+                        workflow_type = "general_inquiry"  # Safe default
+                    
+                    await self.session_manager.save_session(session, workflow_type)
+                    
+                    # Route to appropriate handler based on new intent
+                    if new_intent == "buy_something":
+                        return await self.purchase_intent_handler.handle_purchase_intent(user, session, new_message, intent_result, self._should_use_summary_aware_extraction)
+                    elif new_intent == "rfq_status_check":
+                        return await self._handle_rfq_status_inquiry(user, new_message)
+                    elif new_intent == "general_inquiry":
+                        return await self._handle_general_inquiry(user, new_message)
+                    else:
+                        return await self._handle_fallback(user, new_message)
+                elif result.get("status") == "error":
+                    # Handle intent switch errors
+                    logger.error(f"Intent switch error: {result.get('error')}")
+                    error_response = await self.response_helpers.generate_contextual_response(
+                        {"error_type": "intent_switch_error", "conversation_stage": "error"}, 
+                        ["Sorry, there was an issue processing your request. What would you like to do?"], 
+                        "error"
+                    )
+                    await self.whatsapp_service.send_message(user.phone_number, error_response)
+                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    return result
+                else:
+                    # Clarification requested or other status
+                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    return result
+            
             # Check if we're already in an RFQ workflow
             existing_entities = session.workflow_state.get("extracted_entities", [])
             has_existing_data = len(existing_entities) > 0 and any(
@@ -207,6 +475,12 @@ class ChatService:
             if has_pending_attachment_decision:
                 return await self.attachment_decision_handler.handle_attachment_decision(user, session, message, self._should_use_summary_aware_extraction)
             
+            # Check for intent switch during pending optional/confirmation states BEFORE handling them
+            if (has_pending_optional or has_pending_confirmations) and await self.intent_switch_handler.should_handle_intent_switch(session, intent, confidence):
+                result = await self.intent_switch_handler.handle_intent_switch_choice(user, session, message, intent, intent_result)
+                await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                return result
+            
             # Handle pending optional field responses
             if has_pending_optional:
                 result = await self.confirmation_handler.handle_optional_fields_response(user, session, message)
@@ -236,8 +510,13 @@ class ChatService:
                 
                 return result
             
-            
             if has_existing_data or has_incomplete_products:
+                # Check for intent switch during active workflow BEFORE continuing
+                if await self.intent_switch_handler.should_handle_intent_switch(session, intent, confidence):
+                    result = await self.intent_switch_handler.handle_intent_switch_choice(user, session, message, intent, intent_result)
+                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    return result
+                
                 # Already in RFQ workflow, continue collecting
                 logger.info("Continuing existing RFQ workflow")
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None, self._should_use_summary_aware_extraction)
@@ -748,11 +1027,20 @@ class ChatService:
     async def _show_auth_placeholder(self, user_phone: str) -> None:
         """Show authentication placeholder message for new sessions."""
         try:
-            message = "Authentication system is in progress, continuing with your request..."
+            message = "Registration system is in progress, continuing with your request..."
             await self.whatsapp_service.send_message(user_phone, message)
             logger.info(f"Sent authentication placeholder to {user_phone}")
         except Exception as e:
             logger.error(f"Error sending authentication placeholder: {e}")
+    
+    async def _show_seller_flow_placeholder(self, user_phone: str) -> None:
+        """Show seller flow placeholder message."""
+        try:
+            message = "Seller flow is in progress. Our team will contact you shortly with RFQ opportunities."
+            await self.whatsapp_service.send_message(user_phone, message)
+            logger.info(f"Sent seller flow placeholder to {user_phone}")
+        except Exception as e:
+            logger.error(f"Error sending seller flow placeholder: {e}")
     
     async def _check_bfs_availability(self, user_phone: str) -> None:
         """Check BFS availability after successful RFQ creation."""
@@ -863,7 +1151,88 @@ class ChatService:
                 )
 
             return {"status": "error", "error": str(e)}
+        
+    async def process_auth(self, user_phone: str) -> UserDetailsSchema:
+        try:
+            # 1. Redis Cache
+            user = await self.authentication_service.validate_token(user_phone)
+            if user:
+                logger.info(f"ChatService: User details from cache: {user.dict()}")
+                return user
 
+            # 2. Fallback to Auth API
+            auth_result = await self.authentication_service.authenticate_user(user_phone)
+            if not auth_result.get("success"):
+                return UserDetailsSchema(id="", username="", name="", self_client=False, is_registered=False)
+
+            user_details = auth_result.get("user_details")
+            if user_details: #Multiple Email Confirmaton
+                message = "Multiple Email confirmation - Pending with Client"
+                await self.whatsapp_service.send_message(user_phone, message)
+                
+            if not user_details.self_client: #Seller Email Confirmaton
+                message = "Seller Email confirmation - Pending with Client"
+                await self.whatsapp_service.send_message(user_phone, message)
+                
+            
+            if user_details:
+                await self.authentication_service.store_user_session(user_phone, user_details)
+                return user_details
+
+            return UserDetailsSchema(id="", username="", name="", self_client=False, is_registered=False)
+
+        except Exception as e:
+            logger.error(f"Authentication error for {user_phone}: {e}")
+            return UserDetailsSchema(id="", username="", name="", self_client=False, is_registered=False)
+
+    async def process_registration(self, user_phone: str) -> UserDetailsSchema:
+        """
+        Handle user registration if authentication fails.
+        Creates a new user record or triggers registration workflow.
+        """
+        try:
+            # Call registration API or internal logic
+            registration_result = await self.authentication_service.register_user(user_phone)
+            
+            if not registration_result.get("success"):
+                logger.warning(f"Registration failed for {user_phone}")
+                return UserDetailsSchema(
+                    id="",
+                    username="",
+                    name="",
+                    self_client=False,
+                    is_registered=False,
+                    email_list=[]
+                )
+            
+            user_details = registration_result.get("user_details")
+            if user_details:
+                await self.authentication_service.store_user_session(user_phone, user_details)
+                logger.info(f"User registered and session stored: {user_details.dict()}")
+                return user_details
+            
+            return UserDetailsSchema(
+                id="",
+                username="",
+                name="",
+                self_client=False,
+                is_registered=False,
+                email_list=[]
+            )
+        
+        except Exception as e:
+            logger.error(f"Registration error for {user_phone}: {e}")
+            return UserDetailsSchema(
+                id="",
+                username="",
+                name="",
+                self_client=False,
+                is_registered=False,
+                email_list=[]
+            )
+
+
+    
     def _should_use_summary_aware_extraction(self, message: str) -> bool:
         """
         Use AI to intelligently determine if we should use summary-aware entity extraction.

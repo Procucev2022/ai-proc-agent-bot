@@ -59,7 +59,6 @@ class EnhancedAutoCategorizationService:
                 name="learning_taxonomy",
                 embedding_function=self.embedding_function
             )
-        
         # Initialize fallback service
         self.fallback_service = AutoCategorizationService()
         

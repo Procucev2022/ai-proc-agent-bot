@@ -15,7 +15,11 @@ from .rfq import (
     ExcelValidationSchema,
 )
 from .whatsapp import WhatsAppMessageSchema
-from .user import UserRegistrationSchema
+from .user import (
+    UserDetailsSchema ,
+    BuyerRegistrationSchema,
+    SellerRegistrationSchema,
+    )
 from .vendor import VendorSearchRequestSchema, VendorResponseSchema
 from .conversation import ConversationContextSchema
 from .common import BaseResponseSchema
@@ -33,7 +37,10 @@ __all__ = [
     # WhatsApp schemas
     "WhatsAppMessageSchema",
     # User schemas
-    "UserRegistrationSchema",
+    "UserDetailsSchema",
+    "BuyerRegistrationSchema",
+    "SellerRegistrationSchema",
+    "APIUserSchema",
     # Vendor schemas
     "VendorSearchRequestSchema",
     "VendorResponseSchema",

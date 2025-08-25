@@ -40,7 +40,9 @@ class Settings:
         # Database configuration
         self.local_database_url = os.getenv("LOCAL_DATABASE_URL")
         self.client_database_url = os.getenv("CLIENT_DATABASE_URL")
+        self.remote_database_url = os.getenv("REMOTE_DATABASE_URL")
         self.database_mode = os.getenv("DATABASE_MODE", "local")
+        self.enable_remote_categorization = os.getenv("ENABLE_REMOTE_CATEGORIZATION", "").lower() == "true"
         self.sql_debug = os.getenv("SQL_DEBUG", "false").lower() == "true"
         
         # OpenAI configuration
@@ -92,6 +94,8 @@ class Settings:
         self.gmt_client_id = os.getenv("GMT_CLIENT_ID")
         self.gmt_client_secret = os.getenv("GMT_CLIENT_SECRET")
         self.gmt_password = os.getenv("GMT_PASSWORD")
+        self.gmt_max_retries = int(os.getenv("GMT_MAX_RETRIES", "3"))
+        self.gmt_retry_delay = int(os.getenv("GMT_RETRY_DELAY", "1"))
         
         # Intent Service configuration
         self.intent_threshold_buy_something = int(os.getenv("INTENT_THRESHOLD_BUY_SOMETHING", "75"))
@@ -184,6 +188,16 @@ class Settings:
             raise ValueError("PostgreSQL URL detected. Please use MySQL URL format: mysql+pymysql://...")
         
         return database_url
+    
+    def get_remote_database_url(self) -> Optional[str]:
+        """Get remote database URL for item categorization if enabled."""
+        if not self.enable_remote_categorization:
+            return None
+        
+        if not self.remote_database_url:
+            raise ValueError("REMOTE_DATABASE_URL environment variable is required when ENABLE_REMOTE_CATEGORIZATION is true")
+        
+        return self.remote_database_url
     
     def is_ssl_enabled(self) -> bool:
         """Check if SSL should be enabled based on database mode."""

@@ -27,7 +27,7 @@ class ProcucevAPIClient:
         self.base_url = self.settings.gmt_base_url
         self.username = self.settings.gmt_username
         self.password = self.settings.gmt_password
-        self.phone = self.settings.gmt_phone_number
+        self.phone = self.settings.gmt_phone
         self.client_id = self.settings.gmt_client_id
         self.client_secret = self.settings.gmt_client_secret
         self.max_retries = self.settings.gmt_max_retries or 3
@@ -136,6 +136,10 @@ class ProcucevAPIClient:
                 ) as resp:
                     status = resp.status
                     text = await resp.text()
+
+                    # Log response summary
+                    logger.info("API Response ← Status=%s, URL=%s, Body=%s", status, url, text[:500])
+                    
                     # If 401 Unauthorized, maybe token expired: retry after refreshing token
                     if status == 401 and require_auth:
                         logger.warning("401 Unauthorized – refreshing token and retrying...")

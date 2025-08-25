@@ -68,7 +68,7 @@ class SessionManagementService:
             
             logger.info(f"Created new session: {session_id}")
             # Show authentication placeholder for new session
-            await self._show_auth_placeholder(phone_number)
+            # await self._show_auth_placeholder(phone_number)
         else:
             logger.info(f"Found existing session: {session_id}")
         

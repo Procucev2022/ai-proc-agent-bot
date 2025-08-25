@@ -12,6 +12,8 @@ from enum import Enum
 
 class WorkflowType(str, Enum):
     """Enum for workflow types."""
+    AUTHENTICATION = "authentication"
+    REGISTRATION = "registration"
     PRODUCT_SEARCH = "product_search"
     RFQ_CREATION = "rfq_creation"
     GENERAL_INQUIRY = "general_inquiry"

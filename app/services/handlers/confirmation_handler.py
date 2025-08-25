@@ -121,13 +121,13 @@ class ConfirmationHandler:
         )
         await self.whatsapp_service.send_message(user.phone_number, auto_cat)
         
-        # Run seller recommendation for each successful RFQ (offline process)
-        seller_match = await run_seller_recommendation_for_rfqs(
-            rfq_results, 
-            self.seller_recommendation_service,
-            self.enhanced_seller_matching_service
-        )
-        await self.whatsapp_service.send_message(user.phone_number, seller_match)
+        # # Run seller recommendation for each successful RFQ (offline process)
+        # seller_match = await run_seller_recommendation_for_rfqs(
+        #     rfq_results, 
+        #     self.seller_recommendation_service,
+        #     self.enhanced_seller_matching_service
+        # )
+        # await self.whatsapp_service.send_message(user.phone_number, seller_match)
 
         # Check BFS availability after successful RFQ creation
         await self._check_bfs_availability(user.phone_number)

@@ -584,6 +584,96 @@ class OpenAIService:
             return {"has_references": False, "confidence": 0, "reference_types": [], "detected_phrases": [], "reasoning": f"Analysis failed: {error_msg}", "success": False}
         
     @log_service_method("openai_service")
+    def analyze_intent_switch_response(self, message: str, pending_switch_context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Analyze user's response to intent switch choice using OpenAI.
+        
+        Uses AI to understand ambiguous responses like "Continue with new request" 
+        that contain conflicting keywords, providing better accuracy than simple keyword matching.
+        
+        Args:
+            message: User's response to the intent switch prompt
+            pending_switch_context: Context about the pending switch including current and new intents
+            
+        Returns:
+            Dict with chosen_action, confidence, reasoning, and analysis details
+        """
+        start_time = time.time()
+        
+        try:
+            # Load intent switch analysis tool
+            with open(self.tools_dir / "intent_switch_analysis.json", 'r') as f:
+                switch_tool = json.load(f)
+            
+            # Build context for better analysis
+            current_intent = pending_switch_context.get("current_workflow", "unknown")
+            new_intent = pending_switch_context.get("new_intent", "unknown") 
+            new_message = pending_switch_context.get("new_intent_message", "")
+            
+            context_text = f"""
+User's response: "{message}"
+
+CONTEXT:
+- Current workflow: {current_intent}
+- New intent detected: {new_intent}
+- New intent message was: "{new_message}"
+
+The user was asked to choose between continuing their current workflow or switching to the new intent.
+Analyze their response to determine their true choice.
+"""
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": context_text}],
+                instructions=self._load_prompt("intent_switch", "_get_intent_switch_analysis_prompt"),
+                tools=[switch_tool],
+                tool_choice={"type": "function", "name": "analyze_intent_switch_response"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    result = {
+                        "chosen_action": args.get("chosen_action"),
+                        "confidence": args.get("confidence", 0),
+                        "reasoning": args.get("reasoning", ""),
+                        "detected_keywords": args.get("detected_keywords", []),
+                        "ambiguity_level": args.get("ambiguity_level", "high"),
+                        "success": True
+                    }
+                    
+                    logger.info(f"Intent switch analysis: {result['chosen_action']} (confidence: {result['confidence']}%)")
+                    logger.info(f"Reasoning: {result['reasoning']}")
+                    
+                    return result
+            
+            # Fallback response
+            return {
+                "chosen_action": "continue_current", 
+                "confidence": 30, 
+                "reasoning": "No function call in response, defaulting to continue current", 
+                "detected_keywords": [],
+                "ambiguity_level": "high",
+                "success": False
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Intent switch analysis failed: {error_msg}")
+            return {
+                "chosen_action": "continue_current",
+                "confidence": 20, 
+                "reasoning": f"Analysis failed: {error_msg}",
+                "detected_keywords": [],
+                "ambiguity_level": "high", 
+                "success": False
+            }
+        
+    @log_service_method("openai_service")
     def merge_resolved_references_with_entities(self, products: List[Dict], resolved_references: List[Dict], original_message: str) -> Dict[str, Any]:
         """
         Use AI to intelligently merge resolved references into product entities.
@@ -2117,5 +2207,138 @@ Determine the best category for the input item based on the similar items and th
         except Exception as e:
             logger.error(f"Error generating permission request: {str(e)}")
             return f"Hi {seller_name}! We found an RFQ matching {categories_text}. Can we send you RFQ notifications? Reply 'yes' or 'no'."
+    
+    @log_service_method("openai_service")
+    def classify_auth_intent(self, message: str) -> Dict[str, Any]:
+        """Classify authentication intent (buy/sell/unclear) using function calling."""
+        try:
+            # Simple implementation using existing classify_intent with auth context
+            context = {"workflow_type": "authentication", "stage": "intent_classification"}
+            result = self.classify_intent(message, context)
+            
+            # Map general intents to auth-specific intents
+            intent_mapping = {
+                "buy_something": "buy",
+                "sell_something": "sell", 
+                "general_inquiry": "unclear",
+                "ambiguous": "unclear"
+            }
+            
+            mapped_intent = intent_mapping.get(result.get("intent"), "unclear")
+            
+            return {
+                "intent": mapped_intent,
+                "confidence": result.get("confidence", 0),
+                "success": result.get("success", False)
+            }
+            
+        except Exception as e:
+            logger.error(f"Auth intent classification error: {e}")
+            return {"intent": "unclear", "confidence": 0, "success": False}
+    
+    @log_service_method("openai_service")
+    def extract_registration_entities(self, message: str, current_entities: Dict[str, Any], user_intent: str) -> Dict[str, Any]:
+        """Extract registration entities using function calling."""
+        start_time = time.time()
+        
+        try:
+            # Load appropriate tool and prompt based on user intent
+            if user_intent == "buy":
+                tool_file = "entity_extraction_registration_buyer.json"
+                prompt_file = "buyer_entity_extraction"
+                function_name = "extract_buyer_registration_entities"
+            else:
+                tool_file = "entity_extraction_registration_seller.json"
+                prompt_file = "seller_entity_extraction"
+                function_name = "extract_seller_registration_entities"
+            
+            with open(self.tools_dir / tool_file, 'r') as f:
+                registration_tool = json.load(f)
+            
+            # Build context with current entities
+            context_text = f"User message: {message}\n\n"
+            if current_entities:
+                context_text += f"Already collected: {json.dumps(current_entities, indent=2)}\n\n"
+            context_text += "Extract new information from the message and merge with existing data."
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": context_text}],
+                instructions=self._load_prompt("registration", prompt_file),
+                tools=[registration_tool],
+                tool_choice={"type": "function", "name": function_name}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    
+                    result = {
+                        "entities": args.get("entities", {}),
+                        "completeness": args.get("completeness", 0),
+                        "missing_fields": args.get("missing_fields", []),
+                        "confidence": args.get("confidence", 0),
+                        "success": True
+                    }
+                    
+                    # Log successful extraction
+                    self.interaction_logger.log_entity_extraction(
+                        user_input=message,
+                        entities=result["entities"],
+                        completeness=result["completeness"],
+                        workflow_type=f"registration_{user_intent}",
+                        model_used=self.default_model,
+                        processing_time=processing_time,
+                        missing_fields=result["missing_fields"]
+                    )
+                    
+                    return result
+            
+            return {"entities": {}, "completeness": 0, "missing_fields": [], "confidence": 0, "success": False}
+                
+        except Exception as e:
+            logger.error(f"Registration entity extraction error: {e}")
+            return {"entities": {}, "completeness": 0, "missing_fields": [], "confidence": 0, "success": False}
+    
+    async def parse_email_confirmation(self, message: str, emails: list) -> Dict[str, Any]:
+        """Parse email confirmation response using OpenAI function calling."""
+        try:
+            # Load email confirmation tool
+            with open(self.tools_dir / "email_confirmation_parsing.json", 'r') as f:
+                confirmation_tool = json.load(f)
+            
+            prompt = f"""Parse this user response to email confirmation: "{message}"
+            
+Available emails: {', '.join(emails) if emails else 'Single email'}
+            
+Determine if user is:
+- confirming the email (confirmed)
+- declining/rejecting the email (declined) 
+- giving unclear/invalid response (invalid)
+            
+If multiple emails and user selected a number, include selection."""
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions=self._load_prompt("email_confirmation", "email_confirmation_parsing"),
+                tools=[confirmation_tool],
+                tool_choice={"type": "function", "name": "parse_email_confirmation"}
+            )
+            
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    return {"success": True, **args}
+            
+            return {"success": False}
+            
+        except Exception as e:
+            logger.error(f"Email confirmation parsing error: {e}")
+            return {"success": False}
 
 
