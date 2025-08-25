@@ -865,7 +865,7 @@ Analyze their response to determine their true choice.
                 tools=[merge_tool],
                 instructions=self._load_prompt("response_generation", "_get_seller_intent_response_prompt")
             )
-           
+
 
 
             tool_call = response.output[0]

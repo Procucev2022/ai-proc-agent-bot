@@ -562,8 +562,8 @@ class GMTAPIService:
   "data": {
     "rfqs": [
       { "rfq_id": "RFQ240502211103", "location": "Pune", "submission_date": "2025-08-20", "category": "industrial_motors" },
-      { "rfq_id": "23112", "location": "Mumbai", "submission_date": "2025-08-22", "category": "industrial_motors" },
-      { "rfq_id": "23087", "location": "Nashik", "submission_date": "2025-08-25", "category": "industrial_motors" }
+      { "rfq_id": "RFQ23112234445", "location": "Mumbai", "submission_date": "2025-08-22", "category": "industrial_motors" },
+      { "rfq_id": "RFQ44432223087", "location": "Nashik", "submission_date": "2025-08-25", "category": "industrial_motors" }
     ],
     "totalCount": 42
   }
@@ -613,7 +613,7 @@ class GMTAPIService:
                         result={
   "success": True,
   "data": {
-    "creditsAvailable": 0,
+    "creditsAvailable": 1,
     "subscriptionStatus": "unsubscribed",
     "sellerStatus": "existing"
   }
