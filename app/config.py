@@ -134,8 +134,41 @@ class Settings:
         # RFQ Status settings
         self.rfq_max_allowed = int(os.getenv("RFQ_MAX_ALLOWED", "5"))
         self.rfq_followup_note = os.getenv("RFQ_FOLLOWUP_NOTE",
-                                           "If you want to know the status for any other RFQ number or visit the link for details: https://procucev.com")
-        
+                                           "If you want to know the status for any other RFQ number or visit the link for details: https://p2pdevuiindia.azurewebsites.net/login")
+
+        # Fetch RFQ limit
+        self.rfq_fetch_limit = int(os.getenv("RFQ_FETCH_LIMIT", "3"))
+
+        # Seller Workflow Configuration
+        self.seller_rfq_fetch_limit: int = 3
+        self.seller_max_rfq_selection: int = 5
+        self.eller_credit_check_enabled: bool = True
+        self.seller_default_category: str = "General"
+
+        # Payment Configuration
+        self.payment_timeout_minutes: int = 5
+        self.subscription_plan_cache_minutes: int = 30
+
+        # Workflow Configuration
+        self.seller_workflow_timeout_hours: int = 2
+        self.seller_session_cleanup_enabled: bool = True
+
+        # Response Configuration
+        self.seller_ai_response_enabled: bool = True
+        self.seller_fallback_responses_enabled: bool = True
+
+        # Error Handling Configuration
+        self.seller_max_retry_attempts: int = 2
+        self.seller_error_escalation_enabled: bool = True
+
+        # Monitoring Configuration
+        self.seller_detailed_logging_enabled: bool = True
+        self.seller_performance_monitoring: bool = True
+
+        # Existing RFQ settings renamed/clarified for seller context
+        self.rfq_max_allowed: int = 5  # Used for seller RFQ selection limit
+        self.rfq_fetch_limit: int = 3  # Used for buyer RFQ creation, seller uses seller_rfq_fetch_limit
+
         # Validate configuration
         self.validate_config()
         

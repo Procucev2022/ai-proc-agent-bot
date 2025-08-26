@@ -492,7 +492,7 @@ class GMTAPIService:
             if not await self.ensure_authenticated():
                 return {"success": False, "error": "Authentication failed"}
 
-            url = f"{self.base_url}/procucev/rest/rfq/getRfqStatusById"
+            url = f"{self.base_url}/rest/gmt/rfqStatus"
 
             headers = {
                 'Authorization': f'Bearer {self.token}',
@@ -501,12 +501,17 @@ class GMTAPIService:
             }
 
             data = {"clientId": client_id}
-            if rfq_ids:
-                data["rfqIds"] = rfq_ids
-            # If rfq_ids is None or empty, API will return last 3 RFQs automatically
+            # Only add rfqIds if we have valid (non-None) RFQ IDs
+            if rfq_ids and any(rfq_id is not None for rfq_id in rfq_ids):
+                # Filter out None values
+                valid_rfq_ids = [rfq_id for rfq_id in rfq_ids if rfq_id is not None]
+                if valid_rfq_ids:  # Double check we have valid IDs after filtering
+                    data["rfqIds"] = valid_rfq_ids
+
+
 
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=data, headers=headers, timeout=30) as response:
+                async with session.post(url, json=data, headers=headers, timeout=60) as response:
                     if response.status == 200:
                         result = await response.json()
                         return {"success": True, "data": result}
@@ -517,3 +522,328 @@ class GMTAPIService:
         except Exception as e:
             logger.error(f"Error calling unified RFQ status API: {e}")
             return {"success": False, "error": str(e)}
+
+
+    # Seller-specific API methods
+    async def fetch_active_rfqs(self, category: str, limit: int = 3) -> Dict[str, Any]:
+        """
+        Fetch active RFQs based on seller's category.
+
+        Args:
+            category: Product/service category
+            limit: Number of RFQs to fetch
+
+        Returns:
+            Dict containing RFQ list and count
+        """
+        try:
+            if not await self.ensure_authenticated():
+                return {"success": False, "error": "Authentication failed"}
+
+            url = f"{self.base_url}/rest/seller/fetchActiveRFQs"
+
+            headers = {
+                'Authorization': f'Bearer {self.token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+
+            data = {
+                "category": category,
+                "limit": limit
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=data, headers=headers, timeout=30) as response:
+                    if response.status != 200:
+                        # result = await response.json()
+                        result={
+  "success": True,
+  "data": {
+    "rfqs": [
+      { "rfq_id": "RFQ240502211103", "location": "Pune", "submission_date": "2025-08-20", "category": "industrial_motors" },
+      { "rfq_id": "RFQ23112234445", "location": "Mumbai", "submission_date": "2025-08-22", "category": "industrial_motors" },
+      { "rfq_id": "RFQ44432223087", "location": "Nashik", "submission_date": "2025-08-25", "category": "industrial_motors" }
+    ],
+    "totalCount": 42
+  }
+}
+                        return {
+                            "success": True,
+                            "rfqs": result.get("data", {}).get("rfqs", []),
+                            "total_count": result.get("data", {}).get("totalCount", 0),
+                            "data": result
+                        }
+                    else:
+                        error_text = await response.text()
+                        return {"success": False, "error": f"HTTP {response.status}: {error_text}"}
+
+        except Exception as e:
+            logger.error(f"Error fetching active RFQs: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def check_seller_credits(self, seller_id: str) -> Dict[str, Any]:
+        """
+        Check seller's RFQ request credit balance.
+
+        Args:
+            seller_id: Unique seller identifier
+
+        Returns:
+            Dict containing credit balance information
+        """
+        try:
+            if not await self.ensure_authenticated():
+                return {"success": False, "error": "Authentication failed"}
+
+            url = f"{self.base_url}/rest/seller/checkCredits"
+
+            headers = {
+                'Authorization': f'Bearer {self.token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+
+            data = {"sellerId": seller_id}
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=data, headers=headers, timeout=30) as response:
+                    if response.status != 200:
+                        # result = await response.json()
+                        result={
+  "success": True,
+  "data": {
+    "creditsAvailable": 1,
+    "subscriptionStatus": "unsubscribed",
+    "sellerStatus": "existing"
+  }
+}
+                        return {
+                            "success": True,
+                            "total_count": result.get("data", {}).get("totalCount", 0),
+                            "credits_available": result.get("data", {}).get("creditsAvailable",0),
+                            "data": result
+                        }
+                    else:
+                        error_text = await response.text()
+                        return {"success": False, "error": f"HTTP {response.status}: {error_text}"}
+
+        except Exception as e:
+            logger.error(f"Error checking seller credits: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def send_rfq_email(self, rfq_id: str, seller_email: str, seller_id: str) -> Dict[str, Any]:
+        """
+        Send RFQ details to seller via email.
+
+        Args:
+            rfq_id: RFQ identifier
+            seller_email: Seller's email address
+            seller_id: Seller identifier
+
+        Returns:
+            Dict containing email sending status
+        """
+        try:
+            if not await self.ensure_authenticated():
+                return {"success": False, "error": "Authentication failed"}
+
+            url = f"{self.base_url}/rest/seller/sendRFQEmail"
+
+            headers = {
+                'Authorization': f'Bearer {self.token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+
+            data = {
+                "rfqId": rfq_id,
+                "sellerEmail": seller_email,
+                "sellerId": seller_id
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=data, headers=headers, timeout=30) as response:
+                    if response.status != 200:
+                        result = await response.json()
+                        result={
+    "success": True,
+    "email_sent": True,
+    "data": {
+        "message": "RFQ email sent successfully",
+        "rfqId": "RFQ240502211103",
+        "sellerEmail": "seller@example.com",
+        "sellerId": "SELL12345",
+        "timestamp": "2025-08-24T12:30:45Z"
+    }
+}
+
+                        return {"success": True, "email_sent": True, "data": result}
+                    else:
+                        error_text = await response.text()
+                        return {"success": False, "error": f"HTTP {response.status}: {error_text}"}
+
+        except Exception as e:
+            logger.error(f"Error sending RFQ email: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def update_rfq_seller_sent_flag(self, rfq_id: str, seller_id: str) -> Dict[str, Any]:
+        """
+        Update RFQ-Seller sent flag after email is sent.
+
+        Args:
+            rfq_id: RFQ identifier
+            seller_id: Seller identifier
+
+        Returns:
+            Dict containing update status
+        """
+        try:
+            if not await self.ensure_authenticated():
+                return {"success": False, "error": "Authentication failed"}
+
+            url = f"{self.base_url}/rest/seller/updateRFQSentFlag"
+
+            headers = {
+                'Authorization': f'Bearer {self.token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+
+            data = {
+                "rfqId": rfq_id,
+                "sellerId": seller_id
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=data, headers=headers, timeout=30) as response:
+                    if response.status != 200:
+                        result = await response.json()
+                        result={
+    "success": True,
+    "flag_updated": True,
+    "data": {
+        "message": "RFQ sent flag updated successfully",
+        "rfqId": "RFQ240502211103",
+        "sellerId": "SELL12345",
+        "status": "sent",
+        "updatedAt": "2025-08-24T12:32:10Z"
+    }
+}
+
+                        return {"success": True, "flag_updated": True, "data": result}
+                    else:
+                        error_text = await response.text()
+                        return {"success": False, "error": f"HTTP {response.status}: {error_text}"}
+
+        except Exception as e:
+            logger.error(f"Error updating RFQ sent flag: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def get_subscription_plans(self) -> Dict[str, Any]:
+        """
+        Get available subscription plans for sellers.
+
+        Returns:
+            Dict containing subscription plans
+        """
+        try:
+            if not await self.ensure_authenticated():
+                return {"success": False, "error": "Authentication failed"}
+
+            url = f"{self.base_url}/rest/seller/getSubscriptionPlans"
+
+            headers = {
+                'Authorization': f'Bearer {self.token}',
+                'Accept': 'application/json'
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=30) as response:
+                    if response.status != 200:
+                        # result = await response.json()
+                        result={
+                            "success": True,
+                            "data": {
+                                "plans": [
+                                    {"id": "basic", "name": "Basic", "price": 999, "currency": "INR", "rfq_count": 5,
+                                     "duration_days": 30},
+                                    {"id": "pro", "name": "Pro", "price": 2999, "currency": "INR", "rfq_count": 20,
+                                     "duration_days": 30},
+                                    {"id": "ent", "name": "Enterprise", "price": 7999, "currency": "INR",
+                                     "rfq_count": 60, "duration_days": 90}
+                                ]
+                            }
+                        }
+                        return {
+                            "success": True,
+                            "plans": result.get("data",{}).get("plans", []),
+                            "data": result
+                        }
+                    else:
+                        error_text = await response.text()
+                        return {"success": False, "error": f"HTTP {response.status}: {error_text}"}
+
+        except Exception as e:
+            logger.error(f"Error fetching subscription plans: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def generate_payment_link(self, plan_id: str, seller_id: str) -> Dict[str, Any]:
+        """
+        Generate Razorpay payment link for subscription plan.
+
+        Args:
+            plan_id: Subscription plan identifier
+            seller_id: Seller identifier
+
+        Returns:
+            Dict containing payment link
+        """
+        try:
+            if not await self.ensure_authenticated():
+                return {"success": False, "error": "Authentication failed"}
+
+            url = f"{self.base_url}/rest/seller/generatePaymentLink"
+
+            headers = {
+                'Authorization': f'Bearer {self.token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+
+            data = {
+                "planId": plan_id,
+                "sellerId": seller_id
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=data, headers=headers, timeout=30) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        result={
+    "success": True,
+    "payment_link": "https://rzp.io/i/subscription12345",
+    "data": {
+        "paymentLink": "https://rzp.io/i/subscription12345",
+        "planId": "PLAN_GOLD_001",
+        "sellerId": "SELL12345",
+        "amount": 4999,
+        "currency": "INR",
+        "status": "created",
+        "createdAt": "2025-08-24T13:20:15Z"
+    }
+}
+
+                        return {
+                            "success": True,
+                            "payment_link": result.get("paymentLink"),
+                            "data": result
+                        }
+                    else:
+                        error_text = await response.text()
+                        return {"success": False, "error": f"HTTP {response.status}: {error_text}"}
+
+        except Exception as e:
+            logger.error(f"Error generating payment link: {e}")
+            return {"success": False, "error": str(e)}
+

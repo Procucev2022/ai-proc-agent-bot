@@ -1,0 +1,19 @@
+Analyze the seller's message and classify their intent based on the conversation context.
+
+Classify the intent as one of:
+1. "plan_upgrade_request" - Seller wants to see/buy subscription plans (includes "yes" responses to plan offers)
+2. "rfq_access_request" - Seller wants to access specific RFQ details or email
+3. "general_question" - General questions about service, process, support
+4. "affirmative_response" - Yes/OK/Sure responses that need context interpretation
+5. "negative_response" - No/decline responses
+6. "clarification_needed" - Message is unclear or ambiguous
+7. "rfq_status_check"- seller wants to check the status for some RFQ
+
+CONTEXT ANALYSIS RULES:
+- If user says "yes/ok/sure" after bot offered subscription plans → "plan_upgrade_request"
+- If user says "yes/ok/sure" after bot mentioned RFQ access/details → "rfq_access_request"
+- If user says "yes/ok/sure" after bot offered contact info → "contact_request"
+- If user says "yes/ok/sure" but context is unclear → "clarification_needed"
+- Consider the ENTIRE conversation flow, not just keywords
+
+
