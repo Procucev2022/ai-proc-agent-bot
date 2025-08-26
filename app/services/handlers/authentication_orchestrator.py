@@ -1,0 +1,388 @@
+"""
+Authentication Orchestrator Handler.
+
+Handles complete authentication flow orchestration including:
+- Token validation
+- User authentication via API
+- Email confirmation workflow
+- Email OTP validation
+- Domain matching
+- Support team redirection
+"""
+
+import logging
+from typing import Dict, Any, Optional, List
+from app.models import User, ConversationSession
+from app.services.whatsapp_service import WhatsAppService
+from app.services.helpers.response_helpers import ResponseHelpers
+from app.services.authentication_service import AuthenticationService
+from app.services.registration_service import RegistrationService
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.services.chat_service import ChatService
+from app.services.handlers.supportService_hanlder import SupportHelpers
+from app.services.chat_service import ChatService
+
+from app.schemas.user import UserDetailsSchema
+
+logger = logging.getLogger(__name__)
+
+
+class AuthenticationOrchestrator:
+    """Handles authentication flow orchestration."""
+    
+    def __init__(self, whatsapp_service: WhatsAppService, response_helpers: ResponseHelpers,
+                 authentication_service: AuthenticationService, registration_service: RegistrationService,
+                 intent_service, support_service: SupportHelpers, chat_service: 'ChatService' = None):
+        self.whatsapp_service = whatsapp_service
+        self.response_helpers = response_helpers
+        self.authentication_service = authentication_service
+        self.registration_service = registration_service
+        self.intent_service = intent_service
+        self.support_service = support_service
+        self.chat_service = chat_service
+
+    async def authentication_orchestrator_flow(self, user_phone: str, message_content: str, 
+                                             session: ConversationSession) -> Dict[str, Any]:
+        """Main authentication orchestrator function following the specified flow."""
+        try:
+            logger.info(f"Starting authentication flow for {user_phone}")
+            logger.info(f"Session workflow_state before authentication: {session.workflow_type}")
+
+            # Step 1: Token validation
+            user_details = await self.authentication_service.validate_token(user_phone)
+            
+            if user_details and user_details.is_registered:
+                logger.info(f"Token valid - User authenticated: {user_details.id}")
+                return user_details
+            
+            logger.info(f"Token validation failed for {user_phone}")
+            
+            # Step 2: Token validation failed - classify intent and start authentication flow
+            from app.services.helpers.chat_service_helpers import ChatServiceHelpers
+            conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
+            intent_result = self.intent_service.classify_intent(message_content, conversation_context)
+            logger.info(f"Intent classification result: {intent_result}")
+            
+            intent = intent_result.get('intent')
+            
+            # Step 3: Check existing workflow state
+            workflow_type_str = str(session.workflow_type).lower() if session.workflow_type else None
+            logger.info(f"Current workflow_type: {workflow_type_str}")
+            
+            if workflow_type_str == "workflowtype.authentication" or workflow_type_str == "authentication":
+                logger.info("Routing to existing authentication workflow")
+                return await self._handle_authentication_workflow(user_phone, message_content, session, intent_result)
+            elif workflow_type_str == "workflowtype.registration" or workflow_type_str == "registration":
+                return await self._handle_registration_workflow(user_phone, message_content, session, intent_result)
+            
+            # Step 4: Start new authentication flow
+            logger.info(f"Starting authentication flow for intent: {intent}")
+            return await self._start_authentication_flow(user_phone, message_content, session, intent_result)
+                
+        except Exception as e:
+            logger.error(f"Authentication orchestrator error for {user_phone}: {e}")
+            return await self.support_service.redirect_to_support(
+                user_phone, "authentication_orchestrator_error", str(e)
+            )
+    
+    async def _start_authentication_flow(self, user_phone: str, message_content: str,
+                                        session: ConversationSession, intent_result: Dict) -> Dict[str, Any]:
+        """Start new authentication flow based on intent."""
+        try:
+            intent = intent_result.get('intent')
+            logger.info(f"Starting authentication flow for intent: {intent}")
+            
+            # Handle sell_something intent - check authentication first
+            if intent == "sell_something":
+                logger.info("Processing sell_something intent - checking authentication first")
+                auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
+                
+                if not auth_response.get("success"):
+                    logger.info("Seller not found - redirecting to seller registration")
+                    return await self._redirect_to_registration_flow(user_phone, session, "seller")
+                
+                # Seller found - filter and proceed with email confirmation
+                raw_response = auth_response.get("response", [])
+                filter_result = self.authentication_service.filter_users_by_intent(raw_response, intent)
+                
+                if not filter_result.get("success"):
+                    return await self._redirect_to_registration_flow(user_phone, session, "seller")
+                
+                return await self._handle_user_selection(user_phone, session, filter_result, intent_result)
+            
+            # Step 1: API call to check if user exists
+            auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
+            
+            if not auth_response.get("success"):
+                # User not found - redirect to registration flow
+                # Default to buyer unless explicitly sell_something intent
+                user_type = "seller" if intent == "sell_something" else "buyer"
+                return await self._redirect_to_registration_flow(user_phone, session, user_type)
+            
+            # Step 2: User found - filter based on intent (buy/sell)
+            raw_response = auth_response.get("response", [])
+            filter_result = self.authentication_service.filter_users_by_intent(raw_response, intent)
+            
+            if not filter_result.get("success"):
+                # Default to buyer unless explicitly sell_something intent
+                user_type = "seller" if intent == "sell_something" else "buyer"
+                return await self._redirect_to_registration_flow(user_phone, session, user_type)
+            
+            # Step 3: User selection and email confirmation
+            return await self._handle_user_selection(user_phone, session, filter_result, intent_result)
+                
+        except Exception as e:
+            logger.error(f"Authentication flow start error: {e}")
+            return await self.support_service.redirect_to_support(
+                user_phone, "authentication_flow_error", str(e)
+            )
+    
+
+    
+
+    
+    async def _handle_user_selection(self, user_phone: str, session: ConversationSession,
+                                   filter_result: Dict, intent_result: Dict) -> Dict[str, Any]:
+        """Handle user selection from filtered users."""
+        try:
+            filtered_users = filter_result.get("filtered_users", [])
+            unique_emails = filter_result.get("unique_emails", [])
+            
+            if not unique_emails:
+                # Default to buyer unless explicitly sell_something intent
+                user_type = "seller" if intent_result.get("intent") == "sell_something" else "buyer"
+                return await self._redirect_to_registration_flow(user_phone, session, user_type)
+            
+            # Store user data for email confirmation
+            session.workflow_type = "authentication"
+            session.workflow_state = {
+                "authentication_stage": "email_confirmation",
+                "filtered_users": filtered_users,
+                "available_emails": unique_emails,
+                "intent_result": intent_result
+            }
+            
+            logger.info(f"Starting email confirmation for {len(unique_emails)} emails")
+            return await self.authentication_service.initiate_email_confirmation(
+                user_phone, session, filtered_users, unique_emails
+            )
+            
+        except Exception as e:
+            logger.error(f"User selection error: {e}")
+            return await self.support_service.redirect_to_support(
+                user_phone, "user_selection_error", str(e)
+            )
+    
+    async def _handle_authentication_workflow(self, user_phone: str, message_content: str,
+                                            session: ConversationSession, intent_result: Dict) -> Dict[str, Any]:
+        """Handle ongoing authentication workflow."""
+        try:
+            auth_stage = session.workflow_state.get("authentication_stage")
+            logger.info(f"Handling authentication workflow stage: {auth_stage}")
+            
+            if auth_stage == "email_confirmation":
+                logger.info(f"Processing email confirmation with message: {message_content}")
+                return await self.authentication_service.handle_email_confirmation(
+                    user_phone, message_content, session
+                )
+            elif auth_stage == "email_otp":
+                return await self.authentication_service.handle_email_otp_validation(
+                    user_phone, message_content, session
+                )
+            else:
+                # Unknown stage, restart authentication
+                logger.warning(f"Unknown authentication stage: {auth_stage}, restarting")
+                return await self._start_authentication_flow(user_phone, message_content, session, intent_result)
+                
+        except Exception as e:
+            logger.error(f"Authentication workflow error: {e}")
+            return await self.support_service.redirect_to_support(
+                user_phone, "authentication_workflow_error", str(e)
+            )
+    
+    async def _handle_registration_workflow(self, user_phone: str, message_content: str,
+                                         session: ConversationSession, intent_result: Dict) -> Dict[str, Any]:
+        """Handle ongoing registration workflow following the correct flow sequence."""
+        try:
+            registration_stage = session.workflow_state.get("registration_stage")
+            current_user_type = session.workflow_state.get("user_type", "buyer")
+            intent = intent_result.get('intent')
+            
+            logger.info(f"AuthOrchestrator: Handling registration workflow, stage: {registration_stage}")
+            logger.info(f"AuthOrchestrator: Current user_type: {current_user_type}, intent: {intent}")
+            
+            # Check for explicit intent switch only
+            if self._should_switch_registration_type(intent, current_user_type):
+                logger.info(f"AuthOrchestrator: Explicit intent switch detected from {current_user_type} to opposite")
+                new_user_type = "seller" if current_user_type == "buyer" else "buyer"
+                return await self._redirect_to_registration_flow(user_phone, session, new_user_type)
+            
+            # ALWAYS process registration data collection for data_collection stage
+            if registration_stage == "data_collection":
+                logger.info(f"AuthOrchestrator: Processing registration data collection")
+                logger.info(f"AuthOrchestrator: Session workflow_state before: {session.workflow_state}")
+                
+                # Ensure workflow_type stays as registration
+                session.workflow_type = "registration"
+                
+                # Follow the correct flow: 1. Pre-context 2. Merging 3. Entity extraction 4. Completeness 5. Response 6. Update
+                result = await self.registration_service.handle_registration_data_collection(
+                    user_phone, message_content, session
+                )
+                
+                logger.info(f"AuthOrchestrator: Registration result: {result}")
+                logger.info(f"AuthOrchestrator: Session workflow_state after: {session.workflow_state}")
+                
+                return result
+            elif registration_stage == "email_confirmation":
+                return await self.authentication_service.handle_email_confirmation(
+                    user_phone, message_content, session
+                )
+            elif registration_stage == "email_otp":
+                return await self.authentication_service.handle_email_otp_validation(
+                    user_phone, message_content, session
+                )
+            elif registration_stage == "domain_matching":
+                return await self.authentication_service.handle_domain_matching(
+                    user_phone, message_content, session
+                )
+            elif registration_stage == "confirmation":
+                # Handle confirmation response
+                return await self.registration_service.handle_registration_confirmation(
+                    user_phone, message_content, session
+                )
+            elif registration_stage == "email_otp":
+                # Handle OTP validation for buyer registration
+                return await self.registration_service.handle_registration_otp_validation(
+                    user_phone, message_content, session
+                )
+            elif registration_stage == "domain_matching":
+                # Handle domain matching for buyer registration
+                return await self.registration_service.handle_buyer_domain_matching(
+                    user_phone, session
+                )
+            else:
+                # Unknown stage, restart registration with current user type
+                logger.info(f"AuthOrchestrator: Unknown stage {registration_stage}, restarting with user_type: {current_user_type}")
+                return await self._redirect_to_registration_flow(user_phone, session, current_user_type)
+                
+        except Exception as e:
+            logger.error(f"Registration workflow error: {e}")
+            return await self.support_service.redirect_to_support(
+                user_phone, "registration_workflow_error", str(e)
+            )
+    
+    async def _should_handle_intent_switch(self, intent: str, current_stage: str) -> bool:
+        """Check if intent switch should be handled."""
+        # Allow intent switch if user clearly wants to change direction
+        switch_intents = ["buy_something", "registration_request", "general_inquiry", "cancel", "stop"]
+        return intent in switch_intents and current_stage not in ["email_otp", "confirmation"]
+    
+    async def _handle_intent_switch_during_auth(self, user_phone: str, session: ConversationSession,
+                                              intent_result: Dict) -> Dict[str, Any]:
+        """Handle intent switch during authentication."""
+        try:
+            intent = intent_result.get('intent')
+            
+            if intent == "registration_request":
+                # Switch to registration
+                return await self._redirect_to_registration_flow(user_phone, session, "buyer")
+            elif intent in ["cancel", "stop"]:
+                # Cancel authentication
+                session.workflow_type = None
+                session.workflow_state = {}
+                await self.whatsapp_service.send_message(
+                    user_phone, "Authentication cancelled. How can I help you?"
+                )
+                return {"status": "authentication_cancelled"}
+            else:
+                # Continue with current authentication
+                return {"status": "continue_authentication"}
+                
+        except Exception as e:
+            logger.error(f"Intent switch during auth error: {e}")
+            return {"status": "continue_authentication"}
+    
+    async def _handle_intent_switch_during_registration(self, user_phone: str, session: ConversationSession,
+                                                      intent_result: Dict) -> Dict[str, Any]:
+        """Handle intent switch during registration."""
+        try:
+            intent = intent_result.get('intent')
+            
+            if intent == "buy_something":
+                # Switch to authentication
+                return await self._initiate_authentication_flow(user_phone, "", session, intent_result)
+            elif intent in ["cancel", "stop"]:
+                # Cancel registration
+                session.workflow_type = None
+                session.workflow_state = {}
+                await self.whatsapp_service.send_message(
+                    user_phone, "Registration cancelled. How can I help you?"
+                )
+                return {"status": "registration_cancelled"}
+            else:
+                # Continue with current registration
+                return {"status": "continue_registration"}
+                
+        except Exception as e:
+            logger.error(f"Intent switch during registration error: {e}")
+            return {"status": "continue_registration"}
+    
+    def _should_switch_registration_type(self, intent: str, current_user_type: str) -> bool:
+        """Check if user explicitly wants to switch registration type."""
+        # Only switch if user explicitly mentions opposite intent
+        if current_user_type == "buyer" and intent == "sell_something":
+            return True
+        elif current_user_type == "seller" and intent == "buy_something":
+            return True
+        return False
+    
+    async def _redirect_to_registration_flow(self, user_phone: str, session: ConversationSession, user_type: str = "buyer") -> Dict[str, Any]:
+        """Redirect to registration flow."""
+        try:
+            logger.info(f"AuthOrchestrator: Redirecting to registration flow for user_type: {user_type}")
+            logger.info(f"AuthOrchestrator: Session workflow_state before redirect: {session.workflow_state}")
+            
+            # Preserve existing registration entities if switching within registration
+            existing_entities = session.workflow_state.get("registration_entities", {})
+            existing_last_activity = session.workflow_state.get("last_activity_at")
+            
+            # Ensure workflow_type is consistently set
+            session.workflow_type = "registration"
+            session.workflow_state = {
+                "registration_stage": "data_collection",
+                "user_type": user_type,
+                "registration_entities": existing_entities,
+                "last_activity_at": existing_last_activity
+            }
+            
+            logger.info(f"AuthOrchestrator: Set workflow_type to registration, user_type to {user_type}")
+            
+            logger.info(f"AuthOrchestrator: Updated session workflow_state: {session.workflow_state}")
+            
+            # Use registration service to initiate flow
+            logger.info(f"AuthOrchestrator: Calling registration service initiate_registration")
+            result = await self.registration_service.initiate_registration(
+                user_phone, session, user_type
+            )
+            
+            logger.info(f"AuthOrchestrator: Registration initiation result: {result}")
+            
+            # Ensure workflow_type remains registration
+            session.workflow_type = "registration"
+            
+            return {
+                "status": "redirected_to_registration",
+                "workflow_type": "registration",
+                "user_type": user_type,
+                "stage": "data_collection"
+            }
+            
+        except Exception as e:
+            logger.error(f"Registration redirect error: {e}")
+            return await self.support_service.redirect_to_support(
+                user_phone, "registration_redirect_error", str(e)
+            )
+    

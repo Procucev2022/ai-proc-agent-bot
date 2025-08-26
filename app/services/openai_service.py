@@ -2160,28 +2160,30 @@ Determine the best category for the input item based on the similar items and th
             return {"intent": "unclear", "confidence": 0, "success": False}
     
     @log_service_method("openai_service")
-    def extract_registration_entities(self, message: str, current_entities: Dict[str, Any], user_intent: str) -> Dict[str, Any]:
-        """Extract registration entities using function calling."""
+    def extract_registration_entities(self, message: str, conversation_context: str = "", user_type: str = "buyer", existing_entities: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Extract registration entities using proper tools and prompts like RFQ creation."""
         start_time = time.time()
         
         try:
-            # Load appropriate tool and prompt based on user intent
-            if user_intent == "buy":
+            # Load appropriate tool based on user type
+            if user_type == "buyer":
                 tool_file = "entity_extraction_registration_buyer.json"
-                prompt_file = "buyer_entity_extraction"
                 function_name = "extract_buyer_registration_entities"
+                prompt_file = "buyer_entity_extraction"
             else:
                 tool_file = "entity_extraction_registration_seller.json"
-                prompt_file = "seller_entity_extraction"
                 function_name = "extract_seller_registration_entities"
+                prompt_file = "seller_entity_extraction"
             
             with open(self.tools_dir / tool_file, 'r') as f:
                 registration_tool = json.load(f)
             
-            # Build context with current entities
+            # Build context with existing entities and conversation history
             context_text = f"User message: {message}\n\n"
-            if current_entities:
-                context_text += f"Already collected: {json.dumps(current_entities, indent=2)}\n\n"
+            if conversation_context:
+                context_text += f"Conversation context: {conversation_context}\n\n"
+            if existing_entities:
+                context_text += f"Already collected: {json.dumps(existing_entities, indent=2)}\n\n"
             context_text += "Extract new information from the message and merge with existing data."
             
             response = self.client.responses.create(
@@ -2204,7 +2206,8 @@ Determine the best category for the input item based on the similar items and th
                         "completeness": args.get("completeness", 0),
                         "missing_fields": args.get("missing_fields", []),
                         "confidence": args.get("confidence", 0),
-                        "success": True
+                        "success": True,
+                        "extracted_fields": list(args.get("entities", {}).keys())
                     }
                     
                     # Log successful extraction
@@ -2212,19 +2215,20 @@ Determine the best category for the input item based on the similar items and th
                         user_input=message,
                         entities=result["entities"],
                         completeness=result["completeness"],
-                        workflow_type=f"registration_{user_intent}",
+                        workflow_type=f"registration_{user_type}",
                         model_used=self.default_model,
                         processing_time=processing_time,
                         missing_fields=result["missing_fields"]
                     )
+                    logger.info(f"Registration entity extraction successful for {user_phone}: {result}")    
                     
                     return result
             
-            return {"entities": {}, "completeness": 0, "missing_fields": [], "confidence": 0, "success": False}
+            return {"entities": {}, "completeness": 0, "missing_fields": [], "confidence": 0, "success": False, "extracted_fields": []}
                 
         except Exception as e:
             logger.error(f"Registration entity extraction error: {e}")
-            return {"entities": {}, "completeness": 0, "missing_fields": [], "confidence": 0, "success": False}
+            return {"entities": {}, "completeness": 0, "missing_fields": [], "confidence": 0, "success": False, "extracted_fields": []}
     
     async def parse_email_confirmation(self, message: str, emails: list) -> Dict[str, Any]:
         """Parse email confirmation response using OpenAI function calling."""

@@ -6,7 +6,7 @@ for both buyers and sellers in the system, integrating with the GMT Procucev bac
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 from datetime import datetime
 
 from app.procucev_apis.procucev_api_client import ProcucevAPIClient

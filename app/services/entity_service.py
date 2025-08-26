@@ -59,6 +59,50 @@ class EntityService:
             print(f"Entity extraction error: {e}")
             return {"products": [], "confidence": 0, "success": False}
     
+    def _handle_registration_extraction(self, message: str, context: dict = None, workflow_type: str = "buyer_registration") -> dict:
+        """Handle entity extraction for registration data with context awareness."""
+        try:
+            
+            # Build context from conversation history
+            conversation_context = ""
+            if context and context.get("conversation_history"):
+                conversation_context = context["conversation_history"]
+                logger.info(f"EntityService: Built conversation context: {conversation_context}")
+            
+            user_type = workflow_type.replace("_registration", "")
+            existing_entities = context.get("registration_entities", {}) if context else {}
+            
+            logger.info(f"EntityService: User type: {user_type}")
+            logger.info(f"EntityService: Existing entities: {existing_entities}")
+            
+            # Extract registration entities using OpenAI
+            logger.info(f"EntityService: Calling OpenAI extract_registration_entities")
+            response = self.openai_service.extract_registration_entities(
+                message=message,
+                conversation_context=conversation_context,
+                user_type=user_type,
+                existing_entities=existing_entities
+            )
+            
+            logger.info(f"EntityService: OpenAI response: {response}")
+            
+            result = {
+                "entities": response.get("entities", {}),
+                "confidence": response.get("confidence", 0),
+                "success": response.get("success", True),
+                "extracted_fields": response.get("extracted_fields", []),
+                "reasoning": response.get("reasoning", "")
+            }
+            
+            logger.info(f"EntityService: Final result: {result}")
+            return result
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Registration entity extraction error: {e}", exc_info=True)
+            return {"entities": {}, "confidence": 0, "success": False}
+    
     def _handle_standard_extraction(self, message: str, context: dict = None, workflow_type: str = "buy_something") -> dict:
         """Handle standard entity extraction for new requests."""
         # Build prompt for entity extraction

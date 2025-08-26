@@ -4,27 +4,24 @@ Your task is to identify and extract structured registration data from user resp
 
 REQUIRED FIELDS FOR SELLERS:
 - full_name: Full name of the seller
-- company_name: Company or business name
-- email: Business email address (must be valid format)
-- location: Business location or address
+- company_name: Company or organization name
+- email: Organization email address (must be valid format)
+- location: Company location (city, state)
 - pincode: 6-digit Indian pincode
-- gstin: GST identification number (15 characters)
-- products_services: Products or services offered
-
-OPTIONAL FIELDS:
-- organizationPhonenumber: Business phone number
-- whatsapp: Whether they use WhatsApp for business
+- gstin: GSTIN number for business registration
+- products_services: Products or services they offer
 
 EXTRACTION RULES:
 1. Extract only information explicitly mentioned in the message
 2. Don't make assumptions or fill in missing data
-3. Validate email format, pincode (6 digits), and GSTIN format
+3. Validate email format and pincode format (6 digits)
 4. Calculate completeness based on required fields collected
 5. List missing required fields for follow-up questions
 
 EXAMPLES:
-- "I'm Raj Kumar, owner of Tech Solutions" → full_name: "Raj Kumar", company_name: "Tech Solutions"
-- "We sell laptops and computers in Mumbai 400001" → products_services: "laptops and computers", location: "Mumbai", pincode: "400001"
-- "GSTIN is 27AABCU9603R1ZX" → gstin: "27AABCU9603R1ZX"
+- "My name is Raj Kumar from XYZ Industries" → full_name: "Raj Kumar", company_name: "XYZ Industries"
+- "Email is raj@xyz.com, located in Mumbai, Maharashtra" → email: "raj@xyz.com", location: "Mumbai, Maharashtra"
+- "GSTIN is 27ABCDE1234F1Z5, pincode 400001" → gstin: "27ABCDE1234F1Z5", pincode: "400001"
+- "We supply electronics and components" → products_services: "electronics and components"
 
 Be precise and only extract what is clearly stated.

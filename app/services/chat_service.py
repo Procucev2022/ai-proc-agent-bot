@@ -141,22 +141,33 @@ class ChatService:
             # Track user message in conversation history using extracted service
             self.session_manager.add_message_to_history(session, "user", message_content, message_type)
             
-            # User Token Validation using redis
-            user_details = await self.validate_user_token(user_phone)
-
-            # User Token Expired and reauthentication required or registration required            
-            if not user_details or not user_details.is_registered:
-                logger.info(f"User Token Expired for user: {user_phone}")
-                return await self.process_authentication_and_registration_flow(
-                    user_phone, message_content, session
-                )
+            # User Authentication flow
+            auth_result = await self.authentication_orchestrator_flow(user_phone, message_content, session)
             
-            # Step 3: User is authenticated and registered, proceed with main flow
-            # Create mock user object for compatibility
-        
-            user = self._create_user_from_details(user_details)
+            # Check if authentication is still in progress
+            if isinstance(auth_result, dict):
+                auth_status = auth_result.get("status")
+                if auth_status in ["redirected_to_registration", "redirected_to_email_confirmation", "otp_sent", "email_selection_requested", "registration_initiated", "data_collection_in_progress", "awaiting_confirmation", "registration_restarted", "otp_validated", "domain_approved", "domain_approval_required"]:
+                    # Preserve workflow_type from session if it's registration, otherwise use auth result
+                    workflow_type = "registration" if session.workflow_type == "registration" else auth_result.get("workflow_type", "authentication")
+                    await self.session_manager.save_session(session, workflow_type)
+                    return auth_result
+                elif auth_status == "registration_completed":
+                    # Registration completed, create mock user and continue to main flow
+                    user = self._create_mock_authenticated_user(user_phone, session)
+                    return await self._process_text_message(user, session, message_content)
+            
+            # Check if auth returned UserDetailsSchema (valid or invalid user)
+            if isinstance(auth_result, UserDetailsSchema):
+                # If invalid user but not registered, handle as general inquiry
+                if not auth_result.is_registered and auth_result.role.value == "unknown":
+                    user = self._create_user_from_details(auth_result)
+                    return await self._process_text_message(user, session, message_content)
+            
+            # User is authenticated, create user object
+            user = self._create_user_from_details(auth_result)
             logger.info(f"User authenticated: {user}")
-            logger.info(f"User Details: {user_details}")
+            logger.info(f"User Details: {auth_result}")
             
             if message_type == "text":
                 result = await self._process_text_message(user, session, message_content)
@@ -174,160 +185,30 @@ class ChatService:
                                 
         except Exception as e:
             return await self._handle_error_response(e, user_phone, "processing_message", "Please try again")
-    
-    async def validate_user_token(self, user_phone: str) -> UserDetailsSchema:
-        """Validate user authentication from Redis token storage."""
+        
+    async def authentication_orchestrator_flow(self, user_phone: str, message_content: str, 
+                                             session: ConversationSession) -> Dict[str, Any]:
+        """Main authentication orchestrator function."""
         try:
-            # Check Redis for authenticated user session
-            user_details = await self.authentication_service.validate_token(user_phone)
-            logger.info(f"User Token Validation for user: {user_details}")
-            if user_details and user_details.is_registered:
-                logger.info(f"User authenticated from token: {user_details.id}")
-                return user_details
+            # Initialize authentication orchestrator
+            from app.services.handlers.authentication_orchestrator import AuthenticationOrchestrator
+            from app.services.handlers.supportService_hanlder import SupportHelpers
             
-            logger.info(f"Token Valdiation failed for user: {user_phone}")
-            return None
-            
-        except Exception as e:
-            logger.error(f"Token validation error for {user_phone}: {e}")
-            return None
-    
-    async def process_authentication_and_registration_flow(self, user_phone: str, message: str,
-                                                         session: ConversationSession) -> Dict[str, Any]:
-        """Handle complete authentication and registration flow."""
-        try:
-
-            conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
-            intent_result = self.intent_service.classify_intent(message, conversation_context)
-            logger.info(f"Intent classification result: {intent_result}")
-            logger.info(f"Session: {session}")
-
-            user = await self.authentication_service.user_authenticate(user_phone, message, session)
-            if not user.get("success"):
-                logger.info(f"Authentication failed for user: {user_phone}, redirecting to mock flow")
-                return await self._handle_invalid_user_flow(user_phone, message, session)
-            
-            # Authentication successful - process the user's original message
-            logger.info(f"Authentication successful for user: {user_phone}, processing original message")
-            user_details = user.get("user_details")
-            authenticated_user = self._create_user_from_details(user_details)
-            
-            # Process the message through the main flow
-            return await self._process_text_message(authenticated_user, session, message)
-           
-                
-        except Exception as e:
-            logger.error(f"Authentication/Registration flow error: {e}")
-            return await self._handle_error_response(e, user_phone, "auth_reg_flow", "Please try again")
-    
-    async def _handle_invalid_user_flow(self, user_phone: str, message: str = None, session: ConversationSession = None) -> Dict[str, Any]:
-        """Handle invalid user authentication by creating mock user."""
-        try:
-            mock_user_details = UserDetailsSchema.invalid_user(user_phone)
-
-            # store token in redis
-            await self.authentication_service.store_user_session(user_phone , mock_user_details)
-            # Registration prompt message
-            registration_msg = (
-                "You are not registered yet. "
-                "please share the details below to start your registration process."
+            auth_orchestrator = AuthenticationOrchestrator(
+                self.whatsapp_service, self.response_helpers,
+                self.authentication_service, self.registration_service,
+                self.intent_service, SupportHelpers(self.whatsapp_service), self
             )
-            await self.whatsapp_service.send_message(
-                user_phone, 
-                registration_msg
-            )
-            await self._show_auth_placeholder(user_phone)
             
-            # If we have the original message and session, process it with the mock user
-            if message and session:
-                logger.info(f"Processing original message after registration placeholder for user: {user_phone}")
-                mock_user = self._create_user_from_details(mock_user_details)
-                return await self._process_text_message(mock_user, session, message)
-
-            return {"status": "mock_user_created", "user_details": mock_user_details}
+            return await auth_orchestrator.authentication_orchestrator_flow(
+                user_phone, message_content, session
+            )
+            
         except Exception as e:
-            logger.error(f"Error handling invalid user flow: {e}")
+            logger.error(f"Authentication orchestrator error for {user_phone}: {e}")
             return {"status": "error", "error": str(e)}
-    
-    async def _handle_authentication_workflow_routing(self, user_phone: str, message: str,
-                                                    session: ConversationSession, stage: str) -> Dict[str, Any]:
-        """Route authentication workflow based on current stage."""
-        try:
-            if stage == "intent_clarification":
-                result = await self.authentication_service.handle_intent_clarification_response(
-                    user_phone, message, session
-                )
-            elif stage == "email_confirmation":
-                result = await self.authentication_service.handle_email_confirmation_response(
-                    user_phone, message, session
-                )
-            elif stage == "email_otp":
-                result = await self.authentication_service.handle_otp_verification(
-                    user_phone, message, session
-                )
-            elif stage == "redirect_to_registration":
-                # Transition to registration flow
-                user_intent = session.workflow_state.get("registration_intent", "buy")
-                result = await self.registration_service.initiate_registration(
-                    user_phone, session, user_intent, message
-                )
-            else:
-                # Unknown stage, restart authentication
-                result = await self.authentication_service.user_authenticate(
-                    user_phone, message, session
-                )
             
-            # Save session after authentication workflow
-            await self.session_manager.save_session(session, session.workflow_type or "authentication")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Authentication workflow routing error: {e}")
-            return await self._handle_error_response(e, user_phone, "auth_workflow", "Please try again")
-    
-    async def _handle_registration_workflow_routing(self, user_phone: str, message: str,
-                                                  session: ConversationSession) -> Dict[str, Any]:
-        """Route registration workflow based on current stage."""
-        try:
-            registration_stage = session.workflow_state.get("registration_stage")
-            
-            if registration_stage == "data_collection":
-                result = await self.registration_service.handle_registration_data_collection(
-                    user_phone, message, session
-                )
-            elif registration_stage == "confirmation":
-                result = await self.registration_service.handle_registration_confirmation(
-                    user_phone, message, session
-                )
-            elif registration_stage == "email_otp":
-                result = await self.registration_service.handle_registration_otp_verification(
-                    user_phone, message, session
-                )
-            else:
-                # Unknown stage, restart registration
-                user_intent = session.workflow_state.get("registration_intent", "buy")
-                result = await self.registration_service.initiate_registration(
-                    user_phone, session, user_intent, message
-                )
-            
-            # Check if registration completed and user is ready for main flow
-            if result.get("ready_for_main_flow"):
-                # Create mock authenticated user and proceed to main flow
-                mock_user = self._create_mock_authenticated_user(user_phone, session)
-                session.workflow_type = None  # Reset workflow type
-                session.workflow_state = {"extracted_entities": []}  # Reset state
-                
-                # Process the message through main flow
-                return await self._process_text_message(mock_user, session, message)
-            
-            # Save session after registration workflow
-            await self.session_manager.save_session(session, "registration")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Registration workflow routing error: {e}")
-            return await self._handle_error_response(e, user_phone, "reg_workflow", "Please try again")
-    
+ 
     def _create_mock_authenticated_user(self, user_phone: str, session: ConversationSession) -> User:
         """Create mock authenticated user after successful registration."""
         class MockUser:
@@ -341,15 +222,22 @@ class ChatService:
         user_type = session.user_type.value if session.user_type else "buyer"
         return MockUser(user_phone, user_type)
     
-    def _create_user_from_details(self, user_details: UserDetailsSchema) -> User:
-        """Create user object from UserDetailsSchema."""
+    def _create_user_from_details(self, user_details) -> User:
+        """Create user object from UserDetailsSchema or dict."""
         class AuthenticatedUser:
             def __init__(self, details):
-                self.id = details.id
-                self.phone_number = details.phone_number
-                self.name = details.name
-                self.is_registered = details.is_registered
-                self.role = details.role
+                if isinstance(details, dict):
+                    self.id = details.get('id', 1)
+                    self.phone_number = details.get('phone_number', '')
+                    self.name = details.get('name', 'User')
+                    self.is_registered = details.get('is_registered', False)
+                    self.role = details.get('role', 'buyer')
+                else:
+                    self.id = details.id
+                    self.phone_number = details.phone_number
+                    self.name = details.name
+                    self.is_registered = details.is_registered
+                    self.role = details.role.value if hasattr(details.role, 'value') else details.role
         
         return AuthenticatedUser(user_details)
     
@@ -489,6 +377,20 @@ class ChatService:
                 # Already in RFQ workflow, continue collecting
                 logger.info("Continuing existing RFQ workflow")
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None, self._should_use_summary_aware_extraction)
+            
+            # Check if user recently completed registration and handle follow-up messages
+            recently_registered = session.workflow_state.get("recently_completed_registration", False)
+            if recently_registered and confidence < 0.6:
+                # User just completed registration, treat ambiguous messages as potential purchase intent
+                logger.info(f"Post-registration message detected, treating as purchase intent: {message}")
+                # Clear the registration completion flag
+                session.workflow_state.pop("recently_completed_registration", None)
+                session.workflow_state.pop("registration_completion_time", None)
+                # Route to purchase intent with higher confidence
+                modified_intent_result = intent_result.copy()
+                modified_intent_result["intent"] = "buy_something"
+                modified_intent_result["confidence"] = 75
+                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, modified_intent_result, self._should_use_summary_aware_extraction)
             
             # Route based on already classified intent (intent was classified earlier in the function)
             if intent == "buy_something" and confidence > 0.7:
@@ -1031,87 +933,6 @@ class ChatService:
             logger.error(f"Error sending RFQ status placeholder: {e}")
             return {"status": "error", "error": str(e)}
         
-    async def process_auth(self, user_phone: str) -> UserDetailsSchema:
-        try:
-            # 1. Redis Cache
-            user = await self.authentication_service.validate_token(user_phone)
-            if user:
-                logger.info(f"ChatService: User details from cache: {user.dict()}")
-                return user
-
-            # 2. Fallback to Auth API
-            auth_result = await self.authentication_service.authenticate_user(user_phone)
-            if not auth_result.get("success"):
-                return UserDetailsSchema(id="", username="", name="", self_client=False, is_registered=False)
-
-            user_details = auth_result.get("user_details")
-            if user_details: #Multiple Email Confirmaton
-                message = "Multiple Email confirmation - Pending with Client"
-                await self.whatsapp_service.send_message(user_phone, message)
-                
-            if not user_details.self_client: #Seller Email Confirmaton
-                message = "Seller Email confirmation - Pending with Client"
-                await self.whatsapp_service.send_message(user_phone, message)
-                
-            
-            if user_details:
-                await self.authentication_service.store_user_session(user_phone, user_details)
-                return user_details
-
-            return UserDetailsSchema(id="", username="", name="", self_client=False, is_registered=False)
-
-        except Exception as e:
-            logger.error(f"Authentication error for {user_phone}: {e}")
-            return UserDetailsSchema(id="", username="", name="", self_client=False, is_registered=False)
-
-    async def process_registration(self, user_phone: str) -> UserDetailsSchema:
-        """
-        Handle user registration if authentication fails.
-        Creates a new user record or triggers registration workflow.
-        """
-        try:
-            # Call registration API or internal logic
-            registration_result = await self.authentication_service.register_user(user_phone)
-            
-            if not registration_result.get("success"):
-                logger.warning(f"Registration failed for {user_phone}")
-                return UserDetailsSchema(
-                    id="",
-                    username="",
-                    name="",
-                    self_client=False,
-                    is_registered=False,
-                    email_list=[]
-                )
-            
-            user_details = registration_result.get("user_details")
-            if user_details:
-                await self.authentication_service.store_user_session(user_phone, user_details)
-                logger.info(f"User registered and session stored: {user_details.dict()}")
-                return user_details
-            
-            return UserDetailsSchema(
-                id="",
-                username="",
-                name="",
-                self_client=False,
-                is_registered=False,
-                email_list=[]
-            )
-        
-        except Exception as e:
-            logger.error(f"Registration error for {user_phone}: {e}")
-            return UserDetailsSchema(
-                id="",
-                username="",
-                name="",
-                self_client=False,
-                is_registered=False,
-                email_list=[]
-            )
-
-
-    
     def _should_use_summary_aware_extraction(self, message: str) -> bool:
         """
         Use AI to intelligently determine if we should use summary-aware entity extraction.
