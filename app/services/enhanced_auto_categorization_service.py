@@ -43,6 +43,11 @@ class EnhancedAutoCategorizationService:
             model_name="all-MiniLM-L6-v2"
         )
         
+        # # Get collection
+        # self.collection = self.chroma_client.get_collection(
+        #     name="learning_taxonomy",
+        #     embedding_function=self.embedding_function
+        # )
         # Get collection
         try:
             self.collection = self.chroma_client.get_collection(
@@ -54,7 +59,6 @@ class EnhancedAutoCategorizationService:
                 name="learning_taxonomy",
                 embedding_function=self.embedding_function
             )
-
         # Initialize fallback service
         self.fallback_service = AutoCategorizationService()
         

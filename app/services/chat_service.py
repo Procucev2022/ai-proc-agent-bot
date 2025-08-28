@@ -54,6 +54,9 @@ from app.services.enhanced_auto_categorization_service import EnhancedAutoCatego
 from app.services.seller_recommendation_service import SellerRecommendationService
 from app.services.enhanced_seller_matching_service import EnhancedSellerMatchingService
 from app.services.rfq_background_service import RFQBackgroundService
+from app.services.rfq_status_service import RFQStatusService
+from app.config import get_settings
+from app.services.seller_service import SellerService
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
 
@@ -74,7 +77,9 @@ class ChatService:
         self.intent_service = IntentService()
         self.entity_service = EntityService()
         self.vendor_service = VendorService()
+        self.seller_service = SellerService()
         self.rfq_service = RFQService()
+        self.rfq_status_service = RFQStatusService()
         self.whatsapp_service = WhatsAppService()
         self.openai_service = OpenAIService()
         self.db_manager = DatabaseManager()
@@ -244,6 +249,15 @@ class ChatService:
     async def _process_text_message(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """Process text message through intent classification and routing."""
         try:
+            # Check if user needs registration
+            if not user.is_registered:
+                return await self._handle_registration_workflow(user, message)
+            # Handle seller RFQ selection workflow BEFORE intent classification
+            if session.workflow_type.value == "seller_rfq_view":
+                workflow_state = session.workflow_state or {}
+                current_seller_state = workflow_state.get("seller_workflow_state")
+                # Seller is responding to RFQ list - handle this immediately
+                return await self._handle_seller_flow(user, session, message)
             
             # Handle pending intent switch choices FIRST (user responding to "1. Continue or 2. Switch")
             if session.workflow_state.get("pending_intent_switch"):
@@ -407,6 +421,8 @@ class ChatService:
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result, self._should_use_summary_aware_extraction)
             elif intent == "rfq_status_check" and confidence > 0.7:
                 return await self._handle_rfq_status_inquiry(user, message)
+            elif intent == "sell_something" and confidence > 0.7:
+                return await self._handle_seller_flow(user, session, message)
             elif intent == "general_inquiry":
                 return await self._handle_general_inquiry(user, message)
             elif confidence < 0.5:
@@ -417,7 +433,20 @@ class ChatService:
         except Exception as e:
             logger.error(f"Error processing text message: {e}")
             raise
-    
+
+    # Additional helper method for the seller workflow
+    async def _validate_seller_workflow_transition(self, session: ConversationSession,
+                                                   from_state: str, to_state: str) -> bool:
+        """Validate seller workflow state transitions."""
+        valid_transitions = {
+            "list_rfq_to_seller": ["seller_respond_to_rfq_list"],
+            "seller_respond_to_rfq_list": ["sending_email_to_seller"],
+            "sending_email_to_seller": ["completed"]
+        }
+
+        allowed_next_states = valid_transitions.get(from_state, [])
+        return to_state in allowed_next_states
+
     async def _process_interactive_message(self, user: User, session: ConversationSession, content: Any) -> Dict[str, Any]:
         """Process interactive message responses (buttons, lists)."""
         try:
@@ -917,20 +946,95 @@ class ChatService:
     async def _handle_rfq_status_inquiry(self, user: User, message: str) -> Dict[str, Any]:
         # Help 1 : how to handle session here, like what data needs to be save in db and how to do it
         """Handle RFQ status inquiry requests."""
+        return await self.rfq_status_service.handle_rfq_status_inquiry(user, message)
+
+
+
+
+    async def _handle_seller_flow(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+        """
+        Enhanced handler for seller flow with complete workflow state management.
+
+        Handles:
+        - Initial seller flow (RFQ display)
+        - RFQ selection with credit checks
+        - Plan upgrade requests
+        - Payment processing
+        - General seller queries
+        """
         try:
-            result = await self.rfq_service.process_rfq_status_request(user=user, message=message)
+            # Check if we're already in a seller workflow
+            workflow_state = session.workflow_state or {}
+            current_seller_state = workflow_state.get("seller_workflow_state")
 
-            # Step: Send WhatsApp message
-            await self.whatsapp_service.send_message(user.phone_number, result["response_message"])
+            logger.info(f"ChatService: Handling seller flow - Current state: {current_seller_state}")
 
-            return {
-                "status": result.get("status"),
-                "rfq_ids": result.get("rfq_ids"),
-                "rfq_statuses": result.get("rfq_statuses")
-            }
+            # Handle different seller workflow states
+            if session.workflow_type and hasattr(session.workflow_type, 'value'):
+                workflow_type = session.workflow_type.value
+            else:
+                workflow_type = str(session.workflow_type) if session.workflow_type else None
+
+
+            if workflow_type == "seller_rfq_view":
+                # We're in an active seller workflow - delegate to seller service
+                result = await self.seller_service.handle_seller_workflow(user, session, message)
+
+                # The seller service handles session updates internally
+                # Only send message if not already sent
+                response_message = result.get("message")
+                if response_message and not result.get("message_already_sent"):
+                    await self.whatsapp_service.send_message(user.phone_number, response_message)
+                    self.session_manager.add_message_to_history(session, "assistant", response_message)
+
+                return {
+                    "status": "seller_workflow_handled",
+                    **result
+                }
+            else:
+                # Initial seller flow - starting new workflow
+                result = await self.seller_service.handle_seller_workflow(user, session, message)
+
+
+                # Handle workflow initialization
+                if result.get("success"):
+                    workflow_step = result.get("workflow_step")
+
+                    # Update session workflow type based on result
+                    if workflow_step in ["display_rfqs_to_seller", "show_subscription_plans"]:
+                        session.workflow_type = "seller_rfq_view"
+                        await self.session_manager.save_session(session, "seller_rfq_view")
+
+                # Send response message if provided and not already sent
+                response_message = result.get("message")
+                if response_message and not result.get("message_already_sent"):
+                    await self.whatsapp_service.send_message(user.phone_number, response_message)
+                    self.session_manager.add_message_to_history(session, "assistant", response_message)
+
+                return {
+                    "status": "seller_flow_initiated",
+                    **result
+                }
 
         except Exception as e:
-            logger.error(f"Error sending RFQ status placeholder: {e}")
+            logger.error(f"Error in seller flow handler: {e}")
+
+            # Generate error response using AI
+            error_context = {
+                "workflow_state": "seller_flow_error",
+                "error_message": str(e)
+            }
+
+            try:
+                error_response = await self.response_helpers.generate_seller_contextual_response(error_context)
+                await self.whatsapp_service.send_message(user.phone_number, error_response)
+            except Exception as response_error:
+                logger.error(f"Error generating seller error response: {response_error}")
+                await self.whatsapp_service.send_message(
+                    user.phone_number,
+                    "I encountered an issue processing your request. Please contact support@procurev.com"
+                )
+
             return {"status": "error", "error": str(e)}
         
     def _should_use_summary_aware_extraction(self, message: str) -> bool:
@@ -970,4 +1074,59 @@ class ChatService:
             # Fallback: if analysis fails, don't use summary-aware extraction
             return False
 
-    
+    async def _handle_seller_rfq_selection(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+        """Handle seller replying with RFQ IDs after we displayed a list in their category.
+
+        Extract RFQ IDs using the existing AI entity extraction for rfq_status_check
+        and filter them against the candidate list we showed. This prevents routing
+        to rfq_status_check intent and supports multiple IDs.
+        """
+        try:
+            workflow_state = session.workflow_state or {}
+            candidate_rfqs = workflow_state.get("seller_candidate_rfqs", [])
+            candidate_ids = {str(r.get("rfq_id")) for r in candidate_rfqs if r.get("rfq_id") is not None}
+
+            # Use existing AI extraction pipeline to parse RFQ IDs from free text
+            extraction = self.openai_service.extract_entities(message=message, workflow_type="rfq_status_check")
+            extracted_ids = extraction.get("rfq_id") or []
+
+            # Normalize and filter to candidates
+            normalized = []
+            for rid in extracted_ids:
+                if rid is None:
+                    continue
+                rid_str = str(rid).strip()
+                if rid_str in candidate_ids:
+                    normalized.append(rid_str)
+
+            # Fallback: simple regex over message to capture numbers if AI missed
+            if not normalized and candidate_ids:
+                import re
+                possible = set(re.findall(r"\b\d{2,}\b", message))
+                normalized = [rid for rid in possible if rid in candidate_ids]
+
+            # Enforce max allowed
+            max_allowed = get_settings().rfq_max_allowed
+            selected_ids = normalized[:max_allowed]
+
+            if not selected_ids:
+                # Ask user to pick valid IDs from the list
+                prompt = "I couldn't detect valid RFQ IDs from your reply. Please type the RFQ IDs from the list above (e.g., 3343 or 3343, 3351)."
+                await self.whatsapp_service.send_message(user.phone_number, prompt)
+                return {"status": "awaiting_valid_rfq_ids"}
+
+            # Update session to mark selection captured and clear the pending flag
+            workflow_state["seller_selected_rfq_ids"] = selected_ids
+            workflow_state["seller_next_step"] = None
+            session.workflow_state = workflow_state
+            await self.session_manager.save_session(session, "seller_flow")
+
+            # Acknowledge selection
+            ack = f"Thanks! Noted RFQ ID(s): {', '.join(selected_ids)}. We will proceed accordingly."
+            await self.whatsapp_service.send_message(user.phone_number, ack)
+
+            return {"status": "seller_rfq_ids_captured", "rfq_ids": selected_ids}
+        except Exception as e:
+            logger.error(f"Error handling seller RFQ selection: {e}")
+            await self.whatsapp_service.send_message(user.phone_number, "Sorry, I couldn't process the RFQ IDs. Please try again with the RFQ numbers from the list.")
+            return {"status": "error", "error": str(e)}

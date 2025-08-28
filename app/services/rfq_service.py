@@ -271,7 +271,7 @@ class RFQService:
 
         # Step 2: Fetch from GMT API
         gmt_service = GMTAPIService()
-        result = await gmt_service.get_rfq_status(client_id="4004", rfq_ids=rfq_ids)
+        result = await gmt_service.get_rfq_status(client_id=user.id, rfq_ids=rfq_ids)
 
         rfq_data = result.get("data", {}).get("data", [])
 

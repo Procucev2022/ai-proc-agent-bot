@@ -830,7 +830,84 @@ Analyze their response to determine their true choice.
 
         except Exception as e:
             logger.error(f"Response generation failed: {str(e)}")
-            return self._get_fallback_response(context)
+            return self._get_fallback_response(context,[])
+
+    def generate_seller_intent(self, context: dict) -> str:
+        """
+             Generate contextual seller intent response.
+
+            Uses AI to classify the seller's intent based on the given context
+            and generate an appropriate natural language response. The function
+            builds a prompt, loads the classification tool definition, and calls
+            the model to return the structured intent response.
+
+            Args:
+                context (dict): Dictionary containing conversation context, such as
+                                recent messages, seller actions, and metadata.
+
+            Returns:
+                str: Natural language response reflecting the seller's intent.
+                     Falls back to a default response in case of errors.
+        """
+        try:
+            # Build prompt inline
+            prompt = f"User context: {json.dumps(context)}\n\n"
+            prompt += "Generate an appropriate response for the user based on their context and any available results."
+
+            # Load reference merging tool
+            tool_file = "classify_seller_intent.json"
+            with open(self.tools_dir / tool_file, 'r') as f:
+                merge_tool = json.load(f)
+
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                tools=[merge_tool],
+                instructions=self._load_prompt("response_generation", "_get_seller_intent_response_prompt")
+            )
+
+
+
+            tool_call = response.output[0]
+            arguments_str = tool_call.arguments
+            arguments_dict = json.loads(arguments_str)
+
+            return arguments_dict or "I apologize, but I'm having trouble generating a seller intent  response right now."
+
+        except Exception as e:
+            logger.error(f"Response generation failed: {str(e)}")
+            return self._get_fallback_response(context, [])
+
+    def generate_seller_rfq_overview_response(self, context: dict) -> str:
+        """
+            Generate contextual response for seller RFQ overview flow.
+
+            Builds a concise message for sellers showing count of live RFQs,
+            lists latest RFQs, and tailors CTA based on credits/subscription.
+
+            Args:
+                context: Dictionary containing keys like 'total_count', 'latest_rfqs',
+                         'credits_available', 'plans', and 'workflow_step'.
+
+            Returns:
+                A string response suitable for user-facing interfaces.
+        """
+        try:
+            # Build prompt inline
+            prompt = f"User context: {json.dumps(context)}\n\n"
+            prompt += "Generate an appropriate response for the user based on their context and any available results."
+
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions=self._load_prompt("response_generation", "_get_seller_rfq_overview_prompt")
+            )
+
+            return response.output_text or "I apologize, but I'm having trouble generating a response right now."
+
+        except Exception as e:
+            logger.error(f"Response generation failed: {str(e)}")
+            return self._get_fallback_response(context,[])
 
     def validate_field_value(self, field_name: str, value: str, context: dict) -> Dict[str, Any]:
         """
