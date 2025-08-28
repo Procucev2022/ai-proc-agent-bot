@@ -751,7 +751,7 @@ class GMTAPIService:
             if not await self.ensure_authenticated():
                 return {"success": False, "error": "Authentication failed"}
 
-            url = f"{self.base_url}/rest/seller/getSubscriptionPlans"
+            url = f"{self.base_url}rest/gmt/getSubscriptionPlans"
 
             headers = {
                 'Authorization': f'Bearer {self.token}',
@@ -760,21 +760,8 @@ class GMTAPIService:
 
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, timeout=30) as response:
-                    if response.status != 200:
-                        # result = await response.json()
-                        result={
-                            "success": True,
-                            "data": {
-                                "plans": [
-                                    {"id": "basic", "name": "Basic", "price": 999, "currency": "INR", "rfq_count": 5,
-                                     "duration_days": 30},
-                                    {"id": "pro", "name": "Pro", "price": 2999, "currency": "INR", "rfq_count": 20,
-                                     "duration_days": 30},
-                                    {"id": "ent", "name": "Enterprise", "price": 7999, "currency": "INR",
-                                     "rfq_count": 60, "duration_days": 90}
-                                ]
-                            }
-                        }
+                    if response.status == 200:
+                        result = await response.json()
                         return {
                             "success": True,
                             "plans": result.get("data",{}).get("plans", []),
