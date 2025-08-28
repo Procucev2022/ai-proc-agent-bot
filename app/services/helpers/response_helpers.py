@@ -96,7 +96,6 @@ class ResponseHelpers:
     async def _generate_rfq_display_response(self, context: Dict[str, Any]) -> str:
         """Generate response for displaying RFQs to seller with credits."""
         try:
-            seller_info = context.get("seller_info", {})
             rfqs = context.get("rfqs", [])
             total_count = context.get("total_count", 0)
             credits_available = context.get("credits_available", 0)
@@ -113,10 +112,8 @@ class ResponseHelpers:
             Requirements:
             - Show the RFQ count and credit balance
             - List the 3 RFQs with ID, location, and date
-            - Explain they can request RFQ details by typing RFQ IDs
-            - Keep tone professional and helpful
+            - Explain they can request RFQ details by typing RFQ IDs 
 
-            Format: Direct WhatsApp message, no quotes or extra formatting.
             """
 
             response = self.openai_service.generate_response(prompt, context)
@@ -133,7 +130,7 @@ class ResponseHelpers:
             total_count = context.get("total_count", 0)
 
             prompt = f"""
-            Generate a WhatsApp message for a seller with 0 credits viewing RFQs.
+            Generate a professional WhatsApp message for a seller with 0 credits viewing RFQs.
 
             Context:
             - Seller has 0 credits
@@ -146,9 +143,7 @@ class ResponseHelpers:
             - Explain they have 0 credits
             - Mention they need to choose a subscription plan to access RFQ details
             - Ask if they want to see subscription plans
-            - Keep encouraging tone
 
-            Format: Direct WhatsApp message.
             """
 
             response = self.openai_service.generate_response(prompt, context)
@@ -236,7 +231,7 @@ class ResponseHelpers:
             - Mention payment is secure via Razorpay
             - Explain what happens after payment
             - Set expectations about timeline
-            - Professional and reassuring tone
+            - Professional tone
 
             Format: Direct WhatsApp message.
             """
@@ -295,7 +290,7 @@ class ResponseHelpers:
             - Report success/failure status clearly
             - If some failed, list which RFQ IDs failed
             - Provide support contact if issues occurred
-            - Professional and helpful tone
+            - Professional tone
 
             Format: Direct WhatsApp message.
             """
@@ -324,7 +319,6 @@ class ResponseHelpers:
             Requirements:
             - Explain the issue politely
             - Show available RFQ IDs clearly
-            - Helpful and patient tone
 
             Format: Direct WhatsApp message.
             """
@@ -352,7 +346,6 @@ class ResponseHelpers:
             - Explain the issue politely
             - Re-list available plans clearly
             - Give examples of correct selection
-            - Encouraging tone
 
             Format: Direct WhatsApp message.
             """
@@ -381,7 +374,7 @@ class ResponseHelpers:
             Requirements:
             - Address the query helpfully
             - Mention available options (RFQ access, plans, etc.)
-            - Professional and supportive tone
+            - Professional tone
             - Offer specific next steps
 
             Format: Direct WhatsApp message.
@@ -399,7 +392,6 @@ class ResponseHelpers:
     async def _generate_general_affirmative_response(self, context: Dict[str, Any]) -> str:
         """Generate response for general affirmative responses (contextual 'yes')."""
         try:
-            seller_info = context.get("seller_info", {})
             credits_available = context.get("credits_available", 0)
             ai_analysis = context.get("ai_analysis", {})
 
@@ -408,7 +400,6 @@ class ResponseHelpers:
 
             Context:
             - Seller said something like "yes" but context is unclear
-            - Seller info: {seller_info}
             - Credits available: {credits_available}
             - AI analysis: {ai_analysis.get('reasoning', 'Context unclear')}
 
@@ -416,7 +407,7 @@ class ResponseHelpers:
             - Acknowledge their positive response
             - Offer clear options: view RFQs, subscription plans, or ask questions
             - Be helpful and guide them to next steps
-            - Professional and friendly tone
+            - Professional tone
             - Present options clearly
 
             Format: Direct WhatsApp message.
@@ -432,7 +423,6 @@ class ResponseHelpers:
     async def _generate_contextual_plan_request_response(self, context: Dict[str, Any]) -> str:
         """Generate response when seller contextually requests plans (like saying 'yes' to plan offer)."""
         try:
-            seller_info = context.get("seller_info", {})
             ai_analysis = context.get("ai_analysis", {})
 
             prompt = f"""
@@ -440,7 +430,6 @@ class ResponseHelpers:
 
             Context:
             - Seller responded positively to subscription plan offer
-            - Seller info: {seller_info}
             - AI detected plan interest: {ai_analysis.get('reasoning', 'Contextual plan request')}
 
             Requirements:
@@ -463,7 +452,6 @@ class ResponseHelpers:
         """Generate response for ambiguous seller messages."""
         try:
             message = context.get("message", "")
-            seller_info = context.get("seller_info", {})
             credits_available = context.get("credits_available", 0)
             ai_analysis = context.get("ai_analysis", {})
 
@@ -546,8 +534,7 @@ class ResponseHelpers:
 
             Requirements:
             - Apologize for the issue
-            - Explain what went wrong in simple terms
-            - Provide alternative actions or support contact
+            - Provide support contact support@procurev.com
             - Professional and reassuring tone
             - Don't show technical details to user
 

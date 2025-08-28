@@ -5,9 +5,14 @@ This service can be used by both chat_service and seller_service.
 
 import logging
 from typing import Dict, Any
-from app.models import User
+from app.models import User, ConversationSession
 from app.services.rfq_service import RFQService
 from app.services.whatsapp_service import WhatsAppService
+from app.services.session_management_service import SessionManagementService
+from app.services.chat_summary_service import ChatSummaryService
+from app.services.daily_summary_service import DailySummaryService
+from app.database import DatabaseManager
+
 
 logger = logging.getLogger(__name__)
 
@@ -18,14 +23,26 @@ class RFQStatusService:
     def __init__(self):
         self.rfq_service = RFQService()
         self.whatsapp_service = WhatsAppService()
+        self.db_manager = DatabaseManager()
+        self.chat_summary_service = ChatSummaryService()
+        self.daily_summary_service = DailySummaryService()
+        # Initialize extracted services
+        self.session_manager = SessionManagementService(
+            self.db_manager, self.whatsapp_service,
+            self.chat_summary_service, self.daily_summary_service
+        )
 
-    async def handle_rfq_status_inquiry(self, user: User, message: str) -> Dict[str, Any]:
+    async def handle_rfq_status_inquiry(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """Handle RFQ status inquiry requests."""
         try:
             result = await self.rfq_service.process_rfq_status_request(user=user, message=message)
 
             # Step: Send WhatsApp message
             await self.whatsapp_service.send_message(user.phone_number, result["response_message"])
+
+            # Update session workflow type for tracking
+            session.workflow_type = "rfq_status_check"
+            await self.session_manager.save_session(session, "rfq_status_check")
 
             return {
                 "status": result.get("status"),

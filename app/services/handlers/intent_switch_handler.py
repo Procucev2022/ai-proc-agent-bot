@@ -74,7 +74,11 @@ class IntentSwitchHandler:
             # Let the system present the choice to continue vs start new
             logger.info(f"Potential new product request detected during RFQ creation - returning True")
             return True
-        
+
+        # Check if switching from seller to buyer workflow
+        if (current_workflow and current_workflow.value == "seller_rfq_view") and intent == "buy_something":
+            return True
+
         # Define intent to workflow mapping for other cases
         intent_workflow_map = {
             "rfq_status_check": "rfq_status_check", 
