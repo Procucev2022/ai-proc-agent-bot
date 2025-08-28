@@ -6,10 +6,11 @@ for both buyers and sellers in the system, integrating with the GMT Procucev bac
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 from datetime import datetime
 
 from app.procucev_apis.procucev_api_client import ProcucevAPIClient
+from app.schemas.user import APIUserSchema 
 
 logger = logging.getLogger(__name__)
 
@@ -24,48 +25,40 @@ class AuthAPIService:
 
     
     async def authenticate_user(self, phone_number: str) -> Dict[str, Any]:
-        """Get User Details by phone number both used same API."""
+        """Get User Details by phone number, normalized into APIUserSchema list."""
         try:
-            # Call the API to get user details by phone number
-            
             endpoint = f"/partialvendor/getUsersByPhoneNumber/{phone_number}"
             response_data = await self.api_client.get(endpoint)
 
-            # Check if the response indicates success
-            if response_data.get("success") and isinstance(response_data.get("data"), list) and len(response_data["data"]) > 0:
-                user_data = response_data["data"][0]  # Get first user from the list
+            if response_data.get("success") and isinstance(response_data.get("data"), list):
+                raw_users = response_data["data"]
+
+                if not raw_users:
+                    return {"success": False, "error": "User not found", "is_registered": False}
+
+                # Normalize using schema
+                users: List[APIUserSchema] = [APIUserSchema(**user) for user in raw_users]
+
                 return {
                     "success": True,
-                    "user_data": {
-                        "id": str(user_data.get("id")),
-                        "username": user_data.get("username", ""),
-                        "fullName": user_data.get("fullName", ""),
-                        "selfClient": user_data.get("selfClient", False),
-                        "role": user_data.get("role", ""),
-                        "is_registered": True,  # Explicitly set is_registered to True for authenticated users
-                        "phone": user_data.get("phone"),
-                        "companyName": user_data.get("companyName"),
-                        "orgId": user_data.get("orgId"),
-                        "active": user_data.get("active", False),
-                        "approved": user_data.get("approved", False)
-                    },
-                    "response": response_data["data"],
+                    "users": [u.dict() for u in users],  # Return clean list of dicts
+                    "count": len(users),
+                    "is_registered": True,
                 }
+
             elif response_data.get("status_code") == 404:
                 logger.warning(f"API endpoint not found (404) for phone number {phone_number}")
                 return {
                     "success": False,
                     "error": "User authentication service unavailable",
                     "status_code": 404,
-                    "is_registered": False
+                    "is_registered": False,
                 }
+
             else:
-                logger.warning("No user found with given phone number")
-                return {
-                    "success": False,
-                    "error": "User not found",
-                    "is_registered": False
-                }
+                logger.warning(f"No user found for phone number {phone_number}")
+                return {"success": False, "error": "User not found", "is_registered": False}
+
         except Exception as e:
             logger.error(f"Error fetching user details: {e}")
             return {"success": False, "error": str(e)}

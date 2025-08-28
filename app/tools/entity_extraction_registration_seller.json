@@ -1,71 +1,65 @@
 {
-  "type": "function",
-  "function": {
+    "type": "function",
     "name": "extract_seller_registration_entities",
-    "description": "Extract seller registration information from user message",
+    "description": "Extract seller registration information from user message with context awareness",
     "parameters": {
-      "type": "object",
-      "properties": {
-        "entities": {
-          "type": "object",
-          "properties": {
-            "full_name": {
-              "type": "string",
-              "description": "Full name of the seller"
+        "type": "object",
+        "properties": {
+            "entities": {
+                "type": "object",
+                "properties": {
+                    "full_name": {
+                        "type": ["string", "null"],
+                        "description": "Full name of the seller"
+                    },
+                    "company_name": {
+                        "type": ["string", "null"],
+                        "description": "Company or organization name"
+                    },
+                    "email": {
+                        "type": ["string", "null"],
+                        "description": "Organization email address"
+                    },
+                    "location": {
+                        "type": ["string", "null"],
+                        "description": "Company location (city, state)"
+                    },
+                    "pincode": {
+                        "type": ["string", "null"],
+                        "description": "6-digit pincode"
+                    },
+                    "gstin": {
+                        "type": ["string", "null"],
+                        "description": "GSTIN number"
+                    },
+                    "products_services": {
+                        "type": ["string", "null"],
+                        "description": "Products or services offered"
+                    }
+                },
+                "required": ["full_name", "company_name", "email", "location", "pincode", "gstin", "products_services"],
+                "additionalProperties": false
             },
-            "company_name": {
-              "type": "string",
-              "description": "Company or business name"
+            "completeness": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Percentage of required fields collected"
             },
-            "email": {
-              "type": "string",
-              "description": "Business email address"
+            "missing_fields": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of missing required fields"
             },
-            "location": {
-              "type": "string",
-              "description": "Business location or address"
-            },
-            "pincode": {
-              "type": "string",
-              "description": "6-digit pincode"
-            },
-            "gstin": {
-              "type": "string",
-              "description": "GST identification number"
-            },
-            "products_services": {
-              "type": "string",
-              "description": "Products or services offered"
-            },
-            "organizationPhonenumber": {
-              "type": "string",
-              "description": "Business phone number"
-            },
-            "whatsapp": {
-              "type": "boolean",
-              "description": "Whether they use WhatsApp for business"
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Confidence in extracted entities (0-100)"
             }
-          }
         },
-        "completeness": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 100,
-          "description": "Percentage of required fields collected"
-        },
-        "missing_fields": {
-          "type": "array",
-          "items": {"type": "string"},
-          "description": "List of missing required fields"
-        },
-        "confidence": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1,
-          "description": "Confidence in extracted entities"
-        }
-      },
-      "required": ["entities", "completeness", "missing_fields", "confidence"]
-    }
-  }
+        "required": ["entities", "completeness", "missing_fields", "confidence"],
+        "additionalProperties": false
+    },
+    "strict": true
 }

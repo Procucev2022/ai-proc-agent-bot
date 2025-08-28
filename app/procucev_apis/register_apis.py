@@ -146,7 +146,8 @@ class RegisterAPIService:
             
             response = await self.api_client.post(
                 endpoint=sendOTP_url,
-                json_data=payload
+                json_data=payload ,
+                require_auth=True
             )
             
             if response["success"]:
@@ -194,7 +195,8 @@ class RegisterAPIService:
             
             response = await self.api_client.post(
                 endpoint=validateOTP_url,
-                json_data=payload
+                json_data=payload,
+                require_auth=True
             )
             
             if response["success"]:
@@ -236,7 +238,8 @@ class RegisterAPIService:
             
             response = await self.api_client.post(
                 endpoint=user_approval_url,
-                json_data=payload
+                json_data=payload,
+                require_auth=True
             )
             
             if response["success"]:
