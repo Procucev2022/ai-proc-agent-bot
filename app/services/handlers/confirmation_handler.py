@@ -114,12 +114,12 @@ class ConfirmationHandler:
         await self._send_completion_response(user, rfq_results, successful_count)
         
         # Run auto-categorization for each successful RFQ (offline process)
-        auto_cat = await run_auto_categorization_for_rfqs(
-            rfq_results, 
-            self.auto_categorization_service, 
-            self.enhanced_auto_categorization_service
-        )
-        await self.whatsapp_service.send_message(user.phone_number, auto_cat)
+        # auto_cat = await run_auto_categorization_for_rfqs(
+        #     rfq_results, 
+        #     self.auto_categorization_service, 
+        #     self.enhanced_auto_categorization_service
+        # )
+        # await self.whatsapp_service.send_message(user.phone_number, auto_cat)
         
         # # Run seller recommendation for each successful RFQ (offline process)
         # seller_match = await run_seller_recommendation_for_rfqs(
@@ -129,8 +129,8 @@ class ConfirmationHandler:
         # )
         # await self.whatsapp_service.send_message(user.phone_number, seller_match)
 
-        # Check BFS availability after successful RFQ creation
-        await self._check_bfs_availability(user.phone_number)
+        # # Check BFS availability after successful RFQ creation
+        # await self._check_bfs_availability(user.phone_number)
         
         # Mark session as completed
         session.outcome = 'completed'
@@ -324,17 +324,17 @@ class ConfirmationHandler:
         
         await self.whatsapp_service.send_message(user.phone_number, response)
     
-    async def _check_bfs_availability(self, user_phone: str) -> None:
-        """Check BFS availability after successful RFQ creation."""
-        try:
-            # Send initial checking message
-            checking_message = "Checking our inventory for immediate availability..."
-            await self.whatsapp_service.send_message(user_phone, checking_message)
+    # async def _check_bfs_availability(self, user_phone: str) -> None:
+    #     """Check BFS availability after successful RFQ creation."""
+    #     try:
+    #         # Send initial checking message
+    #         checking_message = "Checking our inventory for immediate availability..."
+    #         await self.whatsapp_service.send_message(user_phone, checking_message)
             
-            # Send placeholder message
-            placeholder_message = "BFS inventory check feature is in progress."
-            await self.whatsapp_service.send_message(user_phone, placeholder_message)
+    #         # Send placeholder message
+    #         placeholder_message = "BFS inventory check feature is in progress."
+    #         await self.whatsapp_service.send_message(user_phone, placeholder_message)
             
-            logger.info(f"Sent BFS availability placeholder to {user_phone}")
-        except Exception as e:
-            logger.error(f"Error sending BFS availability placeholder: {e}")
+    #         logger.info(f"Sent BFS availability placeholder to {user_phone}")
+    #     except Exception as e:
+    #         logger.error(f"Error sending BFS availability placeholder: {e}")
