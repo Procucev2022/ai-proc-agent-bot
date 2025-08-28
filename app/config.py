@@ -95,7 +95,16 @@ class Settings:
         self.gmt_client_secret = os.getenv("GMT_CLIENT_SECRET")
         self.gmt_password = os.getenv("GMT_PASSWORD")
         self.gmt_max_retries = int(os.getenv("GMT_MAX_RETRIES", "3"))
-        self.gmt_retry_delay = int(os.getenv("GMT_RETRY_DELAY", "1"))
+        self.gmt_retry_delay = float(os.getenv("GMT_RETRY_DELAY", "1.0"))
+        
+        # Enhanced API timeout configuration
+        self.api_connect_timeout = int(os.getenv("API_CONNECT_TIMEOUT", "10"))
+        self.api_read_timeout = int(os.getenv("API_READ_TIMEOUT", "30"))
+        self.api_total_timeout = int(os.getenv("API_TOTAL_TIMEOUT", "60"))
+        
+        # OTP rate limiting configuration
+        self.otp_max_attempts = int(os.getenv("OTP_MAX_ATTEMPTS", "3"))
+        self.otp_cooldown_minutes = int(os.getenv("OTP_COOLDOWN_MINUTES", "5"))
         
         # Intent Service configuration
         self.intent_threshold_buy_something = int(os.getenv("INTENT_THRESHOLD_BUY_SOMETHING", "75"))
@@ -126,10 +135,14 @@ class Settings:
         self.rate_limit_default = os.getenv("RATE_LIMIT_DEFAULT", "100/hour")
         self.rate_limit_chat = os.getenv("RATE_LIMIT_CHAT", "20/minute")
         self.rate_limit_upload = os.getenv("RATE_LIMIT_UPLOAD", "5/minute")
+        self.rate_limit_otp = os.getenv("RATE_LIMIT_OTP", "3/hour")
+        self.rate_limit_auth = os.getenv("RATE_LIMIT_AUTH", "10/minute")
         
         # Message retry configuration
         self.retry_max_attempts = int(os.getenv("RETRY_MAX_ATTEMPTS", "3"))
         self.retry_initial_delay = float(os.getenv("RETRY_INITIAL_DELAY", "1.0"))
+        self.retry_exponential_base = float(os.getenv("RETRY_EXPONENTIAL_BASE", "2.0"))
+        self.retry_max_delay = float(os.getenv("RETRY_MAX_DELAY", "30.0"))
         
         # RFQ Status settings
         self.rfq_max_allowed = int(os.getenv("RFQ_MAX_ALLOWED", "5"))
@@ -236,7 +249,7 @@ class Settings:
     def validate_config(self) -> None:
         """Validate that all required configuration is present."""
         required_vars = [
-            ("OPENAI_API_KEY", self.openai_api_key),
+            ("AZURE_OPENAI_API_KEY", self.openai_api_key),
             ("GMT_USERNAME", self.gmt_username),
             ("GMT_PHONE", self.gmt_phone),
         ]
@@ -264,12 +277,39 @@ class Settings:
         
         if self.max_retry_attempts <= 0:
             raise ValueError("MAX_RETRY_ATTEMPTS must be positive")
+        
+        # Validate timeout configurations
+        if self.api_connect_timeout <= 0:
+            raise ValueError("API_CONNECT_TIMEOUT must be positive")
+        
+        if self.api_read_timeout <= 0:
+            raise ValueError("API_READ_TIMEOUT must be positive")
+        
+        if self.otp_max_attempts <= 0 or self.otp_max_attempts > 5:
+            raise ValueError("OTP_MAX_ATTEMPTS must be between 1 and 5")
     
     def get_rfq_status_config(self) -> Dict[str, Any]:
         """Get configuration for RFQ status logic."""
         return {
             "max_allowed": self.rfq_max_allowed,
             "followup_note": self.rfq_followup_note
+        }
+    
+    def get_api_timeout_config(self) -> Dict[str, int]:
+        """Get API timeout configuration."""
+        return {
+            "connect_timeout": self.api_connect_timeout,
+            "read_timeout": self.api_read_timeout,
+            "total_timeout": self.api_total_timeout
+        }
+    
+    def get_retry_config(self) -> Dict[str, Any]:
+        """Get retry configuration with exponential backoff."""
+        return {
+            "max_attempts": self.retry_max_attempts,
+            "initial_delay": self.retry_initial_delay,
+            "exponential_base": self.retry_exponential_base,
+            "max_delay": self.retry_max_delay
         }
 
 # Global settings instance

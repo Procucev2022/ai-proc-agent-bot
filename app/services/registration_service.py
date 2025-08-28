@@ -16,8 +16,9 @@ from app.services.openai_service import OpenAIService
 from app.services.entity_service import EntityService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.procucev_apis.register_apis import RegisterAPIService
-from app.schemas.user import BuyerRegistrationSchema, SellerRegistrationSchema
+from app.schemas.user import BuyerRegistrationSchema, SellerRegistrationSchema, UserDetailsSchema
 from app.utils.datetime_utils import utc_now
+from app.redis_db import get_auth_redis_service
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class RegistrationService:
         self.entity_service = entity_service or EntityService()
         self.response_helpers = response_helpers or ResponseHelpers(self.openai_service)
         self.register_api_service = RegisterAPIService()
+        self.auth_redis_service = get_auth_redis_service()
     
     async def initiate_registration(self, user_phone: str, session: ConversationSession,
                                   user_type: str, message: str = "") -> Dict[str, Any]:
@@ -463,6 +465,14 @@ class RegistrationService:
                     entities = session.workflow_state.get("pending_registration_data", {})
                     user_type = session.workflow_state.get("user_type", "buyer")
                     
+                    # Store user session token after successful registration
+                    session_stored = await self._store_user_session_after_registration(user_phone, entities, user_type)
+                    
+                    if session_stored:
+                        logger.info(f"User session stored successfully for {user_type} {user_phone} after registration")
+                    else:
+                        logger.error(f"Failed to store user session for {user_type} {user_phone} after registration")
+                    
                     if user_type == "buyer":
                         # Buyers: Domain matching
                         email = entities.get("email")
@@ -548,6 +558,40 @@ class RegistrationService:
             logger.error(f"Registration OTP validation error: {e}")
             return await self._redirect_to_support(user_phone, "otp_validation_error", str(e))
 
+    async def _store_user_session_after_registration(self, user_phone: str, entities: Dict, user_type: str) -> bool:
+        """Store user session token after successful registration."""
+        try:
+            # Create UserDetailsSchema from registration data
+            user_details = UserDetailsSchema(
+                id=f"reg_{user_phone}_{int(utc_now().timestamp())}",  # Generate unique ID
+                name=entities.get("name") or entities.get("full_name", ""),
+                email=entities.get("email", ""),
+                phone_number=user_phone,
+                self_client=user_type == "buyer",
+                role=user_type,
+                is_registered=True,
+                company_name=entities.get("company_name", ""),
+                unique_id=f"reg_{user_phone}"
+            )
+            
+            # Store session data in Redis
+            session_data = user_details.dict()
+            session_data["authenticated_at"] = utc_now().isoformat()
+            session_data["registration_source"] = "whatsapp_bot"
+            
+            success = await self.auth_redis_service.store(user_phone, session_data, expiry_seconds=86400)  # 24 hours
+            
+            if success:
+                logger.info(f"User session stored successfully for {user_phone} after registration")
+            else:
+                logger.error(f"Failed to store user session for {user_phone} after registration")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Error storing user session after registration: {e}")
+            return False
+    
     async def _check_domain_approval(self, email: str, entities: Dict) -> Dict[str, Any]:
         """Check if email domain matches company for approval."""
         try:

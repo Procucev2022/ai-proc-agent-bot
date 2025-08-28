@@ -259,6 +259,10 @@ class ChatService:
                 # Seller is responding to RFQ list - handle this immediately
                 return await self._handle_seller_flow(user, session, message)
             
+            # Handle pending role switch confirmation FIRST
+            if session.workflow_state.get("pending_role_switch"):
+                return await self._handle_role_switch_response(user, session, message)
+            
             # Handle pending intent switch choices FIRST (user responding to "1. Continue or 2. Switch")
             if session.workflow_state.get("pending_intent_switch"):
                 result = await self.intent_switch_handler.handle_intent_switch_response(user, session, message)
@@ -405,6 +409,14 @@ class ChatService:
                 modified_intent_result["intent"] = "buy_something"
                 modified_intent_result["confidence"] = 75
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, modified_intent_result, self._should_use_summary_aware_extraction)
+            
+            # Check for role switch (authenticated user wanting to switch from buyer to seller or vice versa)
+            if user.is_registered and confidence > 0.7:
+                current_role = getattr(user, 'role', 'buyer')
+                if intent == "sell_something" and current_role == "buyer":
+                    return await self._handle_role_switch_confirmation(user, session, message, "seller")
+                elif intent == "buy_something" and current_role == "seller":
+                    return await self._handle_role_switch_confirmation(user, session, message, "buyer")
             
             # Route based on already classified intent (intent was classified earlier in the function)
             if intent == "buy_something" and confidence > 0.7:
@@ -1130,3 +1142,90 @@ class ChatService:
             logger.error(f"Error handling seller RFQ selection: {e}")
             await self.whatsapp_service.send_message(user.phone_number, "Sorry, I couldn't process the RFQ IDs. Please try again with the RFQ numbers from the list.")
             return {"status": "error", "error": str(e)}
+    
+    async def _handle_role_switch_confirmation(self, user: User, session: ConversationSession, 
+                                             message: str, target_role: str) -> Dict[str, Any]:
+        """Handle role switch confirmation for authenticated users."""
+        try:
+            current_role = getattr(user, 'role', 'buyer')
+            
+            # Store role switch state
+            session.workflow_state["pending_role_switch"] = {
+                "target_role": target_role,
+                "current_role": current_role,
+                "original_message": message,
+                "timestamp": utc_now().isoformat()
+            }
+            
+            # Generate confirmation message
+            role_descriptions = {
+                "buyer": "create RFQs and purchase products",
+                "seller": "view and respond to RFQs"
+            }
+            
+            confirmation_message = (
+                f"You're currently logged in as a {current_role}. "
+                f"Switching to {target_role} mode will clear your current session and allow you to {role_descriptions[target_role]}.\n\n"
+                f"Do you want to switch to {target_role} mode?\n\n"
+                f"Reply 'yes' to switch or 'no' to continue as {current_role}."
+            )
+            
+            await self.whatsapp_service.send_message(user.phone_number, confirmation_message)
+            await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+            
+            return {"status": "role_switch_confirmation_requested"}
+            
+        except Exception as e:
+            logger.error(f"Error handling role switch confirmation: {e}")
+            return await self._handle_error_response(e, user.phone_number, "role_switch_confirmation", "How can I help you today?")
+    
+    async def _handle_role_switch_response(self, user: User, session: ConversationSession, 
+                                         message: str) -> Dict[str, Any]:
+        """Handle user's response to role switch confirmation."""
+        try:
+            pending_switch = session.workflow_state.get("pending_role_switch")
+            if not pending_switch:
+                return {"status": "no_pending_role_switch"}
+            
+            target_role = pending_switch["target_role"]
+            current_role = pending_switch["current_role"]
+            original_message = pending_switch["original_message"]
+            
+            # Clear pending switch state
+            del session.workflow_state["pending_role_switch"]
+            
+            # Analyze user response
+            message_lower = message.lower().strip()
+            
+            if message_lower in ['yes', 'y', 'switch', 'confirm']:
+                # User confirmed switch - clear token and restart authentication
+                logger.info(f"User confirmed role switch from {current_role} to {target_role}")
+                
+                # Clear user token/session
+                await self.authentication_service.clear_user_token(user.phone_number)
+                
+                # Clear session state
+                session.workflow_type = None
+                session.workflow_state = {}
+                await self.session_manager.save_session(session, 'general_inquiry')
+                
+                # Send confirmation and restart with original message
+                switch_message = f"Switched to {target_role} mode. Let me help you get started."
+                await self.whatsapp_service.send_message(user.phone_number, switch_message)
+                
+                # Process original message with new role context
+                return await self.process_message(user.phone_number, original_message)
+                
+            else:
+                # User declined switch - continue with current role
+                logger.info(f"User declined role switch, continuing as {current_role}")
+                
+                continue_message = f"Continuing as {current_role}. How can I help you today?"
+                await self.whatsapp_service.send_message(user.phone_number, continue_message)
+                
+                await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                return {"status": "role_switch_declined"}
+                
+        except Exception as e:
+            logger.error(f"Error handling role switch response: {e}")
+            return await self._handle_error_response(e, user.phone_number, "role_switch_response", "How can I help you today?")

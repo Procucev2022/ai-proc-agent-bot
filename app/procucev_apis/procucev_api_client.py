@@ -32,6 +32,11 @@ class ProcucevAPIClient:
         self.client_secret = self.settings.gmt_client_secret
         self.max_retries = self.settings.gmt_max_retries or 3
         self.retry_delay = self.settings.gmt_retry_delay or 1.0
+        
+        # Enhanced timeout configuration
+        self.connect_timeout = 10  # Connection timeout
+        self.read_timeout = 30     # Read timeout
+        self.total_timeout = 60    # Total request timeout
 
         self.auth_token: Optional[str] = None
         self.token_expiry: Optional[datetime] = None
@@ -48,11 +53,22 @@ class ProcucevAPIClient:
     async def create_session(self):
         """Initialize one aiohttp session for all requests (connection pooling)."""
         if not self.session:
-            timeout = aiohttp.ClientTimeout(total=30)
-            # limit_per_host=100 (default), unlimited total for flexibility
-            connector = aiohttp.TCPConnector(limit_per_host=100, limit=0)
+            # Enhanced timeout configuration
+            timeout = aiohttp.ClientTimeout(
+                total=self.total_timeout,
+                connect=self.connect_timeout,
+                sock_read=self.read_timeout
+            )
+            # Connection pooling with retry-friendly settings
+            connector = aiohttp.TCPConnector(
+                limit_per_host=50,
+                limit=100,
+                ttl_dns_cache=300,
+                use_dns_cache=True,
+                enable_cleanup_closed=True
+            )
             self.session = aiohttp.ClientSession(timeout=timeout, connector=connector)
-            logger.info("HTTP session created (connection pool)")
+            logger.info("HTTP session created with enhanced timeout configuration")
 
     async def close_session(self):
         """Close the aiohttp session cleanly."""
@@ -163,25 +179,37 @@ class ProcucevAPIClient:
                         "timestamp": datetime.now(UTC).isoformat() + "Z"
                     }
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                logger.warning(f"Attempt {attempt+1}/{self.max_retries} for {method} {url} failed: {e}")
+                error_type = "Network error"
+                if isinstance(e, asyncio.TimeoutError):
+                    error_type = "Request timeout"
+                elif isinstance(e, aiohttp.ClientConnectorError):
+                    error_type = "Connection failed"
+                elif isinstance(e, aiohttp.ClientResponseError):
+                    error_type = "HTTP error"
+                
+                logger.warning(f"Attempt {attempt+1}/{self.max_retries} for {method} {url} failed: {error_type} - {e}")
+                
                 if attempt == self.max_retries - 1:
-                    logger.error("Max retries exceeded, giving up")
+                    logger.error(f"Max retries exceeded for {method} {url}")
                     return {
                         "success": False,
                         "status_code": 500,
-                        "message": "Connection failed after retries",
+                        "message": f"{error_type}. Please check your connection and try again.",
                         "data": None,
                         "timestamp": datetime.now(UTC).isoformat() + "Z"
                     }
-                # Exponential backoff
-                await asyncio.sleep(self.retry_delay * (2 ** attempt))
+                
+                # Exponential backoff with jitter
+                backoff_time = self.retry_delay * (2 ** attempt) + (attempt * 0.1)
+                logger.info(f"Retrying in {backoff_time:.1f} seconds...")
+                await asyncio.sleep(backoff_time)
 
         # Should never reach here, but just in case
         logger.error(f"Exceeded retry loop for {method} {url}")
         return {
             "success": False,
             "status_code": 500,
-            "message": "Max retries exceeded",
+            "message": "Service temporarily unavailable. Please try again later.",
             "data": None,
             "timestamp": datetime.now(UTC).isoformat() + "Z"
         }
