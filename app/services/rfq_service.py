@@ -177,7 +177,7 @@ class RFQService:
             logger.error(f"Error updating RFQ status: {e}")
             return False
     
-    async def submit_rfq_to_backend(self, rfq_id: str) -> Dict[str, Any]:
+    async def submit_rfq_to_backend(self, rfq_id: str, user_id: str = None, org_id: str = None) -> Dict[str, Any]:
         """Submit completed RFQ to GMT backend system with Pydantic validation."""
         try:
             rfq_data = await self.get_rfq_by_id(rfq_id)
@@ -195,7 +195,7 @@ class RFQService:
                 gmt_service = GMTAPIService()
                 
                 # Submit validated data to GMT API
-                submission_result = await gmt_service.create_rfq(validated_rfq.model_dump(by_alias=True))
+                submission_result = await gmt_service.create_rfq(validated_rfq.model_dump(by_alias=True), user_id, org_id)
                 
                 if submission_result.get("success"):
                     # Update status to submitted

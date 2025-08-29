@@ -92,18 +92,18 @@ class ChatService:
         self.enhanced_seller_matching_service = EnhancedSellerMatchingService()
         self.rfq_background_service = RFQBackgroundService()
         
-        # Initialize authentication and registration services
-        self.authentication_service = AuthenticationService(
-            self.whatsapp_service, self.openai_service, self.response_helpers
-        )
-        self.registration_service = RegistrationService(
-            self.whatsapp_service, self.openai_service, self.entity_service, self.response_helpers
-        )
-        
-        # Initialize extracted services
+        # Initialize extracted services first
         self.session_manager = SessionManagementService(
             self.db_manager, self.whatsapp_service, 
             self.chat_summary_service, self.daily_summary_service
+        )
+        
+        # Initialize authentication and registration services with session_manager
+        self.authentication_service = AuthenticationService(
+            self.whatsapp_service, self.openai_service, self.response_helpers, self.session_manager
+        )
+        self.registration_service = RegistrationService(
+            self.whatsapp_service, self.openai_service, self.entity_service, self.response_helpers, self.session_manager
         )
         self.confirmation_handler = ConfirmationHandler(
             self.whatsapp_service, self.response_helpers,
@@ -315,7 +315,7 @@ class ChatService:
                         ["Sorry, there was an issue processing your request. What would you like to do?"], 
                         "error"
                     )
-                    await self.whatsapp_service.send_message(user.phone_number, error_response)
+                    await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
                     await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
                     return result
                 else:
@@ -509,7 +509,7 @@ class ChatService:
                     ["Please complete your registration first before uploading files."],
                     "registration_required"
                 )
-                await self.whatsapp_service.send_message(user.phone_number, registration_response)
+                await self.session_manager.send_and_track_message(user.phone_number, registration_response, session)
                 return {"status": "handled", "response": "registration_required"}
             
             # Extract document information
@@ -527,7 +527,7 @@ class ChatService:
                     ["I couldn't access your Excel file. Please try uploading again."],
                     "file_access_error"
                 )
-                await self.whatsapp_service.send_message(user.phone_number, error_response)
+                await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
                 return {"status": "handled", "response": "file_access_error"}
             
             # Validate Excel file
@@ -542,7 +542,7 @@ class ChatService:
                     [validation_error],
                     "validation_failed"
                 )
-                await self.whatsapp_service.send_message(user.phone_number, error_response)
+                await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
                 return {"status": "handled", "response": "validation_failed"}
             
             # Process Excel file
@@ -560,7 +560,7 @@ class ChatService:
                     [f"Error processing Excel: {processing_error}"],
                     "processing_failed"
                 )
-                await self.whatsapp_service.send_message(user.phone_number, error_response)
+                await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
                 return {"status": "handled", "response": "processing_failed"}
             
             # Prepare context using helpers
@@ -624,7 +624,7 @@ class ChatService:
                     ["Please check your Excel file format and try again."],
                     "error"
                 )
-                await self.whatsapp_service.send_message(user.phone_number, error_response)
+                await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
                 return {"status": "failed", "error": error_msg}
             
             # Create GMT template and submit
@@ -645,7 +645,7 @@ class ChatService:
                 }
                 
                 completion_response = self.openai_service.generate_completion_response(rfq_data, context)
-                await self.whatsapp_service.send_message(user.phone_number, completion_response)
+                await self.session_manager.send_and_track_message(user.phone_number, completion_response, session)
                 
                 session.outcome = 'completed'
                 session.completed_at = utc_now().replace(tzinfo=None)
@@ -664,7 +664,7 @@ class ChatService:
                     ["There was an issue creating the RFQ. Let me help you complete it through conversation."],
                     "error_recovery"
                 )
-                await self.whatsapp_service.send_message(user.phone_number, error_response)
+                await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
                 return await self._handle_incomplete_excel(user, session, {"excel_data": processing_result})
             
         except Exception as e:
@@ -675,7 +675,7 @@ class ChatService:
                 ["There was an issue processing your Excel file. Let me help you through conversation."],
                 "error_recovery"
             )
-            await self.whatsapp_service.send_message(user.phone_number, error_response)
+            await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
             return await self._handle_incomplete_excel(user, session, {"excel_data": processing_result})
     
     async def _handle_incomplete_excel(self, user: User, session: ConversationSession, excel_context: Dict) -> Dict[str, Any]:
@@ -705,7 +705,7 @@ class ChatService:
                 context
             )
             
-            await self.whatsapp_service.send_message(user.phone_number, clarification_response)
+            await self.session_manager.send_and_track_message(user.phone_number, clarification_response, session)
             
             # Update session state - waiting for excel reupload
             session.workflow_state = session.workflow_state or {}
@@ -738,7 +738,10 @@ class ChatService:
                 
                 welcome_message = f"Welcome {name}!\n\nI'm your AI Procurement Assistant. I can help you:\n\n-- Create RFQs (Request for Quotations)\n- Check product availability\n\nWhat would you like to procure today?"
                 
-                await self.whatsapp_service.send_message(user.phone_number, welcome_message)
+                # Note: This is registration workflow - session may not be available
+                # Need to get session for proper tracking
+                session = await self.session_manager.get_conversation_context(user.phone_number)
+                await self.session_manager.send_and_track_message(user.phone_number, welcome_message, session)
                 return {"status": "registered", "user_name": name}
             else:
                 # User already has name, mark as registered
