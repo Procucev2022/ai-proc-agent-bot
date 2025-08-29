@@ -224,3 +224,88 @@ Analyze their response and return only:
         session.workflow_type = None
         session.workflow_state = {}
         session.outcome = 'abandoned'
+    
+    async def handle_role_switch_confirmation(self, user, session, message: str, target_role: str) -> Dict[str, Any]:
+        """Handle role switch confirmation for authenticated users."""
+        try:
+            current_role = getattr(user, 'role', 'buyer')
+            
+            # Store role switch state
+            session.workflow_state["pending_role_switch"] = {
+                "target_role": target_role,
+                "current_role": current_role,
+                "original_message": message,
+                "timestamp": utc_now().isoformat()
+            }
+            
+            # Generate confirmation message
+            role_descriptions = {
+                "buyer": "create RFQs and purchase products",
+                "seller": "view and respond to RFQs"
+            }
+            
+            confirmation_message = (
+                f"You're currently logged in as a {current_role}. "
+                f"Switching to {target_role} mode will clear your current session and allow you to {role_descriptions[target_role]}.\n\n"
+                f"Do you want to switch to {target_role} mode?\n\n"
+                f"Reply 'yes' to switch or 'no' to continue as {current_role}."
+            )
+            
+            await self.whatsapp_service.send_message(user.phone_number, confirmation_message)
+            
+            return {"status": "role_switch_confirmation_requested"}
+            
+        except Exception as e:
+            logger.error(f"Error handling role switch confirmation: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def handle_role_switch_response(self, user, session, message: str, authentication_service) -> Dict[str, Any]:
+        """Handle user's response to role switch confirmation."""
+        try:
+            pending_switch = session.workflow_state.get("pending_role_switch")
+            if not pending_switch:
+                return {"status": "no_pending_role_switch"}
+            
+            target_role = pending_switch["target_role"]
+            current_role = pending_switch["current_role"]
+            original_message = pending_switch["original_message"]
+            
+            # Clear pending switch state
+            del session.workflow_state["pending_role_switch"]
+            
+            # Analyze user response
+            message_lower = message.lower().strip()
+            
+            if message_lower in ['yes', 'y', 'switch', 'confirm']:
+                # User confirmed switch - clear token and restart authentication
+                logger.info(f"User confirmed role switch from {current_role} to {target_role}")
+                
+                # Clear user token/session
+                await authentication_service.clear_user_token(user.phone_number)
+                
+                # Clear session state
+                session.workflow_type = None
+                session.workflow_state = {}
+                
+                # Send confirmation
+                switch_message = f"Switched to {target_role} mode. Let me help you get started."
+                await self.whatsapp_service.send_message(user.phone_number, switch_message)
+                
+                return {
+                    "status": "role_switch_confirmed",
+                    "target_role": target_role,
+                    "original_message": original_message
+                }
+                
+            else:
+                # User declined switch - continue with current role
+                logger.info(f"User declined role switch, continuing as {current_role}")
+                
+                continue_message = f"Continuing as {current_role}. How can I help you today?"
+                await self.whatsapp_service.send_message(user.phone_number, continue_message)
+                
+                return {"status": "role_switch_declined"}
+                
+        except Exception as e:
+            logger.error(f"Error handling role switch response: {e}")
+            return {"status": "error", "error": str(e)}
