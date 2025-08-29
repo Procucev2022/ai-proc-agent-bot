@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from app.services.chat_service import ChatService
 from app.services.handlers.supportService_hanlder import SupportHelpers
 from app.services.chat_service import ChatService
+from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
 
 from app.schemas.user import UserDetailsSchema
 
@@ -42,6 +43,7 @@ class AuthenticationOrchestrator:
         self.intent_service = intent_service
         self.support_service = support_service
         self.chat_service = chat_service
+        self.auth_reg_switch = AuthRegistrationIntentSwitch(whatsapp_service)
 
     async def authentication_orchestrator_flow(self, user_phone: str, message_content: str, 
                                              session: ConversationSession) -> Dict[str, Any]:
@@ -67,9 +69,25 @@ class AuthenticationOrchestrator:
             
             intent = intent_result.get('intent')
             
-            # Step 3: Check existing workflow state
+            # Step 3: Check for intent switch between auth/registration combinations
             workflow_type_str = str(session.workflow_type).lower() if session.workflow_type else None
             logger.info(f"Current workflow_type: {workflow_type_str}")
+            
+            # Check if user is switching between auth/registration combinations
+            if workflow_type_str in ["authentication", "registration"]:
+                user_type = "seller" if intent == "sell_something" else "buyer"
+                
+                # Check for pending switch response first
+                if session.workflow_state.get("pending_auth_reg_switch"):
+                    return await self.auth_reg_switch.handle_auth_reg_switch_response(
+                        user_phone, session, message_content
+                    )
+                
+                # Check if should handle new switch
+                if await self.auth_reg_switch.should_handle_auth_reg_switch(session, intent, user_type):
+                    return await self.auth_reg_switch.handle_auth_reg_switch_choice(
+                        user_phone, session, message_content, intent, user_type
+                    )
             
             if workflow_type_str == "workflowtype.authentication" or workflow_type_str == "authentication":
                 logger.info("Routing to existing authentication workflow")
@@ -179,6 +197,11 @@ class AuthenticationOrchestrator:
                                             session: ConversationSession, intent_result: Dict) -> Dict[str, Any]:
         """Handle ongoing authentication workflow."""
         try:
+            # Check for switch response first
+            switch_result = await self._check_switch_response(user_phone, session, message_content, intent_result)
+            if switch_result:
+                return switch_result
+            
             auth_stage = session.workflow_state.get("authentication_stage")
             logger.info(f"Handling authentication workflow stage: {auth_stage}")
             
@@ -206,18 +229,17 @@ class AuthenticationOrchestrator:
                                          session: ConversationSession, intent_result: Dict) -> Dict[str, Any]:
         """Handle ongoing registration workflow following the correct flow sequence."""
         try:
+            # Check for switch response first
+            switch_result = await self._check_switch_response(user_phone, session, message_content, intent_result)
+            if switch_result:
+                return switch_result
+            
             registration_stage = session.workflow_state.get("registration_stage")
             current_user_type = session.workflow_state.get("user_type", "buyer")
             intent = intent_result.get('intent')
             
             logger.info(f"AuthOrchestrator: Handling registration workflow, stage: {registration_stage}")
             logger.info(f"AuthOrchestrator: Current user_type: {current_user_type}, intent: {intent}")
-            
-            # Check for explicit intent switch only
-            if self._should_switch_registration_type(intent, current_user_type):
-                logger.info(f"AuthOrchestrator: Explicit intent switch detected from {current_user_type} to opposite")
-                new_user_type = "seller" if current_user_type == "buyer" else "buyer"
-                return await self._redirect_to_registration_flow(user_phone, session, new_user_type)
             
             # ALWAYS process registration data collection for data_collection stage
             if registration_stage == "data_collection":
@@ -330,14 +352,7 @@ class AuthenticationOrchestrator:
             logger.error(f"Intent switch during registration error: {e}")
             return {"status": "continue_registration"}
     
-    def _should_switch_registration_type(self, intent: str, current_user_type: str) -> bool:
-        """Check if user explicitly wants to switch registration type."""
-        # Only switch if user explicitly mentions opposite intent
-        if current_user_type == "buyer" and intent == "sell_something":
-            return True
-        elif current_user_type == "seller" and intent == "buy_something":
-            return True
-        return False
+
     
     async def _redirect_to_registration_flow(self, user_phone: str, session: ConversationSession, user_type: str = "buyer") -> Dict[str, Any]:
         """Redirect to registration flow."""
@@ -385,4 +400,38 @@ class AuthenticationOrchestrator:
             return await self.support_service.redirect_to_support(
                 user_phone, "registration_redirect_error", str(e)
             )
+    
+    async def _check_switch_response(self, user_phone: str, session: ConversationSession,
+                                   message_content: str, intent_result: Dict) -> Dict[str, Any]:
+        """Check if user is responding to a switch choice."""
+        try:
+            # Handle auth/registration switch response
+            if session.workflow_state.get("pending_auth_reg_switch"):
+                result = await self.auth_reg_switch.handle_auth_reg_switch_response(
+                    user_phone, session, message_content
+                )
+                
+                if result.get("status") == "switch_to_new_combination":
+                    # User chose to switch - start new workflow
+                    new_intent = result["new_intent"]
+                    new_user_type = result["new_user_type"]
+                    target_workflow = result["target_workflow"]
+                    
+                    if target_workflow == "authentication":
+                        return await self._start_authentication_flow(
+                            user_phone, result["new_message"], session, 
+                            {"intent": new_intent}
+                        )
+                    else:  # registration
+                        return await self._redirect_to_registration_flow(
+                            user_phone, session, new_user_type
+                        )
+                
+                return result
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Switch response check error: {e}")
+            return None
     

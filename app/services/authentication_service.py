@@ -59,11 +59,30 @@ class AuthenticationService:
         try:
             session_data = user_details.dict()
             session_data["authenticated_at"] = datetime.now().isoformat()
-            await self.auth_redis_service.store(user_phone, session_data)
-            logger.info(f"Session stored for user {user_phone} (ID: {user_details.id})")
-            return True
+            
+            success = await self.auth_redis_service.store(user_phone, session_data, expiry_seconds=86400)  # 24 hours
+            
+            if success:
+                logger.info(f"Session stored successfully for user {user_phone} (ID: {user_details.id})")
+            else:
+                logger.error(f"Failed to store session in Redis for user {user_phone}")
+            
+            return success
         except Exception as e:
             logger.error(f"Session storage error for {user_phone}: {e}")
+            return False
+    
+    async def clear_user_token(self, user_phone: str) -> bool:
+        """Clear user token/session from Redis."""
+        try:
+            success = await self.auth_redis_service.delete_auth(user_phone)
+            if success:
+                logger.info(f"User token cleared successfully for {user_phone}")
+            else:
+                logger.warning(f"Failed to clear token for {user_phone} or token not found")
+            return success
+        except Exception as e:
+            logger.error(f"Token clearing error for {user_phone}: {e}")
             return False
     
     async def user_authenticate(self, user_phone: str, message: str, 
@@ -447,7 +466,12 @@ Return only the selected email address or "none" if no clear selection.
             
             if user_type == "buyer":
                 # Buyers: Store token session and redirect to main flow
-                await self.store_user_session_with_email(user_phone, filtered_users, selected_email)
+                session_stored = await self.store_user_session_with_email(user_phone, filtered_users, selected_email)
+                
+                if session_stored:
+                    logger.info(f"User session stored successfully for buyer {user_phone}")
+                else:
+                    logger.error(f"Failed to store user session for buyer {user_phone}")
                 
                 message = "Authentication successful! How can I help you today?"
                 await self.whatsapp_service.send_message(user_phone, message)
@@ -493,7 +517,14 @@ Return only the selected email address or "none" if no clear selection.
                 logger.error(f"Could not create user details for email {selected_email}")
                 return False
             
-            return await self.store_user_session(user_phone, user_details)
+            success = await self.store_user_session(user_phone, user_details)
+            
+            if success:
+                logger.info(f"Successfully stored session for {user_phone} with email {selected_email}")
+            else:
+                logger.error(f"Failed to store session for {user_phone} with email {selected_email}")
+            
+            return success
             
         except Exception as e:
             logger.error(f"Session storage error: {e}")
@@ -588,7 +619,12 @@ Return only the selected email address or "none" if no clear selection.
             
             if validation_response.get("statusCode") == "1001":
                 # OTP valid - store session and complete authentication
-                await self.store_user_session_with_email(user_phone, filtered_users, email)
+                session_stored = await self.store_user_session_with_email(user_phone, filtered_users, email)
+                
+                if session_stored:
+                    logger.info(f"User session stored successfully for seller {user_phone} after OTP validation")
+                else:
+                    logger.error(f"Failed to store user session for seller {user_phone} after OTP validation")
                 
                 message = "Email verified successfully! You can now proceed with your requests."
                 await self.whatsapp_service.send_message(user_phone, message)
@@ -719,7 +755,12 @@ Return only the selected email address or "none" if no clear selection.
                                            selected_email: str) -> Dict[str, Any]:
         """Complete buyer authentication with approval."""
         try:
-            await self._store_user_session_with_email(user_phone, user_details, selected_email)
+            session_stored = await self.store_user_session_with_email(user_phone, [user_details], selected_email)
+            
+            if session_stored:
+                logger.info(f"User session stored successfully for approved buyer {user_phone}")
+            else:
+                logger.error(f"Failed to store user session for approved buyer {user_phone}")
             
             message = (
                 "Registration successful—thank you! How can I help you today? "

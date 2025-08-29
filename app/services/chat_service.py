@@ -259,6 +259,14 @@ class ChatService:
                 # Seller is responding to RFQ list - handle this immediately
                 return await self._handle_seller_flow(user, session, message)
             
+            # Handle pending role switch confirmation FIRST
+            if session.workflow_state.get("pending_role_switch"):
+                from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
+                auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
+                result = await auth_reg_switch.handle_role_switch_response(user, session, message, self.authentication_service)
+                await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                return result
+            
             # Handle pending intent switch choices FIRST (user responding to "1. Continue or 2. Switch")
             if session.workflow_state.get("pending_intent_switch"):
                 result = await self.intent_switch_handler.handle_intent_switch_response(user, session, message)
@@ -405,6 +413,22 @@ class ChatService:
                 modified_intent_result["intent"] = "buy_something"
                 modified_intent_result["confidence"] = 75
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, modified_intent_result, self._should_use_summary_aware_extraction)
+            
+            # Check for role switch (authenticated user wanting to switch from buyer to seller or vice versa)
+            if user.is_registered and confidence > 0.7:
+                current_role = getattr(user, 'role', 'buyer')
+                if intent == "sell_something" and current_role == "buyer":
+                    from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
+                    auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
+                    result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "seller")
+                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    return result
+                elif intent == "buy_something" and current_role == "seller":
+                    from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
+                    auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
+                    result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "buyer")
+                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    return result
             
             # Route based on already classified intent (intent was classified earlier in the function)
             if intent == "buy_something" and confidence > 0.7:

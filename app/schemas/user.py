@@ -18,10 +18,26 @@ class UserRole(str, Enum):
 # Validators (Regex)
 # -------------------------------
 
-EMAIL_REGEX = re.compile(r"^[\w\.-]+@[\w\.-]+\.\w+$")
+# Comprehensive email validation
+EMAIL_REGEX = re.compile(
+    r"^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$"
+)
+# Sanitized phone number (removes spaces, dashes, plus signs)
 PHONE_REGEX = re.compile(r"^[6-9]\d{9}$")
 PINCODE_REGEX = re.compile(r"^\d{6}$")
 GSTIN_REGEX = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$")
+
+
+def sanitize_phone_number(phone: str) -> str:
+    """Sanitize phone number by removing non-digit characters."""
+    if not phone:
+        return phone
+    # Remove spaces, dashes, plus signs, parentheses
+    sanitized = re.sub(r'[\s\-\+\(\)\.]', '', phone)
+    # Remove country code if present (91 for India)
+    if sanitized.startswith('91') and len(sanitized) == 12:
+        sanitized = sanitized[2:]
+    return sanitized
 
 
 # -------------------------------
@@ -38,15 +54,23 @@ class BuyerRegistrationSchema(BaseModel):
 
     @field_validator("email")
     def validate_email(cls, v: str) -> str:
+        if not v or len(v.strip()) == 0:
+            raise ValueError("Email cannot be empty")
+        v = v.strip().lower()
+        if len(v) > 254:  # RFC 5321 limit
+            raise ValueError("Email address too long")
         if not EMAIL_REGEX.match(v):
             raise ValueError("Invalid email format")
-        return v.lower()
+        return v
 
     @field_validator("organizationPhonenumber")
     def validate_phone(cls, v: Optional[str]) -> Optional[str]:
-        if v and not PHONE_REGEX.match(v):
+        if not v:
+            return v
+        sanitized = sanitize_phone_number(v)
+        if not PHONE_REGEX.match(sanitized):
             raise ValueError("Invalid phone number format")
-        return v
+        return sanitized
 
     @field_validator("pincode")
     def validate_pincode(cls, v: str) -> str:
@@ -68,15 +92,23 @@ class SellerRegistrationSchema(BaseModel):
 
     @field_validator("email")
     def validate_email(cls, v: str) -> str:
+        if not v or len(v.strip()) == 0:
+            raise ValueError("Email cannot be empty")
+        v = v.strip().lower()
+        if len(v) > 254:  # RFC 5321 limit
+            raise ValueError("Email address too long")
         if not EMAIL_REGEX.match(v):
             raise ValueError("Invalid email format")
-        return v.lower()
+        return v
 
     @field_validator("organizationPhonenumber")
     def validate_phone(cls, v: Optional[str]) -> Optional[str]:
-        if v and not PHONE_REGEX.match(v):
+        if not v:
+            return v
+        sanitized = sanitize_phone_number(v)
+        if not PHONE_REGEX.match(sanitized):
             raise ValueError("Invalid phone number format")
-        return v
+        return sanitized
 
     @field_validator("pincode")
     def validate_pincode(cls, v: str) -> str:
@@ -125,16 +157,26 @@ class UserDetailsSchema(BaseModel):
             case _:
                 role = UserRole.UNKNOWN
 
+        # Handle both 'id' and 'userId' fields for Redis compatibility
+        user_id = str(api_data.get("id") or api_data.get("userId", ""))
+        if not user_id:
+            raise ValueError("User ID is required")
+
+        # Sanitize phone number if present
+        phone = api_data.get("phone")
+        if phone:
+            phone = sanitize_phone_number(phone)
+
         return cls(
-            id=str(api_data.get("id", "")),
+            id=user_id,
             name=api_data.get("fullName"),
             email=api_data.get("username"),
             self_client=api_data.get("selfClient", False),
             role=role,
-            is_registered=bool(api_data.get("id")),
-            phone_number=api_data.get("phone"),
+            is_registered=bool(user_id),
+            phone_number=phone,
             company_name=api_data.get("companyName"),
-           
+            unique_id=api_data.get("uniqueId")
         )
 
     @classmethod

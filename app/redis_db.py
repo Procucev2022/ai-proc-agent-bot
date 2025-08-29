@@ -76,6 +76,22 @@ class BaseRedisService:
         except Exception as e:
             logger.error(f"Redis EXISTS error for key {key}: {e}")
             return False
+    
+    async def ttl(self, key: str) -> Optional[int]:
+        await self.init_client()
+        try:
+            return await self.client.ttl(key)
+        except Exception as e:
+            logger.error(f"Redis TTL error for key {key}: {e}")
+            return None
+    
+    async def incr(self, key: str) -> Optional[int]:
+        await self.init_client()
+        try:
+            return await self.client.incr(key)
+        except Exception as e:
+            logger.error(f"Redis INCR error for key {key}: {e}")
+            return None
 
 
 class AuthRedisService(BaseRedisService):
