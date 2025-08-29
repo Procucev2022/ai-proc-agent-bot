@@ -32,7 +32,7 @@ class RFQStatusService:
             self.chat_summary_service, self.daily_summary_service
         )
 
-    async def handle_rfq_status_inquiry(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+    async def handle_rfq_status_inquiry(self, user: User,  message: str,session: ConversationSession) -> Dict[str, Any]:
         """Handle RFQ status inquiry requests."""
         try:
             result = await self.rfq_service.process_rfq_status_request(user=user, message=message)
