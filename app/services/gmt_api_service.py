@@ -89,12 +89,14 @@ class GMTAPIService:
             return await self.authenticate()
         return True
     
-    async def create_rfq(self, rfq_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_rfq(self, rfq_data: Dict[str, Any], user_id: str = None, org_id: str = None) -> Dict[str, Any]:
         """
         Create RFQ in GMT system.
         
         Args:
             rfq_data: RFQ data dictionary from our local database
+            user_id: User ID for the RFQ creator
+            org_id: Organization ID for the RFQ creator
             
         Returns:
             Dict with success status and response data
@@ -104,7 +106,7 @@ class GMTAPIService:
                 return {"success": False, "error": "Authentication failed"}
             
             # Transform our RFQ data to GMT API format
-            gmt_rfq_data = self._transform_rfq_to_gmt_format(rfq_data)
+            gmt_rfq_data = self._transform_rfq_to_gmt_format(rfq_data, user_id, org_id)
             
             # GMT API endpoint for creating RFQ
             create_url = f"{self.base_url}/rest/gmt/createRFQByClient"
@@ -153,19 +155,18 @@ class GMTAPIService:
             logger.error(f"Error creating RFQ in GMT system: {e}")
             return {"success": False, "error": str(e)}
     
-    def _transform_rfq_to_gmt_format(self, rfq_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _transform_rfq_to_gmt_format(self, rfq_data: Dict[str, Any], user_id: str = None, org_id: str = None) -> Dict[str, Any]:
         """
         Transform our internal RFQ format to GMT API format.
         
         Args:
             rfq_data: Internal RFQ data structure
+            user_id: User ID for the RFQ creator
+            org_id: Organization ID for the RFQ creator
             
         Returns:
             GMT API compatible RFQ data
         """
-        # Default values for new API (from test scripts)
-        default_org_id = "1001"
-        default_user_id = "10001"
         
         # Create GMT-compatible RFQ item
         rfq_item = {
@@ -240,15 +241,16 @@ class GMTAPIService:
             "deliveryDate": delivery_date,
             "noPrFlag": True,
             "procurementFlag": True,  # Added procurement flag as requested
+            "source_type": rfq_data.get("source_type", "W"),  # W=WhatsApp, C=Chatbot
             "org": {
-                "id": default_org_id
+                "id": org_id
             },
             "rfqItem": [rfq_item],
             "vendors": [],  # Will be populated later
             "clientdeliverylocationrfq": [delivery_location],
             "remarks": rfq_data.get("remarks", "Created via AI Procurement WhatsApp Bot"),
             "rfqDocument": rfq_documents,
-            "user": default_user_id
+            "user": user_id
             # Note: division field removed as per new API - categories auto-populated
         }
         

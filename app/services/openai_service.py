@@ -1043,15 +1043,15 @@ Analyze their response to determine their true choice.
                 function_call = response.output[0]
                 if function_call.type == "function_call":
                     args = json.loads(function_call.arguments)
-                    # Format response inline
-                    generated_response = ""
+                    # Format response with proper spacing
+                    response_parts = []
                     if args.get("acknowledgment"):
-                        generated_response += args["acknowledgment"]
+                        response_parts.append(args["acknowledgment"])
                     if args.get("progress_update"):
-                        generated_response += f"\n\n{args['progress_update']}"
+                        response_parts.append(args["progress_update"])
                     if args.get("next_question"):
-                        generated_response += f"\n\n{args['next_question']}"
-                    generated_response = generated_response.strip()
+                        response_parts.append(args["next_question"])
+                    generated_response = "\n\n".join(response_parts)
                     
                     # Log successful response generation
                     self.interaction_logger.log_response_generation(
@@ -1119,17 +1119,17 @@ Analyze their response to determine their true choice.
                 function_call = response.output[0]
                 if function_call.type == "function_call":
                     args = json.loads(function_call.arguments)
-                    # Format response inline
-                    generated_response = ""
-                    if args.get("celebration"):
-                        generated_response += args["celebration"]
+                    # Format response with proper spacing and sections
+                    response_parts = []
+                    if args.get("confirmation"):
+                        response_parts.append(args["confirmation"])
                     if args.get("summary"):
-                        generated_response += f"\n\n Summary: {args['summary']}"
+                        response_parts.append(f"Summary:\n{args['summary']}")
                     if args.get("next_steps"):
-                        generated_response += f"\n\n Next Steps: {args['next_steps']}"
+                        response_parts.append(f"Next Steps:\n{args['next_steps']}")
                     if args.get("reference_id"):
-                        generated_response += f"\n\n Reference: {args['reference_id']}"
-                    generated_response = generated_response.strip()
+                        response_parts.append(f"Reference: {args['reference_id']}")
+                    generated_response = "\n\n".join(response_parts)
                     
                     # Log successful completion response
                     self.interaction_logger.log_response_generation(
@@ -1142,11 +1142,11 @@ Analyze their response to determine their true choice.
                     
                     return generated_response
             
-            return "Excellent! Your RFQ is now complete. I'll process this request and get back to you soon."
+            return "RFQ completed. Processing request."
             
         except Exception as e:
             logger.error(f"Completion response generation failed: {str(e)}")
-            return "Excellent! Your RFQ is now complete. I'll process this request and get back to you soon."
+            return "RFQ completed. Processing request."
     
     def generate_clarification_response(self, questions: list, completeness: float, context: dict) -> str:
         """
@@ -1194,16 +1194,14 @@ Analyze their response to determine their true choice.
                 function_call = response.output[0]
                 if function_call.type == "function_call":
                     args = json.loads(function_call.arguments)
-                    # Format response inline
-                    generated_response = ""
+                    # Format response with proper spacing and structure
+                    response_parts = []
                     if args.get("progress_acknowledgment"):
-                        generated_response += args["progress_acknowledgment"]
+                        response_parts.append(args["progress_acknowledgment"])
                     if args.get("questions"):
                         questions_text = "\n".join(f"• {q}" for q in args["questions"])
-                        generated_response += f"\n\nI need a few more details:\n\n{questions_text}"
-                    if args.get("reason"):
-                        generated_response += f"\n\n{args['reason']}"
-                    generated_response = generated_response.strip()
+                        response_parts.append(f"Please provide the following:\n\n{questions_text}")
+                    generated_response = "\n\n".join(response_parts)
                     
                     # Log successful clarification response
                     self.interaction_logger.log_response_generation(
@@ -2062,21 +2060,18 @@ Determine the best category for the input item based on the similar items and th
                 if function_call.type == "function_call":
                     args = json.loads(function_call.arguments)
                     
-                    # Format the response with proper sections
-                    formatted_response = ""
+                    # Format response with proper spacing and sections
+                    response_parts = []
                     
                     # Summary section
                     if args.get("summary"):
-                        formatted_response += "Here's a summary of your RFQ:\n\n"
-                        formatted_response += args["summary"]
-                        formatted_response += "\n\n"
-                    
+                        response_parts.append(f"RFQ Summary:\n\n{args['summary']}")
                     
                     # Confirmation request section
                     if args.get("confirmation_request"):
-                        formatted_response += args["confirmation_request"]
+                        response_parts.append(args["confirmation_request"])
                     
-                    return formatted_response.strip()
+                    return "\n\n".join(response_parts)
             
             # Fallback response
             return "Here's a summary of your RFQ. Would you like to proceed with creating it?"
@@ -2297,7 +2292,6 @@ Determine the best category for the input item based on the similar items and th
                         processing_time=processing_time,
                         missing_fields=result["missing_fields"]
                     )
-                    logger.info(f"Registration entity extraction successful for {user_phone}: {result}")    
                     
                     return result
             

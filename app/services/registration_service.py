@@ -29,13 +29,15 @@ class RegistrationService:
     def __init__(self, whatsapp_service: WhatsAppService = None,
                  openai_service: OpenAIService = None,
                  entity_service: EntityService = None,
-                 response_helpers: ResponseHelpers = None):
+                 response_helpers: ResponseHelpers = None,
+                 session_manager=None):
         self.whatsapp_service = whatsapp_service or WhatsAppService()
         self.openai_service = openai_service or OpenAIService()
         self.entity_service = entity_service or EntityService()
         self.response_helpers = response_helpers or ResponseHelpers(self.openai_service)
         self.register_api_service = RegisterAPIService()
         self.auth_redis_service = get_auth_redis_service()
+        self.session_manager = session_manager  # Will be injected from ChatService
     
     async def initiate_registration(self, user_phone: str, session: ConversationSession,
                                   user_type: str, message: str = "") -> Dict[str, Any]:
@@ -61,7 +63,10 @@ class RegistrationService:
                 intro_message = await self._get_seller_introduction_message()
             
             logger.info(f"RegistrationService: Sending intro message: {intro_message}")
-            await self.whatsapp_service.send_message(user_phone, intro_message)
+            if self.session_manager:
+                await self.session_manager.send_and_track_message(user_phone, intro_message, session)
+            else:
+                await self.whatsapp_service.send_message(user_phone, intro_message)
             
             result = {
                 "status": "registration_initiated",
@@ -75,7 +80,7 @@ class RegistrationService:
             
         except Exception as e:
             logger.error(f"Registration initiation error for {user_phone}: {e}")
-            return await self._redirect_to_support(user_phone, "registration_initiation_error", str(e))
+            return await self._redirect_to_support(user_phone, "registration_initiation_error", str(e), session)
     
     async def handle_registration_data_collection(self, user_phone: str, message_content: str,
                                                 session: ConversationSession) -> Dict[str, Any]:
@@ -147,7 +152,10 @@ class RegistrationService:
                     missing_fields, user_type, existing_entities, message_content
                 )
                 logger.info(f"Step 5: Generated questions: {questions}")
-                await self.whatsapp_service.send_message(user_phone, questions)
+                if self.session_manager:
+                    await self.session_manager.send_and_track_message(user_phone, questions, session)
+                else:
+                    await self.whatsapp_service.send_message(user_phone, questions)
                 
                 # Step 6: Session update - ensure workflow_type stays as registration
                 session.workflow_type = "registration"
@@ -164,7 +172,10 @@ class RegistrationService:
                 # Step 5: All data collected, show confirmation
                 logger.info(f"Step 5: All data collected, requesting confirmation")
                 confirmation_message = await self._generate_confirmation_message(existing_entities, user_type)
-                await self.whatsapp_service.send_message(user_phone, confirmation_message)
+                if self.session_manager:
+                    await self.session_manager.send_and_track_message(user_phone, confirmation_message, session)
+                else:
+                    await self.whatsapp_service.send_message(user_phone, confirmation_message)
                 
                 # Step 6: Session update - mark as awaiting confirmation
                 session.workflow_type = "registration"
@@ -180,7 +191,7 @@ class RegistrationService:
                 
         except Exception as e:
             logger.error(f"Registration data collection error: {e}", exc_info=True)
-            return await self._redirect_to_support(user_phone, "registration_data_error", str(e))
+            return await self._redirect_to_support(user_phone, "registration_data_error", str(e), session)
     
     async def _get_buyer_introduction_message(self) -> str:
         """Get buyer registration introduction message."""
@@ -289,7 +300,10 @@ class RegistrationService:
                 }
                 
                 restart_message = await self._get_buyer_introduction_message() if user_type == "buyer" else await self._get_seller_introduction_message()
-                await self.whatsapp_service.send_message(user_phone, restart_message)
+                if self.session_manager:
+                    await self.session_manager.send_and_track_message(user_phone, restart_message, session)
+                else:
+                    await self.whatsapp_service.send_message(user_phone, restart_message)
                 
                 return {
                     "status": "registration_restarted",
@@ -298,7 +312,10 @@ class RegistrationService:
             else:
                 # Unclear response, ask again
                 clarification_message = "Please reply 'yes' to confirm your details or 'no' to restart registration."
-                await self.whatsapp_service.send_message(user_phone, clarification_message)
+                if self.session_manager:
+                    await self.session_manager.send_and_track_message(user_phone, clarification_message, session)
+                else:
+                    await self.whatsapp_service.send_message(user_phone, clarification_message)
                 
                 return {
                     "status": "awaiting_confirmation",
@@ -307,7 +324,7 @@ class RegistrationService:
                 
         except Exception as e:
             logger.error(f"Registration confirmation error: {e}")
-            return await self._redirect_to_support(user_phone, "confirmation_error", str(e))
+            return await self._redirect_to_support(user_phone, "confirmation_error", str(e), session)
     
     async def _generate_contextual_registration_questions(self, missing_fields: List[str], 
                                                         user_type: str, existing_entities: Dict,
@@ -388,7 +405,10 @@ class RegistrationService:
             
             if result.get("statusCode") in ["1001", "200"] or result.get("status") == "Success":
                 # Registration successful - send confirmation message and continue to OTP
-                await self.whatsapp_service.send_message(user_phone, f"{user_type.title()} registration API successful, continuing to OTP flow")
+                if self.session_manager:
+                    await self.session_manager.send_and_track_message(user_phone, f"{user_type.title()} registration API successful, continuing to OTP flow", session)
+                else:
+                    await self.whatsapp_service.send_message(user_phone, f"{user_type.title()} registration API successful, continuing to OTP flow")
                 logger.info(f"{user_type.title()} registration API successful, continuing to OTP flow")
                 return {
                     "status": "registration_completed",
@@ -399,13 +419,13 @@ class RegistrationService:
                 # Registration failed
                 error_msg = result.get("message", "Registration failed")
                 if "already exists" in error_msg.lower():
-                    return await self._redirect_to_support(user_phone, "user_already_exists", error_msg)
+                    return await self._redirect_to_support(user_phone, "user_already_exists", error_msg, session)
                 else:
-                    return await self._redirect_to_support(user_phone, "registration_failed", error_msg)
+                    return await self._redirect_to_support(user_phone, "registration_failed", error_msg, session)
                     
         except Exception as e:
             logger.error(f"Registration submission error: {e}")
-            return await self._redirect_to_support(user_phone, "registration_submission_error", str(e))
+            return await self._redirect_to_support(user_phone, "registration_submission_error", str(e), session)
     
     async def _send_registration_otp(self, user_phone: str, session: ConversationSession, email: str) -> Dict[str, Any]:
         """Send OTP for registration flow using real API."""
@@ -420,7 +440,10 @@ class RegistrationService:
                 session.workflow_state["otp_retry_count"] = session.workflow_state.get("otp_retry_count", 0) + 1
                 
                 message = f"OTP sent to your email: {email}\n\nPlease enter the OTP you received, or reply 'RESEND' to get a new OTP:"
-                await self.whatsapp_service.send_message(user_phone, message)
+                if self.session_manager:
+                    await self.session_manager.send_and_track_message(user_phone, message, session)
+                else:
+                    await self.whatsapp_service.send_message(user_phone, message)
                 
                 return {
                     "status": "otp_sent",
@@ -430,12 +453,15 @@ class RegistrationService:
             else:
                 error_msg = otp_response.get("message", "Failed to send OTP")
                 logger.error(f"OTP send failed: {error_msg}")
-                await self.whatsapp_service.send_message(user_phone, f"Failed to send OTP: {error_msg}. Please contact support.")
-                return await self._redirect_to_support(user_phone, "otp_send_failed", error_msg)
+                if self.session_manager:
+                    await self.session_manager.send_and_track_message(user_phone, f"Failed to send OTP: {error_msg}. Please contact support.", session)
+                else:
+                    await self.whatsapp_service.send_message(user_phone, f"Failed to send OTP: {error_msg}. Please contact support.")
+                return await self._redirect_to_support(user_phone, "otp_send_failed", error_msg, session)
             
         except Exception as e:
             logger.error(f"Registration OTP send error: {e}")
-            return await self._redirect_to_support(user_phone, "otp_send_error", str(e))
+            return await self._redirect_to_support(user_phone, "otp_send_error", str(e), session)
 
     async def handle_registration_otp_validation(self, user_phone: str, message_content: str,
                                                session: ConversationSession) -> Dict[str, Any]:
@@ -490,7 +516,10 @@ class RegistrationService:
                                 "In the meantime please let us know if you want us to support you with anything else?"
                             )
                         
-                        await self.whatsapp_service.send_message(user_phone, success_message)
+                        if self.session_manager:
+                            await self.session_manager.send_and_track_message(user_phone, success_message, session)
+                        else:
+                            await self.whatsapp_service.send_message(user_phone, success_message)
                         
                         session.workflow_type = None
                         session.workflow_state = {
@@ -513,7 +542,10 @@ class RegistrationService:
                             "your onboarding. How can I help you in the meantime?"
                         )
                         
-                        await self.whatsapp_service.send_message(user_phone, success_message)
+                        if self.session_manager:
+                            await self.session_manager.send_and_track_message(user_phone, success_message, session)
+                        else:
+                            await self.whatsapp_service.send_message(user_phone, success_message)
                         
                         session.workflow_type = None
                         session.workflow_state = {
@@ -530,10 +562,13 @@ class RegistrationService:
                 else:
                     # OTP invalid
                     if retry_count >= 3:
-                        return await self._redirect_to_support(user_phone, "max_otp_retries", "Maximum OTP attempts exceeded")
+                        return await self._redirect_to_support(user_phone, "max_otp_retries", "Maximum OTP attempts exceeded", session)
                     
                     message = "Invalid OTP. Please enter the correct OTP or reply 'RESEND' to get a new OTP:"
-                    await self.whatsapp_service.send_message(user_phone, message)
+                    if self.session_manager:
+                        await self.session_manager.send_and_track_message(user_phone, message, session)
+                    else:
+                        await self.whatsapp_service.send_message(user_phone, message)
                     
                     return {
                         "status": "otp_invalid",
@@ -546,7 +581,10 @@ class RegistrationService:
                     return await self._redirect_to_support(user_phone, "max_otp_retries", "Maximum OTP attempts exceeded")
                 
                 message = "Please enter a valid OTP (4-6 digits) or reply 'RESEND' to get a new OTP:"
-                await self.whatsapp_service.send_message(user_phone, message)
+                if self.session_manager:
+                    await self.session_manager.send_and_track_message(user_phone, message, session)
+                else:
+                    await self.whatsapp_service.send_message(user_phone, message)
                 
                 return {
                     "status": "otp_invalid",
@@ -556,7 +594,7 @@ class RegistrationService:
                 
         except Exception as e:
             logger.error(f"Registration OTP validation error: {e}")
-            return await self._redirect_to_support(user_phone, "otp_validation_error", str(e))
+            return await self._redirect_to_support(user_phone, "otp_validation_error", str(e), session)
 
     async def _store_user_session_after_registration(self, user_phone: str, entities: Dict, user_type: str) -> bool:
         """Store user session token after successful registration."""
@@ -614,11 +652,14 @@ class RegistrationService:
             logger.error(f"Domain approval check error: {e}")
             return {"approved": False, "error": str(e)}
 
-    async def _redirect_to_support(self, user_phone: str, issue_type: str, error_details: str) -> Dict[str, Any]:
+    async def _redirect_to_support(self, user_phone: str, issue_type: str, error_details: str, session: ConversationSession = None) -> Dict[str, Any]:
         """Redirect user to support team."""
         try:
             support_message = "Our support team will contact you shortly to assist with your registration."
-            await self.whatsapp_service.send_message(user_phone, support_message)
+            if self.session_manager and session:
+                await self.session_manager.send_and_track_message(user_phone, support_message, session)
+            else:
+                await self.whatsapp_service.send_message(user_phone, support_message)
             
             logger.error(f"Support redirect for {user_phone}: {issue_type} - {error_details}")
             

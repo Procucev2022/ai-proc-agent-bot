@@ -264,7 +264,7 @@ class ConfirmationHandler:
             }
             
             # Submit to backend via GMT API
-            result = await gmt_service.create_rfq(rfq_data)
+            result = await gmt_service.create_rfq(rfq_data, user_id=user.id, org_id=user.id)
             
             # Log the GMT API response for debugging
             logger.info(f"GMT API Response: {result}")
