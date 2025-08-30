@@ -18,6 +18,37 @@ class ResponseHelpers:
         """Initialize with OpenAI service dependency."""
         self.openai_service = openai_service
     
+    async def _generate_common_seller_response(self, workflow_state: str, message_type: str, context: Dict[str, Any], fallback: str) -> str:
+        """Common method for generating seller responses using optimized prompt."""
+        try:
+            # Ensure context is a dictionary
+            print("context", context)
+            if isinstance(context, str):
+                context = {"workflow_state": context}
+            
+            prompt = f"Context: {context}"
+            
+            instructions = self.openai_service._load_prompt(
+                "response_generation", 
+                "_get_seller_common_response_prompt",
+                workflow_state=workflow_state,
+                message_type=message_type,
+                credits_available=context.get("credits_available", 0),
+                context_data=context
+            )
+
+            response = self.openai_service.client.responses.create(
+                model=self.openai_service.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions=instructions
+            )
+            print("lln repsonse", response.output_text)
+
+            return response.output_text.strip() if response.output_text else fallback
+        except Exception as e:
+            logger.error(f"Error generating {message_type} response: {e}")
+            return fallback
+    
     async def generate_contextual_response(self, context: dict, base_questions: list = None, conversation_stage: str = "collecting", chat_summaries: list = None) -> str:
         """Generate contextual response using OpenAI with optional chat summary context."""
         try:
@@ -55,6 +86,8 @@ class ResponseHelpers:
         """Generate contextual response for seller based on workflow state."""
         try:
             workflow_state = context.get("workflow_state")
+
+            print("workflow state", workflow_state, type(workflow_state))
 
             if workflow_state == "display_rfqs_to_seller":
                 return await self._generate_rfq_display_response(context)
@@ -95,391 +128,92 @@ class ResponseHelpers:
 
     async def _generate_rfq_display_response(self, context: Dict[str, Any]) -> str:
         """Generate response for displaying RFQs to seller with credits."""
-        try:
-            rfqs = context.get("rfqs", [])
-            total_count = context.get("total_count", 0)
-            credits_available = context.get("credits_available", 0)
-
-            prompt = f"""
-            Generate a professional WhatsApp message for a seller showing available RFQs.
-
-            Context:
-            - Seller has {credits_available} credits available
-            - Total RFQs in category: {total_count}
-            - Showing latest 3 RFQs: {rfqs}
-            - Seller can request RFQ details via email using credits
-
-            Requirements:
-            - Show the RFQ count and credit balance
-            - List the 3 RFQs with ID, location, and date
-            - Explain they can request RFQ details by typing RFQ IDs 
-
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating RFQ display response: {e}")
-            return self._get_rfq_display_fallback(context)
+        return await self._generate_common_seller_response(
+            "display_rfqs_to_seller", "rfq_display", context, self._get_rfq_display_fallback(context)
+        )
 
     async def _generate_no_credits_rfq_response(self, context: Dict[str, Any]) -> str:
         """Generate response for displaying RFQs when seller has no credits."""
-        try:
-            rfqs = context.get("rfqs", [])
-            total_count = context.get("total_count", 0)
-
-            prompt = f"""
-            Generate a professional WhatsApp message for a seller with 0 credits viewing RFQs.
-
-            Context:
-            - Seller has 0 credits
-            - Total RFQs available: {total_count}
-            - Showing latest 3 RFQs: {rfqs}
-            - Need to upgrade to access RFQ details
-
-            Requirements:
-            - Show the available RFQs (ID, location, date)
-            - Explain they have 0 credits
-            - Mention they need to choose a subscription plan to access RFQ details
-            - Ask if they want to see subscription plans
-
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating no credits RFQ response: {e}")
-            return self._get_no_credits_rfq_fallback(context)
+        return await self._generate_common_seller_response(
+            "display_rfqs_no_credits", "rfq_display", context, self._get_no_credits_rfq_fallback(context)
+        )
 
     async def _generate_subscription_plans_response(self, context: Dict[str, Any]) -> str:
         """Generate response showing subscription plans."""
-        try:
-            plans = context.get("plans", [])
-
-            prompt = f"""
-            Generate a WhatsApp message showing subscription plans to a seller.
-
-            Context:
-            - Available plans: {plans}
-            - Seller wants to upgrade to access RFQs
-
-            Requirements:
-            - List each plan with name, price, and RFQ count
-            - Explain benefits of each plan
-            - Ask seller to choose a plan by typing plan name
-            - Keep persuasive but professional tone
-            
-            Format: Direct WhatsApp message with numbered list.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating subscription plans response: {e}")
-            return self._get_subscription_plans_fallback(context)
+        return await self._generate_common_seller_response(
+            "show_subscription_plans", "subscription_plans", context, self._get_subscription_plans_fallback(context)
+        )
 
     async def _generate_no_credits_response(self, context: Dict[str, Any]) -> str:
-        """Generate response showing subscription plans."""
-        try:
-            plans = context.get("plans", [])
-            credits_available = context.get("credits_available", 0)
-
-            prompt = f"""
-            Generate a WhatsApp message showing subscription plans to a seller.
-
-            Context:
-            - Available Credit: {credits_available}
-            - Seller wants to upgrade to access RFQs
-
-            Requirements:
-            - Show current credit avaiable also ask to upgrade their credits
-            - List each plan with name, price, and RFQ count
-            - Explain benefits of each plan
-            - Ask seller to choose a plan by typing plan name
-            - Keep persuasive but professional tone
-
-            Format: Direct WhatsApp message with numbered list.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating subscription plans response: {e}")
-            return self._get_subscription_plans_fallback(context)
+        """Generate response showing subscription plans when seller has no/low credits."""
+        return await self._generate_common_seller_response(
+            "no_credits_available", "subscription_plans", context, self._get_subscription_plans_fallback(context)
+        )
 
     async def _generate_payment_link_response(self, context: Dict[str, Any]) -> str:
         """Generate response with payment link."""
-        try:
-            selected_plan = context.get("selected_plan", {})
-            payment_link = context.get("payment_link", "")
-
-            prompt = f"""
-            Generate a WhatsApp message with payment link for subscription.
-
-            Context:
-            - Selected plan: {selected_plan.get('name')} - ₹{selected_plan.get('price')}
-            - Payment link: {payment_link}
-            - Plan includes {selected_plan.get('rfq_count')} RFQ requests
-
-            Requirements:
-            - Confirm the selected plan and price
-            - Provide the payment link
-            - Mention payment is secure via Razorpay
-            - Explain what happens after payment
-            - Set expectations about timeline
-            - Professional tone
-
-            Format: Direct WhatsApp message.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating payment link response: {e}")
-            return self._get_payment_link_fallback(context)
+        return await self._generate_common_seller_response(
+            "payment_link_generated", "payment_link", context, self._get_payment_link_fallback(context)
+        )
 
     async def _generate_email_processing_response(self, context: Dict[str, Any]) -> str:
         """Generate response acknowledging RFQ email processing."""
-        try:
-            selected_rfq_ids = context.get("selected_rfq_ids", [])
-
-            prompt = f"""
-            Generate an acknowledgment message for RFQ email processing.
-
-            Context:
-            - Seller requested RFQ IDs: {selected_rfq_ids}
-            - Processing email requests
-
-            Requirements:
-            - Acknowledge the RFQ ID requests
-            - Mention sending detailed information to email
-            - Professional and efficient tone
-            - Brief message
-
-            Format: Direct WhatsApp message.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating email processing response: {e}")
-            return f"Thank you! Processing your request for RFQ IDs: {', '.join(selected_rfq_ids)}. Sending details to your email..."
+        selected_rfq_ids = context.get("selected_rfq_ids", [])
+        return await self._generate_common_seller_response(
+            "rfq_email_processing", "general_assistance", context,
+            f"Thank you! Processing your request for RFQ IDs: {', '.join(selected_rfq_ids)}. Sending details to your email..."
+        )
 
     async def _generate_email_status_response(self, context: Dict[str, Any]) -> str:
         """Generate response with email sending status."""
-        try:
-            successful_emails = context.get("successful_emails", 0)
-            total_requested = context.get("total_requested", 0)
-            email_results = context.get("email_results", [])
-
-            prompt = f"""
-            Generate a status message for RFQ email sending results.
-
-            Context:
-            - Total requested: {total_requested}
-            - Successfully sent: {successful_emails}
-            - Detailed results: {email_results}
-
-            Requirements:
-            - Report success/failure status clearly
-            - If some failed, list which RFQ IDs failed
-            - Provide support contact if issues occurred
-            - Professional tone
-
-            Format: Direct WhatsApp message.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating email status response: {e}")
-            return self._get_email_status_fallback(context)
+        return await self._generate_common_seller_response(
+            "rfq_email_status", "general_assistance", context, self._get_email_status_fallback(context)
+        )
 
     async def _generate_invalid_rfq_response(self, context: Dict[str, Any]) -> str:
         """Generate response for invalid RFQ selection."""
-        try:
-            available_rfqs = context.get("available_rfqs", [])
-            user_message = context.get("user_message", "")
-
-            prompt = f"""
-            Generate a clarification message for invalid RFQ selection.
-
-            Context:
-            - User message: {user_message}
-            - Available RFQ IDs: {available_rfqs}
-            - User's selection was not recognized
-
-            Requirements:
-            - Explain the issue politely
-            - Show available RFQ IDs clearly
-
-            Format: Direct WhatsApp message.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating invalid RFQ response: {e}")
-            return f"I couldn't find valid RFQ IDs in your message. Please select from: {', '.join(available_rfqs)}"
+        available_rfqs = context.get("available_rfqs", [])
+        return await self._generate_common_seller_response(
+            "invalid_rfq_selection", "clarification", context,
+            f"I couldn't find valid RFQ IDs in your message. Please select from: {', '.join(available_rfqs)}"
+        )
 
     async def _generate_invalid_plan_response(self, context: Dict[str, Any]) -> str:
         """Generate response for invalid plan selection."""
-        try:
-            available_plans = context.get("available_plans", [])
-
-            prompt = f"""
-            Generate a clarification message for invalid plan selection.
-
-            Context:
-            - Available plans: {available_plans}
-            - User's selection was not recognized
-
-            Requirements:
-            - Explain the issue politely
-            - Re-list available plans clearly
-            - Give examples of correct selection
-
-            Format: Direct WhatsApp message.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating invalid plan response: {e}")
-            return "Please select a valid plan from the options above. You can type the plan name or number."
+        return await self._generate_common_seller_response(
+            "invalid_plan_selection", "clarification", context,
+            "Please select a valid plan from the options above. You can type the plan name or number."
+        )
 
     async def _generate_general_seller_response(self, context: Dict[str, Any]) -> str:
         """Generate response for general seller queries."""
-        try:
-            message = context.get("message", "")
-            credits_available = context.get("credits_available", 0)
-
-            prompt = f"""
-            Generate a helpful response to seller's general query.
-
-            Context:
-            - Seller message: {message}
-            - Credits available: {credits_available}
-            - General seller assistance needed
-
-            Requirements:
-            - Address the query helpfully
-            - Mention available options (RFQ access, plans, etc.)
-            - Professional tone
-            - Offer specific next steps
-
-            Format: Direct WhatsApp message.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating general seller response: {e}")
-            return "I'm here to help! You can request RFQ details, view subscription plans, or ask any questions about our services."
+        return await self._generate_common_seller_response(
+            "general_seller_response", "general_assistance", context,
+            "I'm here to help! You can request RFQ details, view subscription plans, or ask any questions about our services."
+        )
 
     # Add these methods to the ResponseHelpers class
 
     async def _generate_general_affirmative_response(self, context: Dict[str, Any]) -> str:
         """Generate response for general affirmative responses (contextual 'yes')."""
-        try:
-            credits_available = context.get("credits_available", 0)
-            ai_analysis = context.get("ai_analysis", {})
-
-            prompt = f"""
-            Generate a helpful response to a seller's affirmative response that needs context.
-
-            Context:
-            - Seller said something like "yes" but context is unclear
-            - Credits available: {credits_available}
-            - AI analysis: {ai_analysis.get('reasoning', 'Context unclear')}
-
-            Requirements:
-            - Acknowledge their positive response
-            - Offer clear options: view RFQs, subscription plans, or ask questions
-            - Be helpful and guide them to next steps
-            - Professional tone
-            - Present options clearly
-
-            Format: Direct WhatsApp message.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating general affirmative response: {e}")
-            return "Great! I can help you with:\n\n• View available RFQs in your category\n• Check subscription plans\n• Answer any questions\n\nWhat would you like to do?"
+        return await self._generate_common_seller_response(
+            "general_affirmative_response", "clarification", context,
+            "Great! I can help you with:\n\n• View available RFQs in your category\n• Check subscription plans\n• Answer any questions\n\nWhat would you like to do?"
+        )
 
     async def _generate_contextual_plan_request_response(self, context: Dict[str, Any]) -> str:
         """Generate response when seller contextually requests plans (like saying 'yes' to plan offer)."""
-        try:
-            ai_analysis = context.get("ai_analysis", {})
-
-            prompt = f"""
-            Generate a response acknowledging seller's interest in subscription plans.
-
-            Context:
-            - Seller responded positively to subscription plan offer
-            - AI detected plan interest: {ai_analysis.get('reasoning', 'Contextual plan request')}
-
-            Requirements:
-            - Acknowledge their interest in plans
-            - Mention you're fetching the latest plans
-            - Professional and encouraging tone
-            - Brief transition message
-
-            Format: Direct WhatsApp message.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating contextual plan request response: {e}")
-            return "Perfect! Let me show you our subscription plans. One moment while I fetch the latest options for you..."
+        return await self._generate_common_seller_response(
+            "contextual_plan_request", "general_assistance", context,
+            "Perfect! Let me show you our subscription plans. One moment while I fetch the latest options for you..."
+        )
 
     async def _generate_ambiguous_seller_response(self, context: Dict[str, Any]) -> str:
         """Generate response for ambiguous seller messages."""
-        try:
-            message = context.get("message", "")
-            credits_available = context.get("credits_available", 0)
-            ai_analysis = context.get("ai_analysis", {})
-
-            prompt = f"""
-            Generate a clarification response for an ambiguous seller message.
-
-            Context:
-            - Seller message: "{message}"
-            - Credits available: {credits_available}
-            - AI confidence: {ai_analysis.get('confidence', 'low')}%
-            - AI reasoning: {ai_analysis.get('reasoning', 'Message unclear')}
-
-            Requirements:
-            - Acknowledge their message politely
-            - Ask for clarification in a helpful way
-            - Offer specific options they can choose from
-            - Mention available services (RFQ access, plans, support)
-            - Professional and patient tone
-
-            Format: Direct WhatsApp message.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating ambiguous seller response: {e}")
-            return f"I want to make sure I understand correctly. Could you clarify what you'd like help with?\n\nI can assist with:\n• RFQ details and access\n• Subscription plans\n• General questions\n\nWhat would be most helpful?"
+        return await self._generate_common_seller_response(
+            "ambiguous_seller_response", "clarification", context,
+            "I want to make sure I understand correctly. Could you clarify what you'd like help with?\n\nI can assist with:\n• RFQ details and access\n• Subscription plans\n• General questions\n\nWhat would be most helpful?"
+        )
 
     # Update the main generate_seller_contextual_response method to handle new workflow states
 
@@ -487,94 +221,25 @@ class ResponseHelpers:
     # Also add a method to handle RFQ selection prompts
     async def _generate_rfq_selection_prompt(self, context: Dict[str, Any]) -> str:
         """Generate prompt asking seller to select specific RFQs."""
-        try:
-            available_rfqs = context.get("available_rfqs", [])
-            credits_available = context.get("credits_available", 0)
-
-            prompt = f"""
-            Generate a message asking seller to specify which RFQs they want.
-
-            Context:
-            - Seller showed interest in RFQ details
-            - Credits available: {credits_available}
-            - Available RFQs: {available_rfqs}
-            - Need them to specify RFQ IDs
-
-            Requirements:
-            - Acknowledge their interest
-            - Remind them of available RFQ IDs
-            - Ask them to specify which ones they want
-            - Give example format (e.g., "23112" or "23112, 23087")
-            - Mention credit usage
-            - Encouraging tone
-
-            Format: Direct WhatsApp message.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating RFQ selection prompt: {e}")
-            rfq_list = ", ".join(str(rfq) for rfq in available_rfqs)
-            return f"Great! Please specify which RFQ IDs you'd like details for.\n\nAvailable: {rfq_list}\n\nExample: Type '23112' or '23112, 23087'\n\nEach request uses 1 credit."
+        available_rfqs = context.get("available_rfqs", [])
+        return await self._generate_common_seller_response(
+            "rfq_selection_needed", "clarification", context,
+            f"Great! Please specify which RFQ IDs you'd like details for.\n\nAvailable: {', '.join(str(rfq) for rfq in available_rfqs)}\n\nExample: Type '23112' or '23112, 23087'\n\nEach request uses 1 credit."
+        )
 
     async def _generate_error_response(self, context: Dict[str, Any]) -> str:
         """Generate error response."""
-        try:
-            workflow_state = context.get("workflow_state", "error")
-            error_message = context.get("error_message", "")
-
-            prompt = f"""
-            Generate a helpful error message for seller.
-
-            Context:
-            - Error type: {workflow_state}
-            - Technical error: {error_message}
-
-            Requirements:
-            - Apologize for the issue
-            - Provide support contact support@procurev.com
-            - Professional and reassuring tone
-            - Don't show technical details to user
-
-            Format: Direct WhatsApp message.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating error response: {e}")
-            return "I apologize for the technical issue. Please try again or contact support@procurev.com for assistance."
+        return await self._generate_common_seller_response(
+            context.get("workflow_state", "error"), "error_handling", context,
+            "I apologize for the technical issue. Please try again or contact support@procurev.com for assistance."
+        )
 
     async def _generate_fallback_seller_response(self, context: Dict[str, Any]) -> str:
         """Generate fallback response for unknown states."""
-        try:
-            workflow_state = context.get("workflow_state", "unknown")
-
-            prompt = f"""
-            Generate a helpful fallback message for seller.
-
-            Context:
-            - Workflow state: {workflow_state}
-            - Need general seller assistance
-
-            Requirements:
-            - Acknowledge the interaction
-            - Offer available services (RFQ access, plans, support)
-            - Professional and helpful tone
-            - Provide clear next steps
-
-            Format: Direct WhatsApp message.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
-
-        except Exception as e:
-            logger.error(f"Error generating fallback seller response: {e}")
-            return "I'm here to help with your RFQ needs. You can request RFQ details, view subscription plans, or contact support@procurev.com."
+        return await self._generate_common_seller_response(
+            context.get("workflow_state", "unknown"), "general_assistance", context,
+            "I'm here to help with your RFQ needs. You can request RFQ details, view subscription plans, or contact support@procurev.com."
+        )
 
     # Fallback methods for when AI generation fails
     def _get_fallback_message(self, workflow_state: str) -> str:

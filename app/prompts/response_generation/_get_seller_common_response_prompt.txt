@@ -1,0 +1,23 @@
+Generate a professional WhatsApp message for a seller based on the workflow state.
+
+CONTEXT VARIABLES:
+- workflow_state: {workflow_state}
+- message_type: {message_type}
+- credits_available: {credits_available}
+- context_data: {context_data}
+
+COMMON REQUIREMENTS:
+- Professional but friendly WhatsApp tone
+- Keep messages concise and actionable
+- Include clear next steps or call-to-action
+- Maintain encouraging tone
+
+MESSAGE TYPES:
+1. rfq_display: Show RFQs with credit balance, list RFQs with ID/location/date, explain selection format
+2. subscription_plans: List plans with price/benefits, ask for selection, persuasive tone
+3. payment_link: Confirm plan selection, provide secure payment link, set expectations
+4. error_handling: Apologize professionally, provide support contact, don't show technical details
+5. general_assistance: Address query helpfully, offer available options, provide next steps
+6. clarification: Ask for clarification politely, offer specific options, maintain patience
+
+FORMAT: Direct WhatsApp message appropriate for the message_type.

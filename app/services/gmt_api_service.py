@@ -751,7 +751,7 @@ class GMTAPIService:
             if not await self.ensure_authenticated():
                 return {"success": False, "error": "Authentication failed"}
 
-            url = f"{self.base_url}rest/gmt/getSubscriptionPlans"
+            url = f"{self.base_url}/rest/gmt/getSubscriptionPlans"
 
             headers = {
                 'Authorization': f'Bearer {self.token}',
@@ -762,10 +762,10 @@ class GMTAPIService:
                 async with session.get(url, headers=headers, timeout=30) as response:
                     if response.status == 200:
                         result = await response.json()
+                        print("rsult", result)
                         return {
                             "success": True,
-                            "plans": result.get("data",{}).get("plans", []),
-                            "data": result
+                            "plans": result.get("data",{}).get("plans", [])
                         }
                     else:
                         error_text = await response.text()
