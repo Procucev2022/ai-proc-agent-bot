@@ -7,7 +7,7 @@
     "properties": {
       "next_question": {
         "type": "string",
-        "description": "Ask for the most important missing information in a natural, friendly way. Use proper spacing and formatting to make it easy to read."
+        "description": "Request the most important missing information in a clear, professional manner. Use proper formatting for readability."
       }
     },
     "required": ["next_question"],

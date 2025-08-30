@@ -10,11 +10,7 @@
         "items": {
           "type": "string"
         },
-        "description": "List of questions to ask the user. Use the questions provided from the data model. Present them clearly and organized."
-      },
-      "reason": {
-        "type": "string", 
-        "description": "Brief, friendly explanation of why this information is needed to help complete their procurement request. Keep it conversational and helpful."
+        "description": "List of questions for the user. Use questions from the data model. Present them clearly and organized."
       }
     },
     "required": ["questions"],
