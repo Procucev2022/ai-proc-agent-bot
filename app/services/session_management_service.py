@@ -101,6 +101,27 @@ class SessionManagementService:
         """Add message to conversation history."""
         SummarizationHelpers.add_to_conversation_history(session, role, content, message_type)
     
+    async def send_and_track_message(self, phone_number: str, message: str, 
+                                    session: ConversationSession, message_type: str = "text") -> None:
+        """Send message via WhatsApp and automatically track in conversation history."""
+        try:
+            # Send the message
+            await self.whatsapp_service.send_message(phone_number, message)
+            
+            # Track assistant response in conversation history
+            self.add_message_to_history(session, "assistant", message, message_type)
+            
+            logger.info(f"Sent and tracked message for session {session.session_id}")
+            
+        except Exception as e:
+            logger.error(f"Error sending and tracking message: {e}")
+            # Still try to send the message even if tracking fails
+            try:
+                await self.whatsapp_service.send_message(phone_number, message)
+            except Exception as send_error:
+                logger.error(f"Failed to send message after tracking error: {send_error}")
+                raise
+    
     async def save_session(self, session: ConversationSession, workflow_type: str) -> ConversationSession:
         """Save updated session to database."""
         try:

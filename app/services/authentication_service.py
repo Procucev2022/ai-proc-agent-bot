@@ -33,13 +33,15 @@ class AuthenticationService:
     
     def __init__(self, whatsapp_service: WhatsAppService = None, 
                  openai_service: OpenAIService = None,
-                 response_helpers: ResponseHelpers = None):
+                 response_helpers: ResponseHelpers = None,
+                 session_manager=None):
         self.whatsapp_service = whatsapp_service or WhatsAppService()
         self.openai_service = openai_service or OpenAIService()
         self.response_helpers = response_helpers or ResponseHelpers(self.openai_service)
         self.auth_redis_service = get_auth_redis_service()
         self.auth_api_service = AuthAPIService()
         self.register_api_service = RegisterAPIService()
+        self.session_manager = session_manager  # Will be injected from ChatService
     
     async def validate_token(self, user_phone: str) -> Optional[UserDetailsSchema]:
         """Validate user token from Redis auth storage."""

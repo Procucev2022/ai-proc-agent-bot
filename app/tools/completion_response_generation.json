@@ -5,9 +5,9 @@
   "parameters": {
     "type": "object",
     "properties": {
-      "celebration": {
+      "confirmation": {
         "type": "string",
-        "description": "Warmly congratulate the user on completing their RFQ. Be enthusiastic but professional and natural."
+        "description": "Acknowledge the user's RFQ completion professionally and concisely."
       },
       "summary": {
         "type": "string",
@@ -15,7 +15,7 @@
 
       }
     },
-    "required": ["celebration", "summary"],
+    "required": ["confirmation", "summary"],
     "additionalProperties": false
   }
 }
