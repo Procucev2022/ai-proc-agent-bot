@@ -292,7 +292,7 @@ class SellerService:
                 # Low confidence or unknown intent - generate contextual response
                 context = {
                     "message":  message,
-                    "credits_available":credits_available,
+                    "credits_available": credits_available,
                     "ai_analysis":  seller_intent
 
                 }
@@ -886,16 +886,9 @@ class SellerService:
         """Extract plan selection from seller's message using AI."""
         try:
             # Use AI to extract plan selection
-            extraction_context = {
-                "message": message,
-                "available_plans": available_plans,
-                "extraction_type": "plan_selection"
-            }
-            
             extraction = self.openai_service.extract_entities(
                 message=message,
-                workflow_type="plan_selection",
-                context=extraction_context
+                workflow_type="plan_selection"
             )
 
             print("etxraction result of plans", extraction)
