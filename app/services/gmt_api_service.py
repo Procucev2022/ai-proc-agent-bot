@@ -634,7 +634,7 @@ class GMTAPIService:
             logger.error(f"Error checking seller credits: {e}")
             return {"success": False, "error": str(e)}
 
-    async def send_rfq_email(self, rfq_id: str, seller_email: str, seller_id: str) -> Dict[str, Any]:
+    async def send_rfq_email(self, rfq_ids: List[str], seller_email: str, seller_id: str) -> Dict[str, Any]:
         """
         Send RFQ details to seller via email.
 
@@ -650,7 +650,7 @@ class GMTAPIService:
             if not await self.ensure_authenticated():
                 return {"success": False, "error": "Authentication failed"}
 
-            url = f"{self.base_url}/rest/seller/sendRFQEmail"
+            url = f"{self.base_url}/seller/sendRFQEmail"
 
             headers = {
                 'Authorization': f'Bearer {self.token}',
@@ -659,7 +659,7 @@ class GMTAPIService:
             }
 
             data = {
-                "rfqId": rfq_id,
+                "rfqId": rfq_ids,
                 "sellerEmail": seller_email,
                 "sellerId": seller_id
             }
@@ -753,7 +753,7 @@ class GMTAPIService:
             if not await self.ensure_authenticated():
                 return {"success": False, "error": "Authentication failed"}
 
-            url = f"{self.base_url}/rest/seller/getSubscriptionPlans"
+            url = f"{self.base_url}/rest/gmt/getSubscriptionPlans"
 
             headers = {
                 'Authorization': f'Bearer {self.token}',
@@ -762,25 +762,12 @@ class GMTAPIService:
 
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, timeout=30) as response:
-                    if response.status != 200:
-                        # result = await response.json()
-                        result={
-                            "success": True,
-                            "data": {
-                                "plans": [
-                                    {"id": "basic", "name": "Basic", "price": 999, "currency": "INR", "rfq_count": 5,
-                                     "duration_days": 30},
-                                    {"id": "pro", "name": "Pro", "price": 2999, "currency": "INR", "rfq_count": 20,
-                                     "duration_days": 30},
-                                    {"id": "ent", "name": "Enterprise", "price": 7999, "currency": "INR",
-                                     "rfq_count": 60, "duration_days": 90}
-                                ]
-                            }
-                        }
+                    if response.status == 200:
+                        result = await response.json()
+                        print("rsult", result)
                         return {
                             "success": True,
-                            "plans": result.get("data",{}).get("plans", []),
-                            "data": result
+                            "plans": result.get("data",{}).get("plans", [])
                         }
                     else:
                         error_text = await response.text()

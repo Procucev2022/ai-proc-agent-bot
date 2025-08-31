@@ -41,8 +41,11 @@ class IntentSwitchHandler:
             bool(session.workflow_state.get("pending_combined_rfq")) or
             bool(session.workflow_state.get("pending_rfq")) or
             bool(session.workflow_state.get("pending_optional_rfq")) or
-            bool(session.workflow_state.get("pending_optional_combined_rfq"))
+            bool(session.workflow_state.get("pending_optional_combined_rfq")) or
+            # ADD THIS LINE - Check for seller workflow
+            bool(session.workflow_state.get("seller_workflow_state"))
         )
+        print("has active workflow", has_active_workflow)
         
         logger.info(f"Intent switch check: intent={intent}, confidence={confidence}, has_active_workflow={has_active_workflow}")
         logger.info(f"Workflow state keys: {list(session.workflow_state.keys())}")
@@ -74,7 +77,13 @@ class IntentSwitchHandler:
             # Let the system present the choice to continue vs start new
             logger.info(f"Potential new product request detected during RFQ creation - returning True")
             return True
-        
+
+        # Check if switching from seller to buyer workflow
+        if (current_workflow and current_workflow.value == "seller_rfq_view") and intent == "buy_something":
+            logger.info(f"Switching from selling to buying")
+
+            return True
+
         # Define intent to workflow mapping for other cases
         intent_workflow_map = {
             "rfq_status_check": "rfq_status_check", 

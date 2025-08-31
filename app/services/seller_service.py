@@ -83,56 +83,49 @@ class SellerService:
                 return await self._handle_general_seller_response(user, session, message)
             else:
                 # Initial seller flow
-                return await self._handle_initial_seller_flow(user, session, message)
+                # return await self._handle_initial_seller_flow(user, session, message)
+                return await self._display_rfqs_to_seller(user, session, message)
 
         except Exception as e:
             logger.error(f"Error in seller workflow: {e}")
             return await self._handle_workflow_error(user, session, str(e))
 
-    async def _handle_initial_seller_flow(self, user: User, session: ConversationSession, message: str) -> Dict[
-        str, Any]:
+    async def _handle_initial_seller_flow(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """Handle initial seller flow with credit checking and RFQ listing."""
         try:
-            # Step 1: Identify seller (assume authentication is handled)
-            seller_info = await self._get_seller_info(user.phone_number)
-
-            if not seller_info.get("is_authenticated"):
-                return await self._handle_unauthenticated_seller(user, session)
-
-            # Step 2: Check seller credits
-            credits_result = await self._check_seller_credits(seller_info.get("seller_id"))
-
-            if not credits_result.get("success"):
-                return await self._handle_credit_check_error(user, session)
-
-            credits_available = credits_result.get("credits_available", 0)
-            seller_info["credits_available"] = credits_available
-
-            # Step 3: Fetch active RFQs for seller's category
-            rfq_result = await self._fetch_seller_rfqs(seller_info.get("category", "General"))
+            # Step 1: Fetch active RFQs for seller's category
+            rfq_result = await self._fetch_seller_rfqs( "general")
 
             if not rfq_result.get("success"):
                 return await self._handle_rfq_fetch_error(user, session)
 
-            # Step 4: Display RFQs with appropriate context based on credits
-            return await self._display_rfqs_to_seller(user, session, seller_info, rfq_result)
+            # Step 2: Display RFQs with appropriate context based on credits
+            return await self._display_rfqs_to_seller(user, session, rfq_result)
 
         except Exception as e:
             logger.error(f"Error in initial seller flow: {e}")
             return await self._handle_workflow_error(user, session, str(e))
 
-    async def _display_rfqs_to_seller(self, user: User, session: ConversationSession,
-                                      seller_info: Dict[str, Any], rfq_result: Dict[str, Any]) -> Dict[str, Any]:
+    async def _display_rfqs_to_seller(self, user: User, session: ConversationSession,message:str) -> Dict[str, Any]:
         """Display RFQs to seller with credit-based context."""
         try:
-            rfqs = rfq_result.get("rfqs", [])
-            total_count = rfq_result.get("total_count", 0)
-            credits_available = seller_info.get("credits_available", 0)
+            # Step 1: Fetch active RFQs for seller's category
+            rfq_result = await self._fetch_seller_rfqs( "general")
+
+            if not rfq_result.get("success"):
+                return await self._handle_rfq_fetch_error(user, session)
+
+            # Step 2: Fetch seller current credits
+
+            credits_result = await self._check_seller_credits(user.id)
+
+            rfqs = rfq_result.get("rfqs")
+            total_count = rfq_result.get("total_count")
+            credits_available = credits_result.get("credits_available")
 
             # Prepare context for AI response generation
             context = {
                 "workflow_state": "display_rfqs_to_seller",
-                "seller_info": seller_info,
                 "rfqs": rfqs,
                 "total_count": total_count,
                 "credits_available": credits_available,
@@ -151,8 +144,7 @@ class SellerService:
             # Update session workflow state
             session.workflow_type = "seller_rfq_view"
             session.workflow_state = {
-                "seller_workflow_state": "awaiting_rfq_selection" if credits_available > 0 else "awaiting_general_response",
-                "seller_info": seller_info,
+                "seller_workflow_state": "awaiting_general_response",
                 "available_rfqs": [rfq.get("rfq_id") for rfq in rfqs],
                 "rfq_details": rfqs,
             }
@@ -163,7 +155,6 @@ class SellerService:
                 "success": True,
                 "workflow_step": "display_rfqs_to_seller",
                 "message": response_message,
-                "credits_available": credits_available,
                 "total_rfqs": total_count,
                 "message_already_sent": False
             }
@@ -172,14 +163,11 @@ class SellerService:
             logger.error(f"Error displaying RFQs to seller: {e}")
             raise
 
-    async def _handle_rfq_selection_response(self, user: User, session: ConversationSession,
-                                             message: str) -> Dict[str, Any]:
+    async def _handle_rfq_selection_response(self, user: User, session: ConversationSession,message: str) -> Dict[str, Any]:
         """Handle seller's RFQ selection when they have credits."""
         try:
             workflow_state = session.workflow_state or {}
-            seller_info = workflow_state.get("seller_info", {})
-            # credits_available = workflow_state.get("credits_available", 0)
-            credits = await self._check_seller_credits(seller_info.get("seller_id"))
+            credits = await self._check_seller_credits(user.id)
             credits_available= credits.get("credits_available")
 
             # Check if seller still has credits
@@ -200,15 +188,8 @@ class SellerService:
             if not valid_selections:
                 return await self._handle_invalid_rfq_selection(user, session, message)
 
-            # Check credits again before processing
-            credits_check = await self._check_seller_credits(seller_info.get("seller_id"))
-            current_credits = credits_check.get("credits_available", 0)
-
-            if current_credits <= 0:
-                return await self._handle_no_credits_response(user, session)
-
             # Process RFQ selections
-            return await self._process_rfq_email_requests(user, session, valid_selections, seller_info)
+            return await self._process_rfq_email_requests(user, session, valid_selections)
 
         except Exception as e:
             logger.error(f"Error handling RFQ selection: {e}")
@@ -217,36 +198,15 @@ class SellerService:
     async def _generate_ambiguous_seller_response(self, context: Dict[str, Any]) -> str:
         """Generate response for ambiguous seller messages."""
         try:
-
-            message = context.get("message", "")
-            credits_available = context.get("credits_available", 0)
-            ai_analysis = context.get("ai_analysis", {})
-
-            prompt = f"""
-               Generate a clarification response for an ambiguous seller message.
-
-               Context:
-               - Seller message: "{message}"
-               - Credits available: {credits_available}
-               - AI confidence: {ai_analysis.get('confidence', 'low')}%
-               - AI reasoning: {ai_analysis.get('reasoning', 'Message unclear')}
-
-               Requirements:
-               - Acknowledge their message politely
-               - Ask for clarification in a helpful way
-               - Offer specific options they can choose from
-               - Mention available services (RFQ access, plans, support)
-               - Professional and patient tone
-
-               Format: Direct WhatsApp message.
-               """
-
-            response = self.openai_service.generate_response(prompt, context)
+            response_message = await self.response_helpers.generate_seller_contextual_response({
+                "workflow_state": "ambiguous_seller_response",
+                **context
+            })
+            
             return {
                 "workflow_step": "awaiting_general_response",
-                "message": response.strip(),
+                "message": response_message,
             }
-            # return response.strip()
 
         except Exception as e:
             logger.error(f"Error generating ambiguous seller response: {e}")
@@ -256,28 +216,10 @@ class SellerService:
     async def _generate_general_seller_response(self, context: Dict[str, Any]) -> str:
         """Generate response for general seller queries."""
         try:
-            message = context.get("message", "")
-            credits_available = context.get("credits_available", 0)
-
-            prompt = f"""
-            Generate a helpful response to seller's general query.
-
-            Context:
-            - Seller message: {message}
-            - Credits available: {credits_available}
-            - General seller assistance needed
-
-            Requirements:
-            - Address the query helpfully
-            - Mention available options (RFQ access, plans, etc.)
-            - Professional and supportive tone
-            - Offer specific next steps
-
-            Format: Direct WhatsApp message.
-            """
-
-            response = self.openai_service.generate_response(prompt, context)
-            return response.strip()
+            return await self.response_helpers.generate_seller_contextual_response({
+                "workflow_state": "general_seller_response",
+                **context
+            })
 
         except Exception as e:
             logger.error(f"Error generating general seller response: {e}")
@@ -289,14 +231,16 @@ class SellerService:
         """Handle general seller responses using AI-powered intent classification."""
         try:
             workflow_state = session.workflow_state or {}
-            seller_info = workflow_state.get("seller_info", {})
             # Build conversation context for AI analysis
             conversation_context = self._build_seller_conversation_context(session, message)
 
             # Use AI to classify seller's intent with context awareness
             seller_intent = await self._classify_seller_intent(message, conversation_context, session)
 
-            credits = await self._check_seller_credits(seller_info.get("seller_id"))
+            logger.info(f"Seller Intent is {seller_intent}")
+
+
+            credits = await self._check_seller_credits(user.id)
             credits_available = credits.get("credits_available")
 
             # Route based on AI-classified intent
@@ -307,7 +251,7 @@ class SellerService:
                 return await self._handle_plan_upgrade_request(user, session, message)
 
             elif intent_type == "rfq_status_check" and confidence > 0.7:
-                return await self.rfq_status_service.handle_rfq_status_inquiry(user, message)
+                return await self.rfq_status_service.handle_rfq_status_inquiry(user, message, session)
 
             elif intent_type == "rfq_access_request" and confidence > 0.7:
                 # Check if they have credits for RFQ access
@@ -407,9 +351,7 @@ class SellerService:
 
             elif any(keyword in last_bot_message for keyword in ["rfq", "details", "email"]):
                 # They're confirming RFQ access request
-                workflow_state = session.workflow_state or {}
-                seller_info = workflow_state.get("seller_info", {})
-                credits = await self._check_seller_credits(seller_info.get("seller_id"))
+                credits = await self._check_seller_credits(user.id)
                 credits_available = credits.get("credits_available")
                 if credits_available <= 0:
                     return await self._handle_no_credits_response(user, session)
@@ -431,7 +373,6 @@ class SellerService:
         try:
             context = {
                 "workflow_state": "general_affirmative_response",
-                "seller_info": session.workflow_state.get("seller_info", {}),
                 "credits_available": session.workflow_state.get("credits_available", 0),
                 "ai_analysis": seller_intent
             }
@@ -522,19 +463,25 @@ class SellerService:
                                            message: str) -> Dict[str, Any]:
         """Handle seller's plan upgrade request."""
         try:
-            # Fetch available subscription plans
-            plans_result = await self.gmt_api_service.get_subscription_plans()
-
-            if not plans_result.get("success"):
-                return await self._handle_plan_fetch_error(user, session)
-
-            plans = plans_result.get("plans", [])
+            # Check if plans are already available in session to avoid re-fetching
+            workflow_state = session.workflow_state or {}
+            available_plans = workflow_state.get("available_plans")
+            
+            if not available_plans:
+                # Fetch available subscription plans only if not already available
+                plans_result = await self.gmt_api_service.get_subscription_plans()
+                available_plans = plans_result.get("plans", [])
+                
+                if not plans_result.get("success"):
+                    return await self._handle_plan_fetch_error(user, session)
+                
+                # Store plans in session
+                session.workflow_state["available_plans"] = available_plans
 
             # Generate contextual response showing plans
             context = {
                 "workflow_state": "show_subscription_plans",
-                "plans": plans,
-                "seller_info": session.workflow_state.get("seller_info", {}),
+                "plans": available_plans,
                 "message": message
             }
 
@@ -542,7 +489,6 @@ class SellerService:
 
             # Update session state to await plan selection
             session.workflow_state["seller_workflow_state"] = "awaiting_plan_selection"
-            session.workflow_state["available_plans"] = plans
 
             await self.session_manager.save_session(session, "seller_rfq_view")
 
@@ -550,7 +496,7 @@ class SellerService:
                 "success": True,
                 "workflow_step": "show_subscription_plans",
                 "message": response_message,
-                "plans": plans,
+                "plans": available_plans,
                 "message_already_sent": False
             }
 
@@ -564,18 +510,29 @@ class SellerService:
         try:
             workflow_state = session.workflow_state or {}
             available_plans = workflow_state.get("available_plans", [])
-            seller_info = workflow_state.get("seller_info", {})
 
-            # Extract plan selection from message
+            # Extract plan selection from message using AI
             selected_plan = await self._extract_plan_selection(message, available_plans)
 
             if not selected_plan:
-                return await self._handle_invalid_plan_selection(user, session, message)
+                # Don't show plans again, just ask for clarification
+                context = {
+                    "workflow_state": "invalid_plan_selection",
+                    "available_plans": available_plans,
+                    "user_message": message
+                }
+                response_message = await self.response_helpers.generate_seller_contextual_response(context)
+                return {
+                    "success": False,
+                    "workflow_step": "invalid_plan_selection",
+                    "message": response_message,
+                    "message_already_sent": False
+                }
 
             # Generate payment link
             payment_result = await self.gmt_api_service.generate_payment_link(
                 selected_plan.get("id"),
-                seller_info.get("seller_id")
+                user.id
             )
 
             if not payment_result.get("success"):
@@ -586,15 +543,15 @@ class SellerService:
                 "workflow_state": "payment_link_generated",
                 "selected_plan": selected_plan,
                 "payment_link": payment_result.get("payment_link"),
-                "seller_info": seller_info
             }
 
             response_message = await self.response_helpers.generate_seller_contextual_response(context)
 
-            # Update session state
+            # Update session state - clear available_plans to prevent re-showing
             session.workflow_state["seller_workflow_state"] = "payment_link_sent"
             session.workflow_state["selected_plan"] = selected_plan
             session.workflow_state["payment_link"] = payment_result.get("payment_link")
+            session.workflow_state.pop("available_plans", None)  # Remove to prevent re-showing
 
             await self.session_manager.save_session(session, "seller_rfq_view")
 
@@ -610,18 +567,17 @@ class SellerService:
             logger.error(f"Error handling plan selection: {e}")
             return await self._handle_workflow_error(user, session, str(e))
 
-    async def _process_rfq_email_requests(self, user: User, session: ConversationSession,
-                                         selected_rfq_ids: List[str], seller_info: Dict[str, Any]) -> Dict[str, Any]:
+    async def _process_rfq_email_requests(self, user: User, session: ConversationSession,selected_rfq_ids: List[str]) -> Dict[str, Any]:
         """Process RFQ email requests after credit verification using batch API."""
         try:
-            seller_email = seller_info.get("email")
-            seller_id = seller_info.get("seller_id")
+            seller_email = user.email
+            seller_id = user.id
+            print("selected rfqw_id", selected_rfq_ids)
 
             # Send acknowledgment
             ack_context = {
                 "workflow_state": "rfq_email_processing",
                 "selected_rfq_ids": selected_rfq_ids,
-                "seller_info": seller_info
             }
 
             ack_message = await self.response_helpers.generate_seller_contextual_response(ack_context)
@@ -629,10 +585,10 @@ class SellerService:
 
             # Send batch RFQ email request
             try:
-                batch_result = await self.gmt_api_service.send_rfq_emails(
+                batch_result = await self.gmt_api_service.send_rfq_email(
                     rfq_ids=selected_rfq_ids,
-                    seller_email=seller_email,
-                    seller_id=seller_id
+                    seller_email=user.email,
+                    seller_id=user.id
                 )
 
                 if batch_result.get("success"):
@@ -643,7 +599,7 @@ class SellerService:
                     # Update sent flags for successful emails
                     successful_rfq_ids = [result["rfq_id"] for result in successful_results]
                     if successful_rfq_ids:
-                        await self.gmt_api_service.update_rfq_seller_sent_flags(
+                        await self.gmt_api_service.update_rfq_seller_sent_flag(
                             successful_rfq_ids, seller_id
                         )
 
@@ -723,13 +679,11 @@ class SellerService:
         """Handle response when seller has no credits."""
         try:
             workflow_state = session.workflow_state or {}
-            seller_info = workflow_state.get("seller_info", {})
             rfq_details = workflow_state.get("rfq_details", [])
 
             # Generate contextual response about no credits with plan options
             context = {
                 "workflow_state": "no_credits_available",
-                "seller_info": seller_info,
                 "rfq_details": rfq_details,
                 "credits_available": 0
             }
@@ -753,15 +707,6 @@ class SellerService:
             return await self._handle_workflow_error(user, session, str(e))
 
     # Helper methods
-    async def _get_seller_info(self, phone_number: str) -> Dict[str, Any]:
-        """Get seller information (mock implementation - replace with actual API)."""
-        return {
-            "is_authenticated": True,
-            "seller_id": "SELLER_123",
-            "name": "Sample Seller",
-            "email": "seller@example.com",
-            "category": "industrial_motors"
-        }
 
     async def _check_seller_credits(self, seller_id: str) -> Dict[str, Any]:
         """Check seller's credit balance."""
@@ -799,28 +744,41 @@ class SellerService:
             return []
 
     async def _extract_plan_selection(self, message: str, available_plans: List[Dict]) -> Dict[str, Any]:
-        """Extract plan selection from seller's message."""
+        """Extract plan selection from seller's message using AI."""
         try:
+            # Use AI to extract plan selection
+            extraction_context = {
+                "message": message,
+                "available_plans": available_plans,
+                "extraction_type": "plan_selection"
+            }
+            
+            extraction = self.openai_service.extract_entities(
+                message=message,
+                workflow_type="plan_selection",
+                context=extraction_context
+            )
+
+            print("etxraction result of plans", extraction)
+            
+            # Get the selected plan from AI extraction
+            selected_plan_info = extraction.get("selected_plan")
+            
+            if selected_plan_info:
+                # Find matching plan from available plans
+                for plan in available_plans:
+                    if (plan.get("planName", "").lower() == selected_plan_info.lower() or 
+                        plan.get("id", "") == selected_plan_info or
+                        str(plan.get("id", "")) == selected_plan_info):
+                        return plan
+            
+            # Fallback to simple matching if AI extraction fails
             message_lower = message.lower()
-
             for plan in available_plans:
-                plan_name = plan.get("name", "").lower()
-                plan_id = plan.get("id", "").lower()
-
-                if plan_name in message_lower or plan_id in message_lower:
+                plan_name = plan.get("planName", "").lower()
+                if plan_name in message_lower:
                     return plan
-
-            # Try to match by number if plans are numbered
-            import re
-            numbers = re.findall(r'\d+', message)
-            if numbers:
-                try:
-                    plan_index = int(numbers[0]) - 1
-                    if 0 <= plan_index < len(available_plans):
-                        return available_plans[plan_index]
-                except (ValueError, IndexError):
-                    pass
-
+            
             return None
 
         except Exception as e:
@@ -875,8 +833,7 @@ class SellerService:
             "message_already_sent": False
         }
 
-    async def _handle_invalid_rfq_selection(self, user: User, session: ConversationSession, message: str) -> Dict[
-        str, Any]:
+    async def _handle_invalid_rfq_selection(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """Handle invalid RFQ selection."""
         workflow_state = session.workflow_state or {}
         available_rfqs = workflow_state.get("available_rfqs", [])
@@ -896,16 +853,16 @@ class SellerService:
             "message_already_sent": False
         }
 
-    async def _handle_invalid_plan_selection(self, user: User, session: ConversationSession, message: str) -> Dict[
-        str, Any]:
-        """Handle invalid plan selection."""
+    async def _handle_invalid_plan_selection(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+        """Handle invalid plan selection without re-showing plans."""
         workflow_state = session.workflow_state or {}
         available_plans = workflow_state.get("available_plans", [])
 
         context = {
             "workflow_state": "invalid_plan_selection",
             "available_plans": available_plans,
-            "user_message": message
+            "user_message": message,
+            "show_plans_again": False  # Prevent re-showing plans
         }
 
         response_message = await self.response_helpers.generate_seller_contextual_response(context)
@@ -977,8 +934,7 @@ class SellerService:
             "message_already_sent": False
         }
 
-    async def _handle_payment_link_error(self, user: User, session: ConversationSession,
-                                         selected_plan: Dict[str, Any]) -> Dict[str, Any]:
+    async def _handle_payment_link_error(self, user: User, session: ConversationSession,selected_plan: Dict[str, Any]) -> Dict[str, Any]:
         """Handle payment link generation errors."""
         context = {
             "workflow_state": "payment_link_error",
