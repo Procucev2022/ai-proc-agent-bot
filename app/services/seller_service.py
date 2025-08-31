@@ -10,7 +10,8 @@ This implementation provides the complete seller workflow including:
 """
 
 import logging
-import re
+import asyncio
+from app.utils.datetime_utils import utc_now
 from typing import Dict, Any, List
 from app.models import ConversationSession, User
 from app.services.whatsapp_service import WhatsAppService
@@ -144,18 +145,18 @@ class SellerService:
             # Update session workflow state
             session.workflow_type = "seller_rfq_view"
             session.workflow_state = {
-                "seller_workflow_state": "awaiting_general_response",
-                "available_rfqs": [rfq.get("rfq_id") for rfq in rfqs],
-                "rfq_details": rfqs,
+                "seller_workflow_state": "awaiting_general_response"
             }
 
             await self.session_manager.save_session(session, "seller_rfq_view")
+
+            # ADD THIS: Schedule end-of-flow reminder after 5 minutes for payment link
+            asyncio.create_task(self._schedule_end_of_flow_reminder(user, session))
 
             return {
                 "success": True,
                 "workflow_step": "display_rfqs_to_seller",
                 "message": response_message,
-                "total_rfqs": total_count,
                 "message_already_sent": False
             }
 
@@ -166,8 +167,13 @@ class SellerService:
     async def _handle_rfq_selection_response(self, user: User, session: ConversationSession,message: str) -> Dict[str, Any]:
         """Handle seller's RFQ selection when they have credits."""
         try:
-            workflow_state = session.workflow_state or {}
             credits = await self._check_seller_credits(user.id)
+            rfq_result = await self._fetch_seller_rfqs("general")
+
+            if not rfq_result.get("success"):
+                return await self._handle_rfq_fetch_error(user, session)
+
+            rfqs = rfq_result.get("rfqs")
             credits_available= credits.get("credits_available")
 
             # Check if seller still has credits
@@ -182,7 +188,7 @@ class SellerService:
                 return await self._handle_general_seller_response(user, session, message)
 
             # Validate selected RFQ IDs
-            available_rfqs = workflow_state.get("available_rfqs", [])
+            available_rfqs =[rfq.get("rfq_id") for rfq in rfqs]
             valid_selections = [rfq_id for rfq_id in selected_rfq_ids if rfq_id in available_rfqs]
 
             if not valid_selections:
@@ -230,9 +236,14 @@ class SellerService:
                                               message: str) -> Dict[str, Any]:
         """Handle general seller responses using AI-powered intent classification."""
         try:
+            # ADD THIS: Update activity timestamp to prevent unnecessary reminders
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state["last_activity_timestamp"] = utc_now().isoformat()
             workflow_state = session.workflow_state or {}
             # Build conversation context for AI analysis
             conversation_context = self._build_seller_conversation_context(session, message)
+
+            print("conversation context", conversation_context)
 
             # Use AI to classify seller's intent with context awareness
             seller_intent = await self._classify_seller_intent(message, conversation_context, session)
@@ -254,6 +265,7 @@ class SellerService:
                 return await self.rfq_status_service.handle_rfq_status_inquiry(user, message, session)
 
             elif intent_type == "rfq_access_request" and confidence > 0.7:
+                print("credits avaiable", credits_available)
                 # Check if they have credits for RFQ access
 
                 if credits_available <= 0:
@@ -390,31 +402,7 @@ class SellerService:
             logger.error(f"Error handling general affirmative response: {e}")
             return await self._handle_workflow_error(user, session, str(e))
 
-    def _format_recent_messages(self, messages: List[Dict]) -> str:
-        """Format recent messages for AI context."""
-        formatted = []
-        for msg in messages[-3:]:  # Last 3 messages
-            role = msg.get("role", "user")
-            content = msg.get("content", "")[:200]  # Truncate long messages
-            formatted.append(f"{role.title()}: {content}")
-        return "\n".join(formatted)
 
-    def _parse_ai_classification_response(self, ai_response: str) -> Dict[str, Any]:
-        """Parse AI response when it's not pure JSON."""
-        # Extract key information using regex
-        import re
-
-        intent_match = re.search(r'"intent":\s*"([^"]+)"', ai_response)
-        confidence_match = re.search(r'"confidence":\s*(\d+)', ai_response)
-        reasoning_match = re.search(r'"reasoning":\s*"([^"]+)"', ai_response)
-
-        return {
-            "intent": intent_match.group(1) if intent_match else "general_question",
-            "confidence": int(confidence_match.group(1)) if confidence_match else 50,
-            "reasoning": reasoning_match.group(1) if reasoning_match else "Parsed from AI response",
-            "context_clues": [],
-            "suggested_response": "Use contextual response"
-        }
 
     def _fallback_intent_classification(self, message: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """Fallback intent classification using keyword matching."""
@@ -463,20 +451,12 @@ class SellerService:
                                            message: str) -> Dict[str, Any]:
         """Handle seller's plan upgrade request."""
         try:
-            # Check if plans are already available in session to avoid re-fetching
-            workflow_state = session.workflow_state or {}
-            available_plans = workflow_state.get("available_plans")
-            
-            if not available_plans:
-                # Fetch available subscription plans only if not already available
-                plans_result = await self.gmt_api_service.get_subscription_plans()
-                available_plans = plans_result.get("plans", [])
-                
-                if not plans_result.get("success"):
-                    return await self._handle_plan_fetch_error(user, session)
-                
-                # Store plans in session
-                session.workflow_state["available_plans"] = available_plans
+            # Fetch available subscription plans only if not already available
+            plans_result = await self.gmt_api_service.get_subscription_plans()
+            available_plans = plans_result.get("plans", [])
+
+            if not plans_result.get("success"):
+                return await self._handle_plan_fetch_error(user, session)
 
             # Generate contextual response showing plans
             context = {
@@ -508,9 +488,9 @@ class SellerService:
                                               message: str) -> Dict[str, Any]:
         """Handle seller's plan selection response."""
         try:
-            workflow_state = session.workflow_state or {}
-            available_plans = workflow_state.get("available_plans", [])
-
+            # Fetch available subscription plans only if not already available
+            plans_result = await self.gmt_api_service.get_subscription_plans()
+            available_plans = plans_result.get("plans", [])
             # Extract plan selection from message using AI
             selected_plan = await self._extract_plan_selection(message, available_plans)
 
@@ -518,7 +498,6 @@ class SellerService:
                 # Don't show plans again, just ask for clarification
                 context = {
                     "workflow_state": "invalid_plan_selection",
-                    "available_plans": available_plans,
                     "user_message": message
                 }
                 response_message = await self.response_helpers.generate_seller_contextual_response(context)
@@ -550,10 +529,11 @@ class SellerService:
             # Update session state - clear available_plans to prevent re-showing
             session.workflow_state["seller_workflow_state"] = "payment_link_sent"
             session.workflow_state["selected_plan"] = selected_plan
-            session.workflow_state["payment_link"] = payment_result.get("payment_link")
-            session.workflow_state.pop("available_plans", None)  # Remove to prevent re-showing
 
             await self.session_manager.save_session(session, "seller_rfq_view")
+
+            # ADD THIS: Schedule end-of-flow reminder after 5 minutes for payment link
+            asyncio.create_task(self._schedule_end_of_flow_reminder(user, session))
 
             return {
                 "success": True,
@@ -567,10 +547,22 @@ class SellerService:
             logger.error(f"Error handling plan selection: {e}")
             return await self._handle_workflow_error(user, session, str(e))
 
+    async def _schedule_end_of_flow_reminder(self, user: User, session: ConversationSession):
+        """Schedule end-of-flow reminder after 5 minutes."""
+        try:
+            print("schedult end of flow reminder called")
+            # Wait for 5 minutes as specified in the document
+            await asyncio.sleep(300)  # 5 minutes = 300 seconds
+
+            # Send end-of-flow reminder
+            await self.handle_seller_flow_completion(user, session)
+
+        except Exception as e:
+            logger.error(f"Error scheduling end-of-flow reminder: {e}")
+
     async def _process_rfq_email_requests(self, user: User, session: ConversationSession,selected_rfq_ids: List[str]) -> Dict[str, Any]:
         """Process RFQ email requests after credit verification using batch API."""
         try:
-            seller_email = user.email
             seller_id = user.id
             print("selected rfqw_id", selected_rfq_ids)
 
@@ -663,6 +655,9 @@ class SellerService:
 
             await self.session_manager.save_session(session, "seller_rfq_view")
 
+            # ADD THIS: Schedule end-of-flow reminder after 5 minutes
+            asyncio.create_task(self._schedule_end_of_flow_reminder(user, session))
+
             return {
                 "success": True,
                 "workflow_step": "rfq_emails_processed",
@@ -695,6 +690,9 @@ class SellerService:
 
             await self.session_manager.save_session(session, "seller_rfq_view")
 
+            # ADD THIS: Schedule end-of-flow reminder after 5 minutes if no further interaction
+            asyncio.create_task(self._schedule_conditional_end_of_flow_reminder(user, session))
+
             return {
                 "success": True,
                 "workflow_step": "no_credits_available",
@@ -705,6 +703,33 @@ class SellerService:
         except Exception as e:
             logger.error(f"Error handling no credits response: {e}")
             return await self._handle_workflow_error(user, session, str(e))
+
+    async def _schedule_conditional_end_of_flow_reminder(self, user: User, session: ConversationSession):
+        """
+        Schedule conditional end-of-flow reminder.
+        Only send if user doesn't interact further within 5 minutes.
+        """
+        try:
+            # Store the current session state timestamp
+            current_timestamp = utc_now()
+            session.workflow_state["last_activity_timestamp"] = current_timestamp.isoformat()
+            await self.session_manager.save_session(session, "seller_rfq_view")
+
+            # Wait for 5 minutes
+            await asyncio.sleep(300)  # 5 minutes = 300 seconds
+
+            # Check if there was any activity since we scheduled this reminder
+            updated_session = await self.session_manager.get_conversation_context(user.phone_number)
+            last_activity = updated_session.workflow_state.get("last_activity_timestamp")
+
+            # If no new activity, send end-of-flow reminder
+            if last_activity == current_timestamp.isoformat():
+                await self.handle_seller_flow_completion(user, updated_session)
+            else:
+                logger.info(f"Skipping end-of-flow reminder for {user.phone_number} due to recent activity")
+
+        except Exception as e:
+            logger.error(f"Error in conditional end-of-flow reminder: {e}")
 
     # Helper methods
 
@@ -723,6 +748,120 @@ class SellerService:
         except Exception as e:
             logger.error(f"Error fetching seller RFQs: {e}")
             return {"success": False, "error": str(e)}
+
+    async def handle_seller_flow_completion(self, user: User, session: ConversationSession) -> Dict[str, Any]:
+        """
+        Handle seller flow completion with end-of-flow reminder (Step 13).
+
+        This method is called when the seller workflow is completing to show
+        open RFQs where they haven't submitted bids yet.
+        """
+        try:
+            # Fetch open RFQs where seller has not submitted bids
+            reminder_result = await self._fetch_seller_open_rfqs_for_reminder(user.id)
+
+            if not reminder_result.get("success"):
+                # If API fails, send generic closing message
+                return await self._send_generic_closing_message(user, session)
+
+            open_rfqs = reminder_result.get("open_rfqs", [])
+
+            if not open_rfqs:
+                # No open RFQs, send standard closing message
+                return await self._send_standard_closing_message(user, session)
+
+            # Generate reminder message with open RFQs
+            context = {
+                "workflow_state": "end_of_flow_reminder",
+                "open_rfqs": open_rfqs[:3],  # Show last 3 as per document
+                "total_open_rfqs": len(open_rfqs)
+            }
+
+            reminder_message = await self.response_helpers.generate_seller_contextual_response(context)
+
+            # Send reminder message
+            await self.whatsapp_service.send_message(user.phone_number, reminder_message)
+            self.session_manager.add_message_to_history(session, "assistant", reminder_message)
+
+            # Complete the session
+            session.outcome = 'completed'
+            session.completed_at = utc_now().replace(tzinfo=None)
+            await self.session_manager.save_session(session, "seller_rfq_view")
+
+            return {
+                "success": True,
+                "workflow_step": "end_of_flow_reminder",
+                "message": reminder_message,
+                "message_already_sent": False,
+                "session_completed": True
+            }
+
+        except Exception as e:
+            logger.error(f"Error in seller flow completion: {e}")
+            return await self._send_generic_closing_message(user, session)
+
+    async def _fetch_seller_open_rfqs_for_reminder(self, seller_id: str) -> Dict[str, Any]:
+        """
+        Fetch open RFQs where seller has not submitted bids.
+
+        This calls the GMT API to get RFQs that:
+        - Seller previously requested via email
+        - Are still open for bidding
+        - Haven't received bids from this seller yet
+        """
+        try:
+            return await self.gmt_api_service.fetch_seller_open_rfqs_for_reminder(seller_id)
+        except Exception as e:
+            logger.error(f"Error fetching seller open RFQs for reminder: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def _send_generic_closing_message(self, user: User, session: ConversationSession) -> Dict[str, Any]:
+        """Send generic closing message when reminder API fails."""
+        context = {
+            "workflow_state": "generic_closing_message"
+        }
+
+        closing_message = await self.response_helpers.generate_seller_contextual_response(context)
+
+        await self.whatsapp_service.send_message(user.phone_number, closing_message)
+        self.session_manager.add_message_to_history(session, "assistant", closing_message)
+
+        # Complete the session
+        session.outcome = 'completed'
+        session.completed_at = utc_now().replace(tzinfo=None)
+        await self.session_manager.save_session(session, "seller_rfq_view")
+
+        return {
+            "success": True,
+            "workflow_step": "generic_closing",
+            "message": closing_message,
+            "message_already_sent": False,
+            "session_completed": True
+        }
+
+    async def _send_standard_closing_message(self, user: User, session: ConversationSession) -> Dict[str, Any]:
+        """Send standard closing message when no open RFQs found."""
+        context = {
+            "workflow_state": "standard_closing_message"
+        }
+
+        closing_message = await self.response_helpers.generate_seller_contextual_response(context)
+
+        await self.whatsapp_service.send_message(user.phone_number, closing_message)
+        self.session_manager.add_message_to_history(session, "assistant", closing_message)
+
+        # Complete the session
+        session.outcome = 'completed'
+        session.completed_at = utc_now().replace(tzinfo=None)
+        await self.session_manager.save_session(session, "seller_rfq_view")
+
+        return {
+            "success": True,
+            "workflow_step": "standard_closing",
+            "message": closing_message,
+            "message_already_sent": False,
+            "session_completed": True
+        }
 
     async def _extract_rfq_ids_from_message(self, message: str, session: ConversationSession) -> List[str]:
         """Extract RFQ IDs from seller's message."""
@@ -786,26 +925,6 @@ class SellerService:
             return None
 
 
-
-
-    async def _is_plan_upgrade_request(self, message: str) -> bool:
-        """Check if message is requesting plan upgrade."""
-        upgrade_keywords = ["upgrade", "plan", "subscription", "subscribe", "payment", "pay", "buy", "purchase"]
-        message_lower = message.lower()
-        return any(keyword in message_lower for keyword in upgrade_keywords)
-
-    async def _is_rfq_request_without_credits(self, message: str, session: ConversationSession) -> bool:
-        """Check if seller is requesting RFQ details but has no credits."""
-        workflow_state = session.workflow_state or {}
-        credits_available = workflow_state.get("credits_available", 0)
-
-        if credits_available > 0:
-            return False
-
-        rfq_keywords = ["rfq", "request", "details", "information", "email", "send"]
-        message_lower = message.lower()
-        return any(keyword in message_lower for keyword in rfq_keywords)
-
     def _build_seller_conversation_context(self, session: ConversationSession, message: str) -> Dict[str, Any]:
         """Build conversation context for seller responses."""
         return {
@@ -835,8 +954,15 @@ class SellerService:
 
     async def _handle_invalid_rfq_selection(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """Handle invalid RFQ selection."""
-        workflow_state = session.workflow_state or {}
-        available_rfqs = workflow_state.get("available_rfqs", [])
+        # Step 1: Fetch active RFQs for seller's category
+        rfq_result = await self._fetch_seller_rfqs("general")
+
+        if not rfq_result.get("success"):
+            return await self._handle_rfq_fetch_error(user, session)
+
+
+        rfqs = rfq_result.get("rfqs")
+        available_rfqs = [rfq.get("rfq_id") for rfq in rfqs]
 
         context = {
             "workflow_state": "invalid_rfq_selection",
@@ -853,56 +979,11 @@ class SellerService:
             "message_already_sent": False
         }
 
-    async def _handle_invalid_plan_selection(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
-        """Handle invalid plan selection without re-showing plans."""
-        workflow_state = session.workflow_state or {}
-        available_plans = workflow_state.get("available_plans", [])
 
-        context = {
-            "workflow_state": "invalid_plan_selection",
-            "available_plans": available_plans,
-            "user_message": message,
-            "show_plans_again": False  # Prevent re-showing plans
-        }
 
-        response_message = await self.response_helpers.generate_seller_contextual_response(context)
 
-        return {
-            "success": False,
-            "workflow_step": "invalid_plan_selection",
-            "message": response_message,
-            "message_already_sent": False
-        }
 
-    async def _handle_unauthenticated_seller(self, user: User, session: ConversationSession) -> Dict[str, Any]:
-        """Handle unauthenticated seller."""
-        context = {
-            "workflow_state": "unauthenticated_seller"
-        }
 
-        response_message = await self.response_helpers.generate_seller_contextual_response(context)
-
-        return {
-            "success": False,
-            "workflow_step": "unauthenticated",
-            "message": response_message,
-            "message_already_sent": False
-        }
-
-    async def _handle_credit_check_error(self, user: User, session: ConversationSession) -> Dict[str, Any]:
-        """Handle credit check API errors."""
-        context = {
-            "workflow_state": "credit_check_error"
-        }
-
-        response_message = await self.response_helpers.generate_seller_contextual_response(context)
-
-        return {
-            "success": False,
-            "workflow_step": "credit_check_error",
-            "message": response_message,
-            "message_already_sent": False
-        }
 
     async def _handle_rfq_fetch_error(self, user: User, session: ConversationSession) -> Dict[str, Any]:
         """Handle RFQ fetch errors."""

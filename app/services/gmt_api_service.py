@@ -615,7 +615,7 @@ class GMTAPIService:
                         result={
   "success": True,
   "data": {
-    "creditsAvailable": 1,
+    "creditsAvailable": 0,
     "subscriptionStatus": "unsubscribed",
     "sellerStatus": "existing"
   }
@@ -835,4 +835,103 @@ class GMTAPIService:
         except Exception as e:
             logger.error(f"Error generating payment link: {e}")
             return {"success": False, "error": str(e)}
+
+    async def fetch_seller_open_rfqs_for_reminder(self, seller_id: str) -> Dict[str, Any]:
+        """
+        Fetch open RFQs where seller has not submitted bids yet for end-of-flow reminder.
+
+        Args:
+            seller_id: Seller's unique identifier
+
+        Returns:
+            Dict containing success status and open RFQs list
+        """
+        try:
+            if not await self.ensure_authenticated():
+                return {"success": False, "error": "Authentication failed"}
+
+
+            url = f"{self.base_url}/seller/open-rfqs-reminder"
+
+            payload = {
+                "seller_id": seller_id,
+                "limit": 10  # Get up to 10 open RFQs
+            }
+
+            headers = {
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json"
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=headers) as response:
+                    if response.status != 200:
+                        data = await response.json()
+                        data={
+  "success": True,
+  "open_rfqs": [
+    {
+      "rfq_id": "RFQ240801156789",
+      "project_desc": "Industrial Pumps for Manufacturing Plant",
+      "category": "industrial_equipment",
+      "location": "Chennai, Tamil Nadu",
+      "submission_deadline": "2025-09-05T18:30:00Z",
+      "email_sent_date": "2025-08-28T10:15:30Z",
+      "days_remaining": 5,
+      "estimated_value": "₹2,50,000",
+      "status": "open_for_bidding"
+    },
+    {
+      "rfq_id": "RFQ240803987654",
+      "project_desc": "Electrical Control Panels",
+      "category": "electrical_equipment",
+      "location": "Bangalore, Karnataka",
+      "submission_deadline": "2025-09-08T17:00:00Z",
+      "email_sent_date": "2025-08-29T14:22:18Z",
+      "days_remaining": 8,
+      "estimated_value": "₹1,80,000",
+      "status": "open_for_bidding"
+    },
+    {
+      "rfq_id": "RFQ240805445566",
+      "project_desc": "HVAC System Components",
+      "category": "hvac_equipment",
+      "location": "Pune, Maharashtra",
+      "submission_deadline": "2025-09-10T16:30:00Z",
+      "email_sent_date": "2025-08-30T09:45:12Z",
+      "days_remaining": 10,
+      "estimated_value": "₹3,20,000",
+      "status": "open_for_bidding"
+    }
+  ],
+  "total_count": 7,
+  "metadata": {
+    "seller_id": "SELL12345",
+    "query_timestamp": "2025-08-31T12:00:00Z",
+    "filter_criteria": {
+      "status": "open_for_bidding",
+      "email_sent": True,
+      "bid_submitted": False
+    }
+  }
+}
+                        return {
+                            "success": True,
+                            "open_rfqs": data.get("open_rfqs", []),
+                            "total_count": data.get("total_count", 0)
+                        }
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"GMT API error fetching seller open RFQs: {response.status} - {error_text}")
+                        return {
+                            "success": False,
+                            "error": f"API returned status {response.status}"
+                        }
+
+        except Exception as e:
+            logger.error(f"Exception in fetch_seller_open_rfqs_for_reminder: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
 

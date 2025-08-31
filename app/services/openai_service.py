@@ -909,6 +909,44 @@ Analyze their response to determine their true choice.
             logger.error(f"Response generation failed: {str(e)}")
             return self._get_fallback_response(context,[])
 
+    def _load_prompt(self, prompt_type: str, prompt_name: str, **kwargs) -> str:
+        """Load and format a prompt template."""
+        try:
+            # Handle seller end-of-flow reminder prompts
+            if prompt_name == "_get_seller_common_response_prompt":
+                workflow_state = kwargs.get("workflow_state", "")
+                if workflow_state in ["end_of_flow_reminder", "generic_closing_message", "standard_closing_message"]:
+                    # Use the specialized end-of-flow prompt
+                    prompt_path = os.path.join(
+                        self.prompts_dir,
+                        prompt_type,
+                        "_get_seller_end_of_flow_reminder_prompt.txt"
+                    )
+                else:
+                    # Use the regular seller prompt
+                    prompt_path = os.path.join(
+                        self.prompts_dir,
+                        prompt_type,
+                        f"{prompt_name}.txt"
+                    )
+            else:
+                prompt_path = os.path.join(
+                    self.prompts_dir,
+                    prompt_type,
+                    f"{prompt_name}.txt"
+                )
+
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                template = f.read()
+
+            # Format the template with provided arguments
+            return template.format(**kwargs)
+
+        except Exception as e:
+            logger.error(f"Error loading prompt {prompt_name}: {e}")
+            # Return a fallback prompt
+            return "Generate an appropriate response for the seller based on the current workflow state and context."
+
     def validate_field_value(self, field_name: str, value: str, context: dict) -> Dict[str, Any]:
         """
         Validate RFQ field value using OpenAI for complex validation.
