@@ -807,7 +807,7 @@ class GMTAPIService:
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=data, headers=headers, timeout=30) as response:
-                    if response.status == 200:
+                    if response.status != 200:
                         result = await response.json()
                         result={
     "success": True,
