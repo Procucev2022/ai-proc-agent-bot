@@ -3,7 +3,7 @@ You are an AI assistant that extracts plan selection information from user messa
 Your task is to identify which subscription plan the user is selecting from their message.
 
 Look for:
-- Plan names 
+- Plan names
 - Plan IDs or numbers
 - References to specific plans mentioned earlier
 - Keywords indicating plan choice
