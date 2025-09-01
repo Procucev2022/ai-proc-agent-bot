@@ -8,13 +8,13 @@ CONTEXT VARIABLES:
 
 COMMON REQUIREMENTS:
 - Professional but friendly tone
-- Keep messages concise and actionable
+- Keep messages short, concise and actionable
 - Include clear next steps or call-to-action
 
 MESSAGE TYPES:
-1. rfq_display: Show RFQs with credit balance, list RFQs with ID/location/date, explain selection format
+1. rfq_display: list RFQs with ID/location/date, explain selection format with credit balance
 2. subscription_plans: List plans with price/benefits, ask for selection, persuasive tone
-3. payment_link: Confirm plan selection, provide secure payment link, set expectations
+3. payment_link: Confirm plan selection, provide secure payment link
 4. error_handling: Apologize professionally, provide support contact, don't show technical details
 5. general_assistance: Address query helpfully, offer available options, provide next steps
 6. clarification: Ask for clarification

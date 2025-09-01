@@ -95,7 +95,7 @@ class SellerService:
         """Handle initial seller flow with credit checking and RFQ listing."""
         try:
             # Step 1: Fetch active RFQs for seller's category
-            rfq_result = await self._fetch_seller_rfqs( "general")
+            rfq_result = await self._fetch_seller_rfqs(user.org_id)
 
             if not rfq_result.get("success"):
                 return await self._handle_rfq_fetch_error(user, session)
@@ -111,14 +111,14 @@ class SellerService:
         """Display RFQs to seller with credit-based context."""
         try:
             # Step 1: Fetch active RFQs for seller's category
-            rfq_result = await self._fetch_seller_rfqs( "general")
+            rfq_result = await self._fetch_seller_rfqs(user.org_id)
 
             if not rfq_result.get("success"):
                 return await self._handle_rfq_fetch_error(user, session)
 
             # Step 2: Fetch seller current credits
 
-            credits_result = await self._check_seller_credits(user.id)
+            credits_result = await self._check_seller_credits(user.org_id)
 
             rfqs = rfq_result.get("rfqs")
             total_count = rfq_result.get("total_count")
@@ -167,8 +167,8 @@ class SellerService:
     async def _handle_rfq_selection_response(self, user: User, session: ConversationSession,message: str) -> Dict[str, Any]:
         """Handle seller's RFQ selection when they have credits."""
         try:
-            credits = await self._check_seller_credits(user.id)
-            rfq_result = await self._fetch_seller_rfqs("general")
+            credits = await self._check_seller_credits(user.org_id)
+            rfq_result = await self._fetch_seller_rfqs(user.org_id)
 
             if not rfq_result.get("success"):
                 return await self._handle_rfq_fetch_error(user, session)
@@ -741,10 +741,10 @@ class SellerService:
             logger.error(f"Error checking seller credits: {e}")
             return {"success": False, "error": str(e), "credits_available": 0}
 
-    async def _fetch_seller_rfqs(self, category: str) -> Dict[str, Any]:
+    async def _fetch_seller_rfqs(self, org_id: str) -> Dict[str, Any]:
         """Fetch active RFQs for seller's category."""
         try:
-            return await self.gmt_api_service.fetch_active_rfqs(category, limit=3)
+            return await self.gmt_api_service.fetch_active_rfqs(org_id)
         except Exception as e:
             logger.error(f"Error fetching seller RFQs: {e}")
             return {"success": False, "error": str(e)}
@@ -948,7 +948,7 @@ class SellerService:
     async def _handle_invalid_rfq_selection(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """Handle invalid RFQ selection."""
         # Step 1: Fetch active RFQs for seller's category
-        rfq_result = await self._fetch_seller_rfqs("general")
+        rfq_result = await self._fetch_seller_rfqs(user.org_id)
 
         if not rfq_result.get("success"):
             return await self._handle_rfq_fetch_error(user, session)

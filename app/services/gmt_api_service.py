@@ -527,7 +527,7 @@ class GMTAPIService:
 
 
     # Seller-specific API methods
-    async def fetch_active_rfqs(self, category: str, limit: int = 3) -> Dict[str, Any]:
+    async def fetch_active_rfqs(self, org_id: str) -> Dict[str, Any]:
         """
         Fetch active RFQs based on seller's category.
 
@@ -542,7 +542,7 @@ class GMTAPIService:
             if not await self.ensure_authenticated():
                 return {"success": False, "error": "Authentication failed"}
 
-            url = f"{self.base_url}/rest/seller/fetchActiveRFQs"
+            url = f"{self.base_url}/rest/gmt/getRfqByCategory"
 
             headers = {
                 'Authorization': f'Bearer {self.token}',
@@ -551,40 +551,47 @@ class GMTAPIService:
             }
 
             data = {
-                "category": category,
-                "limit": limit
+            "id":"87e6ce1e-3d39-46ba-a720-615143e2e2cc"
             }
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=data, headers=headers, timeout=30) as response:
-                    if response.status != 200:
-                        # result = await response.json()
-                        result={
-  "success": True,
-  "data": {
-    "rfqs": [
-      { "rfq_id": "RFQ240502211103", "location": "Pune", "submission_date": "2025-08-20", "category": "industrial_motors" },
-      { "rfq_id": "RFQ23112234445", "location": "Mumbai", "submission_date": "2025-08-22", "category": "industrial_motors" },
-      { "rfq_id": "RFQ44432223087", "location": "Nashik", "submission_date": "2025-08-25", "category": "industrial_motors" }
-    ],
-    "totalCount": 42
-  }
-}
+                    if response.status == 200:
+                        result = await response.json()
+                        rfqs_raw = result.get("data", {}).get("rfqs", [])
+                        transformed_rfqs = []
+
+                        for rfq in rfqs_raw:
+                            # Handle clientdeliverylocationrfq as a list
+                            delivery_locations = rfq.get("clientdeliverylocationrfq", [])
+                            location_state = None
+
+                            # Get the state from the first delivery location if it exists
+                            if delivery_locations and len(delivery_locations) > 0:
+                                location_state = delivery_locations[0].get("state")
+
+                            transformed_rfqs.append({
+                                "rfq_id": rfq.get("rfqId"),
+                                "location": location_state,
+                                "submission_date": rfq.get("deliveryDate")
+                            })
+
+                        print("transformed", transformed_rfqs)
                         return {
                             "success": True,
-                            "rfqs": result.get("data", {}).get("rfqs", []),
-                            "total_count": result.get("data", {}).get("totalCount", 0),
-                            "data": result
+                            "rfqs": transformed_rfqs,
+                            "total_count": result.get("data", {}).get("count", 0),
+                            # Note: using "count" not "totalCount"
                         }
                     else:
                         error_text = await response.text()
                         return {"success": False, "error": f"HTTP {response.status}: {error_text}"}
 
         except Exception as e:
-            logger.error(f"Error fetching active RFQs: {e}")
+            logger.error(f"Error fetching active RFQs: {e}, data:{data}")
             return {"success": False, "error": str(e)}
 
-    async def check_seller_credits(self, seller_id: str) -> Dict[str, Any]:
+    async def check_seller_credits(self, seller_org_id: str) -> Dict[str, Any]:
         """
         Check seller's RFQ request credit balance.
 
@@ -598,7 +605,7 @@ class GMTAPIService:
             if not await self.ensure_authenticated():
                 return {"success": False, "error": "Authentication failed"}
 
-            url = f"{self.base_url}/rest/seller/checkCredits"
+            url = f"{self.base_url}/rest/gmt/getSellerRfqCredits"
 
             headers = {
                 'Authorization': f'Bearer {self.token}',
@@ -606,32 +613,23 @@ class GMTAPIService:
                 'Accept': 'application/json'
             }
 
-            data = {"sellerId": seller_id}
+            data = {"id": seller_org_id}
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=data, headers=headers, timeout=30) as response:
-                    if response.status != 200:
-                        # result = await response.json()
-                        result={
-  "success": True,
-  "data": {
-    "creditsAvailable": 0,
-    "subscriptionStatus": "unsubscribed",
-    "sellerStatus": "existing"
-  }
-}
+                    if response.status == 200:
+                        result = await response.json()
                         return {
                             "success": True,
-                            "total_count": result.get("data", {}).get("totalCount", 0),
-                            "credits_available": result.get("data", {}).get("creditsAvailable",0),
-                            "data": result
+                            "credits_available": result.get("data", {}).get("creditsAvailable",0)
+
                         }
                     else:
                         error_text = await response.text()
                         return {"success": False, "error": f"HTTP {response.status}: {error_text}"}
 
         except Exception as e:
-            logger.error(f"Error checking seller credits: {e}")
+            logger.error(f"Error checking seller credits: {e}, data:{data}")
             return {"success": False, "error": str(e)}
 
     async def send_rfq_email(self, rfq_ids: List[str], seller_email: str, seller_id: str) -> Dict[str, Any]:
