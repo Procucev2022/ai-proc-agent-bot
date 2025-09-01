@@ -241,7 +241,7 @@ class GMTAPIService:
             "deliveryDate": delivery_date,
             "noPrFlag": True,
             "procurementFlag": True,  # Added procurement flag as requested
-            "source_type": rfq_data.get("source_type", "W"),  # W=WhatsApp, C=Chatbot
+            "sourceType": rfq_data.get("sourceType", "W"),  # W=WhatsApp, C=Chatbot
             "org": {
                 "id": org_id
             },
