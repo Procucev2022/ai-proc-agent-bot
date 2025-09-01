@@ -264,7 +264,8 @@ class ConfirmationHandler:
             }
             
             # Submit to backend via GMT API
-            result = await gmt_service.create_rfq(rfq_data, user_id=user.id, org_id=user.id)
+            logger.info(f"Creating RFQ with user_id={user.id}, org_id={user.org_id}")
+            result = await gmt_service.create_rfq(rfq_data, user_id=user.id, org_id=user.org_id)
             
             # Log the GMT API response for debugging
             logger.info(f"GMT API Response: {result}")
@@ -317,8 +318,8 @@ class ConfirmationHandler:
                 rfq_ids.append(result["rfq_id"])
         
         if rfq_ids:
-            rfq_ids_text = "\\n".join([f"• {rfq_id}" for rfq_id in rfq_ids])
-            response = f"Thank you! All {successful_count} RFQs have been created successfully.\\n\\nYour RFQ IDs are:\\n{rfq_ids_text}\\n\\nYou can use these reference numbers to track your requests."
+            rfq_ids_text = "\n".join([f"• {rfq_id}" for rfq_id in rfq_ids])
+            response = f"Thank you! All {successful_count} RFQs have been created successfully.\n\nYour RFQ IDs are:\n{rfq_ids_text}\n\nYou can use these reference numbers to track your requests."
         else:
             response = f"Thank you! All {successful_count} RFQs have been created successfully."
         

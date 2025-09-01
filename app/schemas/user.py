@@ -131,6 +131,9 @@ class APIUserSchema(BaseModel):
     phone: Optional[str] = None
     companyName: Optional[str] = None
     uniqueId: Optional[str] = None
+    org_uuid: Optional[str] = None
+    orgUuid: Optional[str] = None
+    orgId: Optional[str] = None
     
 
 class UserDetailsSchema(BaseModel):
@@ -143,10 +146,15 @@ class UserDetailsSchema(BaseModel):
     phone_number: Optional[str] = None
     company_name: Optional[str] = None
     unique_id: Optional[str] = None
+    org_id: Optional[str] = None
 
     @classmethod
     def from_api_response(cls, api_data: dict) -> "UserDetailsSchema":
         """Create UserDetailsSchema from API response."""
+        # Debug logging to see raw API data
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Creating UserDetailsSchema from API data: {api_data}")
 
         # Determine role
         match api_data.get("selfClient"):
@@ -176,7 +184,8 @@ class UserDetailsSchema(BaseModel):
             is_registered=bool(user_id),
             phone_number=phone,
             company_name=api_data.get("companyName"),
-            unique_id=api_data.get("uniqueId")
+            unique_id=api_data.get("uniqueId"),
+            org_id=api_data.get("org_uuid") or api_data.get("orgUuid") or api_data.get("orgId") or api_data.get("organizationId")
         )
 
     @classmethod

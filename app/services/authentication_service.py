@@ -96,7 +96,11 @@ class AuthenticationService:
 
             if auth_response.get("success"):
                 raw_response = auth_response.get("users", [])
-                logger.info(f"Raw API response: {raw_response}")
+                logger.info(f"Raw API response from getUsersByPhoneNumber: {raw_response}")
+                # Log detailed structure of each user in the response
+                for i, user in enumerate(raw_response):
+                    logger.info(f"User {i+1} raw data keys: {list(user.keys()) if isinstance(user, dict) else 'Not a dict'}")
+                    logger.info(f"User {i+1} full data: {user}")
                 
                 if raw_response:
                     return {"success": True, "response": raw_response}
@@ -136,7 +140,13 @@ class AuthenticationService:
                     unique_emails.append(user.username)
             
             # Convert to UserDetailsSchema for consistent response
-            user_details_list = [UserDetailsSchema.from_api_response(user.dict()) for user in filtered_users]
+            user_details_list = []
+            for user in filtered_users:
+                user_dict = user.dict()
+                logger.info(f"Converting APIUserSchema to UserDetailsSchema - input data: {user_dict}")
+                user_detail = UserDetailsSchema.from_api_response(user_dict)
+                logger.info(f"Resulting UserDetailsSchema: {user_detail}")
+                user_details_list.append(user_detail)
             
             return {
                 "success": True,
@@ -179,7 +189,8 @@ class AuthenticationService:
                 role=selected_user.get("role", "unknown"),
                 is_registered=True,
                 company_name=selected_user.get("company_name", ""),
-                unique_id=selected_user.get("unique_id", "")
+                unique_id=selected_user.get("unique_id", ""),
+                org_id=selected_user.get("org_id", "")
             )
             
         except Exception as e:

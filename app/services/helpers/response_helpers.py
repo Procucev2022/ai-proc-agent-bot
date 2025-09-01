@@ -358,8 +358,8 @@ class ResponseHelpers:
             return self.openai_service.generate_clarification_response(questions, completeness, enhanced_context)
         except Exception as e:
             logger.error(f"Error generating clarification response: {e}")
-            questions_text = "\\n".join(f"• {q}" for q in questions)
-            return f"I need a few more details to complete your RFQ:\\n\\n{questions_text}"
+            questions_text = "\n".join(f"• {q}" for q in questions)
+            return f"I need a few more details to complete your RFQ:\n\n{questions_text}"
     
     async def generate_rfq_summary_and_confirmation(self, rfq_schema, context: dict, chat_summaries: list = None) -> str:
         """Generate RFQ summary and ask for confirmation using OpenAI with optional chat summary context."""

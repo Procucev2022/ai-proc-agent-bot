@@ -133,7 +133,7 @@ class ProductsArrayHandler:
         await self.session_manager.save_session(session, 'rfq_creation')
         
         # Generate and send clarification response directly with our specific questions
-        clarification_message = "\\n".join(all_questions)
+        clarification_message = "\n".join(all_questions)
         print(f"  Final clarification message: {clarification_message}")
         
         # Build context and send response directly
@@ -203,7 +203,7 @@ class ProductsArrayHandler:
             # Add optional fields
             if combined_questions["has_optional"]:
                 if combined_questions["has_mandatory"]:
-                    all_questions.append("\\n*Optional details (you can skip these):*")
+                    all_questions.append("\n*Optional details (you can skip these):*")
                 else:
                     all_questions.append("*Optional details:*")
                 all_questions.extend(combined_questions["optional"])
@@ -265,8 +265,8 @@ class ProductsArrayHandler:
         if optional_questions and not session.workflow_state.get("optional_fields_asked"):
             # Ask about optional fields first
             optional_intro = "Would you like to provide any additional details like:"
-            optional_text = "\\n".join(f"• {q}" for q in optional_questions)
-            optional_message = f"{optional_intro}\\n\\n{optional_text}\\n\\nOr simply say 'proceed' to continue."
+            optional_text = "\n".join(f"• {q}" for q in optional_questions)
+            optional_message = f"{optional_intro}\n\n{optional_text}\n\nOr simply say 'proceed' to continue."
             
             await self.whatsapp_service.send_message(user.phone_number, optional_message)
             

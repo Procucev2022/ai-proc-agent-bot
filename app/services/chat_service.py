@@ -234,6 +234,11 @@ class ChatService:
 
     def _create_user_from_details(self, user_details) -> User:
         """Create user object from UserDetailsSchema or dict."""
+        # Debug logging to see what's in user_details
+        logger.info(f"Raw user_details for AuthenticatedUser creation: {user_details}")
+        if hasattr(user_details, '__dict__'):
+            logger.info(f"User details attributes: {user_details.__dict__}")
+        
 
         class AuthenticatedUser:
             def __init__(self, details):
@@ -243,12 +248,15 @@ class ChatService:
                     self.name = details.get('name', 'User')
                     self.is_registered = details.get('is_registered', False)
                     self.role = details.get('role', 'buyer')
+                    self.org_id = details.get('org_id')
                 else:
                     self.id = details.id
                     self.phone_number = details.phone_number
                     self.name = details.name
                     self.is_registered = details.is_registered
                     self.role = details.role.value if hasattr(details.role, 'value') else details.role
+                    self.org_id = getattr(details, 'org_id', None)
+        
 
         return AuthenticatedUser(user_details)
 
