@@ -551,7 +551,7 @@ class GMTAPIService:
             }
 
             data = {
-            "id":"87e6ce1e-3d39-46ba-a720-615143e2e2cc"
+            "id":org_id
             }
 
             async with aiohttp.ClientSession() as session:
@@ -576,12 +576,12 @@ class GMTAPIService:
                                 "submission_date": rfq.get("deliveryDate")
                             })
 
-                        print("transformed", transformed_rfqs)
+
                         return {
                             "success": True,
                             "rfqs": transformed_rfqs,
                             "total_count": result.get("data", {}).get("count", 0),
-                            # Note: using "count" not "totalCount"
+                            
                         }
                     else:
                         error_text = await response.text()
