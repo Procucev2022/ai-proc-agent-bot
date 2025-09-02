@@ -62,7 +62,7 @@ class IntentSwitchHandler:
             return False
             
         # Don't handle if confidence is too low
-        if confidence < 0.7:
+        if confidence < 0.9:
             logger.info(f"Intent switch: Confidence too low ({confidence}) - returning False")
             return False
         

@@ -7,6 +7,7 @@ Extracted from ChatService to reduce complexity.
 """
 
 import logging
+import asyncio
 from typing import Dict, Any, List
 from app.models import User, ConversationSession
 from app.services.whatsapp_service import WhatsAppService
@@ -211,6 +212,9 @@ class ConfirmationHandler:
             }, chat_summaries)
             await self.whatsapp_service.send_message(user.phone_number, summary_response)
             
+            # Small delay to ensure message ordering
+            await asyncio.sleep(0.5)
+            
             # Send Yes/No confirmation buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
@@ -245,6 +249,9 @@ class ConfirmationHandler:
                 chat_summaries
             )
             await self.whatsapp_service.send_message(user.phone_number, summary_response)
+            
+            # Small delay to ensure message ordering
+            await asyncio.sleep(0.5)
             
             # Send Yes/No confirmation buttons
             buttons_config = [

@@ -841,10 +841,16 @@ class ChatService:
                                                      "How can I assist you today?")
 
     async def _handle_button_response(self, user: User, session: ConversationSession, button_id: str) -> Dict[
-        str, Any]:  # noqa: ARG002
+        str, Any]:
         """Handle button interaction responses."""
-        # Implementation for button responses
         logger.info(f"Button response from {user.phone_number}: {button_id}")
+        
+        # Check if this is a confirmation button response
+        if button_id in ["confirm_rfq", "no_rfq"]:
+            # Route to confirmation handler
+            return await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
+        
+        # Default button handling
         return {"status": "button_handled", "button_id": button_id}
 
     async def _handle_list_response(self, user: User, session: ConversationSession, list_id: str) -> Dict[
