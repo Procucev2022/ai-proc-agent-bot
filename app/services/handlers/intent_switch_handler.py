@@ -82,12 +82,23 @@ class IntentSwitchHandler:
                     logger.info(f"User providing details during collection stage - continuing current RFQ")
                     return False
                 
+                # Additional check: if conversation stage is 'collecting' and we have incomplete products,
+                # the user is likely responding to system prompts even if AI doesn't detect references
+                if (conversation_stage == 'collecting' and 
+                    bool(session.workflow_state.get("incomplete_products"))):
+                    logger.info(f"User in collecting stage with incomplete products - likely responding to prompts")
+                    return False
+                
                 # Otherwise, it's likely a new product request
                 logger.info(f"New product request detected (stage: {conversation_stage}, references_existing: {references_existing_data})")
                 return True
             else:
-                # Fallback: without context analysis, don't trigger switch during RFQ creation
-                logger.info(f"No context analysis - defaulting to continue current RFQ")
+                # Fallback: if we have incomplete products during collecting, likely continuation
+                if bool(session.workflow_state.get("incomplete_products")):
+                    logger.info(f"No context analysis but have incomplete products - defaulting to continue current RFQ")
+                    return False
+                
+                logger.info(f"No context analysis and no incomplete products - defaulting to continue current RFQ")
                 return False
 
         # Check if switching from seller to buyer workflow
