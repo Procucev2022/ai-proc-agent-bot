@@ -174,7 +174,7 @@ class ChatServiceHelpers:
                 'outcome': session.outcome,
                 'created_at': session.created_at.isoformat() if session.created_at else None
             },
-            'conversation_history': session.conversation_history or {"messages": []},
+            'conversation_history': session.conversation_history or {"openai_messages": [], "metadata": []},
             'workflow_state': session.workflow_state or {},
             'extracted_entities': session.extracted_entities or {},
             'whatsapp_context': session.whatsapp_context or {},

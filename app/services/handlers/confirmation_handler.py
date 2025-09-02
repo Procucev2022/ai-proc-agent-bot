@@ -42,6 +42,21 @@ class ConfirmationHandler:
         self.seller_recommendation_service = seller_recommendation_service
         self.enhanced_seller_matching_service = enhanced_seller_matching_service
     
+    async def handle_confirmation_button(self, user: User, session: ConversationSession, 
+                                       button_id: str) -> Dict[str, Any]:
+        """Handle Confirm/Modify confirmation button responses."""
+        logger.info(f"Confirmation button response from {user.phone_number}: {button_id}")
+        
+        if button_id == "confirm_rfq":
+            # User clicked "Confirm" - proceed with RFQ acceptance
+            return await self._handle_rfq_acceptance(user, session, "Confirm")
+            
+        elif button_id == "no_rfq":
+            # User clicked "Modify" - handle exactly like current "No" response
+            return await self._handle_rfq_modification(user, session, "No")
+        
+        return {"status": "unknown_button", "button_id": button_id}
+    
     async def handle_pending_confirmations(self, user: User, session: ConversationSession, 
                                          message: str, intent_result: Dict[str, Any]) -> Dict[str, Any]:
         """Handle pending confirmation responses."""
@@ -196,6 +211,18 @@ class ConfirmationHandler:
             }, chat_summaries)
             await self.whatsapp_service.send_message(user.phone_number, summary_response)
             
+            # Send Yes/No confirmation buttons
+            buttons_config = [
+                {"id": "confirm_rfq", "title": "Confirm"},
+                {"id": "no_rfq", "title": "Modify"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                "Confirmation Required", 
+                "Please confirm your choice:",
+                buttons_config
+            )
+            
             # Move to confirmation state
             session.workflow_state["pending_rfq"] = product_info
             del session.workflow_state["pending_optional_rfq"]
@@ -218,6 +245,18 @@ class ConfirmationHandler:
                 chat_summaries
             )
             await self.whatsapp_service.send_message(user.phone_number, summary_response)
+            
+            # Send Yes/No confirmation buttons
+            buttons_config = [
+                {"id": "confirm_rfq", "title": "Confirm"},
+                {"id": "no_rfq", "title": "Modify"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                "Confirmation Required",
+                "Please confirm your choice:",
+                buttons_config
+            )
             
             # Move to confirmation state
             session.workflow_state["pending_combined_rfq"] = combined_data

@@ -266,6 +266,79 @@ class WhatsAppService:
         except Exception as e:
             logger.error(f"Error sending button message: {e}")
             return MessageResponse(success=False, error=str(e))
+    
+    async def send_configurable_buttons(self, 
+                                      recipient_id: str, 
+                                      header: str, 
+                                      body: str, 
+                                      buttons_config: List[Dict[str, str]], 
+                                      footer: str = "Please choose an option") -> MessageResponse:
+        """
+        Send fully configurable button message that can be used anywhere with any button configuration.
+        
+        Args:
+            recipient_id: WhatsApp number
+            header: Message header text
+            body: Message body text
+            buttons_config: List of button configurations with 'id', 'title', and optional 'action'
+            footer: Footer text (optional)
+            
+        Example usage:
+            # Yes/No buttons
+            buttons = [
+                {"id": "confirm_rfq", "title": "Yes"},
+                {"id": "reject_rfq", "title": "No"}
+            ]
+            
+            # Multiple choice buttons  
+            buttons = [
+                {"id": "option_a", "title": "Option A"},
+                {"id": "option_b", "title": "Option B"},
+                {"id": "option_c", "title": "Option C"}
+            ]
+            
+            # Custom workflow buttons
+            buttons = [
+                {"id": "edit_details", "title": "Edit Details"},
+                {"id": "proceed", "title": "Proceed"},
+                {"id": "cancel", "title": "Cancel"}
+            ]
+            
+            await whatsapp_service.send_configurable_buttons(phone, "Please Choose", "What would you like to do?", buttons)
+        """
+        try:
+            if not buttons_config:
+                raise ValueError("At least one button configuration is required")
+                
+            if len(buttons_config) > 3:
+                logger.warning(f"WhatsApp supports maximum 3 buttons, trimming to first 3 from {len(buttons_config)} provided")
+                buttons_config = buttons_config[:3]
+            
+            button_list = []
+            for i, button in enumerate(buttons_config):
+                if not button.get("title"):
+                    raise ValueError(f"Button {i} must have a 'title' field")
+                    
+                button_list.append({
+                    "type": "reply",
+                    "reply": {
+                        "id": button.get("id", f"btn_{i}"),
+                        "title": button.get("title")
+                    }
+                })
+            
+            content = {
+                "header": {"type": "text", "text": header},
+                "body": {"text": body},
+                "footer": {"text": footer},
+                "action": {"buttons": button_list}
+            }
+            
+            return await self.send_interactive_message(recipient_id, "button", content)
+            
+        except Exception as e:
+            logger.error(f"Error sending configurable buttons: {e}")
+            return MessageResponse(success=False, error=str(e))
         
     def format_vendor_results(self, vendors: List[Dict[str, Any]]) -> str:
         """

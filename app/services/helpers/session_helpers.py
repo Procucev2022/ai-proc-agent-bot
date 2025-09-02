@@ -68,7 +68,7 @@ class SessionHelpers:
         if not session.conversation_history:
             return False
         
-        messages = session.conversation_history.get('messages', [])
+        messages = session.conversation_history.get('openai_messages', [])
         if len(messages) <= 1:  # Only auth placeholder or single message
             return False
         
@@ -161,7 +161,7 @@ class SessionHelpers:
         # Reset session for fresh start but keep the same ID
         session.workflow_type = None
         session.outcome = None
-        session.conversation_history = {"messages": []}
+        session.conversation_history = {"openai_messages": [], "metadata": []}
         session.extracted_entities = {}
         session.completed_at = None  # Clear completion timestamp
         
