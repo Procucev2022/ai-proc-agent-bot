@@ -319,7 +319,7 @@ class ChatService:
                                                                                          intent_result,
                                                                                          self._should_use_summary_aware_extraction)
                     elif new_intent == "rfq_status_check":
-                        return await self._handle_rfq_status_inquiry(user, new_message)
+                        return await self._handle_rfq_status_inquiry(user, new_message, session)
                     elif new_intent == "general_inquiry":
                         return await self._handle_general_inquiry(user, new_message)
                     else:
@@ -478,7 +478,7 @@ class ChatService:
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result,
                                                                                  self._should_use_summary_aware_extraction)
             elif intent == "rfq_status_check" and confidence > 0.7:
-                return await self._handle_rfq_status_inquiry(user, message)
+                return await self._handle_rfq_status_inquiry(user, message, session)
             elif intent == "sell_something" and confidence > 0.7:
                 return await self._handle_seller_flow(user, session, message)
             elif intent == "general_inquiry":
@@ -1021,10 +1021,12 @@ class ChatService:
         except Exception as e:
             logger.error(f"Error sending BFS availability placeholder: {e}")
 
-    async def _handle_rfq_status_inquiry(self, user: User, message: str) -> Dict[str, Any]:
+    async def _handle_rfq_status_inquiry(self, user: User, message: str, session: ConversationSession = None) -> Dict[str, Any]:
         # Help 1 : how to handle session here, like what data needs to be save in db and how to do it
         """Handle RFQ status inquiry requests."""
-        return await self.rfq_status_service.handle_rfq_status_inquiry(user, message)
+        if not session:
+            session = await self.session_manager.get_conversation_context(user.phone_number)
+        return await self.rfq_status_service.handle_rfq_status_inquiry(user, message, session)
 
     async def _handle_seller_flow(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """
