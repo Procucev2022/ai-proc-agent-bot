@@ -53,14 +53,23 @@ class AuthenticationOrchestrator:
 
             # Step 1: Token validation
             user_details = await self.authentication_service.validate_token(user_phone)
-            
             if user_details and user_details.is_registered:
                 logger.info(f"Token valid - User authenticated: {user_details.id}")
                 return user_details
             
             logger.info(f"Token validation failed for {user_phone}")
+                      
+            # Step 3: Check for existing auth/registration workflows
+            workflow_type_str = str(session.workflow_type).lower() if session.workflow_type else None
+            logger.info(f"Current workflow_type: {workflow_type_str}")
             
-            # Step 2: Token validation failed - classify intent
+            if workflow_type_str in ["workflowtype.authentication", "authentication"]:
+                logger.info("Routing to existing authentication workflow")
+                return await self._handle_authentication_workflow(user_phone, message_content, session, {})
+            elif workflow_type_str in ["workflowtype.registration", "registration"]:
+                return await self._handle_registration_workflow(user_phone, message_content, session, {})
+            
+            # Step 4: Classify intent for new workflows
             from app.services.helpers.chat_service_helpers import ChatServiceHelpers
             conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
             intent_result = self.intent_service.classify_intent(message_content, conversation_context)
@@ -68,11 +77,11 @@ class AuthenticationOrchestrator:
             intent = intent_result.get('intent')
             confidence = intent_result.get('confidence', 0)
             
-            # Step 3: Handle ambiguous intent - require clarification before proceeding
+            # Step 5: Handle ambiguous intent - require clarification before proceeding
             if intent == "ambiguous" or confidence < 50:
                 return await self._handle_auth_clarification_request(user_phone, message_content)
             
-            # Step 4: Handle confirmed intents
+            # Step 6: Handle confirmed intents
             if intent in ["buy_something", "sell_something"]:
                 # Proceed with authentication/registration flow
                 pass
@@ -80,34 +89,8 @@ class AuthenticationOrchestrator:
                 return await self._handle_auth_general_inquiry(user_phone, message_content)
             else:
                 return await self._handle_auth_fallback(user_phone, message_content)
-                        
-            # Step 5: Check for intent switch between auth/registration combinations
-            workflow_type_str = str(session.workflow_type).lower() if session.workflow_type else None
-            logger.info(f"Current workflow_type: {workflow_type_str}")
             
-            # Check if user is switching between auth/registration combinations
-            if workflow_type_str in ["authentication", "registration"]:
-                user_type = "seller" if intent == "sell_something" else "buyer"
-                
-                # Check for pending switch response first
-                if session.workflow_state.get("pending_auth_reg_switch"):
-                    return await self.auth_reg_switch.handle_auth_reg_switch_response(
-                        user_phone, session, message_content
-                    )
-                
-                # Check if should handle new switch
-                if await self.auth_reg_switch.should_handle_auth_reg_switch(session, intent, user_type):
-                    return await self.auth_reg_switch.handle_auth_reg_switch_choice(
-                        user_phone, session, message_content, intent, user_type
-                    )
-            
-            if workflow_type_str == "workflowtype.authentication" or workflow_type_str == "authentication":
-                logger.info("Routing to existing authentication workflow")
-                return await self._handle_authentication_workflow(user_phone, message_content, session, intent_result)
-            elif workflow_type_str == "workflowtype.registration" or workflow_type_str == "registration":
-                return await self._handle_registration_workflow(user_phone, message_content, session, intent_result)
-            
-            # Step 6: Start new authentication flow with validated intent
+            # Step 7: Start new authentication flow with validated intent
             return await self._start_authentication_flow(user_phone, message_content, session, intent_result)
                 
         except Exception as e:
@@ -235,9 +218,12 @@ class AuthenticationOrchestrator:
                     user_phone, message_content, session
                 )
             else:
-                # Unknown stage, restart authentication
-                logger.warning(f"Unknown authentication stage: {auth_stage}, restarting")
-                return await self._start_authentication_flow(user_phone, message_content, session, intent_result)
+                # No valid auth stage - classify intent and start new flow
+                logger.info(f"No valid auth stage, classifying intent for new flow")
+                from app.services.helpers.chat_service_helpers import ChatServiceHelpers
+                conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
+                new_intent_result = self.intent_service.classify_intent(message_content, conversation_context)
+                return await self._start_authentication_flow(user_phone, message_content, session, new_intent_result)
                 
         except Exception as e:
             logger.error(f"Authentication workflow error: {e}")
@@ -256,27 +242,22 @@ class AuthenticationOrchestrator:
             
             registration_stage = session.workflow_state.get("registration_stage")
             current_user_type = session.workflow_state.get("user_type", "buyer")
-            intent = intent_result.get('intent')
             
             logger.info(f"AuthOrchestrator: Handling registration workflow, stage: {registration_stage}")
-            logger.info(f"AuthOrchestrator: Current user_type: {current_user_type}, intent: {intent}")
+            logger.info(f"AuthOrchestrator: Current user_type: {current_user_type}")
             
             # ALWAYS process registration data collection for data_collection stage
             if registration_stage == "data_collection":
                 logger.info(f"AuthOrchestrator: Processing registration data collection")
-                logger.info(f"AuthOrchestrator: Session workflow_state before: {session.workflow_state}")
                 
                 # Ensure workflow_type stays as registration
                 session.workflow_type = "registration"
                 
-                # Follow the correct flow: 1. Pre-context 2. Merging 3. Entity extraction 4. Completeness 5. Response 6. Update
                 result = await self.registration_service.handle_registration_data_collection(
                     user_phone, message_content, session
                 )
                 
                 logger.info(f"AuthOrchestrator: Registration result: {result}")
-                logger.info(f"AuthOrchestrator: Session workflow_state after: {session.workflow_state}")
-                
                 return result
             elif registration_stage == "email_confirmation":
                 return await self.authentication_service.handle_email_confirmation(
@@ -291,23 +272,12 @@ class AuthenticationOrchestrator:
                     user_phone, message_content, session
                 )
             elif registration_stage == "confirmation":
-                # Handle confirmation response
                 return await self.registration_service.handle_registration_confirmation(
                     user_phone, message_content, session
                 )
-            elif registration_stage == "email_otp":
-                # Handle OTP validation for buyer registration
-                return await self.registration_service.handle_registration_otp_validation(
-                    user_phone, message_content, session
-                )
-            elif registration_stage == "domain_matching":
-                # Handle domain matching for buyer registration
-                return await self.registration_service.handle_buyer_domain_matching(
-                    user_phone, session
-                )
             else:
-                # Unknown stage, restart registration with current user type
-                logger.info(f"AuthOrchestrator: Unknown stage {registration_stage}, restarting with user_type: {current_user_type}")
+                # No valid registration stage - start new registration
+                logger.info(f"AuthOrchestrator: No valid stage, starting new registration with user_type: {current_user_type}")
                 return await self._redirect_to_registration_flow(user_phone, session, current_user_type)
                 
         except Exception as e:

@@ -475,7 +475,8 @@ Return only the selected email address or "none" if no clear selection.
                 else:
                     logger.error(f"Failed to store user session for buyer {user_phone}")
                 
-                message = "Authentication successful! How can I help you today?"
+                username = selected_user.get("name", "User")
+                message = f"Hi {username}! How can I help you today?"
                 await self.whatsapp_service.send_message(user_phone, message)
                 
                 return {
@@ -812,9 +813,21 @@ Return only the selected email address or "none" if no clear selection.
             session.workflow_state["confirmation_stage"] = "confirmation"
             
             # Generate confirmation message
-            message = f"You selected: {selected_email}\n\nIs this correct? Please reply 'yes' to confirm or 'no' to select again."
+            message = f"We have found the below email is associated with your phone number, would you please help us verify this?\n\n{selected_email}"
             
             await self.whatsapp_service.send_message(user_phone, message)
+            
+            # Send Yes/No confirmation buttons
+            buttons_config = [
+                {"id": "confirm_email", "title": "Yes"},
+                {"id": "reject_email", "title": "No"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                user_phone,
+                "Email Confirmation", 
+                "Please confirm if this is your email address:",
+                buttons_config
+            )
             
             return {
                 "status": "email_confirmation_requested",
