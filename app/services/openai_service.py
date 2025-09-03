@@ -78,6 +78,45 @@ class OpenAIService:
         except Exception as e:
             logger.error(f"Error loading prompt {prompt_name}: {str(e)}")
             return f"Error loading prompt: {str(e)}"
+    
+    def _build_messages_with_history(self, context: dict = None, current_message: str = "") -> list:
+        """
+        Build message array with conversation history for OpenAI API calls.
+        
+        This method extracts OpenAI-ready messages from context and optionally
+        appends the current message, enabling conversation continuity.
+        
+        Args:
+            context: Conversation context with openai_messages array
+            current_message: Current user message to append
+            
+        Returns:
+            List of message dicts ready for OpenAI API
+        """
+        input_messages = []
+        
+        # Add conversation history if available
+        if context and context.get('conversation_history', {}).get('openai_messages'):
+            openai_messages = context['conversation_history']['openai_messages']
+            # Ensure it's a list before processing
+            if isinstance(openai_messages, list):
+                history_messages = openai_messages[-10:]  # Last 10 messages for context
+                input_messages.extend(history_messages)
+                logger.info(f"Added {len(history_messages)} history messages to OpenAI context")
+        else:
+            logger.info("No conversation history available - using only current message")
+        
+        # Add current message if provided
+        if current_message:
+            input_messages.append({"role": "user", "content": current_message})
+        
+        # Log the complete input being sent to OpenAI
+        logger.info(f"OpenAI Input ({len(input_messages)} messages):")
+        for i, msg in enumerate(input_messages):
+            content_preview = msg.get('content', '')[:100] + ('...' if len(msg.get('content', '')) > 100 else '')
+            logger.info(f"  {i+1}. {msg.get('role')}: {content_preview}")
+        
+        return input_messages
         
     @log_service_method("openai_service")
     def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
@@ -107,9 +146,9 @@ class OpenAIService:
             context_info = ""
             if context:
                 # Add conversation history
-                if context.get('conversation_history', {}).get('messages'):
-                    recent_messages = context['conversation_history']['messages'][-5:]  # Last 5 messages for context
-                    history_text = "\n".join([f"{msg.get('sender', 'unknown')}: {msg.get('content', '')}" for msg in recent_messages])
+                if context.get('conversation_history', {}).get('openai_messages'):
+                    recent_messages = context['conversation_history']['openai_messages'][-5:]  # Last 5 messages for context
+                    history_text = "\n".join([f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" for msg in recent_messages])
                     context_info += f"\n\nRECENT CONVERSATION HISTORY:\n{history_text}"
                 
                 # Add current session state
@@ -792,7 +831,7 @@ Analyze their response to determine their true choice.
             
             response = self.client.responses.create(
                 model=self.default_model,
-                input=[{"role": "user", "content": prompt}],
+                input=self._build_messages_with_history(context, prompt),
                 instructions=self._load_prompt("response_generation", "_get_response_system_prompt")
             )
             
@@ -822,7 +861,7 @@ Analyze their response to determine their true choice.
 
             response = self.client.responses.create(
                 model=self.default_model,
-                input=[{"role": "user", "content": prompt}],
+                input=self._build_messages_with_history(context, prompt),
                 instructions=self._load_prompt("response_generation", "_get_rfq_status_response_prompt")
             )
 
@@ -899,7 +938,7 @@ Analyze their response to determine their true choice.
 
             response = self.client.responses.create(
                 model=self.default_model,
-                input=[{"role": "user", "content": prompt}],
+                input=self._build_messages_with_history(context, prompt),
                 instructions=self._load_prompt("response_generation", "_get_seller_rfq_overview_prompt")
             )
 
@@ -1068,7 +1107,7 @@ Analyze their response to determine their true choice.
             
             response = self.client.responses.create(
                 model=self.default_model,
-                input=[{"role": "user", "content": prompt}],
+                input=self._build_messages_with_history(context, prompt),
                 instructions=self._load_prompt("response_generation", "_get_contextual_response_system_prompt", conversation_stage=conversation_stage),
                 tools=[response_tool],
                 tool_choice={"type": "function", "name": "generate_contextual_response"}
@@ -1144,7 +1183,7 @@ Analyze their response to determine their true choice.
             
             response = self.client.responses.create(
                 model=self.default_model,
-                input=[{"role": "user", "content": prompt}],
+                input=self._build_messages_with_history(context, prompt),
                 instructions=self._load_prompt("response_generation", "_get_completion_response_system_prompt"),
                 tools=[completion_tool],
                 tool_choice={"type": "function", "name": "generate_completion_response"}
@@ -1219,7 +1258,7 @@ Analyze their response to determine their true choice.
             
             response = self.client.responses.create(
                 model=self.default_model,
-                input=[{"role": "user", "content": prompt}],
+                input=self._build_messages_with_history(context, prompt),
                 instructions=self._load_prompt("response_generation", "_get_clarification_response_system_prompt"),
                 tools=[clarification_tool],
                 tool_choice={"type": "function", "name": "generate_clarification_response"}

@@ -45,18 +45,35 @@ class SummarizationHelpers:
         """
         try:
             if not session.conversation_history:
-                session.conversation_history = {"messages": []}
+                session.conversation_history = {"openai_messages": [], "metadata": []}
+                logger.info("Initialized new conversation history")
             
-            session.conversation_history["messages"].append({
-                "timestamp": utc_now().isoformat(),
-                "sender": sender,
-                "content": message,
-                "type": message_type
+            # Convert sender to OpenAI role format
+            role = "assistant" if sender == "assistant" else "user"
+            
+            # Add to OpenAI-native message format
+            session.conversation_history["openai_messages"].append({
+                "role": role,
+                "content": message
             })
             
+            # Keep metadata separately for debugging/audit
+            session.conversation_history["metadata"].append({
+                "timestamp": utc_now().isoformat(),
+                "sender": sender,
+                "type": message_type,
+                "role": role
+            })
+            
+            message_count = len(session.conversation_history["openai_messages"])
+            content_preview = message[:100] + ('...' if len(message) > 100 else '')
+            logger.info(f"Stored message {message_count}: {role} -> {content_preview}")
+            
             # Keep only last 50 messages to avoid database bloat
-            if len(session.conversation_history["messages"]) > 50:
-                session.conversation_history["messages"] = session.conversation_history["messages"][-50:]
+            if message_count > 50:
+                session.conversation_history["openai_messages"] = session.conversation_history["openai_messages"][-50:]
+                session.conversation_history["metadata"] = session.conversation_history["metadata"][-50:]
+                logger.info(f"Trimmed conversation history to last 50 messages")
                 
         except Exception as e:
             logger.error(f"Error adding to conversation history: {e}")

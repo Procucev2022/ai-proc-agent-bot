@@ -382,7 +382,7 @@ class ChatService:
             # Check for intent switch during pending optional/confirmation states BEFORE handling them
             if (
                     has_pending_optional or has_pending_confirmations) and await self.intent_switch_handler.should_handle_intent_switch(
-                    session, intent, confidence):
+                    session, intent, confidence, intent_result.get('context_analysis')):
                 result = await self.intent_switch_handler.handle_intent_switch_choice(user, session, message, intent,
                                                                                       intent_result)
                 await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
@@ -422,7 +422,7 @@ class ChatService:
 
             if has_existing_data or has_incomplete_products:
                 # Check for intent switch during active workflow BEFORE continuing
-                if await self.intent_switch_handler.should_handle_intent_switch(session, intent, confidence):
+                if await self.intent_switch_handler.should_handle_intent_switch(session, intent, confidence, intent_result.get('context_analysis')):
                     result = await self.intent_switch_handler.handle_intent_switch_choice(user, session, message,
                                                                                           intent, intent_result)
                     await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
@@ -843,10 +843,16 @@ class ChatService:
                                                      "How can I assist you today?")
 
     async def _handle_button_response(self, user: User, session: ConversationSession, button_id: str) -> Dict[
-        str, Any]:  # noqa: ARG002
+        str, Any]:
         """Handle button interaction responses."""
-        # Implementation for button responses
         logger.info(f"Button response from {user.phone_number}: {button_id}")
+        
+        # Check if this is a confirmation button response
+        if button_id in ["confirm_rfq", "no_rfq"]:
+            # Route to confirmation handler
+            return await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
+        
+        # Default button handling
         return {"status": "button_handled", "button_id": button_id}
 
     async def _handle_list_response(self, user: User, session: ConversationSession, list_id: str) -> Dict[
@@ -1017,10 +1023,10 @@ class ChatService:
         except Exception as e:
             logger.error(f"Error sending BFS availability placeholder: {e}")
 
-    async def _handle_rfq_status_inquiry(self, user: User, message: str, session:ConversationSession) -> Dict[str, Any]:
+    async def _handle_rfq_status_inquiry(self, user: User, message: str, session: ConversationSession = None) -> Dict[str, Any]:
         # Help 1 : how to handle session here, like what data needs to be save in db and how to do it
         """Handle RFQ status inquiry requests."""
-        return await self.rfq_status_service.handle_rfq_status_inquiry(user, message, session)
+        return await self.rfq_status_service.handle_rfq_status_inquiry(user, message)
 
     async def _handle_seller_flow(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """

@@ -24,7 +24,7 @@ class IntentSwitchHandler:
         self.response_helpers = response_helpers
         self.openai_service = OpenAIService()
     
-    async def should_handle_intent_switch(self, session: ConversationSession, intent: str, confidence: float) -> bool:
+    async def should_handle_intent_switch(self, session: ConversationSession, intent: str, confidence: float, context_analysis: dict = None) -> bool:
         """
         Determine if we should handle an intent switch during active workflow.
         
@@ -60,7 +60,7 @@ class IntentSwitchHandler:
             return False
             
         # Don't handle if confidence is too low
-        if confidence < 0.7:
+        if confidence < 0.9:
             logger.info(f"Intent switch: Confidence too low ({confidence}) - returning False")
             return False
         
@@ -69,12 +69,35 @@ class IntentSwitchHandler:
         logger.info(f"Intent switch: current_workflow={current_workflow}, intent={intent}")
         
         # Special case: if user is in rfq_creation and wants to "buy_something",
-        # this could be a new product request that should trigger intent switch
+        # use context analysis to determine if this is continuation vs new request
         if (current_workflow and current_workflow.value == "rfq_creation") and intent == "buy_something":
-            # This is a potential new product request during existing RFQ collection
-            # Let the system present the choice to continue vs start new
-            logger.info(f"Potential new product request detected during RFQ creation - returning True")
-            return True
+            if context_analysis:
+                conversation_stage = context_analysis.get('conversation_stage', 'unknown')
+                references_existing_data = context_analysis.get('references_existing_data', False)
+                
+                # If user is in collecting stage and referencing existing data, they're responding to our questions
+                if conversation_stage == 'collecting' and references_existing_data:
+                    logger.info(f"User providing details during collection stage - continuing current RFQ")
+                    return False
+                
+                # Additional check: if conversation stage is 'collecting' and we have incomplete products,
+                # the user is likely responding to system prompts even if AI doesn't detect references
+                if (conversation_stage == 'collecting' and 
+                    bool(session.workflow_state.get("incomplete_products"))):
+                    logger.info(f"User in collecting stage with incomplete products - likely responding to prompts")
+                    return False
+                
+                # Otherwise, it's likely a new product request
+                logger.info(f"New product request detected (stage: {conversation_stage}, references_existing: {references_existing_data})")
+                return True
+            else:
+                # Fallback: if we have incomplete products during collecting, likely continuation
+                if bool(session.workflow_state.get("incomplete_products")):
+                    logger.info(f"No context analysis but have incomplete products - defaulting to continue current RFQ")
+                    return False
+                
+                logger.info(f"No context analysis and no incomplete products - defaulting to continue current RFQ")
+                return False
 
         # Check if switching from seller to buyer workflow
         if (current_workflow and current_workflow.value == "seller_rfq_view") and intent == "buy_something":
