@@ -48,7 +48,6 @@ class AuthenticationService:
         try:
             logger.info("user token validation called")
             user_data = await self.auth_redis_service.retrieve(user_phone)
-            logger.info(f"User Token Validation for user: {user_data}")
             if user_data:
                 return user_data
             return False
@@ -95,13 +94,7 @@ class AuthenticationService:
             auth_response = await self.auth_api_service.authenticate_user(user_phone)
 
             if auth_response.get("success"):
-                raw_response = auth_response.get("users", [])
-                logger.info(f"Raw API response from getUsersByPhoneNumber: {raw_response}")
-                # Log detailed structure of each user in the response
-                for i, user in enumerate(raw_response):
-                    logger.info(f"User {i+1} raw data keys: {list(user.keys()) if isinstance(user, dict) else 'Not a dict'}")
-                    logger.info(f"User {i+1} full data: {user}")
-                
+                raw_response = auth_response.get("users", [])                
                 if raw_response:
                     return {"success": True, "response": raw_response}
                 return {"success": False, "message": "User details not found"}
@@ -127,9 +120,7 @@ class AuthenticationService:
                 filtered_users = [user for user in users if user.selfClient is False]
             else:
                 filtered_users = users
-            
-            logger.info(f"Filtered {len(filtered_users)} users from {len(users)} for intent {intent}")
-            
+                        
             if not filtered_users:
                 return {"success": False, "message": "No matching users found"}
             
@@ -143,9 +134,7 @@ class AuthenticationService:
             user_details_list = []
             for user in filtered_users:
                 user_dict = user.dict()
-                logger.info(f"Converting APIUserSchema to UserDetailsSchema - input data: {user_dict}")
                 user_detail = UserDetailsSchema.from_api_response(user_dict)
-                logger.info(f"Resulting UserDetailsSchema: {user_detail}")
                 user_details_list.append(user_detail)
             
             return {
@@ -273,7 +262,7 @@ class AuthenticationService:
                 if not selected_email:
                     # Send single combined message instead of separate error + list
                     username = filtered_users[0].get("name", "there") if filtered_users else "there"
-                    combined_message = f"Hi {username}! Please select a valid email from below option :\n\n"
+                    combined_message = f"Since we have found multiple emails associated with this phone number I request you choose one to start with chat.\n\n"
                     for i, email in enumerate(email_options, 1):
                         combined_message += f"{i}. {email}\n"
                     combined_message += "\nReply with the number of your email."
@@ -354,21 +343,21 @@ class AuthenticationService:
                 email_text = f"Please select your email address:\n\n{email_list}\n\nReply with the number of your email address."
             
             prompt = f"""
-Generate a friendly email confirmation message for a user named "{username}".
+                Generate a friendly email confirmation message for a user named "{username}".
 
-Context: User is trying to authenticate and needs to confirm their email address.
+                Context: User is trying to authenticate and needs to confirm their email address.
 
-Email options:
-{email_text}
+                Email options:
+                {email_text}
 
-Generate a warm, professional message that:
-1. Greets the user by name
-2. Asks them to confirm their email
-3. Includes the email options
-4. Is concise and clear
+                Generate a warm, professional message that:
+                1. Greets the user by name
+                2. Asks them to confirm their email
+                3. Includes the email options
+                4. Is concise and clear
 
-Example format: "Hi {username}! Could you please confirm your email address to proceed to the next step?"
-"""
+                Example format: "Hi {username}! Could you please confirm your email address to proceed to the next step?"
+                """
             
             response = self.openai_service.generate_response(
                 context={"prompt": prompt},
