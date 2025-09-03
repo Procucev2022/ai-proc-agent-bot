@@ -1,0 +1,21 @@
+{
+  "type": "function",
+  "name": "extract_entities",
+  "description": "Extract plan selection from user message for subscription plan selection workflow.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "selected_plan": {
+        "type": ["string", "null"],
+        "description": "The selected plan name, ID, or identifier mentioned in the message"
+      },
+      "confidence": {
+        "type": "number",
+        "description": "Confidence score for the extraction (0-100)"
+      }
+    },
+    "required": ["selected_plan", "confidence"],
+    "additionalProperties": false
+  },
+  "strict": true
+}
