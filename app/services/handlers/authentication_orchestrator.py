@@ -50,7 +50,6 @@ class AuthenticationOrchestrator:
         """Main authentication orchestrator function following the specified flow."""
         try:
             logger.info(f"Starting authentication flow for {user_phone}")
-            logger.info(f"Session workflow_state before authentication: {session.workflow_type}")
 
             # Step 1: Token validation
             user_details = await self.authentication_service.validate_token(user_phone)
@@ -61,15 +60,28 @@ class AuthenticationOrchestrator:
             
             logger.info(f"Token validation failed for {user_phone}")
             
-            # Step 2: Token validation failed - classify intent and start authentication flow
+            # Step 2: Token validation failed - classify intent
             from app.services.helpers.chat_service_helpers import ChatServiceHelpers
             conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
             intent_result = self.intent_service.classify_intent(message_content, conversation_context)
-            logger.info(f"Intent classification result: {intent_result}")
-            
+           
             intent = intent_result.get('intent')
+            confidence = intent_result.get('confidence', 0)
             
-            # Step 3: Check for intent switch between auth/registration combinations
+            # Step 3: Handle ambiguous intent - require clarification before proceeding
+            if intent == "ambiguous" or confidence < 50:
+                return await self._handle_auth_clarification_request(user_phone, message_content)
+            
+            # Step 4: Handle confirmed intents
+            if intent in ["buy_something", "sell_something"]:
+                # Proceed with authentication/registration flow
+                pass
+            elif intent == "general_inquiry":
+                return await self._handle_auth_general_inquiry(user_phone, message_content)
+            else:
+                return await self._handle_auth_fallback(user_phone, message_content)
+                        
+            # Step 5: Check for intent switch between auth/registration combinations
             workflow_type_str = str(session.workflow_type).lower() if session.workflow_type else None
             logger.info(f"Current workflow_type: {workflow_type_str}")
             
@@ -95,8 +107,7 @@ class AuthenticationOrchestrator:
             elif workflow_type_str == "workflowtype.registration" or workflow_type_str == "registration":
                 return await self._handle_registration_workflow(user_phone, message_content, session, intent_result)
             
-            # Step 4: Start new authentication flow
-            logger.info(f"Starting authentication flow for intent: {intent}")
+            # Step 6: Start new authentication flow with validated intent
             return await self._start_authentication_flow(user_phone, message_content, session, intent_result)
                 
         except Exception as e:
@@ -107,10 +118,19 @@ class AuthenticationOrchestrator:
     
     async def _start_authentication_flow(self, user_phone: str, message_content: str,
                                         session: ConversationSession, intent_result: Dict) -> Dict[str, Any]:
-        """Start new authentication flow based on intent."""
+        """Start new authentication flow based on validated intent."""
         try:
             intent = intent_result.get('intent')
-            logger.info(f"Starting authentication flow for intent: {intent}")
+            confidence = intent_result.get('confidence', 0)
+            logger.info(f"Starting authentication flow for intent: {intent} (confidence: {confidence}%)")
+            
+            # Ensure we have a valid intent before proceeding
+            valid_intents = ["buy_something", "sell_something", "general_inquiry", "modification_request", 
+                           "confirmation_response", "rfq_status_check", "reference_request"]
+            
+            if intent not in valid_intents or confidence < 50:
+                logger.warning(f"Invalid or low confidence intent in auth flow: {intent} ({confidence}%)")
+                return await self._handle_auth_clarification_request(user_phone, message_content)
             
             # Handle sell_something intent - check authentication first
             if intent == "sell_something":
@@ -435,3 +455,43 @@ class AuthenticationOrchestrator:
             logger.error(f"Switch response check error: {e}")
             return None
     
+    async def _handle_auth_clarification_request(self, user_phone: str, message_content: str) -> Dict[str, Any]:
+        """Handle ambiguous messages requiring clarification before proceeding to auth flow."""
+        try:
+            clarification_questions = [
+                "Could you be more specific about what you're looking for?",
+                "Are you continuing as buyer or seller?"
+            ]
+            
+            # Send clarification message
+            response = "\n".join(clarification_questions)
+            await self.whatsapp_service.send_message(user_phone, response)
+            
+            return {"status": "clarification_sent"}
+
+        except Exception as e:
+            logger.error(f"Clarification request error: {e}")
+            await self.whatsapp_service.send_message(
+                user_phone, "Could you be more specific about your procurement needs?"
+            )
+            return {"status": "error", "error": str(e)}
+    
+    async def _handle_auth_general_inquiry(self, user_phone: str, message_content: str) -> Dict[str, Any]:
+        """Handle general inquiries."""
+        try:
+            response = "How can I help you with your procurement needs today?"
+            await self.whatsapp_service.send_message(user_phone, response)
+            return {"status": "general_inquiry_handled"}
+        except Exception as e:
+            logger.error(f"General inquiry error: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def _handle_auth_fallback(self, user_phone: str, message_content: str) -> Dict[str, Any]:
+        """Handle fallback cases."""
+        try:
+            response = "I'm here to help with your procurement needs. How can I assist you today?"
+            await self.whatsapp_service.send_message(user_phone, response)
+            return {"status": "fallback_handled"}
+        except Exception as e:
+            logger.error(f"Fallback error: {e}")
+            return {"status": "error", "error": str(e)}

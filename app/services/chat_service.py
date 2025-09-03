@@ -153,32 +153,45 @@ class ChatService:
             # Check if authentication is still in progress
             if isinstance(auth_result, dict):
                 auth_status = auth_result.get("status")
-                if auth_status in ["redirected_to_registration", "redirected_to_email_confirmation", "otp_sent",
-                                   "email_selection_requested", "registration_initiated", "data_collection_in_progress",
-                                   "awaiting_confirmation", "registration_restarted", "otp_validated",
-                                   "domain_approved", "domain_approval_required"]:
-                    # Preserve workflow_type from session if it's registration, otherwise use auth result
+                logger.info(f"Authentication in progress - status: {auth_status}")
+                
+                # Authentication/registration flow statuses - stay in auth loop
+                auth_in_progress_statuses = [
+                    "clarification_sent", "general_inquiry_handled", "fallback_handled",
+                    "redirected_to_registration", "redirected_to_email_confirmation", "otp_sent",
+                    "email_selection_requested", "registration_initiated", "data_collection_in_progress",
+                    "awaiting_confirmation", "registration_restarted", "otp_validated",
+                    "domain_approved", "domain_approval_required", "authentication_completed"
+                ]
+                
+                if auth_status in auth_in_progress_statuses:
+                    # Save session and return - do not proceed to main flow
                     workflow_type = "registration" if session.workflow_type == "registration" else auth_result.get(
                         "workflow_type", "authentication")
                     await self.session_manager.save_session(session, workflow_type)
+                    logger.info(f"Authentication flow handled - returning without main flow processing")
                     return auth_result
                 elif auth_status == "registration_completed":
                     # Registration completed, create mock user and continue to main flow
                     user = self._create_mock_authenticated_user(user_phone, session)
+                    logger.info(f"Registration completed - proceeding to main flow")
                     return await self._process_text_message(user, session, message_content)
 
-            # Check if auth returned UserDetailsSchema (valid or invalid user)
+            # Check if auth returned UserDetailsSchema (authenticated user)
             if isinstance(auth_result, UserDetailsSchema):
-                # If invalid user but not registered, handle as general inquiry
-                if not auth_result.is_registered and auth_result.role.value == "unknown":
+                if auth_result.is_registered:
+                    # User is authenticated, create user object and proceed to main flow
+                    user = self._create_user_from_details(auth_result)
+                    logger.info(f"User authenticated - proceeding to main flow: {user.phone_number}")
+                else:
+                    # Invalid user but not registered, handle as general inquiry
                     user = self._create_user_from_details(auth_result)
                     return await self._process_text_message(user, session, message_content)
+            else:
+                logger.error(f"Unexpected auth_result type: {type(auth_result)}")
+                return {"status": "error", "error": "Authentication failed"}
 
-            # User is authenticated, create user object
-            user = self._create_user_from_details(auth_result)
-            logger.info(f"User authenticated: {user}")
-            logger.info(f"User Details: {auth_result}")
-
+            # Only proceed to main flow if user is properly authenticated
             if message_type == "text":
                 result = await self._process_text_message(user, session, message_content)
             elif message_type == "interactive":
