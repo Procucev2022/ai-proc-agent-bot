@@ -319,7 +319,9 @@ class ChatService:
                                                                                          intent_result,
                                                                                          self._should_use_summary_aware_extraction)
                     elif new_intent == "rfq_status_check":
-                        return await self._handle_rfq_status_inquiry(user, new_message, session)
+                        return await self._handle_rfq_status_inquiry(user, new_message)
+                    elif new_intent == "sell_something":
+                        return await self._handle_seller_flow(user, session, message)
                     elif new_intent == "general_inquiry":
                         return await self._handle_general_inquiry(user, new_message)
                     else:
@@ -1024,9 +1026,7 @@ class ChatService:
     async def _handle_rfq_status_inquiry(self, user: User, message: str, session: ConversationSession = None) -> Dict[str, Any]:
         # Help 1 : how to handle session here, like what data needs to be save in db and how to do it
         """Handle RFQ status inquiry requests."""
-        if not session:
-            session = await self.session_manager.get_conversation_context(user.phone_number)
-        return await self.rfq_status_service.handle_rfq_status_inquiry(user, message, session)
+        return await self.rfq_status_service.handle_rfq_status_inquiry(user, message)
 
     async def _handle_seller_flow(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """

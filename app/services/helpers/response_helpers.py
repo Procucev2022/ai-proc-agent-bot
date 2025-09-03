@@ -33,7 +33,7 @@ class ResponseHelpers:
                 "_get_seller_common_response_prompt",
                 workflow_state=workflow_state,
                 message_type=message_type,
-                credits_available=context.get("credits_available", 0),
+                credits_available=context.get("credits_available"),
                 context_data=context
             )
 
@@ -116,6 +116,15 @@ class ResponseHelpers:
                 return await self._generate_contextual_plan_request_response(context)
             elif workflow_state == "ambiguous_seller_response":
                 return await self._generate_ambiguous_seller_response(context)
+            # ADD THESE NEW WORKFLOW STATES:
+            elif workflow_state == "end_of_flow_reminder":
+                return await self._generate_end_of_flow_reminder_response(context)
+            elif workflow_state == "generic_closing_message":
+                return await self._generate_generic_closing_response(context)
+            elif workflow_state == "standard_closing_message":
+                return await self._generate_standard_closing_response(context)
+
+
             elif workflow_state in ["error", "credit_check_error", "rfq_fetch_error", "plan_fetch_error",
                                     "payment_link_error"]:
                 return await self._generate_error_response(context)
@@ -125,6 +134,46 @@ class ResponseHelpers:
         except Exception as e:
             logger.error(f"Error generating seller contextual response: {e}")
             return self._get_fallback_message(context.get("workflow_state"))
+
+    async def _generate_end_of_flow_reminder_response(self, context: Dict[str, Any]) -> str:
+        """Generate end-of-flow reminder response showing open RFQs."""
+        return await self._generate_common_seller_response(
+            "end_of_flow_reminder", "general_assistance", context,
+            self._get_end_of_flow_reminder_fallback(context)
+        )
+
+    async def _generate_generic_closing_response(self, context: Dict[str, Any]) -> str:
+        """Generate generic closing message when reminder API fails."""
+        return await self._generate_common_seller_response(
+            "generic_closing_message", "general_assistance", context,
+            "Thanks for chatting with us! For any assistance, contact support@procurev.com"
+        )
+
+    async def _generate_standard_closing_response(self, context: Dict[str, Any]) -> str:
+        """Generate standard closing message when no open RFQs found."""
+        return await self._generate_common_seller_response(
+            "standard_closing_message", "general_assistance", context,
+            "Thanks for chatting with us! For help with any queries, contact support@procurev.com"
+        )
+
+    def _get_end_of_flow_reminder_fallback(self, context: Dict[str, Any]) -> str:
+        """Fallback for end-of-flow reminder response."""
+        open_rfqs = context.get("open_rfqs", [])
+        total_open = context.get("total_open_rfqs", 0)
+
+        if not open_rfqs:
+            return "Thanks for chatting with us! For help with any queries, contact support@procurev.com"
+
+        message = f"Thanks for chatting with us! You still have {total_open} live RFQ(s) for which bids haven't been submitted:\n\n"
+
+        for i, rfq in enumerate(open_rfqs, 1):
+            rfq_id = rfq.get("rfq_id", "N/A")
+            location = rfq.get("location", "N/A")
+            date = rfq.get("submission_date", "N/A")
+            message += f"{i}. RFQ {rfq_id}\n   📍 {location}\n   📅 {date}\n\n"
+
+        message += "We encourage you to submit bids. For help, contact support@procurev.com"
+        return message
 
     async def _generate_rfq_display_response(self, context: Dict[str, Any]) -> str:
         """Generate response for displaying RFQs to seller with credits."""

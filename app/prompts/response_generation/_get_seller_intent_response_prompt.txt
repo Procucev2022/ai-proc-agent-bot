@@ -2,7 +2,7 @@ Analyze the seller's message and classify their intent based on the conversation
 
 Classify the intent as one of:
 1. "plan_upgrade_request" - Seller wants to see/buy subscription plans (includes "yes" responses to plan offers)
-2. "rfq_access_request" - Seller wants to access specific RFQ details or email
+2. "rfq_access_request" - Seller requests access to specific RFQ details  when they receive available RFQ.
 3. "general_question" - General questions about service, process, support
 4. "affirmative_response" - Yes/OK/Sure responses that need context interpretation
 5. "negative_response" - No/decline responses

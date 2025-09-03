@@ -41,9 +41,7 @@ class IntentSwitchHandler:
             bool(session.workflow_state.get("pending_combined_rfq")) or
             bool(session.workflow_state.get("pending_rfq")) or
             bool(session.workflow_state.get("pending_optional_rfq")) or
-            bool(session.workflow_state.get("pending_optional_combined_rfq")) or
-            # ADD THIS LINE - Check for seller workflow
-            bool(session.workflow_state.get("seller_workflow_state"))
+            bool(session.workflow_state.get("pending_optional_combined_rfq"))
         )
         print("has active workflow", has_active_workflow)
         
@@ -104,7 +102,6 @@ class IntentSwitchHandler:
         # Check if switching from seller to buyer workflow
         if (current_workflow and current_workflow.value == "seller_rfq_view") and intent == "buy_something":
             logger.info(f"Switching from selling to buying")
-
             return True
 
         # Define intent to workflow mapping for other cases
@@ -157,7 +154,7 @@ class IntentSwitchHandler:
             ],
             "intent_switch_choice"
         )
-        
+
         await self.whatsapp_service.send_message(user.phone_number, choice_response)
         
         return {"status": "intent_switch_choice_presented"}
@@ -287,7 +284,7 @@ class IntentSwitchHandler:
             "buy_something": "create a new product request",
             "rfq_status_check": "check order status",
             "general_inquiry": "ask a question", 
-            "sell_something": "register as vendor"
+            "sell_something": "sell something"
         }
         
         return descriptions.get(intent, "handle your request")

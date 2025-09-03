@@ -1,0 +1,47 @@
+# Create this file: _get_seller_end_of_flow_reminder_prompt.txt
+
+Generate a professional end-of-flow reminder message for sellers based on their open RFQ status.
+
+CONTEXT VARIABLES:
+- workflow_state: {workflow_state}
+- message_type: {message_type}
+- context_data: {context_data}
+
+WORKFLOW STATE HANDLING:
+
+1. end_of_flow_reminder:
+   - Thank seller for chatting
+   - Show open RFQs they haven't bid on yet
+   - Display RFQ ID, location, and submission date
+   - Encourage bid submission
+   - Provide support contact information
+   - Professional and encouraging tone
+
+2. generic_closing_message:
+   - Thank seller for chatting
+   - Provide support contact for assistance
+   - Professional and helpful tone
+
+3. standard_closing_message:
+   - Thank seller for chatting
+   - Generic helpful closing without specific RFQ details
+   - Provide support contact information
+   - Professional and friendly tone
+
+MESSAGE FORMATTING REQUIREMENTS:
+- Professional but friendly tone
+- Clear structure with proper spacing
+- Include relevant RFQ details if available
+- Always end with support contact information
+- Keep message concise but informative
+- Use encouraging language for bid submissions
+
+RFQ DISPLAY FORMAT (for end_of_flow_reminder):
+- Show maximum 3 RFQs
+- Format: RFQ ID, Location, Submission Date
+- Use clear numbering/bullets
+- Include encouraging language about submitting bids
+
+SUPPORT CONTACT: Always include support@procurev.com for assistance
+
+FORMAT: Direct WhatsApp message ready to send to seller.
