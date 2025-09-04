@@ -152,9 +152,6 @@ class ProcucevAPIClient:
                 ) as resp:
                     status = resp.status
                     text = await resp.text()
-
-                    # Log response summary
-                    logger.info("API Response ← Status=%s, URL=%s, Body=%s", status, url, text[:500])
                     
                     # If 401 Unauthorized, maybe token expired: retry after refreshing token
                     if status == 401 and require_auth:

@@ -808,7 +808,7 @@ Analyze their response to determine their true choice.
             logger.error(f"Reference merging failed: {error_msg}")
             return {"success": False, "updated_products": products, "merge_actions": [], "error": error_msg}
         
-    def generate_response(self, context: dict, query_results: list = None) -> str:
+    def generate_response(self, context: dict, query_results: list = None, prompt_file: str = None) -> str:
         """
         Generate contextual response based on query results.
         
@@ -818,16 +818,22 @@ Analyze their response to determine their true choice.
         Args:
             context: User and conversation context
             query_results: Optional search/query results to incorporate
+            prompt_file: Optional prompt file path in format "category/filename" (without .txt)
             
         Returns:
             Generated response string
         """
         try:
-            # Build prompt inline
-            prompt = f"User context: {json.dumps(context)}\n\n"
-            if query_results:
-                prompt += f"Search results: {json.dumps(query_results)}\n\n"
-            prompt += "Generate an appropriate response for the user based on their context and any available results."
+            if prompt_file:
+                # Use prompt file if specified
+                category, filename = prompt_file.split("/")
+                prompt = self._load_prompt(category, filename, **context)
+            else:
+                # Build prompt inline (legacy behavior)
+                prompt = f"User context: {json.dumps(context)}\n\n"
+                if query_results:
+                    prompt += f"Search results: {json.dumps(query_results)}\n\n"
+                prompt += "Generate an appropriate response for the user based on their context and any available results."
             
             response = self.client.responses.create(
                 model=self.default_model,

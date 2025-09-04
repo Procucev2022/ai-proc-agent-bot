@@ -196,27 +196,13 @@ class RegistrationService:
     async def _get_buyer_introduction_message(self) -> str:
         """Get buyer registration introduction message."""
         return (
-            "Welcome! Let's get you registered as a buyer. "
-            "I'll need some basic information:\n\n"
-            "• Your full name\n"
-            "• Company name\n"
-            "• Business email\n"
-            "• Company pincode\n\n"
-            "Please provide these details."
+            "Hello Buyer, welcome to QUA. To get started, please share your full name, company name, business email, and company pincode. We’ll have you registered right away."
         )
     
     async def _get_seller_introduction_message(self) -> str:
         """Get seller registration introduction message."""
         return (
-            "Welcome! Let's get you registered as a seller. "
-            "I'll need some information:\n\n"
-            "• Your full name\n"
-            "• Company name\n"
-            "• Business email\n"
-            "• Location and pincode\n"
-            "• GSTIN number\n"
-            "• Products/services you offer\n\n"
-            "Please provide these details."
+            "Hello Seller, welcome to QUA. To get started, please share your full name, company name, business email, location with pincode, GSTIN number, and the products or services you offer. We’ll have you registered right away."
         )
     
     def _build_registration_context(self, session: ConversationSession, current_message: str) -> str:
@@ -407,8 +393,7 @@ class RegistrationService:
                 # Registration successful - send confirmation message and continue to OTP
                 if self.session_manager:
                     await self.session_manager.send_and_track_message(user_phone, f"{user_type.title()} registration API successful, continuing to OTP flow", session)
-                else:
-                    await self.whatsapp_service.send_message(user_phone, f"{user_type.title()} registration API successful, continuing to OTP flow")
+                
                 logger.info(f"{user_type.title()} registration API successful, continuing to OTP flow")
                 return {
                     "status": "registration_completed",
