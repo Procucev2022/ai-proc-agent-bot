@@ -200,13 +200,7 @@ class ProductsArrayHandler:
                 all_questions.append("*Required information:*")
                 all_questions.extend(combined_questions["mandatory"])
             
-            # Add optional fields
-            if combined_questions["has_optional"]:
-                if combined_questions["has_mandatory"]:
-                    all_questions.append("\n*Optional details (you can skip these):*")
-                else:
-                    all_questions.append("*Optional details:*")
-                all_questions.extend(combined_questions["optional"])
+
                 
             all_missing_fields.extend(incomplete_products[0]["missing_fields"])
     
@@ -234,13 +228,7 @@ class ProductsArrayHandler:
                     all_questions.append("*Required information:*")
                     all_questions.extend(combined_questions["mandatory"])
                 
-                # Add optional fields
-                if combined_questions["has_optional"]:
-                    if combined_questions["has_mandatory"]:
-                        all_questions.append("*Optional details (you can skip these):*")
-                    else:
-                        all_questions.append("*Optional details:*")
-                    all_questions.extend(combined_questions["optional"])
+
                     
                 all_missing_fields.extend(prod["missing_fields"])
     

@@ -194,49 +194,53 @@ class ConfirmationHandler:
         
         await self.whatsapp_service.send_message(user.phone_number, response)
         return {"status": "confirmation_clarification_requested"}
-    
-    async def _proceed_to_confirmation_from_optional(self, user: User, session: ConversationSession, 
-                                                   message: str) -> Dict[str, Any]:
+
+    async def _proceed_to_confirmation_from_optional(self, user: User, session: ConversationSession,
+                                                     message: str) -> Dict[str, Any]:
         """Proceed from optional fields to confirmation."""
         if session.workflow_state.get("pending_optional_rfq"):
             # Single product
             product_info = session.workflow_state["pending_optional_rfq"]
             rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_info["entities"], None)
-            
+
             # Load summaries for enhanced response generation
             chat_summaries = []  # Could load from chat summary service if needed
-            
+
             summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
                 "user_message": message,
                 "extracted_entities": product_info["entities"]
             }, chat_summaries)
-            
-            # Send confirmation message with buttons combined
+            await self.whatsapp_service.send_message(user.phone_number, summary_response)
+
+            # Small delay to ensure message ordering
+            await asyncio.sleep(0.5)
+
+            # Send Yes/No confirmation buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
                 {"id": "no_rfq", "title": "Modify"}
             ]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
-                "RFQ Confirmation", 
-                summary_response,
+                "Confirmation Required",
+                "Please confirm your choice:",
                 buttons_config
             )
-            
+
             # Move to confirmation state
             session.workflow_state["pending_rfq"] = product_info
             del session.workflow_state["pending_optional_rfq"]
-            
+
         elif session.workflow_state.get("pending_optional_combined_rfq"):
             # Combined RFQ with multiple items
             combined_data = session.workflow_state["pending_optional_combined_rfq"]
             combined_schema = RFQValidationSchema(**combined_data["combined_schema"])
-            
+
             # Load summaries for enhanced response generation
             chat_summaries = []
-            
+
             summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(
-                combined_schema, 
+                combined_schema,
                 {
                     "user_message": message,
                     "extracted_entities": [prod["entities"] for prod in combined_data["products"]],
@@ -244,23 +248,27 @@ class ConfirmationHandler:
                 },
                 chat_summaries
             )
-            
-            # Send confirmation message with buttons combined
+            await self.whatsapp_service.send_message(user.phone_number, summary_response)
+
+            # Small delay to ensure message ordering
+            await asyncio.sleep(0.5)
+
+            # Send Yes/No confirmation buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
                 {"id": "no_rfq", "title": "Modify"}
             ]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
-                "RFQ Confirmation",
-                summary_response,
+                "Confirmation Required",
+                "Please confirm your choice:",
                 buttons_config
             )
-            
+
             # Move to confirmation state
             session.workflow_state["pending_combined_rfq"] = combined_data
             del session.workflow_state["pending_optional_combined_rfq"]
-        
+
         return {"status": "optional_fields_skipped"}
     
     async def _submit_rfq_to_backend(self, rfq_schema, user) -> dict:
