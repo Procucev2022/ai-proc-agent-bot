@@ -269,9 +269,9 @@ class WhatsAppService:
     
     async def send_configurable_buttons(self, 
                                       recipient_id: str, 
-                                      header: str, 
                                       body: str, 
                                       buttons_config: List[Dict[str, str]], 
+                                      header: Optional[str] = None,
                                       footer: str = "Please choose an option") -> MessageResponse:
         """
         Send fully configurable button message that can be used anywhere with any button configuration.
@@ -328,11 +328,13 @@ class WhatsAppService:
                 })
             
             content = {
-                "header": {"type": "text", "text": header},
                 "body": {"text": body},
                 "footer": {"text": footer},
                 "action": {"buttons": button_list}
             }
+            
+            if header:
+                content["header"] = {"type": "text", "text": header}
             
             return await self.send_interactive_message(recipient_id, "button", content)
             
