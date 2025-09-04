@@ -194,18 +194,18 @@ class ConfirmationHandler:
         
         await self.whatsapp_service.send_message(user.phone_number, response)
         return {"status": "confirmation_clarification_requested"}
-    
-    async def _proceed_to_confirmation_from_optional(self, user: User, session: ConversationSession, 
-                                                   message: str) -> Dict[str, Any]:
+
+    async def _proceed_to_confirmation_from_optional(self, user: User, session: ConversationSession,
+                                                     message: str) -> Dict[str, Any]:
         """Proceed from optional fields to confirmation."""
         if session.workflow_state.get("pending_optional_rfq"):
             # Single product
             product_info = session.workflow_state["pending_optional_rfq"]
             rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_info["entities"], None)
-            
+
             # Load summaries for enhanced response generation
             chat_summaries = []  # Could load from chat summary service if needed
-            
+
             summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
                 "user_message": message,
                 "extracted_entities": product_info["entities"]
@@ -226,21 +226,21 @@ class ConfirmationHandler:
                 summary_response,
                 buttons_config
             )
-            
+
             # Move to confirmation state
             session.workflow_state["pending_rfq"] = product_info
             del session.workflow_state["pending_optional_rfq"]
-            
+
         elif session.workflow_state.get("pending_optional_combined_rfq"):
             # Combined RFQ with multiple items
             combined_data = session.workflow_state["pending_optional_combined_rfq"]
             combined_schema = RFQValidationSchema(**combined_data["combined_schema"])
-            
+
             # Load summaries for enhanced response generation
             chat_summaries = []
-            
+
             summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(
-                combined_schema, 
+                combined_schema,
                 {
                     "user_message": message,
                     "extracted_entities": [prod["entities"] for prod in combined_data["products"]],
@@ -264,11 +264,11 @@ class ConfirmationHandler:
                 summary_response,
                 buttons_config
             )
-            
+
             # Move to confirmation state
             session.workflow_state["pending_combined_rfq"] = combined_data
             del session.workflow_state["pending_optional_combined_rfq"]
-        
+
         return {"status": "optional_fields_skipped"}
     
     async def _submit_rfq_to_backend(self, rfq_schema, user) -> dict:
@@ -355,20 +355,27 @@ class ConfirmationHandler:
                 "success": False,
                 "error": f"Failed to submit RFQ: {str(e)}"
             }
-    
+
     async def _send_completion_response(self, user: User, rfq_results: List[Dict], successful_count: int):
         """Send completion response to user."""
         rfq_ids = []
         for result in rfq_results:
             if result.get("success") and result.get("rfq_id"):
                 rfq_ids.append(result["rfq_id"])
-        
         if rfq_ids:
-            rfq_ids_text = "\n".join([f"• {rfq_id}" for rfq_id in rfq_ids])
-            response = f"Thank you! All {successful_count} RFQs have been created successfully.\n\nYour RFQ IDs are:\n{rfq_ids_text}\n\nYou can use these reference numbers to track your requests."
+            # Single RFQ case (matches your example format)
+            if successful_count == 1:
+                response = f"Thank you! Your RFQ has been created successfully.\n\nRFQ ID: {rfq_ids[0]}\nUse this reference number to track your request."
+            # Multiple RFQs case
+            else:
+                rfq_ids_text = "\n".join([f"RFQ ID: {rfq_id}" for rfq_id in rfq_ids])
+                response = f"Thank you! All {successful_count} RFQs have been created successfully.\n\n{rfq_ids_text}\n\nUse these reference numbers to track your requests."
         else:
             response = f"Thank you! All {successful_count} RFQs have been created successfully."
-        
+
+        # Add closing message (optional)
+        response += "\n\nIf there is anything else I can assist you with, please let me know."
+
         await self.whatsapp_service.send_message(user.phone_number, response)
     
     # async def _check_bfs_availability(self, user_phone: str) -> None:
