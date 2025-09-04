@@ -96,7 +96,7 @@ class AuthenticationService:
             if auth_response.get("success"):
                 raw_response = auth_response.get("users", [])                
                 if raw_response:
-                    return {"success": True, "response": raw_response}
+                    return {"success": True, "response": raw_response, "is_registered": auth_response.get("is_registered", True)}
                 return {"success": False, "message": "User details not found"}
 
             return auth_response
@@ -317,8 +317,8 @@ class AuthenticationService:
             if filtered_users:
                 username = filtered_users[0].get("name", "there")
             
-            # Generate email confirmation response using OpenAI
-            message = await self._generate_email_confirmation_response(username, emails)
+            # Generate email confirmation response using OpenAI with user type labels
+            message = await self._generate_email_confirmation_response(username, emails, filtered_users)
             
             await self.whatsapp_service.send_message(user_phone, message)
             
@@ -332,14 +332,29 @@ class AuthenticationService:
             logger.error(f"Email selection request error: {e}")
             return {"status": "error", "error": str(e)}
     
-    async def _generate_email_confirmation_response(self, username: str, emails: List[str]) -> str:
+    async def _generate_email_confirmation_response(self, username: str, emails: List[str], filtered_users: List[Dict] = None) -> str:
         """Generate email confirmation response using OpenAI."""
         try:
-            # Format email list
+            # Format email list with buyer/seller labels
             if len(emails) == 1:
-                email_text = f"Is this your email: {emails[0]}?"
+                # Single email - check if we have user type info
+                email = emails[0]
+                user_type = self._get_user_type_for_email(email, filtered_users)
+                if user_type:
+                    email_text = f"Is this your {user_type.lower()} email: {email}?"
+                else:
+                    email_text = f"Is this your email: {email}?"
             else:
-                email_list = "\n".join([f"{i+1}. {email}" for i, email in enumerate(emails)])
+                # Multiple emails - show with buyer/seller labels
+                email_list_items = []
+                for i, email in enumerate(emails):
+                    user_type = self._get_user_type_for_email(email, filtered_users)
+                    if user_type:
+                        email_list_items.append(f"{i+1}. {email} - {user_type}")
+                    else:
+                        email_list_items.append(f"{i+1}. {email}")
+                
+                email_list = "\n".join(email_list_items)
                 email_text = f"Please select your email address:\n\n{email_list}\n\nReply with the number of your email address."
             
             response = self.openai_service.generate_response(
@@ -460,13 +475,17 @@ Return only the selected email address or "none" if no clear selection.
                     logger.error(f"Failed to store user session for buyer {user_phone}")
                 
                 username = selected_user.get("name", "User")
-                message = f"Hi {username}! How can I help you today?"
+                message = f"Hi {username}! Authentication successful."
                 await self.whatsapp_service.send_message(user_phone, message)
+                
+                # Preserve original message from workflow state for processing after authentication
+                original_message = session.workflow_state.get("original_message") if session.workflow_state else None
                 
                 return {
                     "status": "authentication_completed",
                     "user_type": "buyer",
-                    "redirect_to_main_flow": True
+                    "redirect_to_main_flow": True,
+                    "original_message": original_message
                 }
             elif user_type == "seller":
                 # Sellers: Redirect to email OTP validation
@@ -879,3 +898,20 @@ Respond only with: "yes" or "no"
         except Exception as e:
             logger.error(f"Email rejection check error: {e}")
             return False
+    
+    def _get_user_type_for_email(self, email: str, filtered_users: List[Dict]) -> Optional[str]:
+        """Get user type (Buyer/Seller) for a specific email from filtered users data."""
+        try:
+            if not filtered_users:
+                return None
+            
+            for user in filtered_users:
+                user_email = user.get("email") or user.get("username")
+                if user_email == email:
+                    is_self_client = user.get("self_client", False)
+                    return "Buyer" if is_self_client else "Seller"
+            
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user type for email {email}: {e}")
+            return None

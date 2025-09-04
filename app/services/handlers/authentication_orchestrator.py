@@ -77,11 +77,28 @@ class AuthenticationOrchestrator:
             intent = intent_result.get('intent')
             confidence = intent_result.get('confidence', 0)
             
-            # Step 5: Handle ambiguous intent - require clarification before proceeding
+            # Step 5: For ambiguous or low confidence intents, try authentication first
+            # If user exists, show emails with buyer/seller labels instead of asking for clarification
             if intent == "ambiguous" or confidence < 50:
-                return await self._handle_auth_clarification_request(user_phone, message_content)
+                # Try to authenticate first - if user exists, they can choose email type
+                auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
+                
+                if auth_response.get("success"):
+                    # User found - show all emails with buyer/seller labels (no intent filtering)
+                    raw_response = auth_response.get("response", [])
+                    filter_result = self.authentication_service.filter_users_by_intent(raw_response, "general_inquiry")  # This shows all emails
+                    
+                    if filter_result.get("success"):
+                        # Store the ambiguous message as original message
+                        return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content)
+                    else:
+                        # No emails found - redirect to registration
+                        return await self._redirect_to_registration_flow(user_phone, session, "buyer")
+                else:
+                    # User not found - redirect directly to registration
+                    return await self._redirect_to_registration_flow(user_phone, session, "buyer")
             
-            # Step 6: Handle confirmed intents
+            # Step 6: Handle confirmed intents  
             if intent in ["buy_something", "sell_something"]:
                 # Proceed with authentication/registration flow
                 pass
@@ -109,11 +126,29 @@ class AuthenticationOrchestrator:
             
             # Ensure we have a valid intent before proceeding
             valid_intents = ["buy_something", "sell_something", "general_inquiry", "modification_request", 
-                           "confirmation_response", "rfq_status_check", "reference_request"]
+                           "confirmation_response", "rfq_status_check", "reference_request", "ambiguous"]
             
-            if intent not in valid_intents or confidence < 50:
+            if intent not in valid_intents or (confidence < 50 and intent != "ambiguous"):
                 logger.warning(f"Invalid or low confidence intent in auth flow: {intent} ({confidence}%)")
                 return await self._handle_auth_clarification_request(user_phone, message_content)
+            
+            # Handle ambiguous intent - show all available emails with buyer/seller labels
+            if intent == "ambiguous":
+                logger.info("Processing ambiguous intent - showing all available emails")
+                auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
+                
+                if not auth_response.get("success"):
+                    logger.info("User not found for ambiguous intent - redirecting to registration")
+                    return await self._redirect_to_registration_flow(user_phone, session, "buyer")
+                
+                # User found - show all emails with buyer/seller labels (no intent filtering)
+                raw_response = auth_response.get("response", [])
+                filter_result = self.authentication_service.filter_users_by_intent(raw_response, "general_inquiry")
+                
+                if not filter_result.get("success"):
+                    return await self._redirect_to_registration_flow(user_phone, session, "buyer")
+                
+                return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content)
             
             # Handle sell_something intent - check authentication first
             if intent == "sell_something":
@@ -131,7 +166,7 @@ class AuthenticationOrchestrator:
                 if not filter_result.get("success"):
                     return await self._redirect_to_registration_flow(user_phone, session, "seller")
                 
-                return await self._handle_user_selection(user_phone, session, filter_result, intent_result)
+                return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content)
             
             # Step 1: API call to check if user exists
             auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
@@ -152,7 +187,7 @@ class AuthenticationOrchestrator:
                 return await self._redirect_to_registration_flow(user_phone, session, user_type)
             
             # Step 3: User selection and email confirmation
-            return await self._handle_user_selection(user_phone, session, filter_result, intent_result)
+            return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content)
                 
         except Exception as e:
             logger.error(f"Authentication flow start error: {e}")
@@ -165,7 +200,7 @@ class AuthenticationOrchestrator:
 
     
     async def _handle_user_selection(self, user_phone: str, session: ConversationSession,
-                                   filter_result: Dict, intent_result: Dict) -> Dict[str, Any]:
+                                   filter_result: Dict, intent_result: Dict, message_content: str) -> Dict[str, Any]:
         """Handle user selection from filtered users."""
         try:
             filtered_users = filter_result.get("filtered_users", [])
@@ -182,7 +217,8 @@ class AuthenticationOrchestrator:
                 "authentication_stage": "email_confirmation",
                 "filtered_users": filtered_users,
                 "available_emails": unique_emails,
-                "intent_result": intent_result
+                "intent_result": intent_result,
+                "original_message": message_content
             }
             
             logger.info(f"Starting email confirmation for {len(unique_emails)} emails")
