@@ -797,7 +797,7 @@ Return only the selected email address or "none" if no clear selection.
             session.workflow_state["confirmation_stage"] = "confirmation"
             
             # Generate confirmation message
-            message = f"We have found the below email is associated with your phone number, would you please help us verify this?\n\n{selected_email}"
+            message = f"We found the following email address associated with your phone number. Could you please help us verify it?\n\n{selected_email}"
             
             await self.whatsapp_service.send_message(user_phone, message)
             
