@@ -210,10 +210,10 @@ class ConfirmationHandler:
                 "user_message": message,
                 "extracted_entities": product_info["entities"]
             }, chat_summaries)
-            await self.whatsapp_service.send_message(user.phone_number, summary_response)
+            # await self.whatsapp_service.send_message(user.phone_number, summary_response)
             
             # Small delay to ensure message ordering
-            await asyncio.sleep(0.5)
+            # await asyncio.sleep(0.5)
             
             # Send Yes/No confirmation buttons
             buttons_config = [
@@ -223,7 +223,7 @@ class ConfirmationHandler:
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
                 "Confirmation Required", 
-                "Please confirm your choice:",
+                summary_response,
                 buttons_config
             )
             
@@ -248,10 +248,10 @@ class ConfirmationHandler:
                 },
                 chat_summaries
             )
-            await self.whatsapp_service.send_message(user.phone_number, summary_response)
+            # await self.whatsapp_service.send_message(user.phone_number, summary_response)
             
             # Small delay to ensure message ordering
-            await asyncio.sleep(0.5)
+            # await asyncio.sleep(0.5)
             
             # Send Yes/No confirmation buttons
             buttons_config = [
@@ -261,7 +261,7 @@ class ConfirmationHandler:
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
                 "Confirmation Required",
-                "Please confirm your choice:",
+                summary_response,
                 buttons_config
             )
             
