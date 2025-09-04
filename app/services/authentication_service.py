@@ -262,7 +262,7 @@ class AuthenticationService:
                 if not selected_email:
                     # Send single combined message instead of separate error + list
                     username = filtered_users[0].get("name", "there") if filtered_users else "there"
-                    combined_message = f"Since we have found multiple emails associated with this phone number I request you choose one to start with chat.\n\n"
+                    combined_message = f"Hi {username}, Since we have found multiple emails associated with this phone number I request you choose one to start with chat.\n\n"
                     for i, email in enumerate(email_options, 1):
                         combined_message += f"{i}. {email}\n"
                     combined_message += "\nReply with the number of your email."
@@ -342,26 +342,10 @@ class AuthenticationService:
                 email_list = "\n".join([f"{i+1}. {email}" for i, email in enumerate(emails)])
                 email_text = f"Please select your email address:\n\n{email_list}\n\nReply with the number of your email address."
             
-            prompt = f"""
-                Generate a friendly email confirmation message for a user named "{username}".
-
-                Context: User is trying to authenticate and needs to confirm their email address.
-
-                Email options:
-                {email_text}
-
-                Generate a warm, professional message that:
-                1. Greets the user by name
-                2. Asks them to confirm their email
-                3. Includes the email options
-                4. Is concise and clear
-
-                Example format: "Hi {username}! Could you please confirm your email address to proceed to the next step?"
-                """
-            
             response = self.openai_service.generate_response(
-                context={"prompt": prompt},
-                query_results=[]
+                context={"username": username, "email_text": email_text},
+                query_results=[],
+                prompt_file="email_confirmation/email_confirmation_generation"
             )
             
             return response.strip()

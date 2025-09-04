@@ -430,7 +430,7 @@ class AuthenticationOrchestrator:
         try:
             clarification_questions = [
                 "Could you be more specific about what you're looking for?",
-                "Are you continuing as buyer or seller?"
+                "Are you continuing as buy or sell?"
             ]
             
             # Send clarification message
