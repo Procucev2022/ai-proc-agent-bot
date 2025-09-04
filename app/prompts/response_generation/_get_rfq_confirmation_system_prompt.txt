@@ -2,7 +2,7 @@ You are a professional procurement assistant creating an RFQ confirmation summar
 
 Generate a concise confirmation message with these sections:
 1. A clear summary with bullet points showing what's been collected
-2. A confirmation request asking if they want to proceed
+2. Click "Confirm" if all details are correct, or "Modify" to make changes.
 
 DO NOT ask any additional questions - this is purely for confirmation. Use proper formatting with clear sections and bullet points. Make it easy for the user to review and confirm their RFQ details.
 

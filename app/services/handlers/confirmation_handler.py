@@ -210,20 +210,16 @@ class ConfirmationHandler:
                 "user_message": message,
                 "extracted_entities": product_info["entities"]
             }, chat_summaries)
-            await self.whatsapp_service.send_message(user.phone_number, summary_response)
             
-            # Small delay to ensure message ordering
-            await asyncio.sleep(0.5)
-            
-            # Send Yes/No confirmation buttons
+            # Send confirmation message with buttons combined
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
                 {"id": "no_rfq", "title": "Modify"}
             ]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
-                "Confirmation Required", 
-                "Please confirm your choice:",
+                "RFQ Confirmation", 
+                summary_response,
                 buttons_config
             )
             
@@ -248,20 +244,16 @@ class ConfirmationHandler:
                 },
                 chat_summaries
             )
-            await self.whatsapp_service.send_message(user.phone_number, summary_response)
             
-            # Small delay to ensure message ordering
-            await asyncio.sleep(0.5)
-            
-            # Send Yes/No confirmation buttons
+            # Send confirmation message with buttons combined
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
                 {"id": "no_rfq", "title": "Modify"}
             ]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
-                "Confirmation Required",
-                "Please confirm your choice:",
+                "RFQ Confirmation",
+                summary_response,
                 buttons_config
             )
             
@@ -355,20 +347,27 @@ class ConfirmationHandler:
                 "success": False,
                 "error": f"Failed to submit RFQ: {str(e)}"
             }
-    
+
     async def _send_completion_response(self, user: User, rfq_results: List[Dict], successful_count: int):
         """Send completion response to user."""
         rfq_ids = []
         for result in rfq_results:
             if result.get("success") and result.get("rfq_id"):
                 rfq_ids.append(result["rfq_id"])
-        
         if rfq_ids:
-            rfq_ids_text = "\n".join([f"• {rfq_id}" for rfq_id in rfq_ids])
-            response = f"Thank you! All {successful_count} RFQs have been created successfully.\n\nYour RFQ IDs are:\n{rfq_ids_text}\n\nYou can use these reference numbers to track your requests."
+            # Single RFQ case (matches your example format)
+            if successful_count == 1:
+                response = f"Thank you! Your RFQ has been created successfully.\n\nRFQ ID: {rfq_ids[0]}\nUse this reference number to track your request."
+            # Multiple RFQs case
+            else:
+                rfq_ids_text = "\n".join([f"RFQ ID: {rfq_id}" for rfq_id in rfq_ids])
+                response = f"Thank you! All {successful_count} RFQs have been created successfully.\n\n{rfq_ids_text}\n\nUse these reference numbers to track your requests."
         else:
             response = f"Thank you! All {successful_count} RFQs have been created successfully."
-        
+
+        # Add closing message (optional)
+        response += "\n\nIf there is anything else I can assist you with, please let me know."
+
         await self.whatsapp_service.send_message(user.phone_number, response)
     
     # async def _check_bfs_availability(self, user_phone: str) -> None:

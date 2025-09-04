@@ -264,9 +264,9 @@ class ProductsArrayHandler:
         # Check if this is a response to optional questions (look for specific workflow state)
         if optional_questions and not session.workflow_state.get("optional_fields_asked"):
             # Ask about optional fields first
-            optional_intro = "Would you like to provide any additional details like:"
+            optional_intro = "Would you like to provide any additional details such as:"
             optional_text = "\n".join(f"• {q}" for q in optional_questions)
-            optional_message = f"{optional_intro}\n\n{optional_text}\n\nOr simply say 'proceed' to continue."
+            optional_message = f"{optional_intro}\n\n{optional_text}\n\n You may send the details now or reply “No” to continue."
             
             await self.whatsapp_service.send_message(user.phone_number, optional_message)
             
