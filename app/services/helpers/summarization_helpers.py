@@ -44,9 +44,16 @@ class SummarizationHelpers:
             message_type: Type of message (text, interactive, etc.)
         """
         try:
-            if not session.conversation_history:
+            # Ensure conversation_history is a proper dictionary structure
+            if not session.conversation_history or not isinstance(session.conversation_history, dict):
                 session.conversation_history = {"openai_messages": [], "metadata": []}
                 logger.info("Initialized new conversation history")
+            
+            # Ensure required keys exist and are lists
+            if "openai_messages" not in session.conversation_history or not isinstance(session.conversation_history["openai_messages"], list):
+                session.conversation_history["openai_messages"] = []
+            if "metadata" not in session.conversation_history or not isinstance(session.conversation_history["metadata"], list):
+                session.conversation_history["metadata"] = []
             
             # Convert sender to OpenAI role format
             role = "assistant" if sender == "assistant" else "user"

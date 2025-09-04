@@ -431,17 +431,19 @@ class OpenAIService:
             return {"products": [], "completeness": 0, "missing_fields": [], "confidence": 0, "next_questions": [], "success": False}
         
     @log_service_method("openai_service")
-    def extract_entities_with_summary_context(self, message: str, chat_summaries: List[Dict], workflow_type: str = "rfq_creation") -> Dict[str, Any]:
+    def extract_entities_with_summary_context(self, message: str, chat_summaries: List[Dict], workflow_type: str = "rfq_creation", existing_products: List[Dict] = None) -> Dict[str, Any]:
         """
         Extract entities from current message while resolving references to previous conversations.
         
         Uses chat summaries to resolve references like "same as last time", "usual address", etc.
-        with actual values from historical conversations.
+        with actual values from historical conversations. Also merges new information with 
+        existing incomplete products when available.
         
         Args:
             message: User message to extract entities from
             chat_summaries: List of recent chat summaries with historical context
             workflow_type: Type of workflow (defaults to rfq_creation)
+            existing_products: List of existing incomplete products to merge with new information
             
         Returns:
             Dict with extracted entities, resolved references, and metadata

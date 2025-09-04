@@ -161,7 +161,7 @@ class ChatService:
                     "redirected_to_registration", "redirected_to_email_confirmation", "otp_sent",
                     "email_selection_requested", "registration_initiated", "data_collection_in_progress",
                     "awaiting_confirmation", "registration_restarted", "otp_validated",
-                    "domain_approved", "domain_approval_required", "authentication_completed"
+                    "domain_approved", "domain_approval_required"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
@@ -176,6 +176,31 @@ class ChatService:
                     user = self._create_mock_authenticated_user(user_phone, session)
                     logger.info(f"Registration completed - proceeding to main flow")
                     return await self._process_text_message(user, session, message_content)
+                elif auth_status == "authentication_completed":
+                    # Authentication completed - check if we need to process stored original message
+                    # First check auth_result for original_message, then fallback to session workflow_state
+                    original_message = auth_result.get("original_message") if isinstance(auth_result, dict) else None
+                    if not original_message:
+                        original_message = session.workflow_state.get("original_message") if session.workflow_state else None
+                    
+                    if original_message and original_message != message_content:
+                        # Process the stored original message instead of current message
+                        logger.info(f"Authentication completed - processing stored original message: {original_message}")
+                        user_session = await self.authentication_service.validate_token(user_phone)
+                        if user_session:
+                            user = self._create_user_from_details(user_session)
+                        else:
+                            return {"status": "error", "error": "Session not found after authentication"}
+                        return await self._process_text_message(user, session, original_message)
+                    else:
+                        # No original message or it's the same as current - process normally  
+                        logger.info(f"Authentication completed - processing current message")
+                        user_session = await self.authentication_service.validate_token(user_phone)
+                        if user_session:
+                            user = self._create_user_from_details(user_session)
+                        else:
+                            return {"status": "error", "error": "Session not found after authentication"}
+                        return await self._process_text_message(user, session, message_content)
 
             # Check if auth returned UserDetailsSchema (authenticated user)
             if isinstance(auth_result, UserDetailsSchema):
