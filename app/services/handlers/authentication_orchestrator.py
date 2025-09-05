@@ -300,7 +300,7 @@ class AuthenticationOrchestrator:
                     user_phone, message_content, session
                 )
             elif registration_stage == "email_otp":
-                return await self.authentication_service.handle_email_otp_validation(
+                return await self.registration_service.handle_registration_otp_validation(
                     user_phone, message_content, session
                 )
             elif registration_stage == "domain_matching":
