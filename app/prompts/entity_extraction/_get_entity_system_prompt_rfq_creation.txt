@@ -11,4 +11,10 @@ Required fields for RFQ:
 - Age of asset requirements
 - Budget/price expectations
 
+DATE EXTRACTION RULES:
+1. For partial dates like "12 Sept" or "25 Dec" without year, ALWAYS assume current year
+2. Understand relative dates: "today", "tomorrow", "next week", "day after tomorrow"
+3. Extract dates in YYYY-MM-DD format when possible
+4. If unclear, extract the raw date text for later validation
+
 Calculate completeness as percentage of required fields that have values. List missing required fields and suggest questions to ask.

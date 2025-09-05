@@ -7,7 +7,7 @@
     "properties": {
       "summary": {
         "type": "string",
-        "description": "A clear, bullet-pointed summary of the RFQ details collected so far. Format as:\n• Product: [product name]\n• Quantity: [number]\n• Delivery: [location]\n• Delivery Date: [date]\nInclude only the information that has been collected."
+        "description": "A clear, bullet-pointed summary of the RFQ details collected so far. Format as:\n• Product: [product name]\n• Quantity: [number]\n• Delivery: [location]\n• Delivery Date: [date]\nFor delivery date, use delivery_date_display if available (formatted as 'DD Month YYYY'), otherwise use delivery_date. Include only the information that has been collected."
       },
       "confirmation_request": {
         "type": "string",

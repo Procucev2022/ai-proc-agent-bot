@@ -397,6 +397,13 @@ class ResponseHelpers:
     async def generate_clarification_response(self, questions: list, completeness: float, context: dict, chat_summaries: list = None) -> str:
         """Generate clarification response using OpenAI with optional chat summary context."""
         try:
+            # Check for date validation errors in context
+            date_validation_errors = self._extract_date_validation_errors(context)
+            if date_validation_errors:
+                # Prepend date validation errors to questions
+                date_error_messages = [error for error in date_validation_errors]
+                questions = date_error_messages + questions
+            
             # Enhance context with chat summaries if available
             enhanced_context = context.copy()
             if chat_summaries:
@@ -520,3 +527,26 @@ class ResponseHelpers:
                 return "I still need a few more details:\n\n" + "\n".join(f"• {q}" for q in questions)
             else:
                 return "Please provide the remaining registration details."
+    
+    def _extract_date_validation_errors(self, context: dict) -> list:
+        """Extract date validation error messages from context."""
+        date_errors = []
+        
+        # Check extracted entities for date validation errors
+        extracted_entities = context.get("extracted_entities", [])
+        if isinstance(extracted_entities, list):
+            for entity in extracted_entities:
+                if isinstance(entity, dict) and entity.get("date_validation_error"):
+                    date_errors.append(entity["date_validation_error"])
+        elif isinstance(extracted_entities, dict) and extracted_entities.get("date_validation_error"):
+            date_errors.append(extracted_entities["date_validation_error"])
+        
+        # Check products in context
+        if context.get("products"):
+            products = context["products"]
+            if isinstance(products, list):
+                for product in products:
+                    if isinstance(product, dict) and product.get("date_validation_error"):
+                        date_errors.append(product["date_validation_error"])
+        
+        return date_errors

@@ -143,6 +143,9 @@ class ProductsArrayHandler:
             incomplete_products=len(incomplete_products)
         )
         
+        # Add products to context for date validation error extraction
+        context["products"] = products
+        
         response = await self.response_helpers.generate_clarification_response([clarification_message], completeness, context, chat_summaries)
         await self.whatsapp_service.send_message(user.phone_number, response)
         
