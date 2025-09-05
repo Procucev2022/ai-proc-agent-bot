@@ -44,6 +44,14 @@ def format_utc_short(dt: datetime) -> str:
         return "N/A"
     return format_utc_display(dt, "%d/%m %H:%M UTC")
 
+def format_date_display(dt: datetime) -> str:
+    """Format date in DD Month YYYY format (e.g., 5 Sep 2025)."""
+    if dt is None:
+        return "N/A"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.strftime("%d %b %Y").lstrip('0')
+
 def is_expired(last_activity: datetime, timeout_hours: int) -> tuple[bool, datetime, datetime]:
     """
     Check if session is expired using UTC comparison.
