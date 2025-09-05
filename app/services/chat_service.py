@@ -305,7 +305,7 @@ class ChatService:
             if not user.is_registered:
                 return await self._handle_registration_workflow(user, message)
             # Handle seller RFQ selection workflow BEFORE intent classification
-            if session.workflow_type == "seller_rfq_view":
+            if session.workflow_type and hasattr(session.workflow_type, 'value') and session.workflow_type.value == "seller_rfq_view":
                 workflow_state = session.workflow_state or {}
                 current_seller_state = workflow_state.get("seller_workflow_state")
                 # Seller is responding to RFQ list - handle this immediately
@@ -1190,29 +1190,33 @@ class ChatService:
         Returns:
             True if summary-aware extraction should be used
         """
-        try:
-            # Use OpenAI service for intelligent reference detection
-            reference_analysis = self.openai_service.analyze_reference_context(message)
+        # COMMENTED OUT: Disable automatic reference detection to enforce session timeout behavior
+        # When sessions timeout, users should lose context and start fresh
+        return False
+        
+        # try:
+        #     # Use OpenAI service for intelligent reference detection
+        #     reference_analysis = self.openai_service.analyze_reference_context(message)
 
-            has_references = reference_analysis.get("has_references", False)
-            confidence = reference_analysis.get("confidence", 0)
-            reference_types = reference_analysis.get("reference_types", [])
+        #     has_references = reference_analysis.get("has_references", False)
+        #     confidence = reference_analysis.get("confidence", 0)
+        #     reference_types = reference_analysis.get("reference_types", [])
 
-            # Use summary-aware extraction if we have high confidence references
-            should_use_summary = has_references and confidence >= 70
+        #     # Use summary-aware extraction if we have high confidence references
+        #     should_use_summary = has_references and confidence >= 70
 
-            print(f"ChatService: Reference analysis for '{message}':")
-            print(f"  - Has references: {has_references}")
-            print(f"  - Confidence: {confidence}%")
-            print(f"  - Reference types: {reference_types}")
-            print(f"  - Use summary-aware extraction: {should_use_summary}")
+        #     print(f"ChatService: Reference analysis for '{message}':")
+        #     print(f"  - Has references: {has_references}")
+        #     print(f"  - Confidence: {confidence}%")
+        #     print(f"  - Reference types: {reference_types}")
+        #     print(f"  - Use summary-aware extraction: {should_use_summary}")
 
-            return should_use_summary
+        #     return should_use_summary
 
-        except Exception as e:
-            print(f"ChatService: Error in reference analysis: {e}")
-            # Fallback: if analysis fails, don't use summary-aware extraction
-            return False
+        # except Exception as e:
+        #     print(f"ChatService: Error in reference analysis: {e}")
+        #     # Fallback: if analysis fails, don't use summary-aware extraction
+        #     return False
 
     async def _handle_seller_rfq_selection(self, user: User, session: ConversationSession, message: str) -> Dict[
         str, Any]:

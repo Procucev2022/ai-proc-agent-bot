@@ -31,7 +31,8 @@ class SessionHelpers:
         # Use last_activity_at if available, otherwise fall back to created_at
         last_activity = getattr(session, 'last_activity_at', None) or session.created_at
         
-        timeout_hours = get_settings().session_timeout_hours
+        timeout_minutes = get_settings().session_timeout_minutes
+        timeout_hours = timeout_minutes / 60
         session_expired, last_activity_utc, expired_threshold_utc = is_expired(last_activity, timeout_hours)
         
         if session_expired:
@@ -56,12 +57,13 @@ class SessionHelpers:
         if not await SessionHelpers.is_session_expired(session):
             return False
         
-        # Don't send expiration message for very new sessions (less than 1 hour old)
+        # Don't send expiration message for very new sessions (less than session timeout)
         # This prevents confusion when users just started a conversation
         if session.created_at:
             created_utc = utc_from_naive(session.created_at)
-            one_hour_ago_utc = utc_now() - timedelta(hours=1)
-            if created_utc > one_hour_ago_utc:
+            timeout_minutes = get_settings().session_timeout_minutes
+            timeout_ago_utc = utc_now() - timedelta(minutes=timeout_minutes)
+            if created_utc > timeout_ago_utc:
                 return False
         
         # Don't send expiration message if session has no meaningful history

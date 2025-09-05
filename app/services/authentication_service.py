@@ -818,7 +818,9 @@ Return only the selected email address or "none" if no clear selection.
             # Generate confirmation message
             message = f"We found the following email address associated with your phone number. Could you please help us verify it?\n\n{selected_email}"
             
-            # Send confirmation message with buttons directly
+            await self.whatsapp_service.send_message(user_phone, message)
+            
+            # Send Yes/No confirmation buttons
             buttons_config = [
                 {"id": "confirm_email", "title": "Yes"},
                 {"id": "reject_email", "title": "No"}
