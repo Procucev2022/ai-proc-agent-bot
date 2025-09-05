@@ -14,10 +14,6 @@ from app.services.whatsapp_service import WhatsAppService
 from app.services.gmt_api_service import GMTAPIService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
-from app.services.helpers.rfq_processing_helpers import (
-    run_auto_categorization_for_rfqs,
-    run_seller_recommendation_for_rfqs
-)
 from app.services.auto_categorization_service import AutoCategorizationService
 from app.services.enhanced_auto_categorization_service import EnhancedAutoCategorizationService
 from app.services.seller_recommendation_service import SellerRecommendationService
@@ -210,19 +206,15 @@ class ConfirmationHandler:
                 "user_message": message,
                 "extracted_entities": product_info["entities"]
             }, chat_summaries)
-            # await self.whatsapp_service.send_message(user.phone_number, summary_response)
             
-            # Small delay to ensure message ordering
-            # await asyncio.sleep(0.5)
-            
-            # Send Yes/No confirmation buttons
+            # Send confirmation message with buttons directly
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
                 {"id": "no_rfq", "title": "Modify"}
             ]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
-                "Confirmation Required", 
+                "Confirmation Required",
                 summary_response,
                 buttons_config
             )
@@ -248,12 +240,8 @@ class ConfirmationHandler:
                 },
                 chat_summaries
             )
-            # await self.whatsapp_service.send_message(user.phone_number, summary_response)
             
-            # Small delay to ensure message ordering
-            # await asyncio.sleep(0.5)
-            
-            # Send Yes/No confirmation buttons
+            # Send confirmation message with buttons directly
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
                 {"id": "no_rfq", "title": "Modify"}
