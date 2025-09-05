@@ -825,7 +825,6 @@ Return only the selected email address or "none" if no clear selection.
             ]
             await self.whatsapp_service.send_configurable_buttons(
                 user_phone,
-                "Email Confirmation", 
                 message,
                 buttons_config
             )

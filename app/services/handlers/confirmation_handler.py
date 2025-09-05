@@ -214,9 +214,9 @@ class ConfirmationHandler:
             ]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
-                "Confirmation Required",
                 summary_response,
-                buttons_config
+                buttons_config,
+                "Confirmation Required"
             )
 
             # Move to confirmation state
@@ -248,9 +248,9 @@ class ConfirmationHandler:
             ]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
-                "Confirmation Required",
                 summary_response,
-                buttons_config
+                buttons_config,
+                "Confirmation Required"
             )
 
             # Move to confirmation state
