@@ -160,8 +160,8 @@ class ChatService:
                     "clarification_sent", "general_inquiry_handled", "fallback_handled",
                     "redirected_to_registration", "redirected_to_email_confirmation", "otp_sent",
                     "email_selection_requested", "registration_initiated", "data_collection_in_progress",
-                    "awaiting_confirmation", "registration_restarted", "otp_validated",
-                    "domain_approved", "domain_approval_required"
+                    "awaiting_confirmation", "registration_restarted", "otp_validated", "otp_invalid",
+                    "domain_approved", "domain_approval_required", "email_confirmation_requested"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
@@ -305,7 +305,7 @@ class ChatService:
             if not user.is_registered:
                 return await self._handle_registration_workflow(user, message)
             # Handle seller RFQ selection workflow BEFORE intent classification
-            if session.workflow_type.value == "seller_rfq_view":
+            if session.workflow_type == "seller_rfq_view":
                 workflow_state = session.workflow_state or {}
                 current_seller_state = workflow_state.get("seller_workflow_state")
                 # Seller is responding to RFQ list - handle this immediately
