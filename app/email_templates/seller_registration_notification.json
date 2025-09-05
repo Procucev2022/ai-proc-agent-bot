@@ -1,0 +1,8 @@
+{
+  "to": "support@procucev.com",
+  "cc": "",
+  "bcc": "",
+  "subject": "New Seller Registration – Support Notification",
+  "body": "Dear Support Team,\n\nA user with below details has chosen not to proceed with the seller registration process however wish to sell items. Please follow up as necessary using the below details:\nPhone Number: {phone_number}",
+  "signature": "Regards\nQUA"
+}
