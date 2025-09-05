@@ -890,8 +890,35 @@ class ChatService:
             # Route to confirmation handler
             return await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
         
+        # Check if this is an email confirmation button response during authentication
+        if button_id in ["confirm_email", "reject_email"]:
+            # Route to authentication email confirmation handler
+            return await self._handle_authentication_email_button(user, session, button_id)
+        
         # Default button handling
         return {"status": "button_handled", "button_id": button_id}
+
+    async def _handle_authentication_email_button(self, user: User, session: ConversationSession, button_id: str) -> Dict[str, Any]:
+        """Handle email confirmation button responses during authentication."""
+        logger.info(f"Authentication email button response from {user.phone_number}: {button_id}")
+        
+        try:
+            if button_id == "confirm_email":
+                # User confirmed the email - simulate "yes" response
+                return await self.authentication_service.handle_email_confirmation(
+                    user.phone_number, "yes", session
+                )
+            elif button_id == "reject_email":
+                # User rejected the email - simulate "no" response  
+                return await self.authentication_service.handle_email_confirmation(
+                    user.phone_number, "no", session
+                )
+            else:
+                return {"status": "unknown_email_button", "button_id": button_id}
+                
+        except Exception as e:
+            logger.error(f"Error handling authentication email button: {e}")
+            return {"status": "error", "error": str(e)}
 
     async def _handle_list_response(self, user: User, session: ConversationSession, list_id: str) -> Dict[
         str, Any]:  # noqa: ARG002
