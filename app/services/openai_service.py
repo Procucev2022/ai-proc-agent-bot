@@ -1256,11 +1256,13 @@ Analyze their response to determine their true choice.
                 clarification_tool = json.load(f)
             
             # Build prompt inline
+            prompt = f"Starts with a polite acknowledgment of the user’s request {context.get('user_message', '')}"
+            prompt += "Mention that Request for Quotation (RFQ) will be created"
             prompt = f"Generate clarification response:\n\n"
             prompt += f"Completeness: {completeness}%\n"
             prompt += f"Questions to ask: {questions}\n"
             prompt += f"User message: '{context.get('user_message', '')}'\n"
-            
+
             if context.get('extracted_entities'):
                 prompt += f"Current entities: {json.dumps(context['extracted_entities'])}\n"
             
