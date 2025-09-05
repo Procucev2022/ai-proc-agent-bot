@@ -97,8 +97,14 @@ class BaseRedisService:
 class AuthRedisService(BaseRedisService):
     """Specialized async Redis service for authentication."""
 
-    async def store(self, phone_number: str, user_data: Dict[str, Any], expiry_seconds: int = 3600) -> bool:
+    def __init__(self):
+        super().__init__()
+        self.settings = get_settings()
+
+    async def store(self, phone_number: str, user_data: Dict[str, Any], expiry_seconds: Optional[int] = None) -> bool:
         key = f"auth:{phone_number}"
+        if expiry_seconds is None:
+            expiry_seconds = self.settings.redis_expiry_seconds
         return await self.set(key, user_data, expiry_seconds)
 
     async def retrieve(self, phone_number: str) -> Optional[UserDetailsSchema]:
