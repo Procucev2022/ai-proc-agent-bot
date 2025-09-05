@@ -1256,11 +1256,13 @@ Analyze their response to determine their true choice.
                 clarification_tool = json.load(f)
             
             # Build prompt inline
+            prompt = f"Starts with a polite acknowledgment of the user’s request {context.get('user_message', '')}"
+            prompt += "Mention that Request for Quotation (RFQ) will be created"
             prompt = f"Generate clarification response:\n\n"
             prompt += f"Completeness: {completeness}%\n"
             prompt += f"Questions to ask: {questions}\n"
             prompt += f"User message: '{context.get('user_message', '')}'\n"
-            
+
             if context.get('extracted_entities'):
                 prompt += f"Current entities: {json.dumps(context['extracted_entities'])}\n"
             
@@ -2122,8 +2124,27 @@ Determine the best category for the input item based on the similar items and th
             
             # Build context for OpenAI
             context_text = "Generate RFQ confirmation for the following data:\n\n"
-            # Clean RFQ data for JSON serialization
+            # Clean RFQ data for JSON serialization and format dates
             clean_rfq_data = self._clean_for_json_serialization(rfq_data)
+            
+            # Format delivery date for display
+            if clean_rfq_data.get("delivery_date"):
+                from app.utils.datetime_utils import format_date_display
+                from datetime import datetime
+                
+                delivery_date = clean_rfq_data["delivery_date"]
+                if isinstance(delivery_date, str):
+                    try:
+                        # Parse ISO format date string
+                        dt = datetime.fromisoformat(delivery_date.replace('Z', '+00:00'))
+                        clean_rfq_data["delivery_date_display"] = format_date_display(dt)
+                    except:
+                        clean_rfq_data["delivery_date_display"] = delivery_date
+                elif isinstance(delivery_date, datetime):
+                    clean_rfq_data["delivery_date_display"] = format_date_display(delivery_date)
+                else:
+                    clean_rfq_data["delivery_date_display"] = str(delivery_date)
+            
             context_text += f"RFQ Data: {json.dumps(clean_rfq_data, indent=2)}\n"
             
             if context.get("user_message"):
@@ -2227,6 +2248,106 @@ Determine the best category for the input item based on the similar items and th
             logger.error(f"Error generating opt-in confirmation: {str(e)}")
             return f"Hi {seller_name}, welcome back! You'll receive RFQ notifications for {categories_text}. To opt out, reply 'opt-out'."
     
+    @log_service_method("openai_service")
+    def validate_delivery_date(self, raw_date_input: str, extracted_date: str = None) -> Dict[str, Any]:
+        """Validate delivery date with business rules using OpenAI.
+        
+        Args:
+            raw_date_input: Raw date input from user
+            extracted_date: Initially extracted date in YYYY-MM-DD format
+            
+        Returns:
+            Dict with validation results and normalized date
+        """
+        start_time = time.time()
+        
+        try:
+            from datetime import datetime, timedelta
+            current_date = datetime.now()
+            current_date_str = current_date.strftime("%Y-%m-%d")
+            
+            # Handle common relative dates before calling OpenAI
+            normalized_date = None
+            if raw_date_input.lower().strip() in ["tomorrow", "tommorrow"]:
+                tomorrow = current_date + timedelta(days=1)
+                normalized_date = tomorrow.strftime("%Y-%m-%d")
+            elif raw_date_input.lower().strip() == "today":
+                normalized_date = current_date_str
+            elif raw_date_input.lower().strip() in ["day after tomorrow", "day after tommorrow"]:
+                day_after_tomorrow = current_date + timedelta(days=2)
+                normalized_date = day_after_tomorrow.strftime("%Y-%m-%d")
+            
+            # If we handled it locally, return the result
+            if normalized_date:
+                return {
+                    "is_valid": True,
+                    "normalized_date": normalized_date,
+                    "validation_issues": [],
+                    "user_friendly_message": f"Delivery date set to {normalized_date}",
+                    "confidence": 95,
+                    "success": True
+                }
+            
+            # Load date validation tool for complex cases
+            with open(self.tools_dir / "date_validation.json", 'r') as f:
+                date_tool = json.load(f)
+            
+            prompt = f"""
+            Validate this delivery date input:
+            Raw input: "{raw_date_input}"
+            Extracted date: {extracted_date or "None"}
+            Current date: {current_date_str}
+            
+            Apply validation rules and provide normalized result.
+            """
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions=self._load_prompt("date_validation", "_get_date_validation_prompt"),
+                tools=[date_tool],
+                tool_choice={"type": "function", "name": "validate_delivery_date"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    result = {
+                        "is_valid": args.get("is_valid", False),
+                        "normalized_date": args.get("normalized_date"),
+                        "validation_issues": args.get("validation_issues", []),
+                        "user_friendly_message": args.get("user_friendly_message"),
+                        "confidence": args.get("confidence", 0),
+                        "success": True
+                    }
+                    
+                    logger.info(f"Date validation: {raw_date_input} -> {result['normalized_date']} (valid: {result['is_valid']})")
+                    return result
+            
+            return {
+                "is_valid": False,
+                "normalized_date": None,
+                "validation_issues": ["Validation failed"],
+                "user_friendly_message": "Please provide a valid future date",
+                "confidence": 30,
+                "success": False
+            }
+            
+        except Exception as e:
+            logger.error(f"Date validation failed: {str(e)}")
+            return {
+                "is_valid": False,
+                "normalized_date": None,
+                "validation_issues": [f"Error: {str(e)}"],
+                "user_friendly_message": "Please provide a valid future date",
+                "confidence": 20,
+                "success": False
+            }
+
     @log_service_method("openai_service")
     def detect_opt_out_intent(self, message: str) -> Dict[str, Any]:
         """Detect opt-out/opt-in intent in seller messages using function calling."""

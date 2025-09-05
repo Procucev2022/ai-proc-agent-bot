@@ -118,20 +118,26 @@ class EntityService:
 
         # Handle both old single entity format and new multi-product format
         if "products" in response:
-            # New multi-product format
-            print(f"EntityService: Found products array with {len(response.get('products', []))} products")
-            for i, product in enumerate(response.get('products', [])):
+            # New multi-product format - validate dates
+            products = response.get("products", [])
+            validated_products = self._validate_dates_in_products(products, message)
+            
+            print(f"EntityService: Found products array with {len(validated_products)} products")
+            for i, product in enumerate(validated_products):
                 print(f"  Product {i+1}: {product}")
             return {
-                "products": response.get("products", []),
+                "products": validated_products,
                 "confidence": response.get("confidence", 0),
                 "success": response.get("success", True)
             }
         else:
-            # Backward compatibility for old single entity format
-            print(f"EntityService: Using backward compatibility with entities: {response.get('entities', {})}")
+            # Backward compatibility for old single entity format - validate date
+            entities = response.get("entities", {})
+            validated_entities = self._validate_date_in_entity(entities, message)
+            
+            print(f"EntityService: Using backward compatibility with entities: {validated_entities}")
             return {
-                "entities": response.get("entities", {}),
+                "entities": validated_entities,
                 "confidence": response.get("confidence", 0),
                 "success": response.get("success", True)
             }
@@ -217,8 +223,10 @@ class EntityService:
                 print(f"EntityService: User provided new values, applying {len(modifications)} modifications")
                 # Convert modifications to products format for existing logic
                 converted_products = self._convert_modifications_to_products_format(modifications)
+                # Validate dates in converted products
+                validated_products = self._validate_dates_in_products(converted_products, message)
                 modified_products = self._apply_modifications_to_existing_products(
-                    pending_products, converted_products, message
+                    pending_products, validated_products, message
                 )
                 print(f"EntityService: Applied modifications, returning {len(modified_products)} updated products")
                 return {
@@ -247,8 +255,10 @@ class EntityService:
             has_meaningful_modifications = self._has_meaningful_modification_values(response["products"], message)
             
             if has_meaningful_modifications:
+                # Validate dates in modification products
+                validated_products = self._validate_dates_in_products(response["products"], message)
                 modified_products = self._apply_modifications_to_existing_products(
-                    pending_products, response["products"], message
+                    pending_products, validated_products, message
                 )
                 print(f"EntityService: Applied modifications, returning {len(modified_products)} updated products")
                 return {
@@ -301,10 +311,17 @@ class EntityService:
         for product_info in existing_products:
             # Extract entities from the product info structure
             if "entities" in product_info:
-                updated_products.append(product_info["entities"].copy())
+                product_copy = product_info["entities"].copy()
             else:
                 # If it's already an entity dict, use it directly
-                updated_products.append(product_info.copy())
+                product_copy = product_info.copy()
+            
+            # Clear any existing date validation errors when starting modifications
+            if "date_validation_error" in product_copy:
+                del product_copy["date_validation_error"]
+                print(f"EntityService: Cleared existing date validation error from product")
+            
+            updated_products.append(product_copy)
         
         # Apply each modification
         for modification in modifications:
@@ -411,6 +428,59 @@ class EntityService:
         
         print(f"EntityService: Converted {len(modifications)} modifications to {len(converted_products)} products")
         return converted_products
+
+    def _validate_dates_in_products(self, products: list, original_message: str) -> list:
+        """Validate delivery dates in products list."""
+        validated_products = []
+        
+        for product in products:
+            validated_product = product.copy()
+            delivery_date = product.get("deliveryDate")
+            
+            if delivery_date:
+                validation_result = self.openai_service.validate_delivery_date(
+                    raw_date_input=delivery_date,
+                    extracted_date=delivery_date
+                )
+                
+                if validation_result.get("is_valid"):
+                    validated_product["deliveryDate"] = validation_result.get("normalized_date")
+                    # Clear any existing date validation error when date is valid
+                    if "date_validation_error" in validated_product:
+                        del validated_product["date_validation_error"]
+                else:
+                    # Mark as invalid and add validation message
+                    validated_product["deliveryDate"] = None
+                    validated_product["date_validation_error"] = validation_result.get("user_friendly_message")
+                    print(f"EntityService: Invalid date '{delivery_date}': {validation_result.get('user_friendly_message')}")
+            else:
+                # If no delivery date provided, preserve any existing validation error
+                pass
+            
+            validated_products.append(validated_product)
+        
+        return validated_products
+    
+    def _validate_date_in_entity(self, entities: dict, original_message: str) -> dict:
+        """Validate delivery date in single entity."""
+        validated_entities = entities.copy()
+        delivery_date = entities.get("deliveryDate")
+        
+        if delivery_date:
+            validation_result = self.openai_service.validate_delivery_date(
+                raw_date_input=delivery_date,
+                extracted_date=delivery_date
+            )
+            
+            if validation_result.get("is_valid"):
+                validated_entities["deliveryDate"] = validation_result.get("normalized_date")
+            else:
+                # Mark as invalid and add validation message
+                validated_entities["deliveryDate"] = None
+                validated_entities["date_validation_error"] = validation_result.get("user_friendly_message")
+                print(f"EntityService: Invalid date '{delivery_date}': {validation_result.get('user_friendly_message')}")
+        
+        return validated_entities
 
     def _has_meaningful_modification_values(self, products: list, message: str) -> bool:
         """
@@ -561,6 +631,12 @@ class EntityService:
                 updated_products = self._apply_resolved_references_intelligently(products, resolved_refs, message)
                 response["products"] = updated_products
                 print(f"EntityService: Applied resolved references to {len(updated_products)} products using AI")
+            
+            # Validate dates in the final products
+            if "products" in response:
+                validated_products = self._validate_dates_in_products(response["products"], message)
+                response["products"] = validated_products
+                print(f"EntityService: Validated dates in {len(validated_products)} products from summary-aware extraction")
             
             return response
             
