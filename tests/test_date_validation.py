@@ -7,11 +7,11 @@ import sys
 import os
 from datetime import datetime, timedelta
 
-# Add the app directory to the Python path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'app'))
+# Add the project root to the Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from services.openai_service import OpenAIService
-from services.entity_service import EntityService
+from app.services.openai_service import OpenAIService
+from app.services.entity_service import EntityService
 
 def test_date_validation():
     """Test the date validation functionality."""
