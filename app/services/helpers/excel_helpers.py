@@ -218,21 +218,48 @@ class ExcelHelpers:
         
         # If items exist, check validation issues
         if validation_result.get('errors') or validation_result.get('missing_required_fields'):
-            instructions.append(f"Your Excel file '{filename}' has some issues:")
-            
-            # Show specific validation errors
-            if validation_result.get('errors'):
-                instructions.append("Issues found:")
-                for error in validation_result['errors']:
-                    instructions.append(f"• {error}")
-            
             if validation_result.get('missing_required_fields'):
-                instructions.append("Missing required fields:")
-                for missing in validation_result['missing_required_fields']:
-                    instructions.append(f"• {missing}")
+                missing_items = validation_result['missing_required_fields']
+                
+                # Count missing fields by type
+                missing_by_field = {}
+                for missing in missing_items:
+                    if 'Missing' in missing:
+                        field_name = missing.split("Missing '")[1].split("'")[0]
+                        if field_name not in missing_by_field:
+                            missing_by_field[field_name] = []
+                        item_num = missing.split("Item ")[1].split(":")[0]
+                        missing_by_field[field_name].append(item_num)
+                
+                # Create a simple, direct message
+                message_parts = []
+                for field, items in missing_by_field.items():
+                    message_parts.append(f"Your Excel file '{filename}' is missing the {field} column.")
+                    message_parts.append(f"Add a {field} column with details like:\n")
+                    
+                    # Add examples based on field type
+                    if field == 'Specification':
+                        message_parts.append('"Intel i7, 16GB RAM"')
+                        message_parts.append('"Ergonomic, Adjustable"\n')
+                    elif field == 'ItemDescription':
+                        message_parts.append('"Laptop"')
+                        message_parts.append('"Office Chair"\n')
+                    elif field == 'Uom':
+                        message_parts.append('"pcs"')
+                        message_parts.append('"kg"\n')
+                    elif field == 'Quantity':
+                        message_parts.append('"10"')
+                        message_parts.append('"5"\n')
+                    else:
+                        message_parts.append(f'"{field} details"\n')
+                
+                message_parts.append("Then resend the file.")
+                
+                # Return as a single instruction
+                return ["\n".join(message_parts)]
             
-            instructions.append("Please fix these issues and upload the corrected file.")
-            return instructions
+            # Fallback for other errors
+            return [f"Your Excel file '{filename}' has some issues. Please fix them and upload again."]
         
         # If only warnings (like empty fields), provide guidance
         if validation_result.get('warnings'):

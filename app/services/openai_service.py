@@ -2283,7 +2283,7 @@ Determine the best category for the input item based on the similar items and th
             
             # If we handled it locally, return the result
             if normalized_date:
-                return {
+                result = {
                     "is_valid": True,
                     "normalized_date": normalized_date,
                     "validation_issues": [],
@@ -2291,6 +2291,18 @@ Determine the best category for the input item based on the similar items and th
                     "confidence": 95,
                     "success": True
                 }
+                
+                # Log local date validation
+                self.interaction_logger.log_entity_extraction(
+                    user_input=raw_date_input,
+                    entities={"date_validation": result},
+                    completeness=100,
+                    workflow_type="date_validation_local",
+                    model_used="local_processing",
+                    processing_time=time.time() - start_time
+                )
+                
+                return result
             
             # Load date validation tool for complex cases
             with open(self.tools_dir / "date_validation.json", 'r') as f:
@@ -2329,10 +2341,20 @@ Determine the best category for the input item based on the similar items and th
                         "success": True
                     }
                     
+                    # Log successful date validation interaction
+                    self.interaction_logger.log_entity_extraction(
+                        user_input=raw_date_input,
+                        entities={"date_validation": result},
+                        completeness=100 if result["is_valid"] else 0,
+                        workflow_type="date_validation",
+                        model_used=self.default_model,
+                        processing_time=processing_time
+                    )
+                    
                     logger.info(f"Date validation: {raw_date_input} -> {result['normalized_date']} (valid: {result['is_valid']})")
                     return result
             
-            return {
+            result = {
                 "is_valid": False,
                 "normalized_date": None,
                 "validation_issues": ["Validation failed"],
@@ -2341,8 +2363,27 @@ Determine the best category for the input item based on the similar items and th
                 "success": False
             }
             
+            # Log failed date validation
+            self.interaction_logger.log_error(
+                interaction_type="date_validation",
+                user_input=raw_date_input,
+                error_message="No function call in response",
+                model_used=self.default_model
+            )
+            
+            return result
+            
         except Exception as e:
             logger.error(f"Date validation failed: {str(e)}")
+            
+            # Log exception in date validation
+            self.interaction_logger.log_error(
+                interaction_type="date_validation",
+                user_input=raw_date_input,
+                error_message=str(e),
+                model_used=self.default_model
+            )
+            
             return {
                 "is_valid": False,
                 "normalized_date": None,
@@ -2548,5 +2589,157 @@ If multiple emails and user selected a number, include selection."""
         except Exception as e:
             logger.error(f"Email confirmation parsing error: {e}")
             return {"success": False}
+
+    @log_service_method("openai_service")
+    def handle_contextual_interaction(self, message: str, conversation_history: dict, 
+                                    workflow_state: dict, extracted_entities: list) -> Dict[str, Any]:
+        """
+        Handle complex contextual interactions with comprehensive session management.
+        
+        This method processes user messages that reference previous conversation parts,
+        request workflow changes, entity modifications, or state transitions using
+        advanced AI reasoning to determine appropriate actions.
+        
+        Args:
+            message: User's contextual message
+            conversation_history: Full conversation history with messages
+            workflow_state: Current workflow state and metadata
+            extracted_entities: Currently extracted entities from session
+            
+        Returns:
+            Dict containing:
+            - response: Generated response text
+            - actions: List of actions to perform (entity updates, state changes, etc.)
+            - context_understanding: Analysis of user intent and referenced data
+        """
+        start_time = time.time()
+        
+        try:
+            # Load contextual interaction tool
+            with open(self.tools_dir / "contextual_interaction_handling.json", 'r') as f:
+                contextual_tool = json.load(f)
+            
+            # Build comprehensive context for AI analysis
+            context_text = self._build_contextual_analysis_prompt(
+                message, conversation_history, workflow_state, extracted_entities
+            )
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": context_text}],
+                instructions=self._load_prompt("contextual_interaction", "_handle_contextual_interaction_prompt"),
+                tools=[contextual_tool],
+                tool_choice={"type": "function", "name": "handle_contextual_interaction"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    
+                    result = {
+                        "success": True,
+                        "response": args.get("response", "I understand your request."),
+                        "actions": args.get("actions", []),
+                        "context_understanding": args.get("context_understanding", {}),
+                        "processing_time_ms": int(processing_time * 1000)
+                    }
+                    
+                    # Log successful contextual interaction
+                    user_intent = result["context_understanding"].get("user_intent", "unknown")
+                    confidence = result["context_understanding"].get("confidence", 0)
+                    
+                    logger.info(f"Contextual interaction handled - Intent: {user_intent}, Confidence: {confidence}%, Actions: {len(result['actions'])}")
+                    
+                    # Log detailed interaction for debugging
+                    self.interaction_logger.log_entity_extraction(
+                        user_input=message,
+                        entities={"contextual_actions": result["actions"], "user_intent": user_intent},
+                        completeness=confidence,
+                        workflow_type="contextual_interaction",
+                        model_used=self.default_model,
+                        processing_time=processing_time,
+                        missing_fields=[]
+                    )
+                    
+                    return result
+            
+            # Fallback response
+            return {
+                "success": False,
+                "response": "I understand you're referring to our previous conversation. Could you please clarify what specific changes you'd like me to make?",
+                "actions": [],
+                "context_understanding": {
+                    "user_intent": "unclear",
+                    "referenced_data": [],
+                    "confidence": 30
+                },
+                "processing_time_ms": int(processing_time * 1000)
+            }
+            
+        except Exception as e:
+            processing_time = time.time() - start_time
+            logger.error(f"Contextual interaction handling failed: {e}")
+            
+            return {
+                "success": False,
+                "response": "I had trouble processing your request. Could you please rephrase what you'd like me to do?",
+                "actions": [],
+                "context_understanding": {
+                    "user_intent": "error",
+                    "referenced_data": [],
+                    "confidence": 0
+                },
+                "processing_time_ms": int(processing_time * 1000),
+                "error": str(e)
+            }
+    
+    def _build_contextual_analysis_prompt(self, message: str, conversation_history: dict, 
+                                        workflow_state: dict, extracted_entities: list) -> str:
+        """Build comprehensive context prompt for AI analysis."""
+        
+        # Start with user message
+        prompt = f"USER MESSAGE: '{message}'\n\n"
+        
+        # Add current workflow information
+        prompt += "CURRENT SESSION STATE:\n"
+        prompt += f"- Workflow Type: {workflow_state.get('workflow_type', 'unknown')}\n"
+        prompt += f"- Current Stage: {workflow_state.get('stage', 'unknown')}\n"
+        prompt += f"- Has Pending Confirmations: {bool(workflow_state.get('pending_combined_rfq') or workflow_state.get('pending_rfq'))}\n"
+        
+        # Add extracted entities
+        if extracted_entities:
+            prompt += f"\nCURRENT EXTRACTED ENTITIES ({len(extracted_entities)} items):\n"
+            for i, entity in enumerate(extracted_entities[:5], 1):  # Show first 5
+                product_name = entity.get('product_name', entity.get('description', f'Item {i}'))
+                quantity = entity.get('quantity', 'Not specified')
+                prompt += f"{i}. {product_name} - Quantity: {quantity}\n"
+                if entity.get('specifications'):
+                    prompt += f"   Specs: {entity.get('specifications')}\n"
+        else:
+            prompt += "\nCURRENT EXTRACTED ENTITIES: None\n"
+        
+        # Add recent conversation history
+        messages = conversation_history.get('messages', [])
+        if messages:
+            prompt += f"\nRECENT CONVERSATION (last 5 messages):\n"
+            for msg in messages[-5:]:
+                role = msg.get('role', 'unknown')
+                content = msg.get('content', '')[:150]  # Truncate long messages
+                prompt += f"{role.capitalize()}: {content}\n"
+        
+        # Add workflow state details
+        if workflow_state:
+            prompt += "\nWORKFLOW STATE DETAILS:\n"
+            for key, value in workflow_state.items():
+                if key not in ['extracted_entities', 'conversation_history'] and value:
+                    prompt += f"- {key}: {str(value)[:100]}\n"
+        
+        prompt += "\nBased on this context, analyze the user's message and determine what contextual actions they want to perform."
+        
+        return prompt
 
 

@@ -226,15 +226,35 @@ class ExcelProcessingService:
         
         required_fields = ['ItemDescription', 'Specification', 'Uom', 'Quantity']
         
+        # Track which fields are missing across all items
+        missing_fields_summary = set()
+        
         for i, item in enumerate(items, 1):
             # Check for missing required fields
             for field in required_fields:
                 if field not in item:
                     validation_result['missing_required_fields'].append(f"Item {i}: Missing '{field}'")
+                    missing_fields_summary.add(field)
                     validation_result['valid'] = False
                 elif not str(item[field]).strip():
                     validation_result['empty_required_fields'].append(f"Item {i}: Empty '{field}'")
-                    validation_result['warnings'].append(f"Item {i}: '{field}' is empty")
+                    validation_result['warnings'].append(f"Item {i}: Empty '{field}'")
+        
+        # Add field explanations summary if there are missing fields
+        if missing_fields_summary:
+            field_explanations = {
+                'ItemDescription': 'product name (e.g., Laptop, Office Chair)',
+                'Specification': 'technical details (e.g., Intel i7 16GB RAM, Ergonomic Adjustable)',
+                'Uom': 'unit (pcs, nos, kg, meters)',
+                'Quantity': 'number needed'
+            }
+            
+            explanations = []
+            for field in missing_fields_summary:
+                explanation = field_explanations.get(field, field)
+                explanations.append(f"• {field}: {explanation}")
+            
+            validation_result['field_explanations'] = explanations
         
         # Check for common issues
         if validation_result['missing_required_fields']:

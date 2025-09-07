@@ -267,7 +267,7 @@ class ChatService:
                 self.is_registered = True
                 self.role = "buyer" if user_type == "buyer" else "seller"
 
-        user_type = session.user_type.value if session.user_type else "buyer"
+        user_type = session.user_type.value if session.user_type and hasattr(session.user_type, 'value') else str(session.user_type) if session.user_type else "buyer"
         return MockUser(user_phone, user_type)
 
     def _create_user_from_details(self, user_details) -> User:
@@ -357,7 +357,7 @@ class ChatService:
                                                                                          intent_result,
                                                                                          self._should_use_summary_aware_extraction)
                     elif new_intent == "rfq_status_check":
-                        return await self._handle_rfq_status_inquiry(user, new_message)
+                        return await self._handle_rfq_status_inquiry(user, new_message,session)
                     elif new_intent == "sell_something":
                         return await self._handle_seller_flow(user, session, message)
                     elif new_intent == "general_inquiry":
@@ -406,6 +406,12 @@ class ChatService:
             intent = intent_result.get('intent')
             confidence = intent_result.get('confidence', 0)
 
+            # Handle contextual intents with direct response capability
+            if intent in ['contextual_reference', 'session_inquiry', 'workflow_rejection', 'alternative_request'] and confidence > 60:
+                if intent_result.get('should_handle_directly'):
+                    logger.info(f"Contextual intent detected: {intent} with {confidence}% confidence - handling directly")
+                    return await self._handle_contextual_interaction(user, session, message, intent_result)
+            
             # Handle modification requests immediately if detected with sufficient confidence
             if intent == "modification_request" and confidence > 0.7:
                 logger.info(f"Modification intent detected with {confidence}% confidence - handling immediately")
@@ -1091,7 +1097,7 @@ class ChatService:
     async def _handle_rfq_status_inquiry(self, user: User, message: str, session: ConversationSession = None) -> Dict[str, Any]:
         # Help 1 : how to handle session here, like what data needs to be save in db and how to do it
         """Handle RFQ status inquiry requests."""
-        return await self.rfq_status_service.handle_rfq_status_inquiry(user, message)
+        return await self.rfq_status_service.handle_rfq_status_inquiry(user, message, session)
 
     async def _handle_seller_flow(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """
@@ -1276,3 +1282,370 @@ class ChatService:
             await self.whatsapp_service.send_message(user.phone_number,
                                                      "Sorry, I couldn't process the RFQ IDs. Please try again with the RFQ numbers from the list.")
             return {"status": "error", "error": str(e)}
+
+    async def _generate_session_summary(self, session: ConversationSession) -> str:
+        """
+        Generate a user-friendly summary of collected information for display.
+        
+        This creates a simple summary showing what products/information has been collected
+        so far in the conversation, similar to the confirmation message format.
+        
+        Args:
+            session: Current conversation session
+            
+        Returns:
+            String summary of collected information for user display
+        """
+        try:
+            summary_parts = []
+            workflow_state = session.workflow_state or {}
+            
+            # Get all collected product entities from various storage locations
+            all_products = []
+            
+            # Check extracted_entities (main storage)
+            extracted_entities = workflow_state.get('extracted_entities', [])
+            if extracted_entities:
+                all_products.extend(extracted_entities)
+            
+            # Check incomplete_products 
+            incomplete_products = workflow_state.get('incomplete_products', [])
+            if incomplete_products:
+                # Handle different data structures
+                if isinstance(incomplete_products, list):
+                    all_products.extend(incomplete_products)
+                elif isinstance(incomplete_products, dict) and 'entities' in incomplete_products:
+                    # Handle serialized product with entities
+                    entities = incomplete_products['entities']
+                    if isinstance(entities, list):
+                        all_products.extend(entities)
+                    else:
+                        all_products.append(entities)
+                elif isinstance(incomplete_products, dict):
+                    # Single product dict
+                    all_products.append(incomplete_products)
+            
+            # Check complete_products
+            complete_products = workflow_state.get('complete_products', [])
+            if complete_products:
+                # Handle different data structures
+                if isinstance(complete_products, list):
+                    all_products.extend(complete_products)
+                elif isinstance(complete_products, dict) and 'entities' in complete_products:
+                    # Handle serialized product with entities
+                    entities = complete_products['entities']
+                    if isinstance(entities, list):
+                        all_products.extend(entities)
+                    else:
+                        all_products.append(entities)
+                elif isinstance(complete_products, dict):
+                    # Single product dict
+                    all_products.append(complete_products)
+            
+            # Check pending RFQ data
+            if workflow_state.get('pending_rfq'):
+                pending_data = workflow_state['pending_rfq']
+                if 'entities' in pending_data:
+                    entities = pending_data['entities']
+                    if isinstance(entities, list):
+                        all_products.extend(entities)
+                    elif isinstance(entities, dict):
+                        all_products.append(entities)
+            
+            # Check pending combined RFQ data
+            if workflow_state.get('pending_combined_rfq'):
+                combined_data = workflow_state['pending_combined_rfq']
+                if 'products' in combined_data:
+                    for product in combined_data['products']:
+                        if 'entities' in product:
+                            entities = product['entities']
+                            if isinstance(entities, dict):
+                                all_products.append(entities)
+            
+            # If still no products found, search through all workflow_state for any dict with product-like fields
+            if not all_products:
+                for key, value in workflow_state.items():
+                    if isinstance(value, dict):
+                        # Check if this looks like a product (has product_name or similar)
+                        if any(field in value for field in ['product_name', 'productName', 'description', 'projectDesc']):
+                            all_products.append(value)
+                    elif isinstance(value, list):
+                        for item in value:
+                            if isinstance(item, dict) and any(field in item for field in ['product_name', 'productName', 'description', 'projectDesc']):
+                                all_products.append(item)
+            
+            # Remove duplicates based on product_name
+            seen_products = set()
+            unique_products = []
+            for product in all_products:
+                if isinstance(product, dict):
+                    # Try different possible product name fields
+                    product_name = product.get('product_name') or product.get('productName') or product.get('description') or product.get('projectDesc') or 'Unknown Product'
+                    product_key = f"{product_name}_{product.get('quantity', '')}"
+                    if product_key not in seen_products:
+                        seen_products.add(product_key)
+                        unique_products.append(product)
+            
+            all_products = unique_products
+            
+            if all_products:
+                summary_parts.append("**Collected Information:**")
+                summary_parts.append("")
+                
+                for product in all_products:
+                    # Handle nested entities structure
+                    if 'entities' in product and isinstance(product['entities'], dict):
+                        entities = product['entities']
+                        product_name = entities.get('description') or entities.get('projectDesc') or 'Product'
+                        quantity = entities.get('quantity') or ''
+                        brand = entities.get('brand') or ''
+                        delivery_date = entities.get('deliveryDate') or ''
+                        missing_fields = product.get('missing_fields', [])
+                    else:
+                        product_name = product.get('description') or product.get('product_name') or 'Product'
+                        quantity = product.get('quantity') or ''
+                        brand = product.get('brand') or ''
+                        delivery_date = product.get('delivery_date') or ''
+                        missing_fields = []
+                    
+                    # Product header
+                    summary_parts.append(f"**{product_name.title()}:**")
+                    
+                    # Add available details
+                    if quantity:
+                        summary_parts.append(f"Quantity: {quantity}")
+                    if brand:
+                        summary_parts.append(f"Brand: {brand}")
+                    if delivery_date:
+                        summary_parts.append(f"Delivery Date: {delivery_date}")
+                    
+                    # Add missing fields if any
+                    if missing_fields:
+                        summary_parts.append("")
+                        summary_parts.append(f"**Still Required:** {', '.join(missing_fields).replace('_', ' ').title()}")
+                    
+                    summary_parts.append("")  # Empty line between products
+                
+                # Remove last empty line
+                if summary_parts and summary_parts[-1] == "":
+                    summary_parts.pop()
+            else:
+                summary_parts.append("**Collected Information:**")
+                summary_parts.append("")
+                summary_parts.append("No products discussed yet.")
+            
+            return '\n'.join(summary_parts)
+            
+        except Exception as e:
+            logger.error(f"Error generating session summary: {e}")
+            return "I don't have any product information collected yet. What would you like to procure?"
+
+    async def _handle_contextual_interaction(self, user: User, session: ConversationSession, message: str, intent_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle contextual interactions with comprehensive session management.
+        
+        This method processes contextual intents like session_inquiry, contextual_reference,
+        workflow_rejection, and alternative_request by executing AI-determined actions
+        and updating session state accordingly.
+        
+        Args:
+            user: User making the request
+            session: Current conversation session
+            message: User's contextual message
+            intent_result: Result from intent classification with contextual data
+            
+        Returns:
+            Dict with status and result information
+        """
+        try:
+            # Get contextual response and actions from intent result
+            contextual_response = intent_result.get('contextual_response', 'I understand your request.')
+            contextual_actions = intent_result.get('contextual_actions', [])
+            context_understanding = intent_result.get('context_understanding', {})
+            
+            logger.info(f"Handling contextual interaction - Intent: {context_understanding.get('user_intent', 'unknown')}, Actions: {len(contextual_actions)}")
+            
+            # Process each contextual action
+            session_updated = False
+            for action in contextual_actions:
+                action_type = action.get('type')
+                action_description = action.get('description', '')
+                
+                logger.info(f"Processing contextual action: {action_type} - {action_description}")
+                
+                if action_type == 'show_session_summary':
+                    # Generate session summary and replace the contextual response entirely
+                    session_summary = await self._generate_session_summary(session)
+                    if session_summary:
+                        contextual_response = session_summary  # Replace, don't append
+                    
+                elif action_type == 'change_workflow_state':
+                    session_updated = True
+                    # Default to collecting state for most cases
+                    session.workflow_state = session.workflow_state or {}
+                    session.workflow_state['stage'] = 'collecting'
+                    session.workflow_state.pop('pending_combined_rfq', None)
+                    session.workflow_state.pop('pending_rfq', None)
+                    logger.info(f"Changed workflow state to: collecting")
+                    
+                elif action_type == 'change_workflow_type':
+                    session_updated = True
+                    # Default to general inquiry for workflow changes
+                    session.workflow_type = 'general_inquiry'
+                    logger.info(f"Changed workflow type to: general_inquiry")
+                    
+                elif action_type == 'rollback_to_previous':
+                    session_updated = True
+                    await self._rollback_to_stage(session, 'collecting')
+                    
+                elif action_type == 'clear_session_data':
+                    session_updated = True
+                    await self._clear_session_fields(session, ['extracted_entities', 'pending_combined_rfq', 'pending_rfq'])
+                    
+                elif action_type == 'restart_workflow':
+                    session_updated = True
+                    await self._restart_workflow(session)
+                    
+                elif action_type == 'suggest_alternatives':
+                    # Add common alternatives to response
+                    alt_text = "\n\n**Search BFS Inventory** - Check immediate availability\n**Product Information** - Get details about our services\n**General Inquiry** - Ask questions about the process"
+                    contextual_response += alt_text
+                    
+                elif action_type == 'update_entities' or action_type == 'modify_existing_data':
+                    # This would need more complex parsing from the original message
+                    # For now, just acknowledge that we understand they want to modify something
+                    contextual_response += "\n\nI understand you want to modify the information. Please let me know specifically what you'd like to change."
+                    
+                else:
+                    logger.info(f"Processed contextual action: {action_type}")
+            
+            # Send the contextual response to user
+            await self.session_manager.send_and_track_message(user.phone_number, contextual_response, session)
+            
+            # Save session if any updates were made
+            if session_updated:
+                workflow_type = session.workflow_type if hasattr(session, 'workflow_type') and session.workflow_type else 'general_inquiry'
+                await self.session_manager.save_session(session, workflow_type)
+                logger.info("Session updated and saved after contextual interaction")
+            
+            return {
+                "status": "contextual_interaction_handled",
+                "user_intent": context_understanding.get('user_intent', 'unknown'),
+                "actions_performed": len(contextual_actions),
+                "confidence": context_understanding.get('confidence', 0)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling contextual interaction: {e}")
+            
+            # Send fallback response
+            fallback_response = "I had trouble processing your contextual request. Could you please try rephrasing what you'd like me to do?"
+            await self.session_manager.send_and_track_message(user.phone_number, fallback_response, session)
+            
+            return {
+                "status": "contextual_interaction_error", 
+                "error": str(e)
+            }
+    
+    async def _process_entity_updates(self, session: ConversationSession, entity_updates: List[Dict]) -> None:
+        """Process entity updates from contextual interactions."""
+        try:
+            workflow_state = session.workflow_state or {}
+            extracted_entities = workflow_state.get('extracted_entities', [])
+            
+            for entity_update in entity_updates:
+                action = entity_update.get('action', 'add')
+                
+                if action == 'add':
+                    # Add new entity to the list
+                    new_entity = {
+                        'product_name': entity_update.get('product_name', ''),
+                        'quantity': entity_update.get('quantity', ''),
+                        'specifications': entity_update.get('specifications', ''),
+                        'preferred_brand': entity_update.get('preferred_brand', ''),
+                        'delivery_date': entity_update.get('delivery_date', '')
+                    }
+                    # Remove empty values
+                    new_entity = {k: v for k, v in new_entity.items() if v}
+                    if new_entity:
+                        extracted_entities.append(new_entity)
+                        logger.info(f"Added new entity: {new_entity.get('product_name', 'Unknown')}")
+                        
+                elif action == 'update':
+                    # Update existing entities that match product name
+                    product_name = entity_update.get('product_name', '')
+                    for entity in extracted_entities:
+                        if entity.get('product_name', '').lower() == product_name.lower():
+                            # Update fields that are provided
+                            for field in ['quantity', 'specifications', 'preferred_brand', 'delivery_date']:
+                                if entity_update.get(field):
+                                    entity[field] = entity_update[field]
+                            logger.info(f"Updated entity: {product_name}")
+                            break
+                            
+                elif action == 'remove':
+                    # Remove entities that match product name
+                    product_name = entity_update.get('product_name', '')
+                    extracted_entities = [e for e in extracted_entities if e.get('product_name', '').lower() != product_name.lower()]
+                    logger.info(f"Removed entity: {product_name}")
+            
+            # Update session with modified entities
+            workflow_state['extracted_entities'] = extracted_entities
+            session.workflow_state = workflow_state
+            
+        except Exception as e:
+            logger.error(f"Error processing entity updates: {e}")
+    
+    async def _rollback_to_stage(self, session: ConversationSession, target_stage: str) -> None:
+        """Rollback session to a previous stage."""
+        try:
+            workflow_state = session.workflow_state or {}
+            
+            # Clear stage-specific data based on target
+            if target_stage == 'collecting':
+                # Clear confirmation states
+                workflow_state.pop('pending_combined_rfq', None)
+                workflow_state.pop('pending_rfq', None)
+                workflow_state.pop('pending_optional_rfq', None)
+                workflow_state['stage'] = 'collecting'
+                
+            elif target_stage == 'entity_collection':
+                # Clear all entities and start over
+                workflow_state['extracted_entities'] = []
+                workflow_state['stage'] = 'collecting'
+                
+            session.workflow_state = workflow_state
+            logger.info(f"Rolled back session to stage: {target_stage}")
+            
+        except Exception as e:
+            logger.error(f"Error rolling back to stage {target_stage}: {e}")
+    
+    async def _clear_session_fields(self, session: ConversationSession, fields_to_clear: List[str]) -> None:
+        """Clear specific fields from session."""
+        try:
+            workflow_state = session.workflow_state or {}
+            
+            for field in fields_to_clear:
+                if field in workflow_state:
+                    del workflow_state[field]
+                    logger.info(f"Cleared session field: {field}")
+                    
+            session.workflow_state = workflow_state
+            
+        except Exception as e:
+            logger.error(f"Error clearing session fields {fields_to_clear}: {e}")
+    
+    async def _restart_workflow(self, session: ConversationSession) -> None:
+        """Completely restart the workflow by clearing session data."""
+        try:
+            # Keep basic session info but clear workflow data
+            session.workflow_state = {
+                'extracted_entities': [],
+                'stage': 'collecting',
+                'last_activity_at': utc_now().isoformat()
+            }
+            session.workflow_type = 'general_inquiry'
+            logger.info("Restarted workflow - cleared session data")
+            
+        except Exception as e:
+            logger.error(f"Error restarting workflow: {e}")
