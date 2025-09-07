@@ -294,10 +294,14 @@ class OpenAIService:
                 prompt_category = "entity_extraction"
                 prompt_name = f"_get_entity_system_prompt_{mapped_workflow}"
             
+            # Add current year for date extraction
+            from datetime import datetime
+            current_year = datetime.now().year
+            
             response = self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": message}],
-                instructions=self._load_prompt(prompt_category, prompt_name),
+                instructions=self._load_prompt(prompt_category, prompt_name, current_year=current_year),
                 tools=[entity_tool],
                 tool_choice={"type": "function", "name": tool_function_name}
             )
@@ -2304,7 +2308,7 @@ Determine the best category for the input item based on the similar items and th
             response = self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
-                instructions=self._load_prompt("date_validation", "_get_date_validation_prompt"),
+                instructions=self._load_prompt("date_validation", "_get_date_validation_prompt", current_year=current_date.year, current_date=current_date_str),
                 tools=[date_tool],
                 tool_choice={"type": "function", "name": "validate_delivery_date"}
             )
