@@ -28,8 +28,24 @@ INTENT CATEGORIES:
    Context clues: Reference phrases (same, usual, regular, like before, as last time), user has relevant historical data
    IMPORTANT: Only classify as reference_request if user has relevant historical data available
 
-8. **ambiguous** (<60% confidence) - Unclear intent, mixed signals, or insufficient information
-   Examples: "Hello", "Thanks", unclear mixed messages
+8. **contextual_reference** (80%+ confidence) - User referencing previously provided information
+   Examples: "I already told you that", "As I mentioned before", "I provided those details earlier"
+   Context clues: Reference phrases, user referring to conversation history
+
+9. **session_inquiry** (75%+ confidence) - User asking about collected information or session state
+   Examples: "What do you have so far?", "Show me the information", "Give me a summary"
+   Context clues: Summary requests, information display requests
+
+10. **workflow_rejection** (80%+ confidence) - User rejecting current workflow approach
+    Examples: "I don't want to raise an RFQ", "This isn't working", "Let's try something else"
+    Context clues: Rejection language, dissatisfaction with current approach
+
+11. **alternative_request** (75%+ confidence) - User wanting different approach or service
+    Examples: "Do you have this in stock?", "Can I buy directly?", "Search your inventory"
+    Context clues: Alternative service requests, direct purchase interest
+
+12. **ambiguous** (<60% confidence) - Unclear intent, mixed signals, or insufficient information
+    Examples: "Hello", "Thanks", unclear mixed messages
 
 CONVERSATION CONTEXT ANALYSIS:
 You will receive conversation context including:

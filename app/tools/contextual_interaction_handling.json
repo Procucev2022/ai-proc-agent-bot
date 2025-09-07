@@ -1,0 +1,73 @@
+{
+    "type": "function",
+    "name": "handle_contextual_interaction",
+    "description": "Handle complex contextual interactions including entity updates, workflow state changes, and intelligent responses based on session history",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "response": {
+                "type": "string",
+                "description": "Natural language response to the user that acknowledges their contextual request and explains what actions are being taken"
+            },
+            "actions": {
+                "type": "array",
+                "description": "List of actions to perform in response to the contextual interaction",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": [
+                                "update_entities",
+                                "change_workflow_state", 
+                                "change_workflow_type",
+                                "rollback_to_previous",
+                                "clear_session_data",
+                                "show_session_summary",
+                                "suggest_alternatives",
+                                "restart_workflow"
+                            ],
+                            "description": "Type of action to perform"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Brief description of what this action does"
+                        }
+                    },
+                    "required": ["type", "description"],
+                    "additionalProperties": false
+                }
+            },
+            "context_understanding": {
+                "type": "object",
+                "properties": {
+                    "user_intent": {
+                        "type": "string",
+                        "enum": [
+                            "show_collected_info",
+                            "modify_existing_data", 
+                            "add_new_requirements",
+                            "change_workflow_approach",
+                            "go_back_previous_step",
+                            "restart_completely",
+                            "reject_current_workflow",
+                            "request_alternatives"
+                        ],
+                        "description": "Interpreted user intent from contextual message"
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100,
+                        "description": "Confidence in understanding the user's contextual intent"
+                    }
+                },
+                "required": ["user_intent", "confidence"],
+                "additionalProperties": false
+            }
+        },
+        "required": ["response", "actions", "context_understanding"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

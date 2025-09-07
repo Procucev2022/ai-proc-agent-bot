@@ -79,10 +79,10 @@ class SessionManagementService:
         # Check if session has expired
         if await SessionHelpers.is_session_expired(session):
             # Only send expiration message if appropriate
-            if await SessionHelpers.should_send_expiration_message(session):
+            if await SessionHelpers.should_send_expiration_message(session):    
                 await self.whatsapp_service.send_message(
                     user_phone, 
-                    "Your session has expired. Let's start fresh! What can I help you with?"
+                    "Your session has expired. Let's start fresh!"
                 )
                 
                 # Generate enhanced session summary for timeout (non-blocking)

@@ -26,7 +26,7 @@ class DailyAggregationService:
         self.settings = get_settings()
     
     @log_service_method("daily_aggregation_service")
-    async def run_daily_aggregation(self, target_date: date = None) -> bool:
+    def run_daily_aggregation(self, target_date: date = None) -> bool:
         """Run daily aggregation for B2B WhatsApp metrics."""
         if target_date is None:
             target_date = date.today() - timedelta(days=1)
@@ -45,9 +45,9 @@ class DailyAggregationService:
                     return True
                 
                 # Calculate metrics matching the report format
-                buyer_metrics = await self._calculate_buyer_summary_metrics(sessions, target_date)
-                seller_metrics = await self._calculate_seller_summary_metrics(sessions, target_date)
-                category_metrics = await self._calculate_category_summary_metrics(sessions, target_date)
+                buyer_metrics = self._calculate_buyer_summary_metrics(sessions, target_date)
+                seller_metrics = self._calculate_seller_summary_metrics(sessions, target_date)
+                category_metrics = self._calculate_category_summary_metrics(sessions, target_date)
                 
                 # Store daily metrics
                 self._store_metrics(db, target_date, 'buyer_summary', buyer_metrics)
@@ -57,7 +57,7 @@ class DailyAggregationService:
                 db.commit()
                 
                 # Calculate and store rolling window metrics
-                await self._update_rolling_windows(target_date)
+                self._update_rolling_windows(target_date)
                 
                 logger.info(f"B2B WhatsApp daily aggregation completed for {target_date}")
                 return True
@@ -66,7 +66,7 @@ class DailyAggregationService:
             logger.error(f"Daily aggregation failed for {target_date}: {e}")
             return False
     
-    async def _calculate_buyer_summary_metrics(self, sessions: List, target_date: date) -> Dict[str, Any]:
+    def _calculate_buyer_summary_metrics(self, sessions: List, target_date: date) -> Dict[str, Any]:
         """
         Calculate buyer summary metrics matching the B2B WhatsApp Insights Report.
         
@@ -130,12 +130,12 @@ class DailyAggregationService:
                         if isinstance(product, dict) and product.get('category'):
                             all_categories.append(product['category'])
             
-            # Products searched count (NEW)
-            if session.products_searched_count:
+            # Products searched count (NEW - placeholder until database migration)
+            if hasattr(session, 'products_searched_count') and session.products_searched_count:
                 products_searched_total += session.products_searched_count
             
-            # Total RFQ responses received (NEW)
-            if session.total_rfq_responses_received:
+            # Total RFQ responses received (NEW - placeholder until database migration)
+            if hasattr(session, 'total_rfq_responses_received') and session.total_rfq_responses_received:
                 total_rfq_responses += session.total_rfq_responses_received
             
             # BFS searches
@@ -185,7 +185,7 @@ class DailyAggregationService:
             'bids_accepted_by_buyers': bids_accepted
         }
     
-    async def _calculate_seller_summary_metrics(self, sessions: List, target_date: date) -> Dict[str, Any]:
+    def _calculate_seller_summary_metrics(self, sessions: List, target_date: date) -> Dict[str, Any]:
         """
         Calculate seller summary metrics matching the B2B WhatsApp Insights Report.
         
@@ -210,8 +210,12 @@ class DailyAggregationService:
         # 4. Subscription Plans Requested (NEW - placeholder)
         subscription_plans_requested = 0
         
-        # 5. Counter Offers Accepted
+        # 5. Counter Offers Accepted  
         counter_offers_accepted = 0
+        
+        # Additional metrics (not in return but used in calculations)
+        rfqs_responded = 0
+        bids_accepted = 0
         
         for session in seller_sessions:
             # RFQs requested (RFQs that sellers asked for or engaged with)
@@ -249,7 +253,7 @@ class DailyAggregationService:
             'counter_offers_accepted': counter_offers_accepted
         }
     
-    async def _calculate_category_summary_metrics(self, sessions: List, target_date: date) -> Dict[str, Any]:
+    def _calculate_category_summary_metrics(self, sessions: List, target_date: date) -> Dict[str, Any]:
         """
         Calculate category summary metrics matching the B2B WhatsApp Insights Report.
         
@@ -375,18 +379,18 @@ class DailyAggregationService:
             )
             db.add(new_metric)
     
-    async def _update_rolling_windows(self, end_date: date) -> None:
+    def _update_rolling_windows(self, end_date: date) -> None:
         """Calculate and store 7/30/90 day rolling windows."""
         try:
-            await self._calculate_rolling_window(end_date, "7day", 7)
-            await self._calculate_rolling_window(end_date, "30day", 30)
-            await self._calculate_rolling_window(end_date, "90day", 90)
+            self._calculate_rolling_window(end_date, "7day", 7)
+            self._calculate_rolling_window(end_date, "30day", 30)
+            self._calculate_rolling_window(end_date, "90day", 90)
             
         except Exception as e:
             logger.error(f"Error updating rolling windows: {e}")
             raise
     
-    async def _calculate_rolling_window(self, end_date: date, window_type: str, days: int) -> None:
+    def _calculate_rolling_window(self, end_date: date, window_type: str, days: int) -> None:
         """Calculate rolling window aggregation matching the report format."""
         try:
             start_date = end_date - timedelta(days=days-1)
@@ -515,11 +519,14 @@ class DailyAggregationService:
         # Merge all categories across days
         merged_categories = defaultdict(lambda: {
             'rfqs_uploaded': 0,
+            'rfq_requested': 0,  # Keep for backward compatibility
             'rfqs_with_response': 0,
             'bfs_products_searched': 0,
             'bfs_price_accepted': 0,
+            'bfs_counter_offer_by_buyer': 0,  # New placeholder
             'counter_offers_accepted_by_sellers': 0,
-            'new_counter_offer_by_seller': 0
+            'new_counter_offer_by_seller': 0,
+            'bfs_products_searched_by_unregistered_users': 0  # New placeholder
         })
         
         for day_data in daily_data:

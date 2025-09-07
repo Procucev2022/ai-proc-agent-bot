@@ -116,9 +116,9 @@ class EnhancedAutoCategorizationService:
             if results['documents'][0] and len(results['documents'][0]) > 0:
                 # Found matches in learning taxonomy
                 best_match = results['metadatas'][0][0]
-                # Clamp similarity score to reasonable range (0.0 to 1.0)
+                # Calculate similarity score for cosine distance (distance range 0-2)
                 raw_distance = results['distances'][0][0]
-                similarity_score = max(0.0, min(1.0, 1.0 - raw_distance))
+                similarity_score = max(0.0, min(1.0, 1.0 - (raw_distance / 2.0)))
                 
                 logger.info(f"Best match similarity: {similarity_score:.3f} for '{item_description}'")
                 
@@ -127,9 +127,9 @@ class EnhancedAutoCategorizationService:
                     # Prepare top matches for OpenAI final selection
                     top_matches = []
                     for meta, dist in zip(results['metadatas'][0], results['distances'][0]):
-                        # Clamp similarity score to reasonable range (0.0 to 1.0)
-                        match_similarity = max(0.0, min(1.0, 1.0 - dist))
-                        if match_similarity >= 0.5:  # Only include reasonable matches
+                        # Calculate similarity score for cosine distance (distance range 0-2)
+                        match_similarity = max(0.0, min(1.0, 1.0 - (dist / 2.0)))
+                        if match_similarity >= 0.3:  # Lower threshold for cosine similarity
                             top_matches.append({
                                 "item": meta["item_description"],
                                 "category": meta["client_category_name"],
@@ -235,10 +235,15 @@ class EnhancedAutoCategorizationService:
             )
             
             if fallback_result.get("success"):
-                # Enhanced result with fallback info
+                # Enhanced result with fallback info - fix key mapping
                 fallback_result["method"] = "enhanced_vector_fallback"
                 fallback_result["fallback_used"] = True
                 fallback_result["fallback_reason"] = f"Primary similarity {similarity_score:.3f} below threshold {similarity_threshold}" if 'similarity_score' in locals() else "No matches found in vector store"
+                
+                # Fix key mapping: fallback service returns "category" but we need "client_category"
+                if "category" in fallback_result and "client_category" not in fallback_result:
+                    fallback_result["client_category"] = fallback_result["category"]
+                
                 return fallback_result
             else:
                 # Both primary and fallback failed
