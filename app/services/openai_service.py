@@ -1262,7 +1262,7 @@ Analyze their response to determine their true choice.
             # Build prompt inline
             prompt = f"Starts with a polite acknowledgment of the user’s request {context.get('user_message', '')}"
             prompt += "Mention that Request for Quotation (RFQ) will be created"
-            prompt = f"Generate clarification response:\n\n"
+            prompt += f"Generate clarification response:\n\n"
             prompt += f"Completeness: {completeness}%\n"
             prompt += f"Questions to ask: {questions}\n"
             prompt += f"User message: '{context.get('user_message', '')}'\n"
@@ -1277,6 +1277,7 @@ Analyze their response to determine their true choice.
                 tools=[clarification_tool],
                 tool_choice={"type": "function", "name": "generate_clarification_response"}
             )
+            print("response from LLM is ", response)
             
             processing_time = time.time() - start_time
             

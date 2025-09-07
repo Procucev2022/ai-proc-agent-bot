@@ -200,7 +200,7 @@ class ProductsArrayHandler:
             
             # Add mandatory fields first
             if combined_questions["has_mandatory"]:
-                all_questions.append("*Required information:*")
+                # all_questions.append("*Required information:*")
                 all_questions.extend(combined_questions["mandatory"])
             
 
@@ -228,7 +228,7 @@ class ProductsArrayHandler:
                 
                 # Add mandatory fields first
                 if combined_questions["has_mandatory"]:
-                    all_questions.append("*Required information:*")
+                    # all_questions.append("*Required information:*")
                     all_questions.extend(combined_questions["mandatory"])
                 
 

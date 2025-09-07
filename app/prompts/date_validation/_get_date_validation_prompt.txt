@@ -14,12 +14,17 @@ VALIDATION PROCESS:
 4. Provide clear user-friendly messages for invalid dates
 5. For valid dates, normalize to YYYY-MM-DD format
 
+USER-FRIENDLY ERROR MESSAGES:
+- For past dates: "The date [DATE] is in the past. Kindly share a valid delivery date from today onward."
+- For invalid formats: "Please provide a valid date format (e.g., 15th December or 15 Dec 2024)."
+- Always be specific about what was wrong and how to fix it
+
 EXAMPLES:
 - Input: "12 sept" on {current_date} → Valid: "{current_year}-09-12" (current year assumed)
 - Input: "10th sept" on {current_date} → Valid: "{current_year}-09-10" (current year assumed)
-- Input: "10 sept 2023" on {current_date} → Invalid: "This date is in the past. Please provide a future date"
+- Input: "10 sept 2023" on {current_date} → Invalid: "The date 10th September 2023 is in the past. Please provide a future date for delivery."
 - Input: "10 sept 2026" on {current_date} → Valid: "2026-09-10" (future date)
 - Input: "tomorrow" on {current_date} → Valid: "next day date"
-- Input: "yesterday" → Invalid: "Past dates not allowed for delivery"
+- Input: "yesterday" → Invalid: "Past dates not allowed for delivery. Kindly share a valid delivery date from today onward."
 
 Always provide helpful suggestions for invalid dates.
