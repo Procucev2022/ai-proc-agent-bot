@@ -236,7 +236,7 @@ class GMTAPIService:
 
         # Build GMT API payload
         gmt_payload = {
-            "createdBy": "AI_Procurement_Agent",
+            "createdBy": user_id,
             "projectDesc": rfq_data.get("product_name", f"RFQ_{datetime.now().strftime('%Y%m%d_%H%M%S')}"),
             "deliveryDate": delivery_date,
             "noPrFlag": True,

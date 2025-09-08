@@ -48,10 +48,6 @@ from app.services.excel_processing_service import ExcelProcessingService
 from app.services.gmt_api_service import GMTAPIService
 from app.services.chat_summary_service import ChatSummaryService
 from app.services.daily_summary_service import DailySummaryService
-from app.services.auto_categorization_service import AutoCategorizationService
-from app.services.enhanced_auto_categorization_service import EnhancedAutoCategorizationService
-from app.services.seller_recommendation_service import SellerRecommendationService
-from app.services.enhanced_seller_matching_service import EnhancedSellerMatchingService
 from app.services.rfq_background_service import RFQBackgroundService
 from app.services.rfq_status_service import RFQStatusService
 from app.config import get_settings
@@ -87,10 +83,6 @@ class ChatService:
         self.response_helpers = ResponseHelpers(self.openai_service)
         self.chat_summary_service = ChatSummaryService()
         self.daily_summary_service = DailySummaryService()
-        self.auto_categorization_service = AutoCategorizationService()
-        self.enhanced_auto_categorization_service = EnhancedAutoCategorizationService()
-        self.seller_recommendation_service = SellerRecommendationService()
-        self.enhanced_seller_matching_service = EnhancedSellerMatchingService()
         self.rfq_background_service = RFQBackgroundService()
         
         # Initialize extracted services first
@@ -107,9 +99,7 @@ class ChatService:
             self.whatsapp_service, self.openai_service, self.entity_service, self.response_helpers, self.session_manager
         )
         self.confirmation_handler = ConfirmationHandler(
-            self.whatsapp_service, self.response_helpers,
-            self.auto_categorization_service, self.enhanced_auto_categorization_service,
-            self.seller_recommendation_service, self.enhanced_seller_matching_service
+            self.whatsapp_service, self.response_helpers
         )
         self.intent_switch_handler = IntentSwitchHandler(
             self.whatsapp_service, self.response_helpers
