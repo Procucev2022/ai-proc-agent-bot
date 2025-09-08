@@ -233,10 +233,10 @@ class AuthenticationService:
                 logger.info(f"Auto-processing single email: {selected_email}")
                 return await self._process_selected_email(user_phone, session, selected_email, filtered_users)
             
-            # IMPROVEMENT 2: Multiple emails - use buttons instead of text
-            logger.info(f"Requesting email selection from {len(available_emails)} options with buttons")
+            # Multiple emails - request selection
+            logger.info(f"Requesting email selection from {len(available_emails)} options")
             session.workflow_state["confirmation_stage"] = "selection"
-            return await self._request_email_selection_with_buttons(user_phone, session, available_emails, filtered_users)
+            return await self._request_email_selection(user_phone, session, available_emails)
                 
         except Exception as e:
             logger.error(f"Email confirmation initiation error: {e}")
@@ -254,8 +254,7 @@ class AuthenticationService:
                 return {"status": "restart_authentication"}
             
             # Check if this is a button response
-            if message.startswith(("select_email_", "intent_email_", "confirm_email", "reject_email")):
-                return await self._handle_button_email_response(user_phone, message, session)
+            # Removed button handling - using text-based selection
             
             if confirmation_stage in ["selection", "intent_filtered_selection"]:
                 # AI-first email rejection detection
@@ -269,13 +268,13 @@ class AuthenticationService:
                 
                 if not selected_email:
                     # Fallback to pattern matching
-                    selected_email = await self._pattern_parse_email_selection(message, email_options)
+                    selected_email = await self._parse_email_selection(message, email_options)
                 
                 if selected_email:
                     return await self._process_selected_email(user_phone, session, selected_email, filtered_users)
                 else:
                     # Send retry message with buttons
-                    return await self._send_email_selection_retry_with_buttons(user_phone, session, email_options, filtered_users)
+                    return await self._request_email_selection(user_phone, session, email_options)
             
             elif confirmation_stage == "intent_clarification":
                 # Handle intent clarification response
@@ -288,7 +287,7 @@ class AuthenticationService:
                 
                 if is_confirmed is None:
                     # Fallback to pattern matching
-                    is_confirmed = await self._pattern_validate_confirmation_response(message)
+                    is_confirmed = await self._validate_confirmation_response(message)
                 
                 if is_confirmed:
                     return await self._process_selected_email(user_phone, session, selected_email, filtered_users)
@@ -354,21 +353,33 @@ class AuthenticationService:
                 email = emails[0]
                 user_type = self._get_user_type_for_email(email, filtered_users)
                 if user_type:
-                    email_text = f"Is this your {user_type.lower()} email: {email}?"
+                    email_text = f"Hi {username}! Welcome to QUA,\nIs this your {user_type.lower()} email: {email}?"
                 else:
-                    email_text = f"Is this your email: {email}?"
+                    email_text = f"Hi {username}! Welcome to QUA,\nIs this your email: {email}?"
             else:
-                # Multiple emails - show with buyer/seller labels
+                # Multiple emails - show with buyer/seller labels and QUA welcome
                 email_list_items = []
+                buyer_emails = []
+                seller_emails = []
+                
                 for i, email in enumerate(emails):
                     user_type = self._get_user_type_for_email(email, filtered_users)
-                    if user_type:
-                        email_list_items.append(f"{i+1}. {email} - {user_type}")
+                    if user_type == "Buyer":
+                        buyer_emails.append(email)
+                        email_list_items.append(f"{i+1}. {email} ({user_type})")
+                    elif user_type == "Seller":
+                        seller_emails.append(email)
+                        email_list_items.append(f"{i+1}. {email} ({user_type})")
                     else:
                         email_list_items.append(f"{i+1}. {email}")
                 
                 email_list = "\n".join(email_list_items)
-                email_text = f"Please select your email address:\n\n{email_list}\n\nReply with the number of your email address."
+                
+                # Check if we have mixed user types for better messaging
+                if buyer_emails and seller_emails:
+                    email_text = f"Hi {username}! Welcome to QUA,\nWould you like to buy or sell today?\n\n{email_list}\n\nReply with the number of your email address."
+                else:
+                    email_text = f"Hi {username}! Welcome to QUA,\nPlease select your email address:\n\n{email_list}\n\nReply with the number of your email address."
             
             response = self.openai_service.generate_response(
                 context={"username": username, "email_text": email_text},
@@ -382,10 +393,10 @@ class AuthenticationService:
             logger.error(f"Error generating email confirmation response: {e}")
             # Fallback message
             if len(emails) == 1:
-                return f"Hi {username}! Could you please confirm your email address to proceed: {emails[0]}?"
+                return f"Hi {username}! Welcome to QUA,\nCould you please confirm your email address to proceed: {emails[0]}?"
             else:
                 email_list = "\n".join([f"{i+1}. {email}" for i, email in enumerate(emails)])
-                return f"Hi {username}! Please select your email address:\n\n{email_list}\n\nReply with the number."
+                return f"Hi {username}! Welcome to QUA,\nPlease select your email address:\n\n{email_list}\n\nReply with the number of your email address."
     
     async def _parse_email_selection(self, message: str, email_options: List[str]) -> Optional[str]:
         """Parse email selection from user message."""
@@ -936,18 +947,24 @@ Respond only with: "yes" or "no"
         try:
             username = self._get_username_from_users(filtered_users)
             
-            # Create button configuration for each email
+            # Create button configuration for each email with the actual email as title
             buttons_config = []
             for i, email in enumerate(emails):
-                user_type = self._get_user_type_for_email(email, filtered_users)
-                button_title = f"{user_type} Email" if user_type else f"Email {i+1}"
-                
-                # Ensure button title fits WhatsApp limits (max 20 chars)
+                # Use the actual email address as the button title, truncated if needed
+                button_title = email
                 if len(button_title) > 20:
-                    button_title = f"{user_type[:6]} {i+1}" if user_type else f"Email {i+1}"
+                    # Truncate email but keep domain visible
+                    if '@' in email:
+                        local_part, domain = email.split('@')
+                        if len(domain) < 15:
+                            button_title = f"{local_part[:15-len(domain)-1]}@{domain}"
+                        else:
+                            button_title = email[:17] + "..."
+                    else:
+                        button_title = email[:17] + "..."
                 
                 buttons_config.append({
-                    "id": f"select_email_{i}",
+                    "id": f"email_{i}_{email.replace('@', '_at_').replace('.', '_dot_')}",
                     "title": button_title
                 })
             
@@ -956,16 +973,15 @@ Respond only with: "yes" or "no"
             seller_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Seller"]
             
             if buyer_emails and seller_emails:
-                message = f"Welcome to QUA {username},\n Are you looking to buy or sell today?\n\nPlease select the relevant email:"
+                message = f"Welcome to QUA {username},\nAre you looking to buy or sell today?\n\nPlease select your email address:"
+                # Add user type info when we have both types
+                message += "\n\n"
+                for email in emails:
+                    user_type = self._get_user_type_for_email(email, filtered_users)
+                    type_label = f" - {user_type}" if user_type else ""
+                    message += f"• {email}{type_label}\n"
             else:
-                message = f"Welcome to QUA {username}, please select your email address:"
-            
-            # Add email details in the message body since button titles are short
-            message += "\n\n"
-            for i, email in enumerate(emails, 1):
-                user_type = self._get_user_type_for_email(email, filtered_users)
-                type_label = f" ({user_type})" if user_type else ""
-                message += f"{i}. {email}{type_label}\\n"
+                message = f"Welcome to QUA {username},\nPlease select your email address:"
             
             await self.whatsapp_service.send_configurable_buttons(
                 user_phone,
@@ -975,7 +991,7 @@ Respond only with: "yes" or "no"
             
             # Store email button mapping for response handling
             session.workflow_state["email_button_mapping"] = {
-                f"select_email_{i}": email for i, email in enumerate(emails)
+                f"email_{i}_{email.replace('@', '_at_').replace('.', '_dot_')}": email for i, email in enumerate(emails)
             }
             
             return {
@@ -1024,3 +1040,72 @@ Respond only with: "yes" or "no"
             return "there"
         except Exception:
             return "there"
+    
+    # ===== AI-FIRST AUTHENTICATION METHODS =====
+    
+    async def _ai_parse_email_selection(self, message: str, email_options: List[str]) -> Optional[str]:
+        """Use AI to parse email selection from user message."""
+        try:
+            # Use OpenAI to understand the selection
+            response = self.openai_service.generate_response(
+                context={"message": message, "email_options": email_options},
+                query_results=[],
+                prompt_file="email_confirmation/email_selection_parsing"
+            )
+            
+            response = response.strip().lower()
+            
+            # Check if response matches any email
+            for email in email_options:
+                if email.lower() in response:
+                    logger.info(f"AI selected email: {email} from message: '{message}'")
+                    return email
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"AI email selection parsing error: {e}")
+            return None
+    
+    async def _ai_validate_confirmation_response(self, message: str) -> Optional[bool]:
+        """Use AI to validate confirmation response (yes/no)."""
+        try:
+            response = self.openai_service.generate_response(
+                context={"message": message},
+                query_results=[],
+                prompt_file="email_confirmation/confirmation_validation"
+            )
+            
+            response = response.strip().lower()
+            
+            if "yes" in response:
+                return True
+            elif "no" in response:
+                return False
+            else:
+                return None  # Unclear - will fallback to pattern matching
+                
+        except Exception as e:
+            logger.error(f"AI confirmation validation error: {e}")
+            return None
+    
+    async def _ai_detect_email_rejection(self, message: str) -> bool:
+        """Use AI to detect if user is rejecting all email options."""
+        try:
+            response = self.openai_service.generate_response(
+                context={"message": message},
+                query_results=[],
+                prompt_file="email_confirmation/rejection_detection"
+            )
+            
+            return "yes" in response.strip().lower()
+            
+        except Exception as e:
+            logger.error(f"AI email rejection detection error: {e}")
+            # Fallback to pattern matching
+            message_lower = message.lower().strip()
+            rejection_phrases = [
+                "not my email", "not mine", "wrong email", "incorrect", 
+                "none of these", "not me", "different email", "other email"
+            ]
+            return any(phrase in message_lower for phrase in rejection_phrases)
