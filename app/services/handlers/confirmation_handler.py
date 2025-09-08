@@ -14,10 +14,6 @@ from app.services.whatsapp_service import WhatsAppService
 from app.services.gmt_api_service import GMTAPIService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
-from app.services.auto_categorization_service import AutoCategorizationService
-from app.services.enhanced_auto_categorization_service import EnhancedAutoCategorizationService
-from app.services.seller_recommendation_service import SellerRecommendationService
-from app.services.enhanced_seller_matching_service import EnhancedSellerMatchingService
 from app.schemas.rfq import RFQValidationSchema
 from app.utils.datetime_utils import utc_now
 
@@ -27,17 +23,9 @@ logger = logging.getLogger(__name__)
 class ConfirmationHandler:
     """Handles RFQ confirmation workflow."""
     
-    def __init__(self, whatsapp_service: WhatsAppService, response_helpers: ResponseHelpers,
-                 auto_categorization_service: AutoCategorizationService,
-                 enhanced_auto_categorization_service: EnhancedAutoCategorizationService,
-                 seller_recommendation_service: SellerRecommendationService,
-                 enhanced_seller_matching_service: EnhancedSellerMatchingService):
+    def __init__(self, whatsapp_service: WhatsAppService, response_helpers: ResponseHelpers):
         self.whatsapp_service = whatsapp_service
         self.response_helpers = response_helpers
-        self.auto_categorization_service = auto_categorization_service
-        self.enhanced_auto_categorization_service = enhanced_auto_categorization_service
-        self.seller_recommendation_service = seller_recommendation_service
-        self.enhanced_seller_matching_service = enhanced_seller_matching_service
     
     async def handle_confirmation_button(self, user: User, session: ConversationSession, 
                                        button_id: str) -> Dict[str, Any]:
