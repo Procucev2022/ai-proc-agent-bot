@@ -881,8 +881,12 @@ class ChatService:
         """Handle button interaction responses."""
         logger.info(f"Button response from {user.phone_number}: {button_id}")
         
+        # Handle modify button by simulating "modify" message
+        if button_id == "no_rfq":
+            return await self._process_text_message(user, session, "modify")
+        
         # Check if this is a confirmation button response
-        if button_id in ["confirm_rfq", "no_rfq"]:
+        if button_id == "confirm_rfq":
             # Route to confirmation handler
             return await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
         
