@@ -236,7 +236,7 @@ class AuthenticationService:
             # Multiple emails - request selection
             logger.info(f"Requesting email selection from {len(available_emails)} options")
             session.workflow_state["confirmation_stage"] = "selection"
-            return await self._request_email_selection(user_phone, session, available_emails)
+            return await self._request_email_selection_with_text(user_phone, session, available_emails, filtered_users)
                 
         except Exception as e:
             logger.error(f"Email confirmation initiation error: {e}")
@@ -274,7 +274,7 @@ class AuthenticationService:
                     return await self._process_selected_email(user_phone, session, selected_email, filtered_users)
                 else:
                     # Send retry message
-                    return await self._request_email_selection(user_phone, session, email_options)
+                    return await self._request_email_selection_with_text(user_phone, session, email_options, filtered_users)
             
             elif confirmation_stage == "intent_clarification":
                 # Handle intent clarification response
@@ -327,7 +327,7 @@ class AuthenticationService:
             filtered_users = session.workflow_state.get("filtered_users", [])
             username = "there"
             if filtered_users:
-                username = filtered_users[0].get("name", "there")
+                username = filtered_users[0].get("fullName", "there")
             
             # Generate email confirmation response using OpenAI with user type labels
             message = await self._generate_email_confirmation_response(username, emails, filtered_users)
@@ -999,7 +999,7 @@ Respond only with: "yes" or "no"
         """Extract username from filtered users data."""
         try:
             if filtered_users and len(filtered_users) > 0:
-                return filtered_users[0].get("name", "there")
+                return filtered_users[0].get("fullName", "there")
             return "there"
         except Exception:
             return "there"
