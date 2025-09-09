@@ -249,17 +249,16 @@ Analyze their response and return only:
                 f"Switching to {target_role} mode will clear your current session and allow you to {role_descriptions[target_role]}."
             )
             
-            # Send confirmation with Yes/No buttons
-            buttons = [
-                {"id": "role_switch_yes", "title": "Yes, Switch"},
-                {"id": "role_switch_no", "title": "No, Continue"}
-            ]
+            # Send confirmation with text options
+            confirmation_message += (
+                "\n\n1. Switch\n"
+                "2. Continue\n\n"
+                "Please reply with 1 or 2:"
+            )
             
-            await self.whatsapp_service.send_configurable_buttons(
+            await self.whatsapp_service.send_message(
                 user.phone_number,
-                confirmation_message,
-                buttons,
-                header=f"Switch to {target_role.title()} Mode?"
+                confirmation_message
             )
             
             return {"status": "role_switch_confirmation_requested"}
@@ -379,9 +378,9 @@ Analyze their response and return only:
             # Fallback to simple pattern matching
             message_lower = message.lower().strip()
             
-            if any(word in message_lower for word in ["yes", "y", "switch", "confirm", "ok"]):
+            if any(word in message_lower for word in ["1", "yes", "y", "switch", "confirm", "ok"]):
                 return "yes"
-            elif any(word in message_lower for word in ["no", "n", "continue", "stay", "current"]):
+            elif any(word in message_lower for word in ["2", "no", "n", "continue", "stay", "current"]):
                 return "no"
             else:
                 return "unclear"
