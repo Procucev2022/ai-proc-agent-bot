@@ -292,8 +292,32 @@ class AutoCategorizationService:
     def _handle_no_similar_items(self, item_description: str, user_id: str,
                                 session_id: Optional[str], rfq_id: Optional[str],
                                 processing_time: int) -> Dict:
-        """Handle case when no similar items found."""
+        """Handle case when no similar items found - create fallback learning entry."""
         
+        try:
+            # Create fallback learning category and client mapping
+            fallback_category = self._create_fallback_learning_entry(item_description, user_id)
+            
+            if fallback_category:
+                self._log_categorization(
+                    item_description, user_id, session_id, rfq_id,
+                    fallback_category, 0.5, 0.5, "fallback_created", processing_time
+                )
+                
+                return {
+                    "success": True,
+                    "category": fallback_category,
+                    "method": "fallback_learning_entry",
+                    "reason": "no_similar_items_fallback",
+                    "message": f"Created fallback learning entry, categorized as '{fallback_category}'",
+                    "processing_time_ms": processing_time,
+                    "confidence_score": 0.5,
+                    "requires_review": True
+                }
+        except Exception as e:
+            logger.warning(f"Failed to create fallback learning entry: {e}")
+        
+        # Original fallback if learning entry creation fails
         self._log_categorization(
             item_description, user_id, session_id, rfq_id,
             None, 0.0, 0.0, "no_similar_items", processing_time

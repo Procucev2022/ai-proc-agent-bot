@@ -139,9 +139,16 @@ class EnhancedAutoCategorizationService:
                     # Limit to top 3 matches for OpenAI
                     top_matches = top_matches[:3]
                     
-                    # Use OpenAI for final categorization decision
+                    # Extract available categories from the matches
+                    available_categories = list(set([match['category'] for match in top_matches]))
+                    
+                    # Debug log the categories being passed to OpenAI
+                    logger.info(f"Available categories being passed to OpenAI: {available_categories}")
+                    logger.info(f"Top matches count: {len(top_matches)}")
+                    
+                    # Use OpenAI for final categorization decision with category constraints
                     openai_result = self.openai_service.categorize_with_similar_items(
-                        item_description, top_matches
+                        item_description, top_matches, available_categories
                     )
                     
                     processing_time = int((time.time() - start_time) * 1000)
@@ -244,11 +251,54 @@ class EnhancedAutoCategorizationService:
                 if "category" in fallback_result and "client_category" not in fallback_result:
                     fallback_result["client_category"] = fallback_result["category"]
                 
+                # Update learning taxonomy with the new categorization
+                try:
+                    self._update_learning_taxonomy(
+                        item_description=item_description,
+                        client_category=fallback_result["client_category"],
+                        user_id=user_id
+                    )
+                    fallback_result["learning_updated"] = True
+                    logger.info(f"Updated learning taxonomy with fallback result: {fallback_result['client_category']}")
+                except Exception as e:
+                    logger.warning(f"Failed to update learning taxonomy: {e}")
+                    fallback_result["learning_updated"] = False
+                    fallback_result["learning_error"] = str(e)
+                
                 return fallback_result
             else:
-                # Both primary and fallback failed
+                # Both primary and fallback failed - create "Other" category entry
                 processing_time = int((time.time() - start_time) * 1000)
                 
+                # Try to create fallback "Other" category entry
+                try:
+                    fallback_success = self._update_learning_taxonomy(
+                        item_description=item_description,
+                        client_category="Other",
+                        user_id=user_id
+                    )
+                    
+                    if fallback_success:
+                        self._log_categorization(
+                            item_description, user_id, session_id, rfq_id,
+                            "Other", 0.3, 0.0, "enhanced_vector_fallback_other", processing_time
+                        )
+                        
+                        return {
+                            "success": True,
+                            "method": "enhanced_vector_fallback_other",
+                            "client_category": "Other",
+                            "confidence_score": 0.3,
+                            "processing_time_ms": processing_time,
+                            "requires_review": True,
+                            "message": "Categorized as 'Other' - requires manual review",
+                            "fallback_reason": "Both primary and fallback categorization failed",
+                            "learning_updated": True
+                        }
+                except Exception as e:
+                    logger.warning(f"Failed to create 'Other' category fallback: {e}")
+                
+                # Final fallback - complete failure
                 self._log_categorization(
                     item_description, user_id, session_id, rfq_id,
                     None, 0.0, 0.0, "enhanced_vector_failed", processing_time
@@ -332,6 +382,42 @@ class EnhancedAutoCategorizationService:
         except Exception as e:
             logger.error(f"Error getting category suggestions: {str(e)}")
             return []
+    
+    def _update_learning_taxonomy(self, item_description: str, client_category: str, user_id: str) -> bool:
+        """
+        Update the learning taxonomy with a new item categorization.
+        
+        Args:
+            item_description: Description of the item
+            client_category: Client category assigned
+            user_id: User ID for tracking
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            from .learning_categorization_service import LearningCategorizationService
+            
+            learning_service = LearningCategorizationService()
+            
+            # Use the learning categorization service to add this new item
+            result = learning_service.categorize_and_learn(
+                item_description=item_description,
+                client_category=client_category,
+                user_id=user_id,
+                confidence_threshold=0.7  # Standard threshold for fallback learning
+            )
+            
+            if result.get("success"):
+                logger.info(f"Successfully updated learning taxonomy: {client_category} for '{item_description[:50]}...'")
+                return True
+            else:
+                logger.warning(f"Learning taxonomy update failed: {result.get('error', 'Unknown error')}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error updating learning taxonomy: {e}")
+            return False
     
     def _log_categorization(
         self, 

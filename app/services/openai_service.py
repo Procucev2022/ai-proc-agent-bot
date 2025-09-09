@@ -1584,7 +1584,7 @@ Analyze their response to determine their true choice.
             return {"column_mapping": {}, "confidence": 20, "unmapped_headers": headers, "reasoning": f"Error: {str(e)}", "success": False}
 
     @log_service_method("openai_service")
-    def categorize_with_similar_items(self, item_description: str, similar_items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def categorize_with_similar_items(self, item_description: str, similar_items: List[Dict[str, Any]], available_categories: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Categorize an RFQ item using similar items from vector search.
         
@@ -1594,6 +1594,7 @@ Analyze their response to determine their true choice.
         Args:
             item_description: Description of the item to categorize
             similar_items: List of similar items with category information and similarity scores
+            available_categories: Optional list of available categories to constrain the selection
             
         Returns:
             Dict with categorization result, confidence score, and reasoning
@@ -1601,9 +1602,40 @@ Analyze their response to determine their true choice.
         start_time = time.time()
         
         try:
-            # Load auto-categorization tool
-            with open(self.tools_dir / "auto_categorization.json", 'r') as f:
-                categorization_tool = json.load(f)
+            # Create dynamic auto-categorization tool with enum constraint
+            if available_categories:
+                categories_list = list(set(available_categories)) + ["Other"]
+            else:
+                # Extract categories from similar items as fallback
+                categories_list = list(set([item['category'] for item in similar_items])) + ["Other"]
+            
+            # Create tool with strict enum constraint
+            categorization_tool = {
+                "type": "function",
+                "name": "categorize_item", 
+                "description": "Categorize an RFQ item based on similar items and their categories. You must choose from the available categories provided.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "category": {
+                            "type": "string",
+                            "description": f"The category for the item. Must be one of: {', '.join(categories_list)}",
+                            "enum": categories_list  # Strict constraint
+                        },
+                        "confidence_score": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                            "description": "Confidence score between 0 and 1 for the categorization"
+                        },
+                        "reasoning": {
+                            "type": "string", 
+                            "description": "Brief explanation of why this category was selected based on similar items and available options"
+                        }
+                    },
+                    "required": ["category", "confidence_score", "reasoning"]
+                }
+            }
             
             # Format similar items for the prompt
             similar_items_text = ""
@@ -1613,14 +1645,34 @@ Analyze their response to determine their true choice.
    Category: {item['category']}
 """
             
+            # Extract available categories from similar items or use default
+            if available_categories:
+                categories_list = list(set(available_categories)) + ["Other"]
+                # Format each category on its own line with bullet points
+                categories_formatted = '\n'.join([f"- {cat}" for cat in categories_list])
+                available_categories_text = f"\nAVAILABLE CATEGORIES (you must choose one of these):\n{categories_formatted}\n"
+            else:
+                # Extract categories from similar items as fallback
+                item_categories = list(set([item['category'] for item in similar_items])) + ["Other"]
+                categories_formatted = '\n'.join([f"- {cat}" for cat in item_categories])
+                available_categories_text = f"\nAVAILABLE CATEGORIES (you must choose one of these):\n{categories_formatted}\n"
+            
             prompt = f"""
 Item to categorize: "{item_description}"
 
 Top similar items from database (ranked by similarity):
 {similar_items_text}
+{available_categories_text}
+
+IMPORTANT: You must choose from the available categories listed above. If none are appropriate, select 'Other'.
 
 Determine the best category for the input item based on the similar items and their categories.
 """
+            
+            # Debug log the prompt being sent to OpenAI
+            logger.info(f"OpenAI prompt categories section: {available_categories_text.strip()}")
+            logger.info(f"Full OpenAI prompt:\n{prompt}")
+            logger.info(f"Available categories passed: {available_categories}")
             
             response = self.client.responses.create(
                 model=self.default_model,
