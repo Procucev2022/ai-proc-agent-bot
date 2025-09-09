@@ -266,14 +266,14 @@ class AuthenticationService:
                 # AI-first email selection parsing
                 selected_email = await self._ai_parse_email_selection(message, email_options)
                 
-                if not selected_email:
-                    # Fallback to pattern matching
-                    selected_email = await self._parse_email_selection(message, email_options)
+                # if not selected_email:
+                #     # Fallback to pattern matching
+                #     selected_email = await self._parse_email_selection(message, email_options)
                 
                 if selected_email:
                     return await self._process_selected_email(user_phone, session, selected_email, filtered_users)
                 else:
-                    # Send retry message with buttons
+                    # Send retry message
                     return await self._request_email_selection(user_phone, session, email_options)
             
             elif confirmation_stage == "intent_clarification":
@@ -285,16 +285,16 @@ class AuthenticationService:
                 selected_email = session.workflow_state.get("selected_email")
                 is_confirmed = await self._ai_validate_confirmation_response(message)
                 
-                if is_confirmed is None:
-                    # Fallback to pattern matching
-                    is_confirmed = await self._validate_confirmation_response(message)
+                # if is_confirmed is None:
+                #     # Fallback to pattern matching
+                #     is_confirmed = await self._validate_confirmation_response(message)
                 
                 if is_confirmed:
                     return await self._process_selected_email(user_phone, session, selected_email, filtered_users)
                 else:
-                    # Reset to selection with buttons
+                    # Reset to selection with text
                     session.workflow_state["confirmation_stage"] = "selection"
-                    return await self._request_email_selection_with_buttons(user_phone, session, email_options, filtered_users)
+                    return await self._request_email_selection_with_text(user_phone, session, email_options, filtered_users)
             
         except Exception as e:
             logger.error(f"Email confirmation handling error: {e}")
@@ -840,20 +840,9 @@ Return only the selected email address or "none" if no clear selection.
             session.workflow_state["confirmation_stage"] = "confirmation"
             
             # Generate confirmation message
-            message = f"We found the following email address associated with your phone number. Could you please help us verify it?\n\n{selected_email}"
+            message = f"Welcome to QUA, We found the following email address associated with your phone number. Could you please help us verify it?\n\n{selected_email}\n\nPlease reply 'Yes' to confirm or 'No' if this is incorrect."
             
-            # await self.whatsapp_service.send_message(user_phone, message)
-            
-            # Send Yes/No confirmation buttons
-            buttons_config = [
-                {"id": "confirm_email", "title": "Yes"},
-                {"id": "reject_email", "title": "No"}
-            ]
-            await self.whatsapp_service.send_configurable_buttons(
-                user_phone,
-                message,
-                buttons_config
-            )
+            await self.whatsapp_service.send_message(user_phone, message)
             
             return {
                 "status": "email_confirmation_requested",
@@ -880,7 +869,8 @@ Return only the selected email address or "none" if no clear selection.
                 return False
             
             # Use AI for complex responses
-            return await self._validate_confirmation_with_ai(message)
+            # return await self._validate_confirmation_with_ai(message)
+            return False
             
         except Exception as e:
             logger.error(f"Confirmation validation error: {e}")
@@ -939,76 +929,49 @@ Respond only with: "yes" or "no"
             logger.error(f"Error getting user type for email {email}: {e}")
             return None
     
-    # ===== ENHANCED BUTTON-BASED EMAIL SELECTION =====
+    # ===== TEXT-BASED EMAIL SELECTION =====
     
-    async def _request_email_selection_with_buttons(self, user_phone: str, session: ConversationSession,
-                                                  emails: List[str], filtered_users: List[Dict]) -> Dict[str, Any]:
-        """Request email selection using WhatsApp interactive buttons."""
+    async def _request_email_selection_with_text(self, user_phone: str, session: ConversationSession,
+                                               emails: List[str], filtered_users: List[Dict]) -> Dict[str, Any]:
+        """Request email selection using text-based selection."""
         try:
             username = self._get_username_from_users(filtered_users)
-            
-            # Create button configuration for each email with the actual email as title
-            buttons_config = []
-            for i, email in enumerate(emails):
-                # Use the actual email address as the button title, truncated if needed
-                button_title = email
-                if len(button_title) > 20:
-                    # Truncate email but keep domain visible
-                    if '@' in email:
-                        local_part, domain = email.split('@')
-                        if len(domain) < 15:
-                            button_title = f"{local_part[:15-len(domain)-1]}@{domain}"
-                        else:
-                            button_title = email[:17] + "..."
-                    else:
-                        button_title = email[:17] + "..."
-                
-                buttons_config.append({
-                    "id": f"email_{i}_{email.replace('@', '_at_').replace('.', '_dot_')}",
-                    "title": button_title
-                })
             
             # Check if we have mixed user types for better messaging
             buyer_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Buyer"]
             seller_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Seller"]
             
             if buyer_emails and seller_emails:
-                message = f"Welcome to QUA {username},\nAre you looking to buy or sell today?\n\nPlease select your email address:"
-                # Add user type info when we have both types
-                message += "\n\n"
-                for email in emails:
+                message = f"Welcome to QUA {username},\nAre you looking to buy or sell today?\n\nPlease select your email address:\n\n"
+                for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
                     type_label = f" - {user_type}" if user_type else ""
-                    message += f"• {email}{type_label}\n"
+                    message += f"{i}. {email}{type_label}\n"
+                message += "\nReply with the number of your email address."
             else:
-                message = f"Welcome to QUA {username},\nPlease select your email address:"
+                message = f"Welcome to QUA {username},\nPlease select your email address:\n\n"
+                for i, email in enumerate(emails, 1):
+                    user_type = self._get_user_type_for_email(email, filtered_users)
+                    type_label = f" - {user_type}" if user_type else ""
+                    message += f"{i}. {email}{type_label}\n"
+                message += "\nReply with the number of your email address."
             
-            await self.whatsapp_service.send_configurable_buttons(
-                user_phone,
-                message,
-                buttons_config
-            )
-            
-            # Store email button mapping for response handling
-            session.workflow_state["email_button_mapping"] = {
-                f"email_{i}_{email.replace('@', '_at_').replace('.', '_dot_')}": email for i, email in enumerate(emails)
-            }
+            await self.whatsapp_service.send_message(user_phone, message)
             
             return {
                 "status": "email_selection_requested",
                 "stage": "email_confirmation",
                 "email_options": emails,
-                "using_buttons": True
+                "using_buttons": False
             }
             
         except Exception as e:
-            logger.error(f"Button email selection error: {e}")
-            # Fallback to text-based selection
-            return await self._request_email_selection_text_fallback(user_phone, session, emails, filtered_users)
+            logger.error(f"Text email selection error: {e}")
+            return {"status": "error", "error": str(e)}
     
     async def _request_email_selection_text_fallback(self, user_phone: str, session: ConversationSession,
                                                    emails: List[str], filtered_users: List[Dict]) -> Dict[str, Any]:
-        """Fallback text-based email selection when buttons fail."""
+        """Fallback text-based email selection."""
         try:
             username = self._get_username_from_users(filtered_users)
             
