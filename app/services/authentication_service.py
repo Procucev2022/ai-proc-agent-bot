@@ -999,7 +999,10 @@ Respond only with: "yes" or "no"
         """Extract username from filtered users data."""
         try:
             if filtered_users and len(filtered_users) > 0:
-                return filtered_users[0].get("fullName", "there")
+                name = filtered_users[0].get("fullName")
+                # Handle None or empty string cases
+                if name and name.strip():
+                    return name.strip()
             return "there"
         except Exception:
             return "there"
