@@ -51,13 +51,42 @@ class AuthenticationOrchestrator:
         try:
             logger.info(f"Starting authentication flow for {user_phone}")
 
-            # Step 1: Token validation
-            user_details = await self.authentication_service.validate_token(user_phone)
-            if user_details and user_details.is_registered:
-                logger.info(f"Token valid - User authenticated: {user_details.id}")
-                return user_details
+            # Check if this is a role switch scenario
+            role_switch_in_progress = session.workflow_state.get("role_switch_in_progress", False)
+            target_user_type = session.workflow_state.get("user_type")
             
-            logger.info(f"Token validation failed for {user_phone}")
+            if role_switch_in_progress:
+                logger.info(f"Role switch in progress - forcing authentication for {target_user_type}")
+                # Skip token validation and force authentication for new role
+                session.workflow_state.pop("role_switch_in_progress", None)
+                
+                # For seller role switch, go directly to authentication flow
+                if target_user_type == "seller":
+                    logger.info(f"Seller role switch - starting seller authentication flow")
+                    auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
+                    
+                    if auth_response.get("success"):
+                        # User found - filter by seller role
+                        raw_response = auth_response.get("response", [])
+                        filter_result = self.authentication_service.filter_users_by_intent(raw_response, "sell_something")
+                        
+                        if filter_result.get("success"):
+                            # Store the original message for processing after authentication
+                            return await self._handle_user_selection(user_phone, session, filter_result, {"intent": "sell_something"}, message_content)
+                        else:
+                            # No seller emails found - redirect to registration
+                            return await self._redirect_to_registration_flow(user_phone, session, "seller")
+                    else:
+                        # User not found for seller role - redirect to registration
+                        return await self._redirect_to_registration_flow(user_phone, session, "seller")
+            else:
+                # Step 1: Token validation (normal flow)
+                user_details = await self.authentication_service.validate_token(user_phone)
+                if user_details and user_details.is_registered:
+                    logger.info(f"Token valid - User authenticated: {user_details.id}")
+                    return user_details
+                
+                logger.info(f"Token validation failed for {user_phone}")
                       
             # Step 3: Check for existing auth/registration workflows
             workflow_type_str = str(session.workflow_type).lower() if session.workflow_type else None
@@ -99,31 +128,53 @@ class AuthenticationOrchestrator:
                     return await self._redirect_to_registration_flow(user_phone, session, "buyer")
             
             # Step 6: Always attempt authentication first when token validation fails
-            # Try to authenticate - if user exists, show emails with buyer/seller labels
-            auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
-            
-            if auth_response.get("success"):
-                # User found - show all emails with buyer/seller labels (no intent filtering)
-                raw_response = auth_response.get("response", [])
-                filter_result = self.authentication_service.filter_users_by_intent(raw_response, "general_inquiry")  # This shows all emails
+            # For role switches, use the target user type from session
+            if role_switch_in_progress and target_user_type:
+                # Force authentication for the new role
+                auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
                 
-                if filter_result.get("success"):
-                    # Store the original message for processing after authentication
-                    return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content)
+                if auth_response.get("success"):
+                    # User found - filter by target role
+                    raw_response = auth_response.get("response", [])
+                    target_intent = "sell_something" if target_user_type == "seller" else "buy_something"
+                    filter_result = self.authentication_service.filter_users_by_intent(raw_response, target_intent)
+                    
+                    if filter_result.get("success"):
+                        # Store the original message for processing after authentication
+                        return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content)
+                    else:
+                        # No emails found for target role - redirect to registration
+                        return await self._redirect_to_registration_flow(user_phone, session, target_user_type)
                 else:
-                    # No emails found - redirect to registration based on intent
-                    user_type = "seller" if intent == "sell_something" else "buyer"
-                    return await self._redirect_to_registration_flow(user_phone, session, user_type)
+                    # User not found for target role - redirect to registration
+                    return await self._redirect_to_registration_flow(user_phone, session, target_user_type)
             else:
-                # User not found - handle based on intent
-                if intent in ["buy_something", "sell_something"]:
-                    # Specific intent - redirect to registration
-                    user_type = "seller" if intent == "sell_something" else "buyer"
-                    return await self._redirect_to_registration_flow(user_phone, session, user_type)
-                elif intent == "general_inquiry":
-                    return await self._handle_auth_general_inquiry(user_phone, message_content)
+                # Normal authentication flow
+                # Try to authenticate - if user exists, show emails with buyer/seller labels
+                auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
+                
+                if auth_response.get("success"):
+                    # User found - show all emails with buyer/seller labels (no intent filtering)
+                    raw_response = auth_response.get("response", [])
+                    filter_result = self.authentication_service.filter_users_by_intent(raw_response, "general_inquiry")  # This shows all emails
+                    
+                    if filter_result.get("success"):
+                        # Store the original message for processing after authentication
+                        return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content)
+                    else:
+                        # No emails found - redirect to registration based on intent
+                        user_type = "seller" if intent == "sell_something" else "buyer"
+                        return await self._redirect_to_registration_flow(user_phone, session, user_type)
                 else:
-                    return await self._handle_auth_fallback(user_phone, message_content)
+                    # User not found - handle based on intent
+                    if intent in ["buy_something", "sell_something"]:
+                        # Specific intent - redirect to registration
+                        user_type = "seller" if intent == "sell_something" else "buyer"
+                        return await self._redirect_to_registration_flow(user_phone, session, user_type)
+                    elif intent == "general_inquiry":
+                        return await self._handle_auth_general_inquiry(user_phone, message_content)
+                    else:
+                        return await self._handle_auth_fallback(user_phone, message_content)
                 
         except Exception as e:
             logger.error(f"Authentication orchestrator error for {user_phone}: {e}")
@@ -154,14 +205,17 @@ class AuthenticationOrchestrator:
                 
                 if not auth_response.get("success"):
                     logger.info("User not found for ambiguous intent - redirecting to registration")
-                    return await self._redirect_to_registration_flow(user_phone, session, "buyer")
+                    # Use target user type if role switch, otherwise default to buyer
+                    user_type = target_user_type if role_switch_in_progress and target_user_type else "buyer"
+                    return await self._redirect_to_registration_flow(user_phone, session, user_type)
                 
                 # User found - show all emails with buyer/seller labels (no intent filtering)
                 raw_response = auth_response.get("response", [])
                 filter_result = self.authentication_service.filter_users_by_intent(raw_response, "general_inquiry")
                 
                 if not filter_result.get("success"):
-                    return await self._redirect_to_registration_flow(user_phone, session, "buyer")
+                    user_type = target_user_type if role_switch_in_progress and target_user_type else "buyer"
+                    return await self._redirect_to_registration_flow(user_phone, session, user_type)
                 
                 return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content)
             
@@ -179,6 +233,7 @@ class AuthenticationOrchestrator:
                 filter_result = self.authentication_service.filter_users_by_intent(raw_response, intent)
                 
                 if not filter_result.get("success"):
+                    logger.info("No seller emails found - redirecting to seller registration")
                     return await self._redirect_to_registration_flow(user_phone, session, "seller")
                 
                 return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content)
@@ -188,8 +243,11 @@ class AuthenticationOrchestrator:
             
             if not auth_response.get("success"):
                 # User not found - redirect to registration flow
-                # Default to buyer unless explicitly sell_something intent
-                user_type = "seller" if intent == "sell_something" else "buyer"
+                # Use target user type if role switch, otherwise infer from intent
+                if role_switch_in_progress and target_user_type:
+                    user_type = target_user_type
+                else:
+                    user_type = "seller" if intent == "sell_something" else "buyer"
                 return await self._redirect_to_registration_flow(user_phone, session, user_type)
             
             # Step 2: User found - filter based on intent (buy/sell)
@@ -197,8 +255,11 @@ class AuthenticationOrchestrator:
             filter_result = self.authentication_service.filter_users_by_intent(raw_response, intent)
             
             if not filter_result.get("success"):
-                # Default to buyer unless explicitly sell_something intent
-                user_type = "seller" if intent == "sell_something" else "buyer"
+                # Use target user type if role switch, otherwise infer from intent
+                if role_switch_in_progress and target_user_type:
+                    user_type = target_user_type
+                else:
+                    user_type = "seller" if intent == "sell_something" else "buyer"
                 return await self._redirect_to_registration_flow(user_phone, session, user_type)
             
             # Step 3: User selection and email confirmation
