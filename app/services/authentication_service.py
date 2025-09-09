@@ -685,7 +685,7 @@ Return only the selected email address or "none" if no clear selection.
                 return {"status": "redirect_to_support", "reason": "max_otp_retries_exceeded"}
             
             remaining_attempts = 3 - retry_count
-            message = f"Please enter a valid OTP (4-6 digits). You have {remaining_attempts} attempts remaining, or reply 'RESEND' to get a new OTP:"
+            message = f"Please enter a valid OTP . You have {remaining_attempts} attempts remaining, or reply 'RESEND' to get a new OTP:"
             await self.whatsapp_service.send_message(user_phone, message)
             
             return {
