@@ -1280,7 +1280,7 @@ Analyze their response to determine their true choice.
                 tools=[clarification_tool],
                 tool_choice={"type": "function", "name": "generate_clarification_response"}
             )
-            print("response from LLM is ", response)
+            
             
             processing_time = time.time() - start_time
             
@@ -1295,6 +1295,8 @@ Analyze their response to determine their true choice.
                         response_parts.append(args["progress_acknowledgment"])
                     if args.get("questions"):
                         questions_text = "\n".join(f"• {q}" for q in args["questions"])
+                        
+                        response_parts.append(f"Thank you for your interest in purchasing.\nTo proceed with your request, we will create a Request for Quotation (RFQ).")
                         response_parts.append(f"Please provide the following:\n\n{questions_text}")
                     generated_response = "\n\n".join(response_parts)
                     
