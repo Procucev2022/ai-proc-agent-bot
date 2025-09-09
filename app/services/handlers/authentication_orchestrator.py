@@ -98,17 +98,32 @@ class AuthenticationOrchestrator:
                     # User not found - redirect directly to registration
                     return await self._redirect_to_registration_flow(user_phone, session, "buyer")
             
-            # Step 6: Handle confirmed intents  
-            if intent in ["buy_something", "sell_something"]:
-                # Proceed with authentication/registration flow
-                pass
-            elif intent == "general_inquiry":
-                return await self._handle_auth_general_inquiry(user_phone, message_content)
-            else:
-                return await self._handle_auth_fallback(user_phone, message_content)
+            # Step 6: Always attempt authentication first when token validation fails
+            # Try to authenticate - if user exists, show emails with buyer/seller labels
+            auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
             
-            # Step 7: Start new authentication flow with validated intent
-            return await self._start_authentication_flow(user_phone, message_content, session, intent_result)
+            if auth_response.get("success"):
+                # User found - show all emails with buyer/seller labels (no intent filtering)
+                raw_response = auth_response.get("response", [])
+                filter_result = self.authentication_service.filter_users_by_intent(raw_response, "general_inquiry")  # This shows all emails
+                
+                if filter_result.get("success"):
+                    # Store the original message for processing after authentication
+                    return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content)
+                else:
+                    # No emails found - redirect to registration based on intent
+                    user_type = "seller" if intent == "sell_something" else "buyer"
+                    return await self._redirect_to_registration_flow(user_phone, session, user_type)
+            else:
+                # User not found - handle based on intent
+                if intent in ["buy_something", "sell_something"]:
+                    # Specific intent - redirect to registration
+                    user_type = "seller" if intent == "sell_something" else "buyer"
+                    return await self._redirect_to_registration_flow(user_phone, session, user_type)
+                elif intent == "general_inquiry":
+                    return await self._handle_auth_general_inquiry(user_phone, message_content)
+                else:
+                    return await self._handle_auth_fallback(user_phone, message_content)
                 
         except Exception as e:
             logger.error(f"Authentication orchestrator error for {user_phone}: {e}")
