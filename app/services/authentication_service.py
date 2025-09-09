@@ -942,14 +942,14 @@ Respond only with: "yes" or "no"
             seller_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Seller"]
             
             if buyer_emails and seller_emails:
-                message = f"Welcome to QUA {username},\nAre you looking to buy or sell today?\n\nPlease select your email address:\n\n"
+                message = f"Hi there!, Welcome to QUA,\nAre you looking to buy or sell today?\n\nPlease select your email address:\n\n"
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
                     type_label = f" - {user_type}" if user_type else ""
                     message += f"{i}. {email}{type_label}\n"
                 message += "\nReply with the number of your email address."
             else:
-                message = f"Welcome to QUA {username},\nPlease select your email address:\n\n"
+                message = f"Hi there!, Welcome to QUA,\nPlease select your email address:\n\n"
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
                     type_label = f" - {user_type}" if user_type else ""
