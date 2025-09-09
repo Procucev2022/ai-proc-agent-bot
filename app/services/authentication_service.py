@@ -596,9 +596,8 @@ Return only the selected email address or "none" if no clear selection.
             logger.info(f"Sending OTP to email: {email} for phone: {user_phone}")
             otp_response = await self.register_api_service.send_otp(email, user_phone)
             
-            if otp_response.get("statusCode") == "1001":
-                session.workflow_state["otp_retry_count"] = session.workflow_state.get("otp_retry_count", 0) + 1
-                
+            if otp_response.get("statusCode") in ["1001", "200"] or otp_response.get("status") == "Success":
+                # Don't increment retry count for successful OTP send - only for failed validations
                 message = f"OTP sent to your email: {email}\n\nPlease enter the OTP you received, or reply 'RESEND' to get a new OTP:"
                 await self.whatsapp_service.send_message(user_phone, message)
                 
@@ -647,7 +646,7 @@ Return only the selected email address or "none" if no clear selection.
             logger.info(f"Validating OTP for email: {email}, phone: {user_phone}")
             validation_response = await self.register_api_service.validate_otp(email, otp, user_phone)
             
-            if validation_response.get("statusCode") == "1001":
+            if validation_response.get("statusCode") == "1001" or validation_response.get("status") == "Success":
                 # OTP valid - store session and complete authentication
                 session_stored = await self.store_user_session_with_email(user_phone, filtered_users, email)
                 
@@ -665,7 +664,8 @@ Return only the selected email address or "none" if no clear selection.
                     "redirect_to_main_flow": True
                 }
             else:
-                # OTP invalid - handle retry logic
+                # OTP invalid - increment retry count and handle retry logic
+                session.workflow_state["otp_retry_count"] = session.workflow_state.get("otp_retry_count", 0) + 1
                 return await self._handle_invalid_otp(user_phone, session, email)
                 
         except Exception as e:
@@ -676,13 +676,16 @@ Return only the selected email address or "none" if no clear selection.
     async def _handle_invalid_otp_format(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
         """Handle invalid OTP format."""
         try:
+            # Increment retry count for invalid format
+            session.workflow_state["otp_retry_count"] = session.workflow_state.get("otp_retry_count", 0) + 1
             retry_count = session.workflow_state.get("otp_retry_count", 0)
             
             if retry_count >= 3:
                 await self.whatsapp_service.send_message(user_phone, "Maximum OTP attempts exceeded. Please contact support.")
                 return {"status": "redirect_to_support", "reason": "max_otp_retries_exceeded"}
             
-            message = "Please enter a valid OTP (4-6 digits) or reply 'RESEND' to get a new OTP:"
+            remaining_attempts = 3 - retry_count
+            message = f"Please enter a valid OTP . You have {remaining_attempts} attempts remaining, or reply 'RESEND' to get a new OTP:"
             await self.whatsapp_service.send_message(user_phone, message)
             
             return {

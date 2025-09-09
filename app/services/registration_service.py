@@ -568,7 +568,7 @@ class RegistrationService:
                 if retry_count >= 3:
                     return await self._redirect_to_support(user_phone, "max_otp_retries", "Maximum OTP attempts exceeded")
                 
-                message = "Please enter a valid OTP (4-6 digits) or reply 'RESEND' to get a new OTP:"
+                message = "Please enter a valid OTP  or reply 'RESEND' to get a new OTP:"
                 if self.session_manager:
                     await self.session_manager.send_and_track_message(user_phone, message, session)
                 else:

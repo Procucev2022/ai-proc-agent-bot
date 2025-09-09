@@ -246,12 +246,20 @@ Analyze their response and return only:
             
             confirmation_message = (
                 f"You're currently logged in as a {current_role}. "
-                f"Switching to {target_role} mode will clear your current session and allow you to {role_descriptions[target_role]}.\n\n"
-                f"Do you want to switch to {target_role} mode?\n\n"
-                f"Reply 'yes' to switch or 'no' to continue as {current_role}."
+                f"Switching to {target_role} mode will clear your current session and allow you to {role_descriptions[target_role]}."
             )
             
-            await self.whatsapp_service.send_message(user.phone_number, confirmation_message)
+            # Send confirmation with text options
+            confirmation_message += (
+                "\n\n1. Switch\n"
+                "2. Continue\n\n"
+                "Please reply with 1 or 2:"
+            )
+            
+            await self.whatsapp_service.send_message(
+                user.phone_number,
+                confirmation_message
+            )
             
             return {"status": "role_switch_confirmation_requested"}
             
@@ -270,42 +278,109 @@ Analyze their response and return only:
             current_role = pending_switch["current_role"]
             original_message = pending_switch["original_message"]
             
-            # Clear pending switch state
-            del session.workflow_state["pending_role_switch"]
+            # Use AI to validate confirmation response
+            confirmation_result = await self._ai_validate_role_confirmation_response(
+                message, current_role, target_role
+            )
             
-            # Analyze user response
-            message_lower = message.lower().strip()
-            
-            if message_lower in ['yes', 'y', 'switch', 'confirm']:
+            if confirmation_result == "yes":
                 # User confirmed switch - clear token and restart authentication
                 logger.info(f"User confirmed role switch from {current_role} to {target_role}")
                 
                 # Clear user token/session
                 await authentication_service.clear_user_token(user.phone_number)
                 
-                # Clear session state
-                session.workflow_type = None
-                session.workflow_state = {}
+                # Clear current session and create new one for reauthentication
+                if hasattr(authentication_service, 'session_manager') and authentication_service.session_manager:
+                    # Clear current session
+                    # await authentication_service.session_manager.clear_session(session)
+                    
+                    # Create new session for authentication with target role
+                    new_session = await authentication_service.session_manager.create_session(
+                        user.phone_number, 
+                        workflow_type="authentication",
+                        user_type=target_role
+                    )
+                    
+                    # Update current session to match new session
+                    session.workflow_type = "authentication"
+                    session.workflow_state = {
+                        "target_role": target_role,
+                        "authentication_stage": "start",
+                        "user_type": target_role
+                    }
                 
-                # Send confirmation
-                switch_message = f"Switched to {target_role} mode. Let me help you get started."
+                # Send confirmation message
+                switch_message = f"Switched to {target_role} mode. Starting authentication process..."
                 await self.whatsapp_service.send_message(user.phone_number, switch_message)
                 
                 return {
-                    "status": "role_switch_confirmed",
+                    "status": "force_restart_authentication",
                     "target_role": target_role,
-                    "original_message": original_message
+                    "original_message": original_message,
+                    "workflow_type": "authentication"
                 }
                 
-            else:
+            elif confirmation_result == "no":
                 # User declined switch - continue with current role
                 logger.info(f"User declined role switch, continuing as {current_role}")
+                
+                # Clear pending switch state
+                del session.workflow_state["pending_role_switch"]
                 
                 continue_message = f"Continuing as {current_role}. How can I help you today?"
                 await self.whatsapp_service.send_message(user.phone_number, continue_message)
                 
-                return {"status": "role_switch_declined"}
+                return {
+                    "status": "role_switch_declined",
+                    "original_message": original_message,
+                    "continue_with_original_intent": True
+                }
+                
+            else:
+                # Unclear response - ask for clarification
+                clarification_message = (
+                    f"I didn't quite understand. Would you like to switch to {target_role} mode? "
+                    "Please reply 'Yes' to switch or 'No' to continue as {current_role}."
+                )
+                await self.whatsapp_service.send_message(user.phone_number, clarification_message)
+                
+                return {"status": "role_switch_clarification_requested"}
                 
         except Exception as e:
             logger.error(f"Error handling role switch response: {e}")
             return {"status": "error", "error": str(e)}
+    
+    async def _ai_validate_role_confirmation_response(self, message: str, current_role: str, target_role: str) -> str:
+        """Use AI to validate role confirmation response (yes/no/unclear)."""
+        try:
+            response = self.openai_service.generate_response(
+                context={
+                    "message": message,
+                    "current_role": current_role,
+                    "target_role": target_role
+                },
+                query_results=[],
+                prompt_file="intent_confirmation/role_confirmation_validation"
+            )
+            
+            response = response.strip().lower()
+            
+            if "yes" in response:
+                return "yes"
+            elif "no" in response:
+                return "no"
+            else:
+                return "unclear"
+                
+        except Exception as e:
+            logger.error(f"AI role confirmation validation error: {e}")
+            # Fallback to simple pattern matching
+            message_lower = message.lower().strip()
+            
+            if any(word in message_lower for word in ["1", "yes", "y", "switch", "confirm", "ok"]):
+                return "yes"
+            elif any(word in message_lower for word in ["2", "no", "n", "continue", "stay", "current"]):
+                return "no"
+            else:
+                return "unclear"
