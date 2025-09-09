@@ -112,7 +112,8 @@ class PurchaseIntentHandler:
                 logger.info(f"Taking PRODUCTS ARRAY path with {len(entity_result['products'])} products")
                 # Products array detected - process all products and create RFQs
                 products = entity_result["products"]
-                return await self.products_array_handler.handle_products_array(user, session, message, products, chat_summaries)
+                date_validation_error = entity_result.get("date_validation_error", False)
+                return await self.products_array_handler.handle_products_array(user, session, message, products, chat_summaries, date_validation_error)
             elif "entities" in entity_result:
                 print(f"PurchaseIntentHandler: Taking BACKWARD COMPATIBILITY path with entities: {entity_result['entities']}")
                 logger.info(f"Taking BACKWARD COMPATIBILITY path with entities: {entity_result['entities']}")
@@ -186,7 +187,8 @@ class PurchaseIntentHandler:
                 session.product_items.append(product_info)
             
             # Process this as a single product array
-            return await self.products_array_handler.handle_products_array(user, session, message, current_entities, chat_summaries)
+            date_validation_error = entity_result.get("date_validation_error", False)
+            return await self.products_array_handler.handle_products_array(user, session, message, current_entities, chat_summaries, date_validation_error)
         
         # If no new entities, just continue with existing flow
         return {
