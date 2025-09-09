@@ -51,7 +51,7 @@ class RegisterAPIService:
             
             if response["success"]:
                 return {
-                    "statusCode": "1001",
+                    "statusCode": "200",
                     "message": "Thanks for your interest with procucev, our vendor partner will connect with you",
                     "errorMsg": None,
                     "timestamp": response["timestamp"],
@@ -104,7 +104,7 @@ class RegisterAPIService:
             
             if response["success"]:
                 return {
-                    "statusCode": "1001",
+                    "statusCode": "200",
                     "message": "Thanks for your interest with procucev, our client partner will connect with you",
                     "errorMsg": None,
                     "timestamp": response["timestamp"],
@@ -153,7 +153,7 @@ class RegisterAPIService:
             # Check success based on status field
             if response.get("status") == "Success":
                 return {
-                    "statusCode": "1001",
+                    "statusCode": "200",
                     "message": response.get("message", "OTP sent successfully"),
                     "errorMsg": response.get("errorMsg"),
                     "timestamp": response.get("timestamp"),
@@ -246,7 +246,7 @@ class RegisterAPIService:
             
             if response["success"]:
                 return {
-                    "statusCode": "1001",
+                    "statusCode": "200",
                     "message": "User approved successfully",
                     "errorMsg": None,
                     "timestamp": response["timestamp"],
