@@ -52,6 +52,20 @@ def format_date_display(dt: datetime) -> str:
         dt = dt.replace(tzinfo=UTC)
     return dt.strftime("%d %b %Y").lstrip('0')
 
+def format_date_for_validation_error(date_str: str) -> str:
+    """Format date string for validation error messages (e.g., 12 Sept 2025)."""
+    if not date_str:
+        return "N/A"
+    
+    try:
+        # Parse the date string (assuming YYYY-MM-DD format)
+        from datetime import datetime
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return dt.strftime("%d %b %Y").lstrip('0')
+    except:
+        # If parsing fails, return as-is
+        return date_str
+
 def is_expired(last_activity: datetime, timeout_hours: int) -> tuple[bool, datetime, datetime]:
     """
     Check if session is expired using UTC comparison.

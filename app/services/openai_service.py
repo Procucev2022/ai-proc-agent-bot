@@ -26,6 +26,9 @@ from openai import OpenAI
 from app.config import get_settings
 from app.tools.interaction_logger import get_interaction_logger
 from app.utils.logging_utils import log_service_method
+from app.utils.datetime_utils import format_date_display
+from app.utils.datetime_utils import format_date_for_validation_error
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -1262,7 +1265,7 @@ Analyze their response to determine their true choice.
             # Build prompt inline
             prompt = f"Starts with a polite acknowledgment of the user’s request {context.get('user_message', '')}"
             prompt += "Mention that Request for Quotation (RFQ) will be created"
-            prompt = f"Generate clarification response:\n\n"
+            prompt += f"Generate clarification response:\n\n"
             prompt += f"Completeness: {completeness}%\n"
             prompt += f"Questions to ask: {questions}\n"
             prompt += f"User message: '{context.get('user_message', '')}'\n"
@@ -1278,6 +1281,7 @@ Analyze their response to determine their true choice.
                 tool_choice={"type": "function", "name": "generate_clarification_response"}
             )
             
+            
             processing_time = time.time() - start_time
             
             # Parse function call response
@@ -1291,6 +1295,8 @@ Analyze their response to determine their true choice.
                         response_parts.append(args["progress_acknowledgment"])
                     if args.get("questions"):
                         questions_text = "\n".join(f"• {q}" for q in args["questions"])
+                        
+                        response_parts.append(f"Thank you for your interest in purchasing.\nTo proceed with your request, we will create a Request for Quotation (RFQ).")
                         response_parts.append(f"Please provide the following:\n\n{questions_text}")
                     generated_response = "\n\n".join(response_parts)
                     
@@ -2133,8 +2139,7 @@ Determine the best category for the input item based on the similar items and th
             
             # Format delivery date for display
             if clean_rfq_data.get("delivery_date"):
-                from app.utils.datetime_utils import format_date_display
-                from datetime import datetime
+
                 
                 delivery_date = clean_rfq_data["delivery_date"]
                 if isinstance(delivery_date, str):
@@ -2332,11 +2337,24 @@ Determine the best category for the input item based on the similar items and th
                 function_call = response.output[0]
                 if function_call.type == "function_call":
                     args = json.loads(function_call.arguments)
+                    
+                    # Format user-friendly message with proper date format
+                    user_friendly_message = args.get("user_friendly_message", "")
+                    if not args.get("is_valid", False) and args.get("normalized_date"):
+                        # If there's a date in the message, format it nicely
+
+                        formatted_date = format_date_for_validation_error(args.get("normalized_date"))
+                        # Replace any date references in the message with formatted version
+                        if formatted_date != "N/A":
+                            user_friendly_message = user_friendly_message.replace(
+                                args.get("normalized_date", ""), formatted_date
+                            )
+                    
                     result = {
                         "is_valid": args.get("is_valid", False),
                         "normalized_date": args.get("normalized_date"),
                         "validation_issues": args.get("validation_issues", []),
-                        "user_friendly_message": args.get("user_friendly_message"),
+                        "user_friendly_message": user_friendly_message,
                         "confidence": args.get("confidence", 0),
                         "success": True
                     }
@@ -2388,7 +2406,7 @@ Determine the best category for the input item based on the similar items and th
                 "is_valid": False,
                 "normalized_date": None,
                 "validation_issues": [f"Error: {str(e)}"],
-                "user_friendly_message": "Please provide a valid future date",
+                "user_friendly_message": "Please provide a valid future date (e.g., 12 Sept 2025)",
                 "confidence": 20,
                 "success": False
             }

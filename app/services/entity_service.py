@@ -120,7 +120,7 @@ class EntityService:
         if "products" in response:
             # New multi-product format - validate dates
             products = response.get("products", [])
-            validated_products = self._validate_dates_in_products(products, message)
+            validated_products, has_date_validation_error = self._validate_dates_in_products(products, message)
             
             print(f"EntityService: Found products array with {len(validated_products)} products")
             for i, product in enumerate(validated_products):
@@ -128,18 +128,20 @@ class EntityService:
             return {
                 "products": validated_products,
                 "confidence": response.get("confidence", 0),
-                "success": response.get("success", True)
+                "success": response.get("success", True),
+                "date_validation_error": has_date_validation_error
             }
         else:
             # Backward compatibility for old single entity format - validate date
             entities = response.get("entities", {})
-            validated_entities = self._validate_date_in_entity(entities, message)
+            validated_entities, has_date_validation_error = self._validate_date_in_entity(entities, message)
             
             print(f"EntityService: Using backward compatibility with entities: {validated_entities}")
             return {
                 "entities": validated_entities,
                 "confidence": response.get("confidence", 0),
-                "success": response.get("success", True)
+                "success": response.get("success", True),
+                "date_validation_error": has_date_validation_error
             }
     
     def _handle_modification_extraction(self, message: str, context: dict, workflow_type: str = "buy_something") -> dict:
@@ -224,7 +226,7 @@ class EntityService:
                 # Convert modifications to products format for existing logic
                 converted_products = self._convert_modifications_to_products_format(modifications)
                 # Validate dates in converted products
-                validated_products = self._validate_dates_in_products(converted_products, message)
+                validated_products, has_date_validation_error = self._validate_dates_in_products(converted_products, message)
                 modified_products = self._apply_modifications_to_existing_products(
                     pending_products, validated_products, message
                 )
@@ -256,7 +258,7 @@ class EntityService:
             
             if has_meaningful_modifications:
                 # Validate dates in modification products
-                validated_products = self._validate_dates_in_products(response["products"], message)
+                validated_products, has_date_validation_error = self._validate_dates_in_products(response["products"], message)
                 modified_products = self._apply_modifications_to_existing_products(
                     pending_products, validated_products, message
                 )
@@ -429,9 +431,14 @@ class EntityService:
         print(f"EntityService: Converted {len(modifications)} modifications to {len(converted_products)} products")
         return converted_products
 
-    def _validate_dates_in_products(self, products: list, original_message: str) -> list:
-        """Validate delivery dates in products list."""
+    def _validate_dates_in_products(self, products: list, original_message: str) -> tuple:
+        """Validate delivery dates in products list.
+        
+        Returns:
+            tuple: (validated_products, has_date_validation_error)
+        """
         validated_products = []
+        has_date_validation_error = False
         
         for product in products:
             validated_product = product.copy()
@@ -452,6 +459,7 @@ class EntityService:
                     # Mark as invalid and add validation message
                     validated_product["deliveryDate"] = None
                     validated_product["date_validation_error"] = validation_result.get("user_friendly_message")
+                    has_date_validation_error = True
                     print(f"EntityService: Invalid date '{delivery_date}': {validation_result.get('user_friendly_message')}")
             else:
                 # If no delivery date provided, preserve any existing validation error
@@ -459,11 +467,16 @@ class EntityService:
             
             validated_products.append(validated_product)
         
-        return validated_products
+        return validated_products, has_date_validation_error
     
-    def _validate_date_in_entity(self, entities: dict, original_message: str) -> dict:
-        """Validate delivery date in single entity."""
+    def _validate_date_in_entity(self, entities: dict, original_message: str) -> tuple:
+        """Validate delivery date in single entity.
+        
+        Returns:
+            tuple: (validated_entities, has_date_validation_error)
+        """
         validated_entities = entities.copy()
+        has_date_validation_error = False
         delivery_date = entities.get("deliveryDate")
         
         if delivery_date:
@@ -478,9 +491,10 @@ class EntityService:
                 # Mark as invalid and add validation message
                 validated_entities["deliveryDate"] = None
                 validated_entities["date_validation_error"] = validation_result.get("user_friendly_message")
+                has_date_validation_error = True
                 print(f"EntityService: Invalid date '{delivery_date}': {validation_result.get('user_friendly_message')}")
         
-        return validated_entities
+        return validated_entities, has_date_validation_error
 
     def _has_meaningful_modification_values(self, products: list, message: str) -> bool:
         """
@@ -634,8 +648,9 @@ class EntityService:
             
             # Validate dates in the final products
             if "products" in response:
-                validated_products = self._validate_dates_in_products(response["products"], message)
+                validated_products, has_date_validation_error = self._validate_dates_in_products(response["products"], message)
                 response["products"] = validated_products
+                response["date_validation_error"] = has_date_validation_error
                 print(f"EntityService: Validated dates in {len(validated_products)} products from summary-aware extraction")
             
             return response

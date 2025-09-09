@@ -29,7 +29,8 @@ class ProductsArrayHandler:
         self.session_manager = session_manager
     
     async def handle_products_array(self, user: User, session: ConversationSession, 
-                                  message: str, products: list, chat_summaries: list = None) -> Dict[str, Any]:
+                                  message: str, products: list, chat_summaries: list = None, 
+                                  date_validation_error: bool = False) -> Dict[str, Any]:
         """Handle products array (single or multiple products)."""
         try:
             print(f"ProductsArrayHandler: Processing {len(products)} products")
@@ -44,7 +45,8 @@ class ProductsArrayHandler:
             # If any product is incomplete, collect all questions from data model
             if incomplete_products:
                 return await self._handle_incomplete_products(
-                    user, session, message, products, incomplete_products, complete_products, chat_summaries
+                    user, session, message, products, incomplete_products, complete_products, 
+                    chat_summaries, date_validation_error
                 )
             else:
                 print(f"ProductsArrayHandler: All {len(complete_products)} products are complete!")
@@ -116,7 +118,8 @@ class ProductsArrayHandler:
     
     async def _handle_incomplete_products(self, user: User, session: ConversationSession,
                                         message: str, products: list, incomplete_products: list,
-                                        complete_products: list, chat_summaries: list) -> Dict[str, Any]:
+                                        complete_products: list, chat_summaries: list, 
+                                        date_validation_error: bool = False) -> Dict[str, Any]:
         """Handle incomplete products by generating clarification questions."""
         print(f"ProductsArrayHandler: Found {len(incomplete_products)} incomplete products")
         
@@ -145,6 +148,7 @@ class ProductsArrayHandler:
         
         # Add products to context for date validation error extraction
         context["products"] = products
+        context["date_validation_error"] = date_validation_error
         
         response = await self.response_helpers.generate_clarification_response([clarification_message], completeness, context, chat_summaries)
         await self.whatsapp_service.send_message(user.phone_number, response)
@@ -200,7 +204,7 @@ class ProductsArrayHandler:
             
             # Add mandatory fields first
             if combined_questions["has_mandatory"]:
-                all_questions.append("*Required information:*")
+                # all_questions.append("*Required information:*")
                 all_questions.extend(combined_questions["mandatory"])
             
 
@@ -228,7 +232,7 @@ class ProductsArrayHandler:
                 
                 # Add mandatory fields first
                 if combined_questions["has_mandatory"]:
-                    all_questions.append("*Required information:*")
+                    # all_questions.append("*Required information:*")
                     all_questions.extend(combined_questions["mandatory"])
                 
 

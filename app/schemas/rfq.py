@@ -301,6 +301,9 @@ class RFQValidationSchema(BaseModel):
     user_id: Optional[str] = Field(None, description="User ID")
     organization_id: Optional[str] = Field(None, description="Organization ID")
     
+    # Date validation flag
+    date_validation_error: bool = Field(False, description="Flag indicating if there's a date validation error")
+    
     
     # Item details (at least one item required)
     items: List[Dict[str, Any]] = Field(default_factory=list, description="RFQ items")
@@ -322,7 +325,7 @@ class RFQValidationSchema(BaseModel):
         # User-providable mandatory fields (from GMT API)
         if not self.project_desc:
             missing.append("project_desc")
-        if not self.delivery_date:
+        if not self.delivery_date and not self.date_validation_error:
             missing.append("delivery_date")
         
         # Division is now auto-populated via categorization service - not required from user
@@ -423,7 +426,7 @@ class RFQValidationSchema(BaseModel):
         if "project_desc" in missing:
             questions.append(question_map["project_description"])
         
-        if "delivery_date" in missing:
+        if "delivery_date" in missing and not self.date_validation_error:
             questions.append(question_map["delivery_date"])
         
         if "division_confirmation" in missing:
@@ -495,6 +498,14 @@ class RFQValidationSchema(BaseModel):
             return optional_questions
         
         return []  # No questions needed if everything is complete
+    
+    def set_date_validation_error(self, has_error: bool = True):
+        """Set the date validation error flag."""
+        self.date_validation_error = has_error
+    
+    def has_date_validation_error(self) -> bool:
+        """Check if there's a date validation error."""
+        return self.date_validation_error
     
     def get_combined_questions(self, include_optional: bool = True) -> Dict[str, List[str]]:
         """

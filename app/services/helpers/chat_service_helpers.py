@@ -91,8 +91,13 @@ class ChatServiceHelpers:
     def create_rfq_schema_from_entities(entities: dict, openai_service=None):
         """Create RFQValidationSchema from entities with division auto-population."""
         schema_data = ChatServiceHelpers.transform_entities_to_schema(entities)
-        schema = RFQValidationSchema(**schema_data)
         
+        # Check for date validation errors in entities
+        has_date_validation_error = bool(entities.get("date_validation_error"))
+        if has_date_validation_error:
+            schema_data["date_validation_error"] = True
+        
+        schema = RFQValidationSchema(**schema_data)
         
         # Debug logging for optional questions
         logger.info(f"Schema data: preferred_brand={schema.preferred_brand}, remarks={schema.remarks}, items={bool(schema.items)}")
@@ -110,6 +115,17 @@ class ChatServiceHelpers:
         # Use the first product's common fields (delivery, project desc, etc.)
         base_entities = products_list[0]["entities"]
         schema_data = ChatServiceHelpers.transform_entities_to_schema(base_entities)
+        
+        # Check for date validation errors in any product
+        has_date_validation_error = False
+        for prod in products_list:
+            entities = prod["entities"]
+            if entities.get("date_validation_error"):
+                has_date_validation_error = True
+                break
+        
+        if has_date_validation_error:
+            schema_data["date_validation_error"] = True
         
         # Combine all products into items array
         combined_items = []
