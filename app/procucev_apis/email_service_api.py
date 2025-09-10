@@ -51,11 +51,13 @@ class EmailServiceAPI:
                 "body": email_data.get("body", "")
             }
             
+            logger.info(f"Sending email via GMT API to {payload['to']}")
             response = await self.api_client.post(
                 endpoint=email_url,
                 json_data=payload,
                 require_auth=True
             )
+            logger.info(f"GMT API response: {response.get('success')}")
             
             if response["success"]:
                 return {
@@ -80,6 +82,7 @@ class EmailServiceAPI:
                         
         except Exception as e:
             logger.error(f"Email sending error: {e}")
+            logger.error(f"Failed payload: {payload if 'payload' in locals() else 'N/A'}")
             return {
                 "statusCode": "500",
                 "message": "Internal server error",
