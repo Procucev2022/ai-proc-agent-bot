@@ -1,8 +1,11 @@
 {
+  "scenario_id": 5,
   "to": "support@procucev.com",
   "cc": "",
   "bcc": "",
   "subject": "RFQ Item Categorization – Item Marked as \"Others\"",
   "body": "Dear Category Manager,\n\nDuring the RFQ item categorization process, one or more items were marked as \"Others\". Please review and update the categorization accordingly.\n\nRFQID: {rfq_id}",
-  "signature": "Regards\nQUA"
+  "signature": "Regards\nQUA",
+  "supports_buyer": true,
+  "supports_seller": false
 }
