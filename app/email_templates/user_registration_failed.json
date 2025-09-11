@@ -1,0 +1,11 @@
+{
+  "scenario_id": 1,
+  "to": "support@procucev.com",
+  "cc": "{user_email}",
+  "bcc": "",
+  "subject": "User Registration Not Approved – Action Required",
+  "body": "Dear Support Team,\n\nA new user attempted registration but the process was not completed successfully. Please review the details below and take necessary action:\n\nFull Name: {full_name}\nEmail: {email}\nContact Number: {contact_number}\n\nRegistration attempt for the user with below details was not approved because the provided email address and domain do not match our requirements.",
+  "signature": "Regards\nQUA",
+  "supports_buyer": true,
+  "supports_seller": true
+}

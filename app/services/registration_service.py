@@ -19,6 +19,7 @@ from app.procucev_apis.register_apis import RegisterAPIService
 from app.schemas.user import BuyerRegistrationSchema, SellerRegistrationSchema, UserDetailsSchema
 from app.utils.datetime_utils import utc_now
 from app.redis_db import get_auth_redis_service
+from app.services.support_notification_service import SupportNotificationService
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class RegistrationService:
         self.response_helpers = response_helpers or ResponseHelpers(self.openai_service)
         self.register_api_service = RegisterAPIService()
         self.auth_redis_service = get_auth_redis_service()
+        self.support_notification_service = SupportNotificationService()
         self.session_manager = session_manager  # Will be injected from ChatService
     
     async def initiate_registration(self, user_phone: str, session: ConversationSession,
@@ -402,6 +404,15 @@ class RegistrationService:
             else:
                 # Registration failed
                 error_msg = result.get("message", "Registration failed")
+                
+                # Send email notification to support team for registration failure
+                await self.support_notification_service.notify_registration_failed(
+                    entities.get("name") or entities.get("full_name", "User"),
+                    entities.get("email", "unknown"),
+                    user_phone,
+                    user_type
+                )
+                
                 if "already exists" in error_msg.lower():
                     return await self._redirect_to_support(user_phone, "user_already_exists", error_msg, session)
                 else:
@@ -439,6 +450,12 @@ class RegistrationService:
             else:
                 error_msg = otp_response.get("message", "Failed to send OTP")
                 logger.error(f"OTP send failed: {error_msg}")
+                
+                # Send email notification to support team for OTP send failure
+                await self.support_notification_service.notify_otp_validation_failed(
+                    "User", email, user_phone
+                )
+                
                 if self.session_manager:
                     await self.session_manager.send_and_track_message(user_phone, f"Failed to send OTP: {error_msg}. Please contact support.", session)
                 else:
@@ -550,6 +567,10 @@ class RegistrationService:
                 else:
                     # OTP invalid
                     if retry_count >= 3:
+                        # Send email notification to support team for max OTP retries
+                        await self.support_notification_service.notify_otp_validation_failed(
+                            "User", otp_email, user_phone
+                        )
                         return await self._redirect_to_support(user_phone, "max_otp_retries", "Maximum OTP attempts exceeded", session)
                     
                     message = "Invalid OTP. Please enter the correct OTP or reply 'RESEND' to get a new OTP:"
@@ -566,7 +587,11 @@ class RegistrationService:
             else:
                 # Invalid OTP format
                 if retry_count >= 3:
-                    return await self._redirect_to_support(user_phone, "max_otp_retries", "Maximum OTP attempts exceeded")
+                    # Send email notification to support team for max OTP retries
+                    await self.support_notification_service.notify_otp_validation_failed(
+                        "User", otp_email, user_phone
+                    )
+                    return await self._redirect_to_support(user_phone, "max_otp_retries", "Maximum OTP attempts exceeded", session)
                 
                 message = "Please enter a valid OTP  or reply 'RESEND' to get a new OTP:"
                 if self.session_manager:
@@ -638,6 +663,12 @@ class RegistrationService:
             
         except Exception as e:
             logger.error(f"Domain approval check error: {e}")
+            
+            # Send email notification to support team for domain approval check failure
+            await self.support_notification_service.notify_api_service_failure(
+                f"Domain approval check error for {email}: {str(e)}"
+            )
+            
             return {"approved": False, "error": str(e)}
 
     async def _redirect_to_support(self, user_phone: str, issue_type: str, error_details: str, session: ConversationSession = None) -> Dict[str, Any]:
