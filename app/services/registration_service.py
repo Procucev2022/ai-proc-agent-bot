@@ -19,7 +19,7 @@ from app.procucev_apis.register_apis import RegisterAPIService
 from app.schemas.user import BuyerRegistrationSchema, SellerRegistrationSchema, UserDetailsSchema
 from app.utils.datetime_utils import utc_now
 from app.redis_db import get_auth_redis_service
-
+import re
 logger = logging.getLogger(__name__)
 
 
@@ -463,7 +463,7 @@ class RegistrationService:
                 return await self._send_registration_otp(user_phone, session, otp_email)
             
             # Extract and validate OTP using real API
-            import re
+            
             digits = re.findall(r'\d+', message_content.strip())
             
             if digits and len(digits[0]) >= 4:

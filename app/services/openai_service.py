@@ -1296,7 +1296,7 @@ Analyze their response to determine their true choice.
                     if args.get("questions"):
                         questions_text = "\n".join(f"• {q}" for q in args["questions"])
                         
-                        response_parts.append(f"Thank you for your interest in purchasing.\nTo proceed with your request, we will create a Request for Quotation (RFQ).")
+                        response_parts.append(f"To proceed with your request, we will create a Request for Quotation (RFQ).")
                         response_parts.append(f"Please provide the following:\n\n{questions_text}")
                     generated_response = "\n\n".join(response_parts)
                     

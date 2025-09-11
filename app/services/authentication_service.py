@@ -61,6 +61,7 @@ class AuthenticationService:
             session_data = user_details.dict()
             session_data["authenticated_at"] = datetime.now().isoformat()
             
+            # Issue TODO : Token Deactivation after x seconds of INACTIVITY
             success = await self.auth_redis_service.store(user_phone, session_data, expiry_seconds=3600)  # 24 hours
             
             if success:
@@ -499,7 +500,7 @@ Return only the selected email address or "none" if no clear selection.
                     logger.error(f"Failed to store user session for buyer {user_phone}")
                 
                 username = selected_user.get("name", "User")
-                message = f"Hi {username}! Authentication successful."
+                message = f"Hi {username}!"
                 await self.whatsapp_service.send_message(user_phone, message)
                 
                 # Preserve original message from workflow state for processing after authentication

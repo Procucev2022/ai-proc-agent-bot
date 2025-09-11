@@ -18,7 +18,7 @@ from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
 from typing import TYPE_CHECKING
-
+from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 if TYPE_CHECKING:
     from app.services.chat_service import ChatService
 from app.services.handlers.supportService_hanlder import SupportHelpers
@@ -99,7 +99,7 @@ class AuthenticationOrchestrator:
                 return await self._handle_registration_workflow(user_phone, message_content, session, {})
             
             # Step 4: Classify intent for new workflows
-            from app.services.helpers.chat_service_helpers import ChatServiceHelpers
+            
             conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
             intent_result = self.intent_service.classify_intent(message_content, conversation_context)
            
@@ -121,6 +121,7 @@ class AuthenticationOrchestrator:
                         # Store the ambiguous message as original message
                         return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content)
                     else:
+                        # Issue TODO: Ask user if they want to buy or sell and redirect to registratin based on user's response 
                         # No emails found - redirect to registration
                         return await self._redirect_to_registration_flow(user_phone, session, "buyer")
                 else:
