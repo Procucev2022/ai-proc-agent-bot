@@ -121,6 +121,7 @@ class AuthenticationOrchestrator:
                         # Store the ambiguous message as original message
                         return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content)
                     else:
+                        # Issue TODO: Ask user if they want to buy or sell and redirect to registratin based on user's response 
                         # No emails found - redirect to registration
                         return await self._redirect_to_registration_flow(user_phone, session, "buyer")
                 else:

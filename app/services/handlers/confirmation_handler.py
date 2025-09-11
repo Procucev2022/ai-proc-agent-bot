@@ -74,9 +74,11 @@ class ConfirmationHandler:
                                             message: str) -> Dict[str, Any]:
         """Handle optional field responses."""
         # Check if user wants to skip optional fields
+        # Issue TODO : Add intelligent identification here to understands intent (Negative/Positive), Check all the keyword implementations
         if any(keyword in message.lower() for keyword in ["no", "skip", "proceed", "continue", "next"]):
             # User wants to skip optional fields, proceed to confirmation
             return await self._proceed_to_confirmation_from_optional(user, session, message)
+        # For above TODO, Add a elif logic here
         else:
             # User provided optional information, process it and then proceed to confirmation
             return {"status": "continue_with_purchase_intent"}
