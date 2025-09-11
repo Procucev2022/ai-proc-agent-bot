@@ -11,6 +11,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,8 @@ class InteractionLogger:
         """JSON serializer for objects not serializable by default json code."""
         if isinstance(obj, datetime):
             return obj.isoformat()
+        if isinstance(obj, Enum):
+            return obj.value
         raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 

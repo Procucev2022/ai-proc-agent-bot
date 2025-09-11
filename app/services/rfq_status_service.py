@@ -46,6 +46,7 @@ class RFQStatusService:
 
             return {
                 "status": result.get("status"),
+                "message": result.get("response_message"),
                 "rfq_ids": result.get("rfq_ids"),
                 "rfq_statuses": result.get("rfq_statuses")
             }

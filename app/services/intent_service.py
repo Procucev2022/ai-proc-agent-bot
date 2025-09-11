@@ -44,12 +44,16 @@ class IntentService:
             
         Returns:
             Dict containing:
-            - intent: classified intent (buy_something, general_inquiry, modification_request, confirmation_response, reference_request, ambiguous)
+            - intent: classified intent (buy_something, general_inquiry, modification_request, confirmation_response, reference_request, ambiguous, contextual_reference, session_inquiry, workflow_rejection, alternative_request)
             - confidence: confidence score (0-100)
             - reasoning: explanation of classification including context analysis
             - all_intent_scores: scores for all possible intents
             - context_analysis: detailed analysis of conversation context including reference details
             - success: whether classification succeeded
+            - contextual_response: ready-to-send response (if contextual intent detected)
+            - entity_updates: extracted entities from contextual reference (if applicable)
+            - should_handle_directly: whether ChatService should handle this directly
+            - should_update_entities: whether entities should be updated from contextual reference
         """
         try:
             # Get classification from OpenAI with context
@@ -65,6 +69,10 @@ class IntentService:
             context_stage = classification_result.get('context_analysis', {}).get('conversation_stage', 'unknown')
             
             logger.info(f"Intent classified: {intent} (confidence: {confidence}%, stage: {context_stage})")
+            
+            # Handle contextual intents with intelligent responses
+            if intent in ['contextual_reference', 'session_inquiry', 'workflow_rejection', 'alternative_request'] and confidence > 60:
+                return self._handle_contextual_intent(intent, message, context, classification_result)
             
             return classification_result
             
@@ -168,3 +176,57 @@ class IntentService:
             return "general_inquiry", 60
         else:
             return "ambiguous", 30
+    
+    def _handle_contextual_intent(self, intent: str, message: str, context: dict, classification_result: dict) -> Dict[str, Any]:
+        """
+        Handle contextual intents by generating intelligent responses and extracting entities.
+        
+        Args:
+            intent: Detected contextual intent
+            message: User's message
+            context: Conversation context
+            classification_result: Original classification result
+            
+        Returns:
+            Enhanced classification result with contextual response and entity updates
+        """
+        try:
+            # Use comprehensive contextual interaction handler for all contextual intents
+            contextual_data = self.openai_service.handle_contextual_interaction(
+                message=message,
+                conversation_history=context.get('conversation_history', {}),
+                workflow_state=context.get('workflow_state', {}),
+                extracted_entities=context.get('extracted_entities', [])
+            )
+            
+            # Enhance the classification result with contextual data
+            enhanced_result = classification_result.copy()
+            enhanced_result.update({
+                'contextual_response': contextual_data.get('response', 'How can I help you?'),
+                'contextual_actions': contextual_data.get('actions', []),
+                'context_understanding': contextual_data.get('context_understanding', {}),
+                'should_handle_directly': True,
+                'should_update_entities': any(action.get('type') == 'update_entities' for action in contextual_data.get('actions', [])),
+                'should_change_workflow': any(action.get('type') in ['change_workflow_state', 'change_workflow_type'] for action in contextual_data.get('actions', []))
+            })
+            
+            logger.info(f"Generated contextual response for {intent}: {len(enhanced_result['contextual_response'])} chars")
+            return enhanced_result
+            
+        except Exception as e:
+            logger.error(f"Error handling contextual intent {intent}: {e}")
+            # Return basic classification result with fallback response
+            fallback_result = classification_result.copy()
+            fallback_result.update({
+                'contextual_response': 'I understand you\'re referring to our conversation. Could you please clarify what you need?',
+                'contextual_actions': [],
+                'context_understanding': {
+                    'user_intent': 'unclear',
+                    'referenced_data': [],
+                    'confidence': 30
+                },
+                'should_handle_directly': True,
+                'should_update_entities': False,
+                'should_change_workflow': False
+            })
+            return fallback_result

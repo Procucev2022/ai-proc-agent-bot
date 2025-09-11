@@ -26,6 +26,9 @@ from openai import OpenAI
 from app.config import get_settings
 from app.tools.interaction_logger import get_interaction_logger
 from app.utils.logging_utils import log_service_method
+from app.utils.datetime_utils import format_date_display
+from app.utils.datetime_utils import format_date_for_validation_error
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -294,10 +297,14 @@ class OpenAIService:
                 prompt_category = "entity_extraction"
                 prompt_name = f"_get_entity_system_prompt_{mapped_workflow}"
             
+            # Add current year for date extraction
+            from datetime import datetime
+            current_year = datetime.now().year
+            
             response = self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": message}],
-                instructions=self._load_prompt(prompt_category, prompt_name),
+                instructions=self._load_prompt(prompt_category, prompt_name, current_year=current_year),
                 tools=[entity_tool],
                 tool_choice={"type": "function", "name": tool_function_name}
             )
@@ -1256,11 +1263,13 @@ Analyze their response to determine their true choice.
                 clarification_tool = json.load(f)
             
             # Build prompt inline
-            prompt = f"Generate clarification response:\n\n"
+            prompt = f"Starts with a polite acknowledgment of the user’s request {context.get('user_message', '')}"
+            prompt += "Mention that Request for Quotation (RFQ) will be created"
+            prompt += f"Generate clarification response:\n\n"
             prompt += f"Completeness: {completeness}%\n"
             prompt += f"Questions to ask: {questions}\n"
             prompt += f"User message: '{context.get('user_message', '')}'\n"
-            
+
             if context.get('extracted_entities'):
                 prompt += f"Current entities: {json.dumps(context['extracted_entities'])}\n"
             
@@ -1271,6 +1280,7 @@ Analyze their response to determine their true choice.
                 tools=[clarification_tool],
                 tool_choice={"type": "function", "name": "generate_clarification_response"}
             )
+            
             
             processing_time = time.time() - start_time
             
@@ -1285,6 +1295,8 @@ Analyze their response to determine their true choice.
                         response_parts.append(args["progress_acknowledgment"])
                     if args.get("questions"):
                         questions_text = "\n".join(f"• {q}" for q in args["questions"])
+                        
+                        response_parts.append(f"To proceed with your request, we will create a Request for Quotation (RFQ).")
                         response_parts.append(f"Please provide the following:\n\n{questions_text}")
                     generated_response = "\n\n".join(response_parts)
                     
@@ -2122,8 +2134,26 @@ Determine the best category for the input item based on the similar items and th
             
             # Build context for OpenAI
             context_text = "Generate RFQ confirmation for the following data:\n\n"
-            # Clean RFQ data for JSON serialization
+            # Clean RFQ data for JSON serialization and format dates
             clean_rfq_data = self._clean_for_json_serialization(rfq_data)
+            
+            # Format delivery date for display
+            if clean_rfq_data.get("delivery_date"):
+
+                
+                delivery_date = clean_rfq_data["delivery_date"]
+                if isinstance(delivery_date, str):
+                    try:
+                        # Parse ISO format date string
+                        dt = datetime.fromisoformat(delivery_date.replace('Z', '+00:00'))
+                        clean_rfq_data["delivery_date_display"] = format_date_display(dt)
+                    except:
+                        clean_rfq_data["delivery_date_display"] = delivery_date
+                elif isinstance(delivery_date, datetime):
+                    clean_rfq_data["delivery_date_display"] = format_date_display(delivery_date)
+                else:
+                    clean_rfq_data["delivery_date_display"] = str(delivery_date)
+            
             context_text += f"RFQ Data: {json.dumps(clean_rfq_data, indent=2)}\n"
             
             if context.get("user_message"):
@@ -2227,6 +2257,160 @@ Determine the best category for the input item based on the similar items and th
             logger.error(f"Error generating opt-in confirmation: {str(e)}")
             return f"Hi {seller_name}, welcome back! You'll receive RFQ notifications for {categories_text}. To opt out, reply 'opt-out'."
     
+    @log_service_method("openai_service")
+    def validate_delivery_date(self, raw_date_input: str, extracted_date: str = None) -> Dict[str, Any]:
+        """Validate delivery date with business rules using OpenAI.
+        
+        Args:
+            raw_date_input: Raw date input from user
+            extracted_date: Initially extracted date in YYYY-MM-DD format
+            
+        Returns:
+            Dict with validation results and normalized date
+        """
+        start_time = time.time()
+        
+        try:
+            from datetime import datetime, timedelta
+            current_date = datetime.now()
+            current_date_str = current_date.strftime("%Y-%m-%d")
+            
+            # Handle common relative dates before calling OpenAI
+            normalized_date = None
+            if raw_date_input.lower().strip() in ["tomorrow", "tommorrow"]:
+                tomorrow = current_date + timedelta(days=1)
+                normalized_date = tomorrow.strftime("%Y-%m-%d")
+            elif raw_date_input.lower().strip() == "today":
+                normalized_date = current_date_str
+            elif raw_date_input.lower().strip() in ["day after tomorrow", "day after tommorrow"]:
+                day_after_tomorrow = current_date + timedelta(days=2)
+                normalized_date = day_after_tomorrow.strftime("%Y-%m-%d")
+            
+            # If we handled it locally, return the result
+            if normalized_date:
+                result = {
+                    "is_valid": True,
+                    "normalized_date": normalized_date,
+                    "validation_issues": [],
+                    "user_friendly_message": f"Delivery date set to {normalized_date}",
+                    "confidence": 95,
+                    "success": True
+                }
+                
+                # Log local date validation
+                self.interaction_logger.log_entity_extraction(
+                    user_input=raw_date_input,
+                    entities={"date_validation": result},
+                    completeness=100,
+                    workflow_type="date_validation_local",
+                    model_used="local_processing",
+                    processing_time=time.time() - start_time
+                )
+                
+                return result
+            
+            # Load date validation tool for complex cases
+            with open(self.tools_dir / "date_validation.json", 'r') as f:
+                date_tool = json.load(f)
+            
+            prompt = f"""
+            Validate this delivery date input:
+            Raw input: "{raw_date_input}"
+            Extracted date: {extracted_date or "None"}
+            Current date: {current_date_str}
+            
+            Apply validation rules and provide normalized result.
+            """
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions=self._load_prompt("date_validation", "_get_date_validation_prompt", current_year=current_date.year, current_date=current_date_str),
+                tools=[date_tool],
+                tool_choice={"type": "function", "name": "validate_delivery_date"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    
+                    # Format user-friendly message with proper date format
+                    user_friendly_message = args.get("user_friendly_message", "")
+                    if not args.get("is_valid", False) and args.get("normalized_date"):
+                        # If there's a date in the message, format it nicely
+
+                        formatted_date = format_date_for_validation_error(args.get("normalized_date"))
+                        # Replace any date references in the message with formatted version
+                        if formatted_date != "N/A":
+                            user_friendly_message = user_friendly_message.replace(
+                                args.get("normalized_date", ""), formatted_date
+                            )
+                    
+                    result = {
+                        "is_valid": args.get("is_valid", False),
+                        "normalized_date": args.get("normalized_date"),
+                        "validation_issues": args.get("validation_issues", []),
+                        "user_friendly_message": user_friendly_message,
+                        "confidence": args.get("confidence", 0),
+                        "success": True
+                    }
+                    
+                    # Log successful date validation interaction
+                    self.interaction_logger.log_entity_extraction(
+                        user_input=raw_date_input,
+                        entities={"date_validation": result},
+                        completeness=100 if result["is_valid"] else 0,
+                        workflow_type="date_validation",
+                        model_used=self.default_model,
+                        processing_time=processing_time
+                    )
+                    
+                    logger.info(f"Date validation: {raw_date_input} -> {result['normalized_date']} (valid: {result['is_valid']})")
+                    return result
+            
+            result = {
+                "is_valid": False,
+                "normalized_date": None,
+                "validation_issues": ["Validation failed"],
+                "user_friendly_message": "Please provide a valid future date",
+                "confidence": 30,
+                "success": False
+            }
+            
+            # Log failed date validation
+            self.interaction_logger.log_error(
+                interaction_type="date_validation",
+                user_input=raw_date_input,
+                error_message="No function call in response",
+                model_used=self.default_model
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Date validation failed: {str(e)}")
+            
+            # Log exception in date validation
+            self.interaction_logger.log_error(
+                interaction_type="date_validation",
+                user_input=raw_date_input,
+                error_message=str(e),
+                model_used=self.default_model
+            )
+            
+            return {
+                "is_valid": False,
+                "normalized_date": None,
+                "validation_issues": [f"Error: {str(e)}"],
+                "user_friendly_message": "Please provide a valid future date (e.g., 12 Sept 2025)",
+                "confidence": 20,
+                "success": False
+            }
+
     @log_service_method("openai_service")
     def detect_opt_out_intent(self, message: str) -> Dict[str, Any]:
         """Detect opt-out/opt-in intent in seller messages using function calling."""
@@ -2423,5 +2607,157 @@ If multiple emails and user selected a number, include selection."""
         except Exception as e:
             logger.error(f"Email confirmation parsing error: {e}")
             return {"success": False}
+
+    @log_service_method("openai_service")
+    def handle_contextual_interaction(self, message: str, conversation_history: dict, 
+                                    workflow_state: dict, extracted_entities: list) -> Dict[str, Any]:
+        """
+        Handle complex contextual interactions with comprehensive session management.
+        
+        This method processes user messages that reference previous conversation parts,
+        request workflow changes, entity modifications, or state transitions using
+        advanced AI reasoning to determine appropriate actions.
+        
+        Args:
+            message: User's contextual message
+            conversation_history: Full conversation history with messages
+            workflow_state: Current workflow state and metadata
+            extracted_entities: Currently extracted entities from session
+            
+        Returns:
+            Dict containing:
+            - response: Generated response text
+            - actions: List of actions to perform (entity updates, state changes, etc.)
+            - context_understanding: Analysis of user intent and referenced data
+        """
+        start_time = time.time()
+        
+        try:
+            # Load contextual interaction tool
+            with open(self.tools_dir / "contextual_interaction_handling.json", 'r') as f:
+                contextual_tool = json.load(f)
+            
+            # Build comprehensive context for AI analysis
+            context_text = self._build_contextual_analysis_prompt(
+                message, conversation_history, workflow_state, extracted_entities
+            )
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": context_text}],
+                instructions=self._load_prompt("contextual_interaction", "_handle_contextual_interaction_prompt"),
+                tools=[contextual_tool],
+                tool_choice={"type": "function", "name": "handle_contextual_interaction"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    
+                    result = {
+                        "success": True,
+                        "response": args.get("response", "I understand your request."),
+                        "actions": args.get("actions", []),
+                        "context_understanding": args.get("context_understanding", {}),
+                        "processing_time_ms": int(processing_time * 1000)
+                    }
+                    
+                    # Log successful contextual interaction
+                    user_intent = result["context_understanding"].get("user_intent", "unknown")
+                    confidence = result["context_understanding"].get("confidence", 0)
+                    
+                    logger.info(f"Contextual interaction handled - Intent: {user_intent}, Confidence: {confidence}%, Actions: {len(result['actions'])}")
+                    
+                    # Log detailed interaction for debugging
+                    self.interaction_logger.log_entity_extraction(
+                        user_input=message,
+                        entities={"contextual_actions": result["actions"], "user_intent": user_intent},
+                        completeness=confidence,
+                        workflow_type="contextual_interaction",
+                        model_used=self.default_model,
+                        processing_time=processing_time,
+                        missing_fields=[]
+                    )
+                    
+                    return result
+            
+            # Fallback response
+            return {
+                "success": False,
+                "response": "I understand you're referring to our previous conversation. Could you please clarify what specific changes you'd like me to make?",
+                "actions": [],
+                "context_understanding": {
+                    "user_intent": "unclear",
+                    "referenced_data": [],
+                    "confidence": 30
+                },
+                "processing_time_ms": int(processing_time * 1000)
+            }
+            
+        except Exception as e:
+            processing_time = time.time() - start_time
+            logger.error(f"Contextual interaction handling failed: {e}")
+            
+            return {
+                "success": False,
+                "response": "I had trouble processing your request. Could you please rephrase what you'd like me to do?",
+                "actions": [],
+                "context_understanding": {
+                    "user_intent": "error",
+                    "referenced_data": [],
+                    "confidence": 0
+                },
+                "processing_time_ms": int(processing_time * 1000),
+                "error": str(e)
+            }
+    
+    def _build_contextual_analysis_prompt(self, message: str, conversation_history: dict, 
+                                        workflow_state: dict, extracted_entities: list) -> str:
+        """Build comprehensive context prompt for AI analysis."""
+        
+        # Start with user message
+        prompt = f"USER MESSAGE: '{message}'\n\n"
+        
+        # Add current workflow information
+        prompt += "CURRENT SESSION STATE:\n"
+        prompt += f"- Workflow Type: {workflow_state.get('workflow_type', 'unknown')}\n"
+        prompt += f"- Current Stage: {workflow_state.get('stage', 'unknown')}\n"
+        prompt += f"- Has Pending Confirmations: {bool(workflow_state.get('pending_combined_rfq') or workflow_state.get('pending_rfq'))}\n"
+        
+        # Add extracted entities
+        if extracted_entities:
+            prompt += f"\nCURRENT EXTRACTED ENTITIES ({len(extracted_entities)} items):\n"
+            for i, entity in enumerate(extracted_entities[:5], 1):  # Show first 5
+                product_name = entity.get('product_name', entity.get('description', f'Item {i}'))
+                quantity = entity.get('quantity', 'Not specified')
+                prompt += f"{i}. {product_name} - Quantity: {quantity}\n"
+                if entity.get('specifications'):
+                    prompt += f"   Specs: {entity.get('specifications')}\n"
+        else:
+            prompt += "\nCURRENT EXTRACTED ENTITIES: None\n"
+        
+        # Add recent conversation history
+        messages = conversation_history.get('messages', [])
+        if messages:
+            prompt += f"\nRECENT CONVERSATION (last 5 messages):\n"
+            for msg in messages[-5:]:
+                role = msg.get('role', 'unknown')
+                content = msg.get('content', '')[:150]  # Truncate long messages
+                prompt += f"{role.capitalize()}: {content}\n"
+        
+        # Add workflow state details
+        if workflow_state:
+            prompt += "\nWORKFLOW STATE DETAILS:\n"
+            for key, value in workflow_state.items():
+                if key not in ['extracted_entities', 'conversation_history'] and value:
+                    prompt += f"- {key}: {str(value)[:100]}\n"
+        
+        prompt += "\nBased on this context, analyze the user's message and determine what contextual actions they want to perform."
+        
+        return prompt
 
 

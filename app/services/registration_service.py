@@ -196,13 +196,13 @@ class RegistrationService:
     async def _get_buyer_introduction_message(self) -> str:
         """Get buyer registration introduction message."""
         return (
-            "Hello Buyer, welcome to QUA. To get started, please share your full name, company name, business email, and company pincode. We’ll have you registered right away."
+            "Hello Buyer, welcome to QUA.\n To get started, please share\n\n  1. Full name,\n 2. Company name,\n 3. Business email,\n 4. Company pincode.\n\n We’ll have you registered right away."
         )
     
     async def _get_seller_introduction_message(self) -> str:
         """Get seller registration introduction message."""
         return (
-            "Hello Seller, welcome to QUA. To get started, please share your full name, company name, business email, location with pincode, GSTIN number, and the products or services you offer. We’ll have you registered right away."
+            "Hello Seller, welcome to QUA.\n To get started, please share your\n 1.Full name,\n 2. Company name, \n 3. Business email, \n 4. Location with Pincode,\n 5. GSTIN number,\n 6. The products or services you offer. \n\nWe’ll have you registered right away."
         )
     
     def _build_registration_context(self, session: ConversationSession, current_message: str) -> str:
@@ -269,6 +269,8 @@ class RegistrationService:
                     session.workflow_state["pending_registration_data"] = entities
                     session.workflow_state["otp_email"] = email
                     session.workflow_state["otp_retry_count"] = 0
+                    
+                    session.workflow_type = "registration"
                     
                     # Send OTP for email verification
                     return await self._send_registration_otp(user_phone, session, email)
@@ -391,9 +393,6 @@ class RegistrationService:
             
             if result.get("statusCode") in ["1001", "200"] or result.get("status") == "Success":
                 # Registration successful - send confirmation message and continue to OTP
-                if self.session_manager:
-                    await self.session_manager.send_and_track_message(user_phone, f"{user_type.title()} registration API successful, continuing to OTP flow", session)
-                
                 logger.info(f"{user_type.title()} registration API successful, continuing to OTP flow")
                 return {
                     "status": "registration_completed",
@@ -424,6 +423,8 @@ class RegistrationService:
             if otp_response.get("statusCode") in ["1001", "200"] or otp_response.get("status") == "Success":
                 session.workflow_state["otp_retry_count"] = session.workflow_state.get("otp_retry_count", 0) + 1
                 
+                session.workflow_type = "registration"
+                
                 message = f"OTP sent to your email: {email}\n\nPlease enter the OTP you received, or reply 'RESEND' to get a new OTP:"
                 if self.session_manager:
                     await self.session_manager.send_and_track_message(user_phone, message, session)
@@ -452,6 +453,8 @@ class RegistrationService:
                                                session: ConversationSession) -> Dict[str, Any]:
         """Handle OTP validation for registration."""
         try:
+            session.workflow_type = "registration"
+            
             otp_email = session.workflow_state.get("otp_email")
             retry_count = session.workflow_state.get("otp_retry_count", 0)
             
@@ -565,7 +568,7 @@ class RegistrationService:
                 if retry_count >= 3:
                     return await self._redirect_to_support(user_phone, "max_otp_retries", "Maximum OTP attempts exceeded")
                 
-                message = "Please enter a valid OTP (4-6 digits) or reply 'RESEND' to get a new OTP:"
+                message = "Please enter a valid OTP  or reply 'RESEND' to get a new OTP:"
                 if self.session_manager:
                     await self.session_manager.send_and_track_message(user_phone, message, session)
                 else:

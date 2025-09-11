@@ -51,7 +51,7 @@ class RegisterAPIService:
             
             if response["success"]:
                 return {
-                    "statusCode": "1001",
+                    "statusCode": "200",
                     "message": "Thanks for your interest with procucev, our vendor partner will connect with you",
                     "errorMsg": None,
                     "timestamp": response["timestamp"],
@@ -104,7 +104,7 @@ class RegisterAPIService:
             
             if response["success"]:
                 return {
-                    "statusCode": "1001",
+                    "statusCode": "200",
                     "message": "Thanks for your interest with procucev, our client partner will connect with you",
                     "errorMsg": None,
                     "timestamp": response["timestamp"],
@@ -150,23 +150,24 @@ class RegisterAPIService:
                 require_auth=True
             )
             
-            if response["success"]:
+            # Check success based on status field
+            if response.get("status") == "Success":
                 return {
-                    "statusCode": "1001",
-                    "message": "OTP sent successfully",
-                    "errorMsg": None,
-                    "timestamp": response["timestamp"],
+                    "statusCode": "200",
+                    "message": response.get("message", "OTP sent successfully"),
+                    "errorMsg": response.get("errorMsg"),
+                    "timestamp": response.get("timestamp"),
                     "status": "Success",
-                    "type": None
+                    "type": response.get("type")
                 }
             else:
                 return {
-                    "statusCode": response["status_code"],
-                    "message": "Failed to send OTP",
-                    "errorMsg": response["message"],
-                    "timestamp": response["timestamp"],
+                    "statusCode": response.get("statusCode", "400"),
+                    "message": response.get("message", "Failed to send OTP"),
+                    "errorMsg": response.get("errorMsg"),
+                    "timestamp": response.get("timestamp"),
                     "status": "Failure",
-                    "type": None
+                    "type": response.get("type")
                 }
                         
         except Exception as e:
@@ -199,23 +200,24 @@ class RegisterAPIService:
                 require_auth=True
             )
             
-            if response["success"]:
+            # Check success based on status field
+            if response.get("status") == "Success":
                 return {
-                    "statusCode": "1001",
-                    "message": "OTP validated successfully",
-                    "errorMsg": None,
-                    "timestamp": response["timestamp"],
+                    "statusCode": "200",
+                    "message": response.get("message", "OTP validated successfully"),
+                    "errorMsg": response.get("errorMsg"),
+                    "timestamp": response.get("timestamp"),
                     "status": "Success",
-                    "type": None
+                    "type": response.get("type")
                 }
             else:
                 return {
-                    "statusCode": response["status_code"],
-                    "message": "Invalid OTP",
-                    "errorMsg": response["message"],
-                    "timestamp": response["timestamp"],
+                    "statusCode": response.get("statusCode", "400"),
+                    "message": response.get("message", "Invalid OTP"),
+                    "errorMsg": response.get("errorMsg"),
+                    "timestamp": response.get("timestamp"),
                     "status": "Failure",
-                    "type": None
+                    "type": response.get("type")
                 }
                         
         except Exception as e:
@@ -244,7 +246,7 @@ class RegisterAPIService:
             
             if response["success"]:
                 return {
-                    "statusCode": "1001",
+                    "statusCode": "200",
                     "message": "User approved successfully",
                     "errorMsg": None,
                     "timestamp": response["timestamp"],

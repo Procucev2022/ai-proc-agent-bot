@@ -7,7 +7,7 @@
         "properties": {
             "intent": {
                 "type": "string",
-                "enum": ["buy_something", "sell_something", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "ambiguous"],
+                "enum": ["buy_something", "sell_something", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "ambiguous", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request"],
                 "description": "The primary classified intent category based on user message analysis and conversation context"
             },
             "confidence": {
@@ -53,9 +53,29 @@
                         "type": "number",
                         "minimum": 0,
                         "maximum": 100
+                    },
+                    "contextual_reference": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                    },
+                    "session_inquiry": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                    },
+                    "workflow_rejection": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                    },
+                    "alternative_request": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
                     }
                 },
-                "required": ["buy_something", "sell_something", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request"],
+                "required": ["buy_something", "sell_something", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request"],
                 "additionalProperties": false,
                 "description": "Confidence scores for all intent categories"
             },

@@ -6,3 +6,12 @@ venv/
 .env
 # Ignore OpenAI interaction logs
 app/logs/openai_interactions/*.jsonl
+chroma_db
+unified_chroma_db
+azure_key.pem
+DigiCertGlobalRootCA.crt.pem
+/logs
+VMconnection.txt
+WhatsappIntegrationDoc.md
+database_explorer.py
+/documentation

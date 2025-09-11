@@ -68,6 +68,7 @@ class Settings:
         
         # Redis configuration
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        self.redis_expiry_seconds = int(os.getenv("REDIS_EXPIRY_SECONDS", "86400"))  # 12 hours default
         
         # Security configuration
         self.secret_key = os.getenv("SECRET_KEY")
@@ -112,8 +113,8 @@ class Settings:
         self.intent_threshold_ambiguous = int(os.getenv("INTENT_THRESHOLD_AMBIGUOUS", "60"))
         
         # Session and timeout configuration
-        self.session_timeout_hours = int(os.getenv("SESSION_TIMEOUT_HOURS", "3"))
-        self.session_timeout_minutes = int(os.getenv("SESSION_TIMEOUT_MINUTES", "30"))  # Keep for backward compatibility
+        self.session_timeout_minutes = int(os.getenv("SESSION_TIMEOUT_MINUTES", "30"))
+        self.session_timeout_minutes = int(os.getenv("SESSION_TIMEOUT_MINUTES", "30"))
         self.cleanup_completed_sessions = os.getenv("CLEANUP_COMPLETED_SESSIONS", "true").lower() == "true"
         self.max_retry_attempts = int(os.getenv("MAX_RETRY_ATTEMPTS", "3"))
         
@@ -268,10 +269,8 @@ class Settings:
         if missing_vars:
             raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
         
-        # Validate numeric configurations
-        if self.session_timeout_hours <= 0:
-            raise ValueError("SESSION_TIMEOUT_HOURS must be positive")
-        
+        # Validate numeric configurations        
+        # Validate numeric configurations        
         if self.session_timeout_minutes <= 0:
             raise ValueError("SESSION_TIMEOUT_MINUTES must be positive")
         

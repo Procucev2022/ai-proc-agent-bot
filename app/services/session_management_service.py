@@ -74,15 +74,39 @@ class SessionManagementService:
         
         return session
     
+    async def create_session(self, phone_number: str, workflow_type: str = None, user_type: str = None) -> ConversationSession:
+        """Create a new session with specified workflow type and user type."""
+        session_id = SessionHelpers.generate_session_id(phone_number, "daily")
+        
+        session_data = {
+            'session_id': session_id,
+            'external_user_id': phone_number,
+            'workflow_type': workflow_type,
+            'outcome': None,
+            'workflow_state': {
+                "extracted_entities": [], 
+                "last_activity_at": utc_now().isoformat(),
+                "user_type": user_type
+            },
+            'conversation_history': {"messages": []},
+            'extracted_entities': {},
+            'retention_date': date.today() + timedelta(days=30)
+        }
+        
+        session = self.db_manager.save_conversation_session(session_data)
+        logger.info(f"Created new session: {session_id} with workflow: {workflow_type}, user_type: {user_type}")
+        
+        return session
+    
     async def handle_session_expiry_check(self, user_phone: str, session: ConversationSession) -> ConversationSession:
         """Handle session expiry check and renewal."""
         # Check if session has expired
         if await SessionHelpers.is_session_expired(session):
             # Only send expiration message if appropriate
-            if await SessionHelpers.should_send_expiration_message(session):
+            if await SessionHelpers.should_send_expiration_message(session):    
                 await self.whatsapp_service.send_message(
                     user_phone, 
-                    "Your session has expired. Let's start fresh! What can I help you with?"
+                    "Your session has expired. Let's start fresh!"
                 )
                 
                 # Generate enhanced session summary for timeout (non-blocking)

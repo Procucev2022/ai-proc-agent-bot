@@ -31,7 +31,8 @@ class SessionHelpers:
         # Use last_activity_at if available, otherwise fall back to created_at
         last_activity = getattr(session, 'last_activity_at', None) or session.created_at
         
-        timeout_hours = get_settings().session_timeout_hours
+        timeout_minutes = get_settings().session_timeout_minutes
+        timeout_hours = timeout_minutes / 60
         session_expired, last_activity_utc, expired_threshold_utc = is_expired(last_activity, timeout_hours)
         
         if session_expired:
@@ -56,12 +57,13 @@ class SessionHelpers:
         if not await SessionHelpers.is_session_expired(session):
             return False
         
-        # Don't send expiration message for very new sessions (less than 1 hour old)
+        # Don't send expiration message for very new sessions (less than session timeout)
         # This prevents confusion when users just started a conversation
         if session.created_at:
             created_utc = utc_from_naive(session.created_at)
-            one_hour_ago_utc = utc_now() - timedelta(hours=1)
-            if created_utc > one_hour_ago_utc:
+            timeout_minutes = get_settings().session_timeout_minutes
+            timeout_ago_utc = utc_now() - timedelta(minutes=timeout_minutes)
+            if created_utc > timeout_ago_utc:
                 return False
         
         # Don't send expiration message if session has no meaningful history
@@ -320,3 +322,71 @@ class SessionHelpers:
         except Exception as e:
             logger.error(f"Error calculating session averages: {e}")
             return session
+
+    @staticmethod
+    def clean_for_json_serialization(obj):
+        """Recursively clean object for JSON serialization."""
+        import json
+        from datetime import datetime, date
+
+        if obj is None:
+            return None
+        elif hasattr(obj, 'value'):  # Enum object
+            return obj.value
+        elif isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        elif isinstance(obj, dict):
+            return {key: SessionHelpers.clean_for_json_serialization(value) for key, value in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [SessionHelpers.clean_for_json_serialization(item) for item in obj]
+        elif isinstance(obj, (str, int, float, bool)):
+            return obj
+        else:
+            # Try to serialize to test, if it fails, convert to string
+            try:
+                json.dumps(obj)
+                return obj
+            except (TypeError, ValueError):
+                return str(obj)
+
+    @staticmethod
+    def should_use_summary_aware_extraction(message: str) -> bool:
+        """
+        Use AI to intelligently determine if we should use summary-aware entity extraction.
+
+        This uses the OpenAI service to analyze the message and determine if the user is making
+        references to previous conversations that would benefit from historical context.
+
+        Args:
+            message: User message to analyze
+
+        Returns:
+            True if summary-aware extraction should be used
+        """
+        # COMMENTED OUT: Disable automatic reference detection to enforce session timeout behavior
+        # When sessions timeout, users should lose context and start fresh
+        return False
+        
+        # try:
+        #     # Use OpenAI service for intelligent reference detection
+        #     reference_analysis = self.openai_service.analyze_reference_context(message)
+
+        #     has_references = reference_analysis.get("has_references", False)
+        #     confidence = reference_analysis.get("confidence", 0)
+        #     reference_types = reference_analysis.get("reference_types", [])
+
+        #     # Use summary-aware extraction if we have high confidence references
+        #     should_use_summary = has_references and confidence >= 70
+
+        #     print(f"ChatService: Reference analysis for '{message}':")
+        #     print(f"  - Has references: {has_references}")
+        #     print(f"  - Confidence: {confidence}%")
+        #     print(f"  - Reference types: {reference_types}")
+        #     print(f"  - Use summary-aware extraction: {should_use_summary}")
+
+        #     return should_use_summary
+
+        # except Exception as e:
+        #     print(f"ChatService: Error in reference analysis: {e}")
+        #     # Fallback: if analysis fails, don't use summary-aware extraction
+        #     return False

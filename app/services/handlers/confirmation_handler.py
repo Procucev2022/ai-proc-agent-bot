@@ -14,14 +14,6 @@ from app.services.whatsapp_service import WhatsAppService
 from app.services.gmt_api_service import GMTAPIService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
-from app.services.helpers.rfq_processing_helpers import (
-    run_auto_categorization_for_rfqs,
-    run_seller_recommendation_for_rfqs
-)
-from app.services.auto_categorization_service import AutoCategorizationService
-from app.services.enhanced_auto_categorization_service import EnhancedAutoCategorizationService
-from app.services.seller_recommendation_service import SellerRecommendationService
-from app.services.enhanced_seller_matching_service import EnhancedSellerMatchingService
 from app.schemas.rfq import RFQValidationSchema
 from app.utils.datetime_utils import utc_now
 
@@ -31,17 +23,9 @@ logger = logging.getLogger(__name__)
 class ConfirmationHandler:
     """Handles RFQ confirmation workflow."""
     
-    def __init__(self, whatsapp_service: WhatsAppService, response_helpers: ResponseHelpers,
-                 auto_categorization_service: AutoCategorizationService,
-                 enhanced_auto_categorization_service: EnhancedAutoCategorizationService,
-                 seller_recommendation_service: SellerRecommendationService,
-                 enhanced_seller_matching_service: EnhancedSellerMatchingService):
+    def __init__(self, whatsapp_service: WhatsAppService, response_helpers: ResponseHelpers):
         self.whatsapp_service = whatsapp_service
         self.response_helpers = response_helpers
-        self.auto_categorization_service = auto_categorization_service
-        self.enhanced_auto_categorization_service = enhanced_auto_categorization_service
-        self.seller_recommendation_service = seller_recommendation_service
-        self.enhanced_seller_matching_service = enhanced_seller_matching_service
     
     async def handle_confirmation_button(self, user: User, session: ConversationSession, 
                                        button_id: str) -> Dict[str, Any]:
@@ -90,9 +74,11 @@ class ConfirmationHandler:
                                             message: str) -> Dict[str, Any]:
         """Handle optional field responses."""
         # Check if user wants to skip optional fields
+        # Issue TODO : Add intelligent identification here to understands intent (Negative/Positive), Check all the keyword implementations
         if any(keyword in message.lower() for keyword in ["no", "skip", "proceed", "continue", "next"]):
             # User wants to skip optional fields, proceed to confirmation
             return await self._proceed_to_confirmation_from_optional(user, session, message)
+        # For above TODO, Add a elif logic here
         else:
             # User provided optional information, process it and then proceed to confirmation
             return {"status": "continue_with_purchase_intent"}
@@ -210,21 +196,17 @@ class ConfirmationHandler:
                 "user_message": message,
                 "extracted_entities": product_info["entities"]
             }, chat_summaries)
-            # await self.whatsapp_service.send_message(user.phone_number, summary_response)
             
-            # Small delay to ensure message ordering
-            # await asyncio.sleep(0.5)
-            
-            # Send Yes/No confirmation buttons
+            # Send confirmation message with buttons directly
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
                 {"id": "no_rfq", "title": "Modify"}
             ]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
-                "Confirmation Required", 
                 summary_response,
-                buttons_config
+                buttons_config,
+                "Confirmation Required"
             )
 
             # Move to confirmation state
@@ -248,21 +230,17 @@ class ConfirmationHandler:
                 },
                 chat_summaries
             )
-            # await self.whatsapp_service.send_message(user.phone_number, summary_response)
             
-            # Small delay to ensure message ordering
-            # await asyncio.sleep(0.5)
-            
-            # Send Yes/No confirmation buttons
+            # Send confirmation message with buttons directly
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
                 {"id": "no_rfq", "title": "Modify"}
             ]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
-                "Confirmation Required",
                 summary_response,
-                buttons_config
+                buttons_config,
+                "Confirmation Required"
             )
 
             # Move to confirmation state
