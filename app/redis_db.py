@@ -113,25 +113,15 @@ class AuthRedisService(BaseRedisService):
     async def store(self, phone_number: str, user_data: Dict[str, Any], expiry_seconds: Optional[int] = None) -> bool:
         key = f"auth:{phone_number}"
         if expiry_seconds is None:
-            expiry_seconds = self.settings.redis_expiry_seconds
+            expiry_seconds = self.settings.redis_expiry_seconds 
         return await self.set(key, user_data, expiry_seconds)
-    
-    async def refresh_token(self, phone_number: str) -> bool:
-        """Refresh token expiry to reset inactivity timer."""
-        key = f"auth:{phone_number}"
-        try:
-            await self.init_client()
-            return await self.client.expire(key, self.settings.redis_expiry_seconds)  # Reset to 1 hour
-        except Exception as e:
-            logger.error(f"Redis token refresh error for key {key}: {e}")
-            return False
 
     async def retrieve(self, phone_number: str) -> Optional[UserDetailsSchema]:
         key = f"auth:{phone_number}"
         data = await self.get(key, as_json=True)
         if data:
             # Refresh token on successful retrieval (user activity)
-            await self.refresh_token(phone_number)
+            await self.refresh_user_token(phone_number)
             return UserDetailsSchema(**data)
         return False
 
@@ -147,7 +137,12 @@ class AuthRedisService(BaseRedisService):
         """Refresh user token to extend session for active users."""
         key = f"auth:{phone_number}"
         if await self.exists(key):
-            return await self.refresh_token(phone_number)
+            try:
+                await self.init_client()
+                return await self.client.expire(key, 3600)  # Reset to 1 hour
+            except Exception as e:
+                logger.error(f"Redis token refresh error for key {key}: {e}")
+                return False
         return False
 
 

@@ -129,10 +129,6 @@ class ChatService:
         workflow routing, and response generation.
         """
         try:
-            # Refresh user token on activity (if authenticated)
-            auth_redis = get_auth_redis_service()
-            await auth_redis.refresh_user_token(user_phone)
-            
             # Get or create user session using extracted service
             session = await self.session_manager.get_conversation_context(user_phone)
 

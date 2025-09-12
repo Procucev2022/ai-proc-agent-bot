@@ -88,24 +88,6 @@ class AuthenticationService:
             logger.error(f"Token clearing error for {user_phone}: {e}")
             return False
     
-    async def get_token_ttl(self, user_phone: str) -> Optional[int]:
-        """Get remaining time-to-live for user token in seconds."""
-        try:
-            key = f"auth:{user_phone}"
-            ttl = await self.auth_redis_service.ttl(key)
-            return ttl if ttl and ttl > 0 else None
-        except Exception as e:
-            logger.error(f"Error getting token TTL for {user_phone}: {e}")
-            return None
-    
-    async def refresh_user_activity(self, user_phone: str) -> bool:
-        """Refresh user token on activity to extend session."""
-        try:
-            return await self.auth_redis_service.refresh_user_token(user_phone)
-        except Exception as e:
-            logger.error(f"Error refreshing user activity for {user_phone}: {e}")
-            return False
-    
     async def user_authenticate(self, user_phone: str, message: str, 
                               session: ConversationSession, intent: str = None) -> Dict[str, Any]:
         """Handles token validation failure and routes to user authentication flow."""
