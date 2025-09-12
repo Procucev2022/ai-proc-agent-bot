@@ -24,6 +24,7 @@ from app.redis_db import get_auth_redis_service
 from app.schemas.user import UserDetailsSchema
 from app.procucev_apis.auth_apis import AuthAPIService
 from app.procucev_apis.register_apis import RegisterAPIService
+from app.services.support_notification_service import SupportNotificationService
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class AuthenticationService:
         self.auth_redis_service = get_auth_redis_service()
         self.auth_api_service = AuthAPIService()
         self.register_api_service = RegisterAPIService()
+        self.support_notification_service = SupportNotificationService()
         self.session_manager = session_manager  # Will be injected from ChatService
     
     async def validate_token(self, user_phone: str) -> Optional[UserDetailsSchema]:
@@ -610,6 +612,11 @@ Return only the selected email address or "none" if no clear selection.
                 error_msg = otp_response.get("message", "Failed to send OTP")
                 logger.error(f"OTP send failed: {error_msg}")
                 
+                # Send email notification to support team
+                await self.support_notification_service.notify_otp_validation_failed(
+                    "User", email, user_phone
+                )
+                
                 if "email not exists" in error_msg.lower():
                     await self.whatsapp_service.send_message(user_phone, "Email address not found in our system. Please contact support.")
                     return {"status": "redirect_to_support", "reason": "email_not_exists"}
@@ -619,6 +626,12 @@ Return only the selected email address or "none" if no clear selection.
                     
         except Exception as e:
             logger.error(f"OTP send error: {e}")
+            
+            # Send email notification to support team
+            await self.support_notification_service.notify_api_service_failure(
+                f"OTP send error for {user_phone}: {str(e)}"
+            )
+            
             await self.whatsapp_service.send_message(user_phone, "Error sending OTP. Please contact support.")
             return {"status": "redirect_to_support", "reason": "otp_send_error"}
     
@@ -666,10 +679,22 @@ Return only the selected email address or "none" if no clear selection.
             else:
                 # OTP invalid - increment retry count and handle retry logic
                 session.workflow_state["otp_retry_count"] = session.workflow_state.get("otp_retry_count", 0) + 1
+                
+                # Send email notification to support team for OTP validation failure
+                await self.support_notification_service.notify_otp_validation_failed(
+                    "User", email, user_phone
+                )
+                
                 return await self._handle_invalid_otp(user_phone, session, email)
                 
         except Exception as e:
             logger.error(f"OTP validation error: {e}")
+            
+            # Send email notification to support team
+            await self.support_notification_service.notify_api_service_failure(
+                f"OTP validation error for {user_phone}: {str(e)}"
+            )
+            
             await self.whatsapp_service.send_message(user_phone, "Error validating OTP. Please contact support.")
             return {"status": "redirect_to_support", "reason": "otp_validation_error"}
     
@@ -704,6 +729,11 @@ Return only the selected email address or "none" if no clear selection.
             retry_count = session.workflow_state.get("otp_retry_count", 0)
             
             if retry_count >= 3:
+                # Send email notification to support team for max retries exceeded
+                await self.support_notification_service.notify_otp_validation_failed(
+                    "User", email, user_phone
+                )
+                
                 await self.whatsapp_service.send_message(user_phone, "Maximum OTP attempts exceeded. Please contact support.")
                 return {"status": "redirect_to_support", "reason": "max_otp_retries_exceeded"}
             
@@ -769,6 +799,12 @@ Return only the selected email address or "none" if no clear selection.
             
         except Exception as e:
             logger.error(f"Domain approval check error: {e}")
+            
+            # Send email notification to support team for domain matching failure
+            await self.support_notification_service.notify_api_service_failure(
+                f"Domain approval check error for {email}: {str(e)}"
+            )
+            
             return {"approved": False, "error": str(e)}
     
     async def _update_approval_status(self, user_id: str, approved: bool) -> Dict[str, Any]:
@@ -782,6 +818,12 @@ Return only the selected email address or "none" if no clear selection.
                 
         except Exception as e:
             logger.error(f"Approval status update error: {e}")
+            
+            # Send email notification to support team for approval status update failure
+            await self.support_notification_service.notify_api_service_failure(
+                f"Approval status update error for user {user_id}: {str(e)}"
+            )
+            
             return {"success": False, "error": str(e)}
     
     async def _complete_buyer_authentication(self, user_phone: str, user_details: Dict,

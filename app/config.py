@@ -152,6 +152,11 @@ class Settings:
 
         # Fetch RFQ limit
         self.rfq_fetch_limit = int(os.getenv("RFQ_FETCH_LIMIT", "3"))
+        
+        # Email configuration
+        self.support_email = os.getenv("SUPPORT_EMAIL", "support@procucev.com")
+        self.email_signature = os.getenv("EMAIL_SIGNATURE", "Regards\nQUA")
+        self.email_templates_path = os.getenv("EMAIL_TEMPLATES_PATH", "app/email_templates")
 
         # Seller Workflow Configuration
         self.seller_rfq_fetch_limit: int = 3

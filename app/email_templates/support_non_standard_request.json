@@ -1,0 +1,11 @@
+{
+  "scenario_id": 6,
+  "to": "support@procucev.com",
+  "cc": "",
+  "bcc": "",
+  "subject": "Support Required for Non-Standard Request",
+  "body": "Dear Support Team,\n\nWe are unable to serve the request from the user. User wanted help in the below area:\n\n{request_details}\n\nPlease reach out to the user with below details:\nFull Name: {full_name}\nEmail: {email}\nContact Number: {contact_number}",
+  "signature": "Regards,\nProcucev Team\n[support@procucev.com]",
+  "supports_buyer": true,
+  "supports_seller": true
+}

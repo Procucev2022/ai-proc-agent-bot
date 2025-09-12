@@ -1,0 +1,11 @@
+{
+  "scenario_id": 7,
+  "to": "{buyer_email}",
+  "cc": "support@procucev.com",
+  "bcc": "",
+  "subject": "RFQ Selected – Notification",
+  "body": "Dear Buyer,\n\nA seller has selected your RFQ with ID: {rfq_id}. You will be notified with the quotation details soon.\n\nFor further action, please review the RFQ details in the portal. For any help please contact us on support@procucev.com",
+  "signature": "Regards,\nProcucev Team\n[support@procucev.com]",
+  "supports_buyer": true,
+  "supports_seller": true
+}

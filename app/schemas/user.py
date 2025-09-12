@@ -170,10 +170,9 @@ class UserDetailsSchema(BaseModel):
         if not user_id:
             raise ValueError("User ID is required")
 
-        # Sanitize phone number if present
+        # Keep original phone format from API (with country code)
         phone = api_data.get("phone")
-        if phone:
-            phone = sanitize_phone_number(phone)
+        # Don't sanitize - keep the original format for session consistency
 
         return cls(
             id=user_id,
