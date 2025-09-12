@@ -19,6 +19,7 @@ import logging
 from typing import Dict, Any, List
 import json
 import asyncio
+from app.redis_db import get_auth_redis_service
 
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
@@ -128,6 +129,10 @@ class ChatService:
         workflow routing, and response generation.
         """
         try:
+            # Refresh user token on activity (if authenticated)
+            auth_redis = get_auth_redis_service()
+            await auth_redis.refresh_user_token(user_phone)
+            
             # Get or create user session using extracted service
             session = await self.session_manager.get_conversation_context(user_phone)
 

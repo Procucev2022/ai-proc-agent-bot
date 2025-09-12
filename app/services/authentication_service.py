@@ -44,11 +44,13 @@ class AuthenticationService:
         self.session_manager = session_manager  # Will be injected from ChatService
     
     async def validate_token(self, user_phone: str) -> Optional[UserDetailsSchema]:
-        """Validate user token from Redis auth storage."""
+        """Validate user token from Redis auth storage and refresh on activity."""
         try:
             logger.info("user token validation called")
             user_data = await self.auth_redis_service.retrieve(user_phone)
             if user_data:
+                # Token automatically refreshed in retrieve method
+                logger.info(f"Token validated and refreshed for user {user_phone}")
                 return user_data
             return False
         except Exception as e:
@@ -60,8 +62,8 @@ class AuthenticationService:
         try:
             session_data = user_details.dict()
             session_data["authenticated_at"] = datetime.now().isoformat()
-            # Issue TODO : Token Deactivation after x seconds of INACTIVITY
-            success = await self.auth_redis_service.store(user_phone, session_data, expiry_seconds=3600)  # 24 hours
+            # Token expires after 1 hour of inactivity
+            success = await self.auth_redis_service.store(user_phone, session_data, expiry_seconds=3600)  # 1 hour
             
             if success:
                 logger.info(f"Session stored successfully for user {user_phone} (ID: {user_details.id})")
@@ -84,6 +86,24 @@ class AuthenticationService:
             return success
         except Exception as e:
             logger.error(f"Token clearing error for {user_phone}: {e}")
+            return False
+    
+    async def get_token_ttl(self, user_phone: str) -> Optional[int]:
+        """Get remaining time-to-live for user token in seconds."""
+        try:
+            key = f"auth:{user_phone}"
+            ttl = await self.auth_redis_service.ttl(key)
+            return ttl if ttl and ttl > 0 else None
+        except Exception as e:
+            logger.error(f"Error getting token TTL for {user_phone}: {e}")
+            return None
+    
+    async def refresh_user_activity(self, user_phone: str) -> bool:
+        """Refresh user token on activity to extend session."""
+        try:
+            return await self.auth_redis_service.refresh_user_token(user_phone)
+        except Exception as e:
+            logger.error(f"Error refreshing user activity for {user_phone}: {e}")
             return False
     
     async def user_authenticate(self, user_phone: str, message: str, 
