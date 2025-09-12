@@ -19,7 +19,6 @@ import logging
 from typing import Dict, Any, List
 import json
 import asyncio
-from app.redis_db import get_auth_redis_service
 
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
