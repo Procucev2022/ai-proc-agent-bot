@@ -46,12 +46,18 @@ class AuthenticationService:
         self.session_manager = session_manager  # Will be injected from ChatService
     
     async def validate_token(self, user_phone: str) -> Optional[UserDetailsSchema]:
-        """Validate user token from Redis auth storage."""
+        """Validate user token from Redis auth storage and refresh on activity."""
         try:
             logger.info("user token validation called")
             user_data = await self.auth_redis_service.retrieve(user_phone)
             if user_data:
+                # Token automatically refreshed in retrieve method
+                logger.info(f"Token validated and refreshed for user {user_phone}")
                 return user_data
+            
+            # Token expired or not found - send welcome message
+            logger.info(f"Token expired for user {user_phone}, sending welcome message")
+            await self.whatsapp_service.send_message(user_phone, "Welcome to QUA!")
             return False
         except Exception as e:
             logger.error(f"Authentication error for {user_phone}: {e}")
@@ -62,8 +68,8 @@ class AuthenticationService:
         try:
             session_data = user_details.dict()
             session_data["authenticated_at"] = datetime.now().isoformat()
-            # Issue TODO : Token Deactivation after x seconds of INACTIVITY
-            success = await self.auth_redis_service.store(user_phone, session_data, expiry_seconds=3600)  # 24 hours
+            # Token expires after 1 hour of inactivity
+            success = await self.auth_redis_service.store(user_phone, session_data, expiry_seconds=3600)  # 1 hour
             
             if success:
                 logger.info(f"Session stored successfully for user {user_phone} (ID: {user_details.id})")
