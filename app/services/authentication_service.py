@@ -52,6 +52,10 @@ class AuthenticationService:
                 # Token automatically refreshed in retrieve method
                 logger.info(f"Token validated and refreshed for user {user_phone}")
                 return user_data
+            
+            # Token expired or not found - send welcome message
+            logger.info(f"Token expired for user {user_phone}, sending welcome message")
+            await self.whatsapp_service.send_message(user_phone, "Welcome to QUA!")
             return False
         except Exception as e:
             logger.error(f"Authentication error for {user_phone}: {e}")
