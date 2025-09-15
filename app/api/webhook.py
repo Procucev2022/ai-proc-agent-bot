@@ -93,27 +93,41 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
 @router.post("/delivery")
 async def handle_delivery_callback(request: Request):
     """
-    Handle delivery status callbacks from WhatsApp.
-    
-    Processes delivery, read, and failed message status updates.
+    Handle delivery status callbacks from WhatsApp based on ICS documentation.
+
+    Expected ICS format:
+    ?qStatus=STATUS&qMobile=MOBILENO&qMsgRef=MESSAGEID&qDTime=DATETIME&SMSMSGID=SMSMSGID&SENDERID=SENDERID&NOTES=NOTES
+
+    Sample: ?qStatus=read&qMobile=919036149941&qMsgRef=80890044684334105532272789261449227204&qDTime=2025-09-13%2013%3A53%3A25.980895&SMSMSGID=test13sep&NOTES=NA
     """
     try:
         # Parse query parameters from URL
         query_params = dict(request.query_params)
-        logger.info(f"Delivery callback received: {query_params}")
-        
+        logger.info(f"ICS delivery callback received: {query_params}")
+
+        # Extract ICS delivery callback fields
         status = query_params.get("qStatus")
         mobile = query_params.get("qMobile")
         msg_ref = query_params.get("qMsgRef")
-        
+        date_time = query_params.get("qDTime")
+        sms_msg_id = query_params.get("SMSMSGID")
+        sender_id = query_params.get("SENDERID")
+        notes = query_params.get("NOTES")
+
         if status and mobile and msg_ref:
-            logger.info(f"Message {msg_ref} to {mobile}: {status}")
+            logger.info(f"ICS delivery status - Message {msg_ref} to {mobile}: {status} at {date_time}")
+            if notes and notes != "NA":
+                logger.info(f"Delivery notes: {notes}")
+
             # Here you could update message status in database
-        
+            # Example: await update_message_status(msg_ref, status, date_time)
+        else:
+            logger.warning(f"Missing required delivery callback fields: status={status}, mobile={mobile}, msg_ref={msg_ref}")
+
         return JSONResponse(content={"status": "ok"})
-        
+
     except Exception as e:
-        logger.error(f"Error processing delivery callback: {e}")
+        logger.error(f"Error processing ICS delivery callback: {e}")
         return JSONResponse(content={"status": "error"}, status_code=500)
 
 
@@ -146,10 +160,12 @@ async def parse_webhook_data(request: Request) -> Optional[Dict[str, Any]]:
 
 def parse_user_response_callback(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Parse user response callback from WhatsApp.
-    
-    Based on the documentation format:
-    replytype, customernumber, replymessage, timestamp, wabanumber
+    Parse user response callback from WhatsApp based on ICS documentation.
+
+    Expected format from ICS:
+    replytype, customernumber, replymessage, timestamp, wabanumber, mid, smsgid
+
+    Sample: ?replytype=TEXT&customernumber=919036149941&replymessage=I+want+laptop&timestamp=2025-09-13%2013%3A54%3A22.125300&wabanumber=917090170855&mid=80890044684334105532272789261449227204&smsgid=NA
     """
     try:
         reply_type = data.get("replytype")
@@ -157,33 +173,51 @@ def parse_user_response_callback(data: Dict[str, Any]) -> Optional[Dict[str, Any
         reply_message = data.get("replymessage")
         timestamp = data.get("timestamp")
         waba_number = data.get("wabanumber")
-        
-        if not all([reply_type, customer_number, reply_message]):
+        mid = data.get("mid")
+        smsgid = data.get("smsgid")
+
+        # Log received data for debugging
+        logger.info(f"Parsing ICS webhook - Type: {reply_type}, From: {customer_number}, Message: {reply_message[:50] if reply_message else 'None'}...")
+
+        # Check essential fields - only customer_number and reply_message are mandatory
+        if not customer_number:
+            logger.warning("Missing customer number in ICS webhook data")
             return None
-        
-        # URL decode the reply message
-        decoded_message = unquote(reply_message)
-        
-        # Handle different message types
+
+        if not reply_message:
+            logger.warning("Missing reply message in ICS webhook data")
+            return None
+
+        # URL decode the reply message (+ signs should become spaces)
+        decoded_message = unquote(reply_message.replace('+', ' '))
+
+        # Handle different message types based on ICS documentation
         message_data = {
-            "type": reply_type.lower(),
+            "type": reply_type.lower() if reply_type else "text",
             "from": customer_number,
             "to": waba_number,
             "timestamp": timestamp,
-            "content": decoded_message
+            "content": decoded_message,
+            "message_id": mid,
+            "sms_id": smsgid
         }
-        
-        # Parse JSON content for media messages
-        if reply_type.upper() in ["IMAGE", "VIDEO", "DOCUMENT", "INTERACTIVE"]:
+
+        # Parse JSON content for media/interactive messages per ICS documentation
+        if reply_type and reply_type.upper() in ["IMAGE", "VIDEO", "DOCUMENT", "INTERACTIVE"]:
             try:
+                # ICS sends JSON data URL-encoded for media messages
                 message_data["content"] = json.loads(decoded_message)
+                logger.info(f"Successfully parsed {reply_type.upper()} message content as JSON")
             except json.JSONDecodeError:
+                # Keep as string if JSON parsing fails
+                logger.info(f"Keeping {reply_type.upper()} message content as string")
                 pass
-        
+
+        logger.info(f"Successfully parsed ICS webhook: Type={message_data['type']}, From={message_data['from']}")
         return message_data
-        
+
     except Exception as e:
-        logger.error(f"Error parsing user response callback: {e}")
+        logger.error(f"Error parsing ICS user response callback: {e}")
         return None
 
 
