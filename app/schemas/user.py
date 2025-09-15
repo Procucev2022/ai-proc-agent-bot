@@ -136,7 +136,7 @@ class APIUserSchema(BaseModel):
     orgId: Optional[str] = None
     
 
-class UserDetailsSchema(BaseModel):
+class User(BaseModel):
     id: str
     name: Optional[str] = None
     email: Optional[str] = None
@@ -149,12 +149,12 @@ class UserDetailsSchema(BaseModel):
     org_id: Optional[str] = None
 
     @classmethod
-    def from_api_response(cls, api_data: dict) -> "UserDetailsSchema":
-        """Create UserDetailsSchema from API response."""
+    def from_api_response(cls, api_data: dict) -> "User":
+        """Create User from API response."""
         # Debug logging to see raw API data
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"Creating UserDetailsSchema from API data: {api_data}")
+        logger.info(f"Creating User from API data: {api_data}")
 
         # Determine role
         match api_data.get("selfClient"):
@@ -188,7 +188,7 @@ class UserDetailsSchema(BaseModel):
         )
 
     @classmethod
-    def invalid_user(cls, user_phone: str) -> "UserDetailsSchema":
+    def invalid_user(cls, user_phone: str) -> "User":
         """Returns a dummy user for test environments or invalid cases."""
         return cls(
             id="1428bbb9-a0ba-459d-b1e8-23d7c49455e8",
@@ -198,7 +198,5 @@ class UserDetailsSchema(BaseModel):
             role=UserRole.UNKNOWN,
             is_registered=True,
             phone_number=user_phone,
-            company_name="mohap ai solutin",
-
-           
+            company_name="mohap ai solution"
         )

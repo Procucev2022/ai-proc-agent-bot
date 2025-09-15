@@ -56,8 +56,8 @@ from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
 
 from app.database import SessionLocal, DatabaseManager
-from app.models import User, ConversationSession
-from app.schemas.user import UserDetailsSchema
+from app.models import ConversationSession
+from app.schemas.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -162,10 +162,13 @@ class ChatService:
                     logger.info(f"Authentication flow handled - returning without main flow processing")
                     return auth_result
                 elif auth_status == "registration_completed":
-                    # Registration completed, create mock user and continue to main flow
-                    user = self._create_mock_authenticated_user(user_phone, session)
-                    logger.info(f"Registration completed - proceeding to main flow")
-                    return await self._process_text_message(user, session, message_content)
+                    # Registration completed, get user details and continue to main flow
+                    user = await self.authentication_service.validate_token(user_phone)
+                    if user:
+                        logger.info(f"Registration completed - proceeding to main flow")
+                        return await self._process_text_message(user, session, message_content)
+                    else:
+                        return {"status": "error", "error": "Session not found after registration"}
                 elif auth_status == "authentication_completed":
                     # Authentication completed - check if we need to process stored original message
                     # First check auth_result for original_message, then fallback to session workflow_state
@@ -176,37 +179,34 @@ class ChatService:
                     if original_message and original_message != message_content:
                         # Process the stored original message instead of current message
                         logger.info(f"Authentication completed - processing stored original message: {original_message}")
-                        user_session = await self.authentication_service.validate_token(user_phone)
-                        if user_session:
-                            user = self._create_user_from_details(user_session)
+                        user = await self.authentication_service.validate_token(user_phone)
+                        if user:
+                            return await self._process_text_message(user, session, original_message)
                         else:
                             return {"status": "error", "error": "Session not found after authentication"}
-                        return await self._process_text_message(user, session, original_message)
                     else:
                         # No original message or it's the same as current - process normally  
                         logger.info(f"Authentication completed - processing current message")
-                        user_session = await self.authentication_service.validate_token(user_phone)
-                        if user_session:
-                            user = self._create_user_from_details(user_session)
+                        user = await self.authentication_service.validate_token(user_phone)
+                        if user:
+                            return await self._process_text_message(user, session, message_content)
                         else:
                             return {"status": "error", "error": "Session not found after authentication"}
-                        return await self._process_text_message(user, session, message_content)
 
-            # Check if auth returned UserDetailsSchema (authenticated user)
-            if isinstance(auth_result, UserDetailsSchema):
+            # Check if auth returned User (authenticated user)
+            if isinstance(auth_result, User):
                 if auth_result.is_registered:
-                    # User is authenticated, create user object and proceed to main flow
-                    user = self._create_user_from_details(auth_result)
-                    logger.info(f"User authenticated - proceeding to main flow: {user.phone_number}")
+                    # User is authenticated, proceed to main flow
+                    logger.info(f"User authenticated - proceeding to main flow: {auth_result.phone_number}")
                 else:
                     # Invalid user but not registered, handle as general inquiry
-                    user = self._create_user_from_details(auth_result)
-                    return await self._process_text_message(user, session, message_content)
+                    return await self._process_text_message(auth_result, session, message_content)
             else:
                 logger.error(f"Unexpected auth_result type: {type(auth_result)}")
                 return {"status": "error", "error": "Authentication failed"}
 
             # Only proceed to main flow if user is properly authenticated
+            user = auth_result
             if message_type == "text":
                 result = await self._process_text_message(user, session, message_content)
             elif message_type == "interactive":
@@ -246,47 +246,9 @@ class ChatService:
             logger.error(f"Authentication orchestrator error for {user_phone}: {e}")
             return {"status": "error", "error": str(e)}
 
-    def _create_mock_authenticated_user(self, user_phone: str, session: ConversationSession) -> User:
-        """Create mock authenticated user after successful registration."""
 
-        class MockUser:
-            def __init__(self, phone_number, user_type):
-                self.id = 1
-                self.phone_number = phone_number
-                self.name = "Registered User"
-                self.is_registered = True
-                self.role = "buyer" if user_type == "buyer" else "seller"
 
-        user_type = session.user_type.value if session.user_type and hasattr(session.user_type, 'value') else str(session.user_type) if session.user_type else "buyer"
-        return MockUser(user_phone, user_type)
 
-    def _create_user_from_details(self, user_details) -> User:
-        """Create user object from UserDetailsSchema or dict."""
-        # Debug logging to see what's in user_details
-        logger.info(f"Raw user_details for AuthenticatedUser creation: {user_details}")
-        if hasattr(user_details, '__dict__'):
-            logger.info(f"User details attributes: {user_details.__dict__}")
-        
-
-        class AuthenticatedUser:
-            def __init__(self, details):
-                if isinstance(details, dict):
-                    self.id = details.get('id', 1)
-                    self.phone_number = details.get('phone_number', '')
-                    self.name = details.get('name', 'User')
-                    self.is_registered = details.get('is_registered', False)
-                    self.role = details.get('role', 'buyer')
-                    self.org_id = details.get('org_id')
-                else:
-                    self.id = details.id
-                    self.phone_number = details.phone_number
-                    self.name = details.name
-                    self.is_registered = details.is_registered
-                    self.role = details.role.value if hasattr(details.role, 'value') else details.role
-                    self.org_id = getattr(details, 'org_id', None)
-        
-
-        return AuthenticatedUser(user_details)
 
     async def _process_text_message(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """Process text message through intent classification and routing."""
@@ -938,7 +900,7 @@ class ChatService:
             auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
 
             # Check current user role
-            current_role = getattr(user, 'role', 'buyer')
+            current_role = user.role.value if hasattr(user.role, 'value') else user.role
 
             if target_role != current_role:
                 # Cross-role switch (buyer -> seller or seller -> buyer)

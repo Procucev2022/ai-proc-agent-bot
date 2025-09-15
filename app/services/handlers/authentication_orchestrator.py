@@ -25,7 +25,7 @@ from app.services.handlers.supportService_hanlder import SupportHelpers
 from app.services.chat_service import ChatService
 from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
 
-from app.schemas.user import UserDetailsSchema
+# UserDetailsSchema replaced with User model
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +86,10 @@ class AuthenticationOrchestrator:
                     logger.info(f"Token valid - User authenticated: {user_details.id}")
                     return user_details
                 
-                logger.info(f"Token validation failed for {user_phone}")
                       
-            # Step 3: Check for existing auth/registration workflows
+
+            
+            # Step 4: Check for existing auth/registration workflows
             workflow_type_str = str(session.workflow_type).lower() if session.workflow_type else None
             logger.info(f"Current workflow_type: {workflow_type_str}")
             
@@ -98,7 +99,7 @@ class AuthenticationOrchestrator:
             elif workflow_type_str in ["workflowtype.registration", "registration"]:
                 return await self._handle_registration_workflow(user_phone, message_content, session, {})
             
-            # Step 4: Classify intent for new workflows
+            # Step 5: Classify intent for new workflows
             from app.services.helpers.chat_service_helpers import ChatServiceHelpers
             conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
             intent_result = self.intent_service.classify_intent(message_content, conversation_context)
@@ -106,27 +107,17 @@ class AuthenticationOrchestrator:
             intent = intent_result.get('intent')
             confidence = intent_result.get('confidence', 0)
             
-            # Step 5: For ambiguous or low confidence intents, try authentication first
-            # If user exists, show emails with buyer/seller labels instead of asking for clarification
+            # Step 5: For ambiguous or low confidence intents, ask for clarification first
             if intent == "ambiguous" or confidence < 50:
-                # Try to authenticate first - if user exists, they can choose email type
-                auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
-                
-                if auth_response.get("success"):
-                    # User found - show all emails with buyer/seller labels (no intent filtering)
-                    raw_response = auth_response.get("response", [])
-                    filter_result = self.authentication_service.filter_users_by_intent(raw_response, "general_inquiry")  # This shows all emails
-                    
-                    if filter_result.get("success"):
-                        # Store the ambiguous message as original message
-                        return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content)
-                    else:
-                        # Issue TODO: Ask user if they want to buy or sell and redirect to registratin based on user's response 
-                        # No emails found - redirect to registration
-                        return await self._redirect_to_registration_flow(user_phone, session, "buyer")
-                else:
-                    # User not found - redirect directly to registration
+                # Check if this is a buy/sell clarification response
+                response_lower = message_content.lower().strip()
+                if "buy" in response_lower:
                     return await self._redirect_to_registration_flow(user_phone, session, "buyer")
+                elif "sell" in response_lower:
+                    return await self._redirect_to_registration_flow(user_phone, session, "seller")
+                else:
+                    # Ask for clarification
+                    return await self._handle_auth_clarification_request(user_phone, session)
             
             # Step 6: Always attempt authentication first when token validation fails
             # For role switches, use the target user type from session
@@ -173,7 +164,15 @@ class AuthenticationOrchestrator:
                         user_type = "seller" if intent == "sell_something" else "buyer"
                         return await self._redirect_to_registration_flow(user_phone, session, user_type)
                     elif intent == "general_inquiry":
-                        return await self._handle_auth_general_inquiry(user_phone, message_content)
+                        # Check if this is a buy/sell clarification response
+                        response_lower = message_content.lower().strip()
+                        if "buy" in response_lower:
+                            return await self._redirect_to_registration_flow(user_phone, session, "buyer")
+                        elif "sell" in response_lower:
+                            return await self._redirect_to_registration_flow(user_phone, session, "seller")
+                        else:
+                            # Ask for clarification
+                            return await self._handle_auth_clarification_request(user_phone, session)
                     else:
                         return await self._handle_auth_fallback(user_phone, message_content)
                 
@@ -187,6 +186,10 @@ class AuthenticationOrchestrator:
                                         session: ConversationSession, intent_result: Dict) -> Dict[str, Any]:
         """Start new authentication flow based on validated intent."""
         try:
+            # Get role switch variables from session state
+            role_switch_in_progress = session.workflow_state.get("role_switch_in_progress", False)
+            target_user_type = session.workflow_state.get("user_type")
+            
             intent = intent_result.get('intent')
             confidence = intent_result.get('confidence', 0)
             logger.info(f"Starting authentication flow for intent: {intent} (confidence: {confidence}%)")
@@ -321,6 +324,21 @@ class AuthenticationOrchestrator:
             auth_stage = session.workflow_state.get("authentication_stage")
             logger.info(f"Handling authentication workflow stage: {auth_stage}")
             
+            # Check for intent switch during authentication stages
+            if auth_stage in ["email_confirmation", "email_otp"]:
+                # Classify intent to detect potential switches
+                from app.services.helpers.chat_service_helpers import ChatServiceHelpers
+                conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
+                new_intent_result = self.intent_service.classify_intent(message_content, conversation_context)
+                
+                new_intent = new_intent_result.get('intent')
+                confidence = new_intent_result.get('confidence', 0)
+                
+                # Check if user wants to switch intent during authentication
+                if await self._should_handle_intent_switch_during_auth(new_intent, confidence, auth_stage):
+                    logger.info(f"AuthOrchestrator: Intent switch detected during authentication: {new_intent}")
+                    return await self._handle_intent_switch_during_auth(user_phone, session, message_content, new_intent_result)
+            
             if auth_stage == "email_confirmation":
                 logger.info(f"Processing email confirmation with message: {message_content}")
                 return await self.authentication_service.handle_email_confirmation(
@@ -402,16 +420,44 @@ class AuthenticationOrchestrator:
     async def _should_handle_intent_switch(self, intent: str, current_stage: str) -> bool:
         """Check if intent switch should be handled."""
         # Allow intent switch if user clearly wants to change direction
-        switch_intents = ["buy_something", "registration_request", "general_inquiry", "cancel", "stop"]
+        switch_intents = ["buy_something", "sell_something", "registration_request", "general_inquiry", "cancel", "stop"]
         return intent in switch_intents and current_stage not in ["email_otp", "confirmation"]
     
+    async def _should_handle_intent_switch_during_auth(self, new_intent: str, confidence: float, auth_stage: str) -> bool:
+        """Check if we should handle intent switch during authentication."""
+        # Don't interrupt critical authentication stages
+        if auth_stage == "email_otp" and confidence < 80:
+            return False
+            
+        # Handle high-confidence switches
+        if confidence < 70:
+            return False
+            
+        # Allow switches for conflicting intents or cancellation
+        if new_intent in ["buy_something", "sell_something", "registration_request", "cancel", "stop"]:
+            return True
+            
+        return False
+    
     async def _handle_intent_switch_during_auth(self, user_phone: str, session: ConversationSession,
-                                              intent_result: Dict) -> Dict[str, Any]:
+                                              message_content: str, intent_result: Dict) -> Dict[str, Any]:
         """Handle intent switch during authentication."""
         try:
             intent = intent_result.get('intent')
             
-            if intent == "registration_request":
+            logger.info(f"AuthOrchestrator: Handling intent switch during authentication to {intent}")
+            
+            if intent == "buy_something":
+                # User wants to buy - offer switch to buyer authentication
+                return await self.auth_reg_switch.handle_auth_reg_switch_choice(
+                    user_phone, session, message_content, intent, "buyer"
+                )
+            elif intent == "sell_something":
+                # User wants to sell - offer switch to seller authentication
+                return await self.auth_reg_switch.handle_auth_reg_switch_choice(
+                    user_phone, session, message_content, intent, "seller"
+                )
+            elif intent == "registration_request":
                 # Switch to registration
                 return await self._redirect_to_registration_flow(user_phone, session, "buyer")
             elif intent in ["cancel", "stop"]:
@@ -430,15 +476,40 @@ class AuthenticationOrchestrator:
             logger.error(f"Intent switch during auth error: {e}")
             return {"status": "continue_authentication"}
     
+    async def _should_handle_intent_switch_during_registration(self, new_intent: str, confidence: float, current_user_type: str) -> bool:
+        """Check if we should handle intent switch during registration."""
+        # Handle high-confidence intent switches that conflict with current registration type
+        if confidence < 70:
+            return False
+            
+        # Detect conflicting intents
+        if current_user_type == "seller" and new_intent == "buy_something":
+            return True
+        elif current_user_type == "buyer" and new_intent == "sell_something":
+            return True
+        elif new_intent in ["cancel", "stop"]:
+            return True
+            
+        return False
+    
     async def _handle_intent_switch_during_registration(self, user_phone: str, session: ConversationSession,
-                                                      intent_result: Dict) -> Dict[str, Any]:
+                                                      message_content: str, intent_result: Dict, current_user_type: str) -> Dict[str, Any]:
         """Handle intent switch during registration."""
         try:
             intent = intent_result.get('intent')
             
-            if intent == "buy_something":
-                # Switch to authentication
-                return await self._initiate_authentication_flow(user_phone, "", session, intent_result)
+            logger.info(f"AuthOrchestrator: Handling intent switch from {current_user_type} registration to {intent}")
+            
+            if intent == "buy_something" and current_user_type == "seller":
+                # User was registering as seller but wants to buy - offer switch
+                return await self.auth_reg_switch.handle_auth_reg_switch_choice(
+                    user_phone, session, message_content, intent, "buyer"
+                )
+            elif intent == "sell_something" and current_user_type == "buyer":
+                # User was registering as buyer but wants to sell - offer switch
+                return await self.auth_reg_switch.handle_auth_reg_switch_choice(
+                    user_phone, session, message_content, intent, "seller"
+                )
             elif intent in ["cancel", "stop"]:
                 # Cancel registration
                 session.workflow_type = None
@@ -518,17 +589,24 @@ class AuthenticationOrchestrator:
                     # User chose to switch - start new workflow
                     new_intent = result["new_intent"]
                     new_user_type = result["new_user_type"]
+                    new_message = result["new_message"]
                     target_workflow = result["target_workflow"]
+                    
+                    logger.info(f"AuthOrchestrator: User chose to switch to {target_workflow} for {new_user_type}")
                     
                     if target_workflow == "authentication":
                         return await self._start_authentication_flow(
-                            user_phone, result["new_message"], session, 
+                            user_phone, new_message, session, 
                             {"intent": new_intent}
                         )
                     else:  # registration
                         return await self._redirect_to_registration_flow(
                             user_phone, session, new_user_type
                         )
+                elif result.get("status") == "continue_current_workflow":
+                    # User chose to continue - return to normal flow processing
+                    logger.info(f"AuthOrchestrator: User chose to continue current workflow")
+                    return None  # Let normal flow continue
                 
                 return result
             
@@ -553,10 +631,7 @@ class AuthenticationOrchestrator:
             return {"status": "clarification_sent"}
 
         except Exception as e:
-            logger.error(f"Clarification request error: {e}")
-            await self.whatsapp_service.send_message(
-                user_phone, "Could you be more specific about your procurement needs?"
-            )
+            logger.error(f"Clarification error: {e}")
             return {"status": "error", "error": str(e)}
     
     async def _handle_auth_general_inquiry(self, user_phone: str, message_content: str) -> Dict[str, Any]:
