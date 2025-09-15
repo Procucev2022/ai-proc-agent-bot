@@ -1061,16 +1061,25 @@ Analyze their response to determine their true choice.
             "confidence": 30,
             "all_intent_scores": {
                 "buy_something": 20,
+                "sell_something": 10,
+                "account_switch": 5,
                 "general_inquiry": 30,
                 "modification_request": 10,
                 "confirmation_response": 10,
-                "rfq_status_check": 10
+                "rfq_status_check": 10,
+                "reference_request": 5,
+                "contextual_reference": 5,
+                "session_inquiry": 5,
+                "workflow_rejection": 5,
+                "alternative_request": 5
             },
             "context_analysis": {
                 "references_existing_data": False,
                 "conversation_stage": "unknown",
                 "modification_details": {"target_entity": None, "modification_type": None},
-                "confirmation_details": {"response_type": None, "has_conditions": False}
+                "confirmation_details": {"response_type": None, "has_conditions": False},
+                "reference_details": {"reference_type": None, "has_history": False},
+                "account_switch_details": {"target_role": None, "switch_type": None}
             },
             "reasoning": f"Fallback classification due to error: {error}",
             "suggested_clarification": "Could you please rephrase your request?",
