@@ -371,13 +371,25 @@ class AuthenticationOrchestrator:
             if switch_result:
                 return switch_result
             
+            # Classify intent to detect potential switches
+            from app.services.helpers.chat_service_helpers import ChatServiceHelpers
+            conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
+            new_intent_result = self.intent_service.classify_intent(message_content, conversation_context)
+            
+            new_intent = new_intent_result.get('intent')
+            confidence = new_intent_result.get('confidence', 0)
+            
             registration_stage = session.workflow_state.get("registration_stage")
             current_user_type = session.workflow_state.get("user_type", "buyer")
+            
+            # Check if user wants to switch intent during registration
+            if await self._should_handle_intent_switch_during_registration(new_intent, confidence, current_user_type):
+                logger.info(f"AuthOrchestrator: Intent switch detected during registration: {new_intent}")
+                return await self._handle_intent_switch_during_registration(user_phone, session, message_content, new_intent_result, current_user_type)
             
             logger.info(f"AuthOrchestrator: Handling registration workflow, stage: {registration_stage}")
             logger.info(f"AuthOrchestrator: Current user_type: {current_user_type}")
             
-            # ALWAYS process registration data collection for data_collection stage
             if registration_stage == "data_collection":
                 logger.info(f"AuthOrchestrator: Processing registration data collection")
                 
