@@ -90,6 +90,7 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
         return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
 
 
+@router.get("/delivery")
 @router.post("/delivery")
 async def handle_delivery_callback(request: Request):
     """
