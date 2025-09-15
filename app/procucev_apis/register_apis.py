@@ -10,6 +10,7 @@ from typing import Dict, Any
 from datetime import datetime
 
 from app.procucev_apis.procucev_api_client import ProcucevAPIClient
+from app.utils.procucev_api_logger import log_procucev_api_call
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ class RegisterAPIService:
     def __init__(self):
         self.api_client = ProcucevAPIClient()
         
+    @log_procucev_api_call("register_seller")
     async def register_seller(self, seller_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Register a new seller with the GMT Procucev system.
@@ -48,23 +50,23 @@ class RegisterAPIService:
                 endpoint=seller_url,
                 json_data=payload
             )
-            
-            if response["success"]:
+
+            if response["status"] == "Success":
                 return {
-                    "statusCode": "200",
-                    "message": "Thanks for your interest with procucev, our vendor partner will connect with you",
-                    "errorMsg": None,
-                    "timestamp": response["timestamp"],
-                    "status": "Success",
+                    "statusCode": response.get("statusCode", "200"),
+                    "message": response.get("data", {}).get("message", "Registration successful"),
+                    "errorMsg": response.get("data", {}).get("error", None),
+                    "timestamp": response.get("timestamp", None),
+                    "status": response.get("status", "Success"),
                     "type": None
                 }
             else:
                 return {
-                    "statusCode": response["status_code"],
+                    "statusCode": response.get("statusCode", "400"),
                     "message": response.get("data", {}).get("message", "Registration failed"),
                     "errorMsg": response.get("data", {}).get("error", None),
-                    "timestamp": response["timestamp"],
-                    "status": "Failure",
+                    "timestamp": response.get("timestamp", None),
+                    "status": response.get("status", "Failure"),
                     "type": None
                 }
                         
@@ -79,6 +81,7 @@ class RegisterAPIService:
                 "type": None
             }
             
+    @log_procucev_api_call("register_buyer")
     async def register_buyer(self, buyer_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Register a new buyer with the GMT Procucev system.
@@ -101,23 +104,23 @@ class RegisterAPIService:
                 endpoint=buyer_url,
                 json_data=payload
             )
-            
-            if response["success"]:
+
+            if response["status"] == "Success":
                 return {
-                    "statusCode": "200",
-                    "message": "Thanks for your interest with procucev, our client partner will connect with you",
-                    "errorMsg": None,
-                    "timestamp": response["timestamp"],
-                    "status": "Success",
+                    "statusCode": response.get("statusCode", "200"),
+                    "message": response.get("data", {}).get("message", "Registration successful"),
+                    "errorMsg": response.get("data", {}).get("error", None),
+                    "timestamp": response.get("timestamp", None),
+                    "status": response.get("status", "Success"),
                     "type": None
                 }
             else:
                 return {
-                    "statusCode": response["status_code"],
+                    "statusCode": response.get("statusCode", "400"),
                     "message": response.get("data", {}).get("message", "Registration failed"),
                     "errorMsg": response.get("data", {}).get("error", None),
-                    "timestamp": response["timestamp"],
-                    "status": "Failure",
+                    "timestamp": response.get("timestamp", None),
+                    "status": response.get("status", "Failure"),
                     "type": None
                 }
                         
@@ -132,6 +135,7 @@ class RegisterAPIService:
                 "type": None
             }
      
+    @log_procucev_api_call("send_otp")
     async def send_otp(self, username: str, phone_number: str = None) -> Dict[str, Any]:
         """
         Send OTP to the provided username for verification.
@@ -153,11 +157,11 @@ class RegisterAPIService:
             # Check success based on status field
             if response.get("status") == "Success":
                 return {
-                    "statusCode": "200",
+                    "statusCode": response.get("statusCode", "200"),
                     "message": response.get("message", "OTP sent successfully"),
                     "errorMsg": response.get("errorMsg"),
                     "timestamp": response.get("timestamp"),
-                    "status": "Success",
+                    "status": response,
                     "type": response.get("type")
                 }
             else:
@@ -166,7 +170,7 @@ class RegisterAPIService:
                     "message": response.get("message", "Failed to send OTP"),
                     "errorMsg": response.get("errorMsg"),
                     "timestamp": response.get("timestamp"),
-                    "status": "Failure",
+                    "status": response.get("status", "Failure"),
                     "type": response.get("type")
                 }
                         
@@ -181,6 +185,7 @@ class RegisterAPIService:
                 "type": None
             }
     
+    @log_procucev_api_call("validate_otp")
     async def validate_otp(self, username: str, otp: str, phone_number: str = None) -> Dict[str, Any]:
         """
         Validate OTP for the provided username.
@@ -203,11 +208,11 @@ class RegisterAPIService:
             # Check success based on status field
             if response.get("status") == "Success":
                 return {
-                    "statusCode": "200",
+                    "statusCode": response,
                     "message": response.get("message", "OTP validated successfully"),
                     "errorMsg": response.get("errorMsg"),
                     "timestamp": response.get("timestamp"),
-                    "status": "Success",
+                    "status": response.get("status", "Success"),
                     "type": response.get("type")
                 }
             else:
@@ -216,7 +221,7 @@ class RegisterAPIService:
                     "message": response.get("message", "Invalid OTP"),
                     "errorMsg": response.get("errorMsg"),
                     "timestamp": response.get("timestamp"),
-                    "status": "Failure",
+                    "status": response.get("status", "Failure"),
                     "type": response.get("type")
                 }
                         
@@ -231,6 +236,7 @@ class RegisterAPIService:
                 "type": None
             }
 
+    @log_procucev_api_call("user_approval")
     async def user_approval(self, user_id: str) -> Dict[str, Any]:
         try:
             user_approval_url = "/rest/gmt/acceptSelfRegisterClient"
@@ -244,22 +250,22 @@ class RegisterAPIService:
                 require_auth=True
             )
             
-            if response["success"]:
+            if response["status"] == "Success":
                 return {
-                    "statusCode": "200",
-                    "message": "User approved successfully",
-                    "errorMsg": None,
-                    "timestamp": response["timestamp"],
-                    "status": "Success",
+                    "statusCode": response.get("statusCode", "200"),
+                    "message": response.get("message", "User approved successfully"),
+                    "errorMsg": response.get("errorMsg", None),
+                    "timestamp": response.get("timestamp", None),
+                    "status": response.get("status", "Success"),
                     "type": None
                 }
             else:
                 return {
-                    "statusCode": response["status_code"],
-                    "message": "Failed to approve user",
-                    "errorMsg": response["message"],
-                    "timestamp": response["timestamp"],
-                    "status": "Failure",
+                    "statusCode": response.get("statusCode", "400"),
+                    "message": response.get("message", "Failed to approve user"),
+                    "errorMsg": response.get("errorMsg", None),
+                    "timestamp": response.get("timestamp"),
+                    "status": response.get("status", "Failure"),
                     "type": None
                 }
         

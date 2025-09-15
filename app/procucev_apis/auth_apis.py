@@ -10,7 +10,8 @@ from typing import Dict, Any, List
 from datetime import datetime
 
 from app.procucev_apis.procucev_api_client import ProcucevAPIClient
-from app.schemas.user import APIUserSchema 
+from app.schemas.user import APIUserSchema
+from app.utils.procucev_api_logger import log_procucev_api_call
 
 logger = logging.getLogger(__name__)
 
@@ -24,41 +25,68 @@ class AuthAPIService:
         self.api_client = ProcucevAPIClient()
 
     
+    @log_procucev_api_call("authenticate_user")
     async def authenticate_user(self, phone_number: str) -> Dict[str, Any]:
-        """Get User Details by phone number, normalized into APIUserSchema list."""
+        """
+        Authenticate user by phone number.
+        Handles both scenarios:
+          - API returns { "status": "failure", "message": "..."} when no user is found
+          - API returns a list of user dicts when user(s) are found
+        """
+
         try:
             endpoint = f"/partialvendor/getUsersByPhoneNumber/{phone_number}"
             response_data = await self.api_client.get(endpoint)
 
-            if response_data.get("success") and isinstance(response_data.get("data"), list):
-                raw_users = response_data["data"]
-
-                if not raw_users:
-                    return {"success": False, "error": "User not found", "is_registered": False}
-
-                # Normalize using schema
-                users: List[APIUserSchema] = [APIUserSchema(**user) for user in raw_users]
-
-                return {
-                    "success": True,
-                    "users": [u.dict() for u in users],  # Return clean list of dicts
-                    "count": len(users),
-                    "is_registered": True,
-                }
-
-            elif response_data.get("status_code") == 404:
-                logger.warning(f"API endpoint not found (404) for phone number {phone_number}")
+            # Case 1: API explicitly returns failure response
+            if isinstance(response_data, dict) and response_data.get("status") == "failure":
+                logger.info(f"No user found for phone number {phone_number}")
                 return {
                     "success": False,
-                    "error": "User authentication service unavailable",
+                    "message": response_data.get("message", f"No user found with phone number: {phone_number}"),
                     "status_code": 404,
                     "is_registered": False,
                 }
 
+            # Case 2: API returns a list of users (successful lookup)
+            elif isinstance(response_data, list):
+                if not response_data:
+                    logger.info(f"No user found for phone number {phone_number}")
+                    return {
+                        "success": False,
+                        "message": f"No user found with phone number: {phone_number}",
+                        "status_code": 404,
+                        "is_registered": False,
+                    }
+
+                # Normalize response
+                users: List[APIUserSchema] = [APIUserSchema(**user) for user in response_data]
+
+                return {
+                    "success": True,
+                    "message": "User(s) retrieved successfully",
+                    "status_code": 200,
+                    "data": [u.dict() for u in users],
+                    "count": len(users),
+                    "is_registered": True,
+                }
+
+            # Unexpected format
             else:
-                logger.warning(f"No user found for phone number {phone_number}")
-                return {"success": False, "error": "User not found", "is_registered": False}
+                logger.warning(f"Unexpected response format for {phone_number}: {response_data}")
+                return {
+                    "success": False,
+                    "message": "Unexpected response format from authentication service",
+                    "status_code": 502,
+                    "is_registered": False,
+                }
 
         except Exception as e:
-            logger.error(f"Error fetching user details: {e}")
-            return {"success": False, "error": str(e)}
+            logger.exception(f"Exception during user authentication for {phone_number}: {e}")
+            return {
+                "success": False,
+                "message": "Internal server error while fetching user details",
+                "status_code": 500,
+                "error": str(e),
+                "is_registered": False,
+            }
