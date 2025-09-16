@@ -32,6 +32,7 @@ from app.models import (
 from app.config import get_settings
 from app.utils.logging_utils import log_service_method
 from app.services.location_service import LocationService
+from app.services.seller_data_adapter import SellerDataAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ class SellerRecommendationService:
             
             if not category_matched_sellers:
                 logger.warning(f"No sellers found for categories: {rfq_data.get('categories')}")
-                return self._empty_selection_result("No sellers match the required categories")
+                return self._empty_selection_result("Unable to retrieve sellers from remote database or no sellers match the required categories")
             
             # Step 2: Apply geographic filtering
             geo_filtered_sellers = await self._filter_sellers_by_location(
@@ -187,29 +188,34 @@ class SellerRecommendationService:
         """Filter sellers who serve any of the RFQ categories."""
         if not categories:
             return []
-        
+
         try:
-            # Use JSON_CONTAINS or JSON_OVERLAPS to find sellers with matching categories
-            sellers = []
-            for category in categories:
-                category_sellers = self.db_session.query(Seller).filter(
-                    func.json_contains(Seller.categories, f'"{category}"')
-                ).all()
-                sellers.extend(category_sellers)
-            
-            # Remove duplicates while preserving order
+            # NEW: Use SellerDataAdapter to get real seller data from remote database
+
+            adapter = SellerDataAdapter()
+            all_sellers = adapter.get_sellers_from_remote()
+
+            # Filter sellers by categories (same logic as before)
+            matching_sellers = []
             seen = set()
-            unique_sellers = []
-            for seller in sellers:
-                if seller.seller_id not in seen:
-                    seen.add(seller.seller_id)
-                    unique_sellers.append(seller)
-            
-            logger.info(f"Found {len(unique_sellers)} sellers matching categories: {categories}")
-            return unique_sellers
-            
+
+            for seller in all_sellers:
+                # Check if seller serves any of the required categories
+                seller_categories_lower = [cat.lower() for cat in seller.categories]
+                if any(cat.lower() in seller_categories_lower for cat in categories):
+                    if seller.seller_id not in seen:
+                        seen.add(seller.seller_id)
+                        matching_sellers.append(seller)
+
+            logger.info(f"Found {len(matching_sellers)} sellers matching categories: {categories}")
+            logger.debug(f"Categories searched: {categories}")
+            logger.debug(f"Total sellers available: {len(all_sellers)}")
+
+            return matching_sellers
+
         except Exception as e:
-            logger.error(f"Error filtering by category: {str(e)}")
+            logger.error(f"Error filtering sellers by category: {str(e)}")
+            logger.error(f"Unable to retrieve seller data from remote database. Categories: {categories}")
             return []
     
     async def _filter_sellers_by_location(self, sellers: List[Seller], delivery_location: Dict, radius_km: int) -> List[Seller]:
