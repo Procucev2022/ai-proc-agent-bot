@@ -51,14 +51,14 @@ class RegisterAPIService:
                 json_data=payload
             )
 
-            if response["status"] == "Success":
+            if response["status"] == "Success" and response['statusCode'] == 200:
                 return {
                     "statusCode": response.get("statusCode", "200"),
                     "message": response.get("data", {}).get("message", "Registration successful"),
                     "errorMsg": response.get("data", {}).get("error", None),
                     "timestamp": response.get("timestamp", None),
                     "status": response.get("status", "Success"),
-                    "type": None
+                    "type": response.get("data", None)
                 }
             else:
                 return {
@@ -67,7 +67,7 @@ class RegisterAPIService:
                     "errorMsg": response.get("data", {}).get("error", None),
                     "timestamp": response.get("timestamp", None),
                     "status": response.get("status", "Failure"),
-                    "type": None
+                    "type": response.get("data", None)
                 }
                         
         except Exception as e:
@@ -105,14 +105,14 @@ class RegisterAPIService:
                 json_data=payload
             )
 
-            if response["status"] == "Success":
+            if response["status"] == "Success" and response['statusCode'] == 200:
                 return {
                     "statusCode": response.get("statusCode", "200"),
                     "message": response.get("data", {}).get("message", "Registration successful"),
                     "errorMsg": response.get("data", {}).get("error", None),
                     "timestamp": response.get("timestamp", None),
                     "status": response.get("status", "Success"),
-                    "type": None
+                    "type": response.get("data", None)
                 }
             else:
                 return {
@@ -121,7 +121,7 @@ class RegisterAPIService:
                     "errorMsg": response.get("data", {}).get("error", None),
                     "timestamp": response.get("timestamp", None),
                     "status": response.get("status", "Failure"),
-                    "type": None
+                    "type": response.get("data", None)
                 }
                         
         except Exception as e:
@@ -155,7 +155,7 @@ class RegisterAPIService:
             )
             
             # Check success based on status field
-            if response.get("status") == "Success":
+            if response.get("status") == "Success" and response['statusCode'] == 200:
                 return {
                     "statusCode": response.get("statusCode", "200"),
                     "message": response.get("message", "OTP sent successfully"),
@@ -206,7 +206,7 @@ class RegisterAPIService:
             )
             
             # Check success based on status field
-            if response.get("status") == "Success":
+            if response.get("status") == "Success" and response['statusCode'] == 200:
                 return {
                     "statusCode": response,
                     "message": response.get("message", "OTP validated successfully"),
@@ -250,14 +250,14 @@ class RegisterAPIService:
                 require_auth=True
             )
             
-            if response["status"] == "Success":
+            if response["status"] == "Success" and response['statusCode'] == 200:
                 return {
                     "statusCode": response.get("statusCode", "200"),
                     "message": response.get("message", "User approved successfully"),
                     "errorMsg": response.get("errorMsg", None),
                     "timestamp": response.get("timestamp", None),
                     "status": response.get("status", "Success"),
-                    "type": None
+                    "type": response.get("data", None)
                 }
             else:
                 return {
@@ -266,7 +266,7 @@ class RegisterAPIService:
                     "errorMsg": response.get("errorMsg", None),
                     "timestamp": response.get("timestamp"),
                     "status": response.get("status", "Failure"),
-                    "type": None
+                    "type": response.get("data", None)
                 }
         
         except Exception as e:

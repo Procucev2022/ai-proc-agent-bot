@@ -61,15 +61,15 @@ class EmailServiceAPI:
             )
             logger.info(f"GMT API response: {response.get('success')}")
             
-            if response["status"] == "Success":
+            if response["status"] == "Success" and response.get("statusCode") == "200":
                 return {
                     "statusCode": response.get("statusCode", "200"),
                     "message": response.get("message", "Email Sent Successfully"),
                     "errorMsg": response.get("errorMsg", None),
                     "timestamp": response["timestamp"],
                     "status": response.get("status", "Success"),
-                    "type": None,
-                    "data": None
+                    "type": response.get("data", None),
+                    "data": response.get("data", None)
                 }
             else:
                 return {
@@ -78,8 +78,8 @@ class EmailServiceAPI:
                     "errorMsg": response.get("errorMsg", None),
                     "timestamp": response["timestamp"],
                     "status": response.get("status", "Failure"),
-                    "type": None,
-                    "data": None
+                    "type": response.get("data", None),
+                    "data": response.get("data", None)
                 }
                         
         except Exception as e:
