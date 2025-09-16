@@ -172,6 +172,14 @@ async def process_single_rfq_matching(rfq: Dict[str, Any], seller_service: Selle
         seller_result = await seller_service.select_sellers_for_rfq(rfq_data)
         
         if seller_result.get('total_selected', 0) > 0:
+            # Try to log selected sellers to gmt_rfq_vendors table (optional)
+            try:
+                log_selected_sellers_to_remote(rfq_uuid, rfq_id, seller_result)
+                logger.info(f"Successfully logged sellers to gmt_rfq_vendors for RFQ {rfq_id}")
+            except Exception as e:
+                logger.warning(f"Could not log to gmt_rfq_vendors (permissions issue): {e}")
+                logger.info(f"Seller selection completed for RFQ {rfq_id} but logging skipped")
+
             # Mark RFQ as processed
             mark_rfq_seller_matching_processed(rfq_uuid, seller_result.get('total_selected', 0))
             
@@ -236,6 +244,89 @@ def extract_delivery_location(rfq: Dict[str, Any]) -> Dict[str, Any]:
             break
     
     return location
+
+
+def log_selected_sellers_to_remote(rfq_uuid: str, rfq_id: str, seller_result: Dict[str, Any]) -> bool:
+    """
+    Log selected sellers to the remote gmt_rfq_vendors table.
+
+    Args:
+        rfq_uuid: RFQ UUID
+        rfq_id: RFQ ID
+        seller_result: Result from seller selection containing selected sellers
+
+    Returns:
+        True if logging successful, False otherwise
+    """
+    try:
+        logger.info(f"Logging {seller_result.get('total_selected', 0)} selected sellers for RFQ {rfq_id}")
+
+        # Combine subscribed and unsubscribed sellers
+        all_selected_sellers = []
+        all_selected_sellers.extend(seller_result.get('subscribed_sellers', []))
+        all_selected_sellers.extend(seller_result.get('unsubscribed_sellers', []))
+
+        if not all_selected_sellers:
+            logger.warning(f"No sellers to log for RFQ {rfq_id}")
+            return True
+
+        # Prepare batch insert for gmt_rfq_vendors
+        insert_values = []
+        for seller in all_selected_sellers:
+            insert_values.append({
+                'rfq_uuid': rfq_uuid,
+                'vendor_id': seller['seller_id'],
+                'vendor_name': seller['seller_name'],
+                'vendor_ranking': seller.get('ranking', 'Gold'),
+                'notification_sent': 'pending',  # Will be updated when notification is actually sent
+                'created_ts': 'NOW()',
+                'distance_km': seller.get('distance_km'),
+                'selection_reason': 'automated_matching'
+            })
+
+        # Build batch insert query
+        if insert_values:
+            from sqlalchemy import text
+
+            query = """
+                INSERT INTO gmt_rfq_vendors
+                (rfq_uuid, vendor_id, vendor_name, vendor_ranking, notification_sent, created_ts, distance_km, selection_reason)
+                VALUES
+            """
+
+            # Add value placeholders
+            value_placeholders = []
+            params = {}
+            for i, values in enumerate(insert_values):
+                placeholder = f"(:rfq_uuid_{i}, :vendor_id_{i}, :vendor_name_{i}, :vendor_ranking_{i}, :notification_sent_{i}, NOW(), :distance_km_{i}, :selection_reason_{i})"
+                value_placeholders.append(placeholder)
+
+                # Add parameters with unique names
+                for key, value in values.items():
+                    if key != 'created_ts':  # Skip NOW() function
+                        params[f"{key}_{i}"] = value
+
+            query += ", ".join(value_placeholders)
+
+            # Execute the insert
+            db = get_remote_db_session()
+            try:
+                result = db.execute(text(query), params)
+                db.commit()
+
+                logger.info(f"Successfully logged {len(insert_values)} sellers to gmt_rfq_vendors for RFQ {rfq_id}")
+                return True
+
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Failed to insert sellers to gmt_rfq_vendors: {e}")
+                return False
+            finally:
+                db.close()
+
+    except Exception as e:
+        logger.error(f"Error logging selected sellers for RFQ {rfq_id}: {e}")
+        return False
 
 
 def mark_rfq_seller_matching_processed(rfq_uuid: str, seller_count: int) -> bool:

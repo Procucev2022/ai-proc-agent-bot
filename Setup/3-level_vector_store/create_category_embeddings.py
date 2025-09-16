@@ -25,7 +25,8 @@ import chromadb.utils.embedding_functions as embedding_functions
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from app.database import get_db_session
-from app.models import LearningCategory, LearningCategoryItem, SellerLearningMapping, Seller
+from app.models import LearningCategory, LearningCategoryItem, SellerLearningMapping
+from app.services.seller_data_adapter import SellerDataAdapter
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -60,7 +61,7 @@ def create_unified_vector_store(clear_existing: bool = False):
         logger.info(f"Found {len(learning_items)} learning items")
         
         # Get seller mappings
-        seller_mappings = db.query(SellerLearningMapping).join(Seller).all()
+        seller_mappings = db.query(SellerLearningMapping).all()
         logger.info(f"Found {len(seller_mappings)} seller mappings")
         
         if not learning_items and not seller_mappings:
@@ -97,43 +98,57 @@ def create_unified_vector_store(clear_existing: bool = False):
             
             ids.append(f"item_{item.id}")
         
-        # Add seller mappings (for seller matching)
-        for mapping in seller_mappings:
-            seller = mapping.seller
-            category_path = f"{mapping.level_1_category} > {mapping.level_2_category} > {mapping.level_3_category}"
-            
-            # Document for embedding
-            location_text = ""
-            if seller.location:
-                location_text = f"{seller.location.get('city', '')} {seller.location.get('state', '')}"
-            doc_text = f"{seller.seller_name} {mapping.original_category} {category_path} {location_text}"
-            documents.append(doc_text)
-            
-            # Metadata for search results
-            metadatas.append({
-                "type": "seller_mapping",
-                "seller_id": seller.seller_id,
-                "seller_name": seller.seller_name,
-                "phone_number": seller.phone_number,
-                "email": seller.email or "",
-                "original_category": mapping.original_category,
-                "learning_category_id": mapping.learning_category_id,
-                "level_1_category": mapping.level_1_category,
-                "level_2_category": mapping.level_2_category,
-                "level_3_category": mapping.level_3_category,
-                "category_path": category_path,
-                "confidence_score": float(mapping.confidence_score),
-                "location": str(seller.location) if seller.location else "",
-                "ranking": seller.ranking.value if seller.ranking else "Gold"
-            })
-            
-            ids.append(f"seller_{mapping.mapping_id}")
+        # Add seller mappings (for seller matching) - get seller info from remote data
+        if seller_mappings:
+            logger.info(f"Getting real seller data for {len(seller_mappings)} mappings...")
+            adapter = SellerDataAdapter()
+
+            # Create seller lookup for performance
+            real_sellers = adapter.get_sellers_from_remote()
+            seller_lookup = {seller.seller_id: seller for seller in real_sellers}
+
+            for mapping in seller_mappings:
+                # Get seller info from remote data
+                seller = seller_lookup.get(mapping.seller_id)
+
+                if not seller:
+                    logger.warning(f"Seller {mapping.seller_id} not found in remote data, skipping mapping")
+                    continue
+
+                category_path = f"{mapping.level_1_category} > {mapping.level_2_category} > {mapping.level_3_category}"
+
+                # Document for embedding
+                location_text = ""
+                if seller.location:
+                    location_text = f"{seller.location.get('city', '')} {seller.location.get('state', '')}"
+                doc_text = f"{seller.seller_name} {mapping.original_category} {category_path} {location_text}"
+                documents.append(doc_text)
+
+                # Metadata for search results
+                metadatas.append({
+                    "type": "seller_mapping",
+                    "seller_id": seller.seller_id,
+                    "seller_name": seller.seller_name,
+                    "phone_number": seller.phone_number or "",
+                    "email": seller.email or "",
+                    "original_category": mapping.original_category,
+                    "learning_category_id": mapping.learning_category_id,
+                    "level_1_category": mapping.level_1_category,
+                    "level_2_category": mapping.level_2_category,
+                    "level_3_category": mapping.level_3_category,
+                    "category_path": category_path,
+                    "confidence_score": float(mapping.confidence_score),
+                    "location": str(seller.location) if seller.location else "",
+                    "ranking": seller.ranking.value if seller.ranking else "Gold"
+                })
+
+                ids.append(f"seller_{mapping.mapping_id}")
         
         # Add to ChromaDB
         logger.info(f"Creating embeddings for {len(documents)} items (this may take a while)...")
         collection.add(documents=documents, metadatas=metadatas, ids=ids)
         
-        logger.info(f"✅ Successfully created unified vector store:")
+        logger.info(f"Successfully created unified vector store:")
         logger.info(f"   - {len(learning_items)} category items")
         logger.info(f"   - {len(seller_mappings)} seller mappings")
         logger.info(f"   - Total: {len(documents)} embeddings")
@@ -151,10 +166,10 @@ def main():
     success = create_unified_vector_store(args.clear_existing)
     
     if success:
-        logger.info("✅ Unified vector store created successfully!")
+        logger.info("Unified vector store created successfully!")
         sys.exit(0)
     else:
-        logger.error("❌ Failed to create unified vector store!")
+        logger.error("Failed to create unified vector store!")
         sys.exit(1)
 
 if __name__ == "__main__":
