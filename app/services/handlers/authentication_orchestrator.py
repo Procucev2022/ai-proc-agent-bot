@@ -106,7 +106,17 @@ class AuthenticationOrchestrator:
            
             intent = intent_result.get('intent')
             confidence = intent_result.get('confidence', 0)
-            
+
+            # Handle exit intent immediately - even for unauthenticated users
+            if intent == "exit_system" and confidence > 50:
+                logger.info(f"Exit intent detected in auth flow with {confidence}% confidence")
+                from app.services.exit_service import ExitService
+                exit_service = ExitService(self.whatsapp_service, self.authentication_service,
+                                         self.chat_service.session_manager if self.chat_service else None,
+                                         self.chat_service.db_manager if self.chat_service else None)
+                exit_result = await exit_service.handle_exit_intent(user_phone, session)
+                return exit_result
+
             # Step 5: For ambiguous or low confidence intents, ask for clarification first
             if intent == "ambiguous" or confidence < 50:
                 # Try to authenticate first - if user exists, they can choose email type

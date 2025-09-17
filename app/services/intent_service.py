@@ -73,6 +73,10 @@ class IntentService:
             # Handle contextual intents with intelligent responses
             if intent in ['contextual_reference', 'session_inquiry', 'workflow_rejection', 'alternative_request'] and confidence > 60:
                 return self._handle_contextual_intent(intent, message, context, classification_result)
+
+            # Handle exit intent - return immediately without contextual processing
+            if intent == 'exit_system' and confidence > 50:
+                return classification_result
             
             return classification_result
             

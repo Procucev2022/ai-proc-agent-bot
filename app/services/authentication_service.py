@@ -101,6 +101,7 @@ class AuthenticationService:
         try:
             logger.info(f"Authenticating user {user_phone} with intent: {intent}")
             auth_response = await self.auth_api_service.authenticate_user(user_phone)
+            logger.info(f"Auth API service response: {auth_response}")
 
             if auth_response.get("success"):
                 raw_response = auth_response.get("data", [])                
