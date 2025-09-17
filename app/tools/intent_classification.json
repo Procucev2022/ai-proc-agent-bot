@@ -7,7 +7,7 @@
         "properties": {
             "intent": {
                 "type": "string",
-                "enum": ["buy_something", "sell_something", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "ambiguous", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request"],
+                "enum": ["buy_something", "sell_something", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "ambiguous", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request"],
                 "description": "The primary classified intent category based on user message analysis and conversation context"
             },
             "confidence": {
@@ -25,6 +25,16 @@
                         "maximum": 100
                     },
                     "sell_something": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                    },
+                    "account_switch": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                    },
+                    "register_account": {
                         "type": "number",
                         "minimum": 0,
                         "maximum": 100
@@ -75,7 +85,7 @@
                         "maximum": 100
                     }
                 },
-                "required": ["buy_something", "sell_something", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request"],
+                "required": ["buy_something", "sell_something", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request"],
                 "additionalProperties": false,
                 "description": "Confidence scores for all intent categories"
             },
@@ -141,9 +151,44 @@
                         "required": ["reference_type", "has_history"],
                         "additionalProperties": false,
                         "description": "Details about reference if this is a reference_request"
+                    },
+                    "account_switch_details": {
+                        "type": "object",
+                        "properties": {
+                            "target_role": {
+                                "type": ["string", "null"],
+                                "enum": ["buyer", "seller", "same", null],
+                                "description": "Target role user wants to switch to ('same' means different account of same role)"
+                            },
+                            "switch_type": {
+                                "type": ["string", "null"],
+                                "enum": ["cross_role", "same_role", "unclear", null],
+                                "description": "Type of account switch requested"
+                            }
+                        },
+                        "required": ["target_role", "switch_type"],
+                        "additionalProperties": false,
+                        "description": "Details about account switch if this is an account_switch intent"
+                    },
+                    "registration_details": {
+                        "type": "object",
+                        "properties": {
+                            "registration_type": {
+                                "type": ["string", "null"],
+                                "enum": ["buyer", "seller", "unclear", null],
+                                "description": "Type of account user wants to register"
+                            },
+                            "is_additional_account": {
+                                "type": "boolean",
+                                "description": "Whether this is an additional account registration (user already authenticated)"
+                            }
+                        },
+                        "required": ["registration_type", "is_additional_account"],
+                        "additionalProperties": false,
+                        "description": "Details about registration if this is a register_account intent"
                     }
                 },
-                "required": ["references_existing_data", "conversation_stage", "modification_details", "confirmation_details", "reference_details"],
+                "required": ["references_existing_data", "conversation_stage", "modification_details", "confirmation_details", "reference_details", "account_switch_details", "registration_details"],
                 "additionalProperties": false,
                 "description": "Analysis of conversation context and how it affects intent classification"
             },

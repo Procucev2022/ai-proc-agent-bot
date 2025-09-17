@@ -14,14 +14,15 @@ Handles complete user authentication flow including:
 import logging
 from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime
-from app.models import User, ConversationSession, UserType
+from app.schemas.user import User
+from app.models import ConversationSession, UserType
 from app.services.whatsapp_service import WhatsAppService
 from app.services.openai_service import OpenAIService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.authentication_helpers import AuthenticationHelpers
 from app.utils.datetime_utils import utc_now
 from app.redis_db import get_auth_redis_service
-from app.schemas.user import UserDetailsSchema
+from app.schemas.user import User
 from app.procucev_apis.auth_apis import AuthAPIService
 from app.procucev_apis.register_apis import RegisterAPIService
 from app.services.support_notification_service import SupportNotificationService
@@ -45,25 +46,31 @@ class AuthenticationService:
         self.support_notification_service = SupportNotificationService()
         self.session_manager = session_manager  # Will be injected from ChatService
     
-    async def validate_token(self, user_phone: str) -> Optional[UserDetailsSchema]:
-        """Validate user token from Redis auth storage."""
+    async def validate_token(self, user_phone: str) -> Optional[User]:
+        """Validate user token from Redis auth storage and refresh on activity."""
         try:
             logger.info("user token validation called")
             user_data = await self.auth_redis_service.retrieve(user_phone)
             if user_data:
+                # Token automatically refreshed in retrieve method
+                logger.info(f"Token validated and refreshed for user {user_phone}")
                 return user_data
+            
+            # Token expired or not found - send welcome message
+            logger.info(f"Token expired for user {user_phone}, sending welcome message")
+            # await self.whatsapp_service.send_message(user_phone, "Welcome to QUA!")
             return False
         except Exception as e:
             logger.error(f"Authentication error for {user_phone}: {e}")
             return False
     
-    async def store_user_session(self, user_phone: str, user_details: UserDetailsSchema) -> bool:
+    async def store_user_session(self, user_phone: str, user_details: User) -> bool:
         """Store user session data in Redis."""
         try:
             session_data = user_details.dict()
             session_data["authenticated_at"] = datetime.now().isoformat()
-            # Issue TODO : Token Deactivation after x seconds of INACTIVITY
-            success = await self.auth_redis_service.store(user_phone, session_data, expiry_seconds=3600)  # 24 hours
+            # Token expires after 1 hour of inactivity
+            success = await self.auth_redis_service.store(user_phone, session_data, expiry_seconds=3600)  # 1 hour
             
             if success:
                 logger.info(f"Session stored successfully for user {user_phone} (ID: {user_details.id})")
@@ -96,7 +103,7 @@ class AuthenticationService:
             auth_response = await self.auth_api_service.authenticate_user(user_phone)
 
             if auth_response.get("success"):
-                raw_response = auth_response.get("users", [])                
+                raw_response = auth_response.get("data", [])                
                 if raw_response:
                     return {
                         "success": True, 
@@ -115,7 +122,7 @@ class AuthenticationService:
     def filter_users_by_intent(self, raw_users: List[Dict], intent: str) -> Dict[str, Any]:
         """Filter users based on intent and return structured data using schemas."""
         try:
-            from app.schemas.user import APIUserSchema, UserDetailsSchema
+            from app.schemas.user import APIUserSchema
             
             # Normalize using schema
             users: List[APIUserSchema] = [APIUserSchema(**user) for user in raw_users]
@@ -137,11 +144,11 @@ class AuthenticationService:
                 if user.username and user.username not in unique_emails:
                     unique_emails.append(user.username)
             
-            # Convert to UserDetailsSchema for consistent response
+            # Convert to User for consistent response
             user_details_list = []
             for user in filtered_users:
                 user_dict = user.dict()
-                user_detail = UserDetailsSchema.from_api_response(user_dict)
+                user_detail = User.from_api_response(user_dict)
                 user_details_list.append(user_detail)
             
             return {
@@ -155,8 +162,8 @@ class AuthenticationService:
             logger.error(f"User filtering error: {e}")
             return {"success": False, "message": str(e)}
     
-    def create_user_details_from_email(self, filtered_users: List[Dict], selected_email: str) -> Optional[UserDetailsSchema]:
-        """Create UserDetailsSchema from selected email and filtered users."""
+    def create_user_details_from_email(self, filtered_users: List[Dict], selected_email: str) -> Optional[User]:
+        """Create User from selected email and filtered users."""
         try:
             # Find user data matching the selected email
             selected_user = None
@@ -176,7 +183,7 @@ class AuthenticationService:
                 logger.warning(f"No user found for email {selected_email}")
                 return None
             
-            return UserDetailsSchema(
+            return User(
                 id=selected_user.get("id", ""),
                 name=selected_user.get("name", ""),
                 email=selected_email,
@@ -193,8 +200,8 @@ class AuthenticationService:
             logger.error(f"Error creating user details from email: {e}")
             return None
 
-    def _extract_user_details(self, api_response: list) -> Optional[UserDetailsSchema]:
-        """Parse external API response and map into UserDetailsSchema."""
+    def _extract_user_details(self, api_response: list) -> Optional[User]:
+        """Parse external API response and map into User."""
         try:
             if not api_response:
                 return None
@@ -203,16 +210,15 @@ class AuthenticationService:
             if not user_data:
                 return None
             
-            return UserDetailsSchema(
+            return User(
                 id=user_data.get("id", ""),
-                username=user_data.get("username", ""),
+                email=user_data.get("username", ""),
                 name=user_data.get("fullName", ""),
                 phone_number=user_data.get("phone", ""),
                 self_client=user_data.get("selfClient", False),
                 role="buyer" if user_data.get("selfClient") else "seller",
                 is_registered=True,
-                company_name=user_data.get("companyName", ""),
-                approved=user_data.get("approved", False)
+                company_name=user_data.get("companyName", "")
             )
         except Exception as e:
             logger.error(f"Error extracting user details: {e}")

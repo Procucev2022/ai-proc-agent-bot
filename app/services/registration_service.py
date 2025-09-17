@@ -10,13 +10,15 @@ Handles complete user registration flow including:
 
 import logging
 from typing import Dict, Any, List
-from app.models import User, ConversationSession, UserType
+from app.schemas.user import User
+from app.models import ConversationSession, UserType
 from app.services.whatsapp_service import WhatsAppService
 from app.services.openai_service import OpenAIService
 from app.services.entity_service import EntityService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.procucev_apis.register_apis import RegisterAPIService
-from app.schemas.user import BuyerRegistrationSchema, SellerRegistrationSchema, UserDetailsSchema
+from app.schemas.user import BuyerRegistrationSchema, SellerRegistrationSchema
+from app.schemas.user import User
 from app.utils.datetime_utils import utc_now
 from app.redis_db import get_auth_redis_service
 from app.services.support_notification_service import SupportNotificationService
@@ -612,8 +614,8 @@ class RegistrationService:
     async def _store_user_session_after_registration(self, user_phone: str, entities: Dict, user_type: str) -> bool:
         """Store user session token after successful registration."""
         try:
-            # Create UserDetailsSchema from registration data
-            user_details = UserDetailsSchema(
+            # Create User from registration data
+            user_details = User(
                 id=f"reg_{user_phone}_{int(utc_now().timestamp())}",  # Generate unique ID
                 name=entities.get("name") or entities.get("full_name", ""),
                 email=entities.get("email", ""),

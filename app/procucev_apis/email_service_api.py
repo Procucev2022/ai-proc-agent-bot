@@ -10,6 +10,7 @@ from typing import Dict, Any, List
 from datetime import datetime
 
 from app.procucev_apis.procucev_api_client import ProcucevAPIClient
+from app.utils.procucev_api_logger import log_procucev_api_call
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ class EmailServiceAPI:
     def __init__(self):
         self.api_client = ProcucevAPIClient()
         
+    @log_procucev_api_call("send_email")
     async def send_email(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Send email notification through GMT Procucev email service.
@@ -59,30 +61,29 @@ class EmailServiceAPI:
             )
             logger.info(f"GMT API response: {response.get('success')}")
             
-            if response["success"]:
+            if response["status"] == "Success" and response.get("statusCode") == "200":
                 return {
-                    "statusCode": "200",
-                    "message": "Email Sent Successfully",
-                    "errorMsg": None,
+                    "statusCode": response.get("statusCode", "200"),
+                    "message": response.get("message", "Email Sent Successfully"),
+                    "errorMsg": response.get("errorMsg", None),
                     "timestamp": response["timestamp"],
-                    "status": "Success",
-                    "type": None,
-                    "data": None
+                    "status": response.get("status", "Success"),
+                    "type": response.get("data", None),
+                    "data": response.get("data", None)
                 }
             else:
                 return {
-                    "statusCode": response["status_code"],
-                    "message": response.get("data", {}).get("message", "Email sending failed"),
-                    "errorMsg": response.get("data", {}).get("error", None),
+                    "statusCode": response.get("statusCode", "400"),
+                    "message": response.get("message", "Email sending failed"),
+                    "errorMsg": response.get("errorMsg", None),
                     "timestamp": response["timestamp"],
-                    "status": "Failure",
-                    "type": None,
-                    "data": None
+                    "status": response.get("status", "Failure"),
+                    "type": response.get("data", None),
+                    "data": response.get("data", None)
                 }
                         
         except Exception as e:
             logger.error(f"Email sending error: {e}")
-            logger.error(f"Failed payload: {payload if 'payload' in locals() else 'N/A'}")
             return {
                 "statusCode": "500",
                 "message": "Internal server error",

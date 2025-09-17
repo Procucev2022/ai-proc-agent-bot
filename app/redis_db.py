@@ -6,7 +6,7 @@ import redis.asyncio as aioredis
 import json
 import logging
 from typing import Optional, Dict, Any
-from app.schemas.user import UserDetailsSchema
+from app.schemas.user import User
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -85,6 +85,15 @@ class BaseRedisService:
             logger.error(f"Redis TTL error for key {key}: {e}")
             return None
     
+    async def expire(self, key: str, seconds: int) -> bool:
+        """Set expiry time for a key."""
+        await self.init_client()
+        try:
+            return await self.client.expire(key, seconds)
+        except Exception as e:
+            logger.error(f"Redis EXPIRE error for key {key}: {e}")
+            return False
+    
     async def incr(self, key: str) -> Optional[int]:
         await self.init_client()
         try:
@@ -104,14 +113,16 @@ class AuthRedisService(BaseRedisService):
     async def store(self, phone_number: str, user_data: Dict[str, Any], expiry_seconds: Optional[int] = None) -> bool:
         key = f"auth:{phone_number}"
         if expiry_seconds is None:
-            expiry_seconds = self.settings.redis_expiry_seconds
+            expiry_seconds = self.settings.redis_expiry_seconds 
         return await self.set(key, user_data, expiry_seconds)
 
-    async def retrieve(self, phone_number: str) -> Optional[UserDetailsSchema]:
+    async def retrieve(self, phone_number: str) -> Optional[User]:
         key = f"auth:{phone_number}"
         data = await self.get(key, as_json=True)
         if data:
-            return UserDetailsSchema(**data)
+            # Refresh token on successful retrieval (user activity)
+            await self.refresh_user_token(phone_number)
+            return User(**data)
         return False
 
     async def delete_auth(self, phone_number: str) -> bool:
@@ -121,6 +132,18 @@ class AuthRedisService(BaseRedisService):
     async def is_authenticated(self, phone_number: str) -> bool:
         key = f"auth:{phone_number}"
         return await self.exists(key)
+    
+    async def refresh_user_token(self, phone_number: str) -> bool:
+        """Refresh user token to extend session for active users."""
+        key = f"auth:{phone_number}"
+        if await self.exists(key):
+            try:
+                await self.init_client()
+                return await self.client.expire(key, 3600)  # Reset to 1 hour
+            except Exception as e:
+                logger.error(f"Redis token refresh error for key {key}: {e}")
+                return False
+        return False
 
 
 # Singleton instances

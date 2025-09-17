@@ -16,7 +16,7 @@ from .rfq import (
 )
 from .whatsapp import WhatsAppMessageSchema
 from .user import (
-    UserDetailsSchema ,
+    User,
     BuyerRegistrationSchema,
     SellerRegistrationSchema,
     )
@@ -37,7 +37,7 @@ __all__ = [
     # WhatsApp schemas
     "WhatsAppMessageSchema",
     # User schemas
-    "UserDetailsSchema",
+    "User",
     "BuyerRegistrationSchema",
     "SellerRegistrationSchema",
     "APIUserSchema",

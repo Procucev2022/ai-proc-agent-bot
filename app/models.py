@@ -553,7 +553,7 @@ class Seller(Base):
     notifications = relationship("RFQSellerNotification", back_populates="seller")
     interactions = relationship("SellerRFQInteraction", back_populates="seller")
     subscriptions = relationship("SellerSubscription", back_populates="seller")
-    learning_mappings = relationship("SellerLearningMapping", back_populates="seller")
+    # learning_mappings removed - now handled by SellerDataAdapter for remote sellers
 
 class RFQSellerNotification(Base):
     """
@@ -658,14 +658,14 @@ class MockRFQ(Base):
 class SellerLearningMapping(Base):
     """
     Map sellers to 3-level learning categories through offline OpenAI processing.
-    
+
     Links seller's simple categories to the sophisticated 3-level learning
     categorization system for enhanced matching capabilities.
     """
     __tablename__ = "seller_learning_mappings"
-    
+
     mapping_id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    seller_id = Column(CHAR(36), ForeignKey("sellers.seller_id"), nullable=False)
+    seller_id = Column(CHAR(36), nullable=False)  # References remote seller, no FK constraint
     original_category = Column(String(255), nullable=False)  # Original simple category from seller
     learning_category_id = Column(CHAR(36), ForeignKey("learning_categories.id"), nullable=True)
     level_1_category = Column(String(255), nullable=True)
@@ -677,8 +677,7 @@ class SellerLearningMapping(Base):
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, default=func.current_timestamp(), onupdate=func.current_timestamp())
     
-    # Relationships
-    seller = relationship("Seller", back_populates="learning_mappings")
+    # Relationships (seller removed since it references remote data)
     learning_category = relationship("LearningCategory")
 
 class SellerCategorizationJob(Base):

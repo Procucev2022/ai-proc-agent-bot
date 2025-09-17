@@ -29,15 +29,19 @@ GSTIN_REGEX = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$")
 
 
 def sanitize_phone_number(phone: str) -> str:
-    """Sanitize phone number by removing non-digit characters."""
+    """Sanitize phone number and ensure +91 country code format."""
     if not phone:
         return phone
-    # Remove spaces, dashes, plus signs, parentheses
-    sanitized = re.sub(r'[\s\-\+\(\)\.]', '', phone)
-    # Remove country code if present (91 for India)
-    if sanitized.startswith('91') and len(sanitized) == 12:
-        sanitized = sanitized[2:]
-    return sanitized
+    # Remove spaces, dashes, parentheses, dots but keep digits
+    sanitized = re.sub(r'[\s\-\(\)\.]', '', phone)
+    # Remove + if present
+    if sanitized.startswith('+'):
+        sanitized = sanitized[1:]
+    # Add country code if not present
+    if not sanitized.startswith('91') and len(sanitized) == 10:
+        sanitized = '91' + sanitized
+    # Return with + prefix
+    return '+' + sanitized if sanitized else phone
 
 
 # -------------------------------
@@ -51,6 +55,7 @@ class BuyerRegistrationSchema(BaseModel):
     pincode: str = Field(..., description="Pincode")
     organizationPhonenumber: Optional[str] = Field(None, description="Phone number")
     whatsapp: Optional[bool] = Field(None, description="WhatsApp flag")
+    source_type: str = "W"
 
     @field_validator("email")
     def validate_email(cls, v: str) -> str:
@@ -89,6 +94,7 @@ class SellerRegistrationSchema(BaseModel):
     products_services: str
     organizationPhonenumber: Optional[str] = None
     whatsapp: Optional[bool] = None
+    source_type: str = "W"
 
     @field_validator("email")
     def validate_email(cls, v: str) -> str:
@@ -134,9 +140,10 @@ class APIUserSchema(BaseModel):
     org_uuid: Optional[str] = None
     orgUuid: Optional[str] = None
     orgId: Optional[str] = None
+    verificationStatus: Optional[str] = None
     
 
-class UserDetailsSchema(BaseModel):
+class User(BaseModel):
     id: str
     name: Optional[str] = None
     email: Optional[str] = None
@@ -147,14 +154,15 @@ class UserDetailsSchema(BaseModel):
     company_name: Optional[str] = None
     unique_id: Optional[str] = None
     org_id: Optional[str] = None
+    verification_status: Optional[str] = None
 
     @classmethod
-    def from_api_response(cls, api_data: dict) -> "UserDetailsSchema":
-        """Create UserDetailsSchema from API response."""
+    def from_api_response(cls, api_data: dict) -> "User":
+        """Create User from API response."""
         # Debug logging to see raw API data
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"Creating UserDetailsSchema from API data: {api_data}")
+        logger.info(f"Creating User from API data: {api_data}")
 
         # Determine role
         match api_data.get("selfClient"):
@@ -184,11 +192,12 @@ class UserDetailsSchema(BaseModel):
             phone_number=phone,
             company_name=api_data.get("companyName"),
             unique_id=api_data.get("uniqueId"),
-            org_id=api_data.get("org_uuid") or api_data.get("orgUuid") or api_data.get("orgId") or api_data.get("organizationId")
+            org_id=api_data.get("org_uuid") or api_data.get("orgUuid") or api_data.get("orgId") or api_data.get("organizationId"),
+            verification_status=api_data.get("verificationStatus")
         )
 
     @classmethod
-    def invalid_user(cls, user_phone: str) -> "UserDetailsSchema":
+    def invalid_user(cls, user_phone: str) -> "User":
         """Returns a dummy user for test environments or invalid cases."""
         return cls(
             id="1428bbb9-a0ba-459d-b1e8-23d7c49455e8",
@@ -198,7 +207,5 @@ class UserDetailsSchema(BaseModel):
             role=UserRole.UNKNOWN,
             is_registered=True,
             phone_number=user_phone,
-            company_name="mohap ai solutin",
-
-           
+            company_name="mohap ai solution"
         )

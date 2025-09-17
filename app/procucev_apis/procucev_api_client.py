@@ -68,8 +68,7 @@ class ProcucevAPIClient:
                 enable_cleanup_closed=True
             )
             self.session = aiohttp.ClientSession(timeout=timeout, connector=connector)
-            logger.info("HTTP session created with enhanced timeout configuration")
-
+            
     async def close_session(self):
         """Close the aiohttp session cleanly."""
         if self.session:
@@ -133,7 +132,6 @@ class ProcucevAPIClient:
         """ Base HTTP request handler with retry/backoff. """
         # check session initialisation
         if self.session is None:
-            logger.warning("Session not initialized — calling create_session() automatically.")
             await self.create_session()
 
         # Build full URL

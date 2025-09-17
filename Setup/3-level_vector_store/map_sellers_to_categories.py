@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 from app.database import get_db_session
 from app.models import Seller, LearningCategory, SellerLearningMapping
 from app.services.openai_service import OpenAIService
+from app.services.seller_data_adapter import SellerDataAdapter
 
 # Configure logging
 logging.basicConfig(
@@ -47,13 +48,26 @@ def map_sellers_to_learning_categories(batch_size: int = 5, target_seller_id: Op
     openai_service = OpenAIService()
     
     try:
-        # Get sellers to process
+        # Get sellers from real data (remote database) instead of local mock data
+        logger.info("Fetching sellers from remote database using SellerDataAdapter...")
+        adapter = SellerDataAdapter()
+
+        if not adapter.test_connection():
+            logger.error("Cannot connect to remote database")
+            return {
+                "success": False,
+                "error": "Remote database connection failed",
+                "processed_count": 0
+            }
+
+        # Get real sellers from remote database
         if target_seller_id:
-            sellers = db.query(Seller).filter(Seller.seller_id == target_seller_id).all()
+            seller = adapter.get_seller_by_id(target_seller_id)
+            sellers = [seller] if seller else []
             logger.info(f"Processing specific seller: {target_seller_id}")
         else:
-            sellers = db.query(Seller).all()
-            logger.info(f"Processing all {len(sellers)} sellers")
+            sellers = adapter.get_sellers_from_remote()
+            logger.info(f"Processing all {len(sellers)} real sellers from remote database")
         
         if not sellers:
             logger.warning("No sellers found to process")
