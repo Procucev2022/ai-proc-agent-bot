@@ -109,12 +109,21 @@ class AuthenticationOrchestrator:
             
             # Step 5: For ambiguous or low confidence intents, ask for clarification first
             if intent == "ambiguous" or confidence < 50:
-                # Check if this is a buy/sell clarification response
-                response_lower = message_content.lower().strip()
-                if "buy" in response_lower:
-                    return await self._redirect_to_registration_flow(user_phone, session, "buyer")
-                elif "sell" in response_lower:
-                    return await self._redirect_to_registration_flow(user_phone, session, "seller")
+                # Try to authenticate first - if user exists, they can choose email type
+                auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
+                
+                if auth_response.get("success"):
+                    # User found - show all emails with buyer/seller labels (no intent filtering)
+                    raw_response = auth_response.get("response", [])
+                    filter_result = self.authentication_service.filter_users_by_intent(raw_response, "general_inquiry")  # This shows all emails
+                    
+                    if filter_result.get("success"):
+                        # Store the ambiguous message as original message
+                        return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content)
+                    else:
+                        # Issue TODO: Ask user if they want to buy or sell and redirect to registratin based on user's response 
+                        # No emails found - redirect to registration
+                        return await self._redirect_to_registration_flow(user_phone, session, "buyer")
                 else:
                     # Ask for clarification
                     return await self._handle_auth_clarification_request(user_phone, session)
@@ -164,15 +173,7 @@ class AuthenticationOrchestrator:
                         user_type = "seller" if intent == "sell_something" else "buyer"
                         return await self._redirect_to_registration_flow(user_phone, session, user_type)
                     elif intent == "general_inquiry":
-                        # Check if this is a buy/sell clarification response
-                        response_lower = message_content.lower().strip()
-                        if "buy" in response_lower:
-                            return await self._redirect_to_registration_flow(user_phone, session, "buyer")
-                        elif "sell" in response_lower:
-                            return await self._redirect_to_registration_flow(user_phone, session, "seller")
-                        else:
-                            # Ask for clarification
-                            return await self._handle_auth_clarification_request(user_phone, session)
+                        return await self._handle_auth_general_inquiry(user_phone, message_content)
                     else:
                         return await self._handle_auth_fallback(user_phone, message_content)
                 

@@ -36,8 +36,9 @@ class AuthAPIService:
             response_data = await self.api_client.get(endpoint)
 
             status_code = response_data.get("statusCode")
+            status = response_data.get("status")
             
-            if status_code == "200":
+            if status_code == "200" and status == "success":
                 users_data = response_data.get("data", {}).get("users", [])
                 users = [APIUserSchema(**user) for user in users_data]
                 
