@@ -103,7 +103,7 @@ class AuthenticationService:
             auth_response = await self.auth_api_service.authenticate_user(user_phone)
 
             if auth_response.get("success"):
-                raw_response = auth_response.get("users", [])                
+                raw_response = auth_response.get("data", [])                
                 if raw_response:
                     return {
                         "success": True, 
