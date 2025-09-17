@@ -29,15 +29,19 @@ GSTIN_REGEX = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$")
 
 
 def sanitize_phone_number(phone: str) -> str:
-    """Sanitize phone number by removing non-digit characters."""
+    """Sanitize phone number and ensure +91 country code format."""
     if not phone:
         return phone
-    # Remove spaces, dashes, plus signs, parentheses
-    sanitized = re.sub(r'[\s\-\+\(\)\.]', '', phone)
-    # Remove country code if present (91 for India)
-    if sanitized.startswith('91') and len(sanitized) == 12:
-        sanitized = sanitized[2:]
-    return sanitized
+    # Remove spaces, dashes, parentheses, dots but keep digits
+    sanitized = re.sub(r'[\s\-\(\)\.]', '', phone)
+    # Remove + if present
+    if sanitized.startswith('+'):
+        sanitized = sanitized[1:]
+    # Add country code if not present
+    if not sanitized.startswith('91') and len(sanitized) == 10:
+        sanitized = '91' + sanitized
+    # Return with + prefix
+    return '+' + sanitized if sanitized else phone
 
 
 # -------------------------------
@@ -51,6 +55,7 @@ class BuyerRegistrationSchema(BaseModel):
     pincode: str = Field(..., description="Pincode")
     organizationPhonenumber: Optional[str] = Field(None, description="Phone number")
     whatsapp: Optional[bool] = Field(None, description="WhatsApp flag")
+    source_type: str = "W"
 
     @field_validator("email")
     def validate_email(cls, v: str) -> str:
@@ -89,6 +94,7 @@ class SellerRegistrationSchema(BaseModel):
     products_services: str
     organizationPhonenumber: Optional[str] = None
     whatsapp: Optional[bool] = None
+    source_type: str = "W"
 
     @field_validator("email")
     def validate_email(cls, v: str) -> str:
@@ -134,6 +140,7 @@ class APIUserSchema(BaseModel):
     org_uuid: Optional[str] = None
     orgUuid: Optional[str] = None
     orgId: Optional[str] = None
+    verificationStatus: Optional[str] = None
     
 
 class User(BaseModel):
@@ -147,6 +154,7 @@ class User(BaseModel):
     company_name: Optional[str] = None
     unique_id: Optional[str] = None
     org_id: Optional[str] = None
+    verification_status: Optional[str] = None
 
     @classmethod
     def from_api_response(cls, api_data: dict) -> "User":
@@ -184,7 +192,8 @@ class User(BaseModel):
             phone_number=phone,
             company_name=api_data.get("companyName"),
             unique_id=api_data.get("uniqueId"),
-            org_id=api_data.get("org_uuid") or api_data.get("orgUuid") or api_data.get("orgId") or api_data.get("organizationId")
+            org_id=api_data.get("org_uuid") or api_data.get("orgUuid") or api_data.get("orgId") or api_data.get("organizationId"),
+            verification_status=api_data.get("verificationStatus")
         )
 
     @classmethod
