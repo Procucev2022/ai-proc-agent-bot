@@ -136,10 +136,7 @@ class ExitService:
         """
         try:
             goodbye_message = (
-                "Thank you for using QUA!\n\n"
-                "Your session has been ended and all data cleared. "
-                "Feel free to message us anytime - we'll be here to help with a fresh start!\n\n"
-                "Have a great day!"
+                "Thank you for using QUA!"
             )
 
             await self.whatsapp_service.send_message(user_phone, goodbye_message)
