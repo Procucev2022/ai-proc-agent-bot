@@ -6,7 +6,7 @@ import redis.asyncio as aioredis
 import json
 import logging
 from typing import Optional, Dict, Any
-from app.schemas.user import UserDetailsSchema
+from app.schemas.user import User
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -116,13 +116,13 @@ class AuthRedisService(BaseRedisService):
             expiry_seconds = self.settings.redis_expiry_seconds 
         return await self.set(key, user_data, expiry_seconds)
 
-    async def retrieve(self, phone_number: str) -> Optional[UserDetailsSchema]:
+    async def retrieve(self, phone_number: str) -> Optional[User]:
         key = f"auth:{phone_number}"
         data = await self.get(key, as_json=True)
         if data:
             # Refresh token on successful retrieval (user activity)
             await self.refresh_user_token(phone_number)
-            return UserDetailsSchema(**data)
+            return User(**data)
         return False
 
     async def delete_auth(self, phone_number: str) -> bool:
