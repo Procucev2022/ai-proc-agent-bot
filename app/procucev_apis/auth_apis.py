@@ -32,13 +32,15 @@ class AuthAPIService:
         Handles API responses with statusCode: 200 (success), 204 (no user found), 500 (error)
         """
         try:
+            logger.info("Api call to authenticate user")
+    
             endpoint = f"/partialvendor/getUsersByPhoneNumber/{phone_number}"
             response_data = await self.api_client.get(endpoint)
 
             status_code = response_data.get("statusCode")
             status = response_data.get("status")
             
-            if status_code == "200" and status == "success":
+            if status_code == "200" and status == "Success":
                 users_data = response_data.get("data", {}).get("users", [])
                 users = [APIUserSchema(**user) for user in users_data]
                 
