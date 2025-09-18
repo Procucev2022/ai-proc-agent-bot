@@ -234,7 +234,7 @@ class ChatService:
         try:
             # Initialize authentication orchestrator
             from app.services.handlers.authentication_orchestrator import AuthenticationOrchestrator
-            from app.services.handlers.supportService_hanlder import SupportHelpers
+            from app.services.helpers.support_helpers import SupportHelpers
 
             auth_orchestrator = AuthenticationOrchestrator(
                 self.whatsapp_service, self.response_helpers,
