@@ -76,14 +76,43 @@ class ProcucevAPIClient:
             logger.info("HTTP session closed")
             self.session = None
 
+    def format_phone_number(self, phone: str) -> str:
+        """Format phone number with +<countrycode><phonenumber> format."""
+        if not phone:
+            return ""
+        
+        phone_clean = phone.strip().replace('"', '')
+        
+        # If already has +, return as is
+        if phone_clean.startswith('+'):
+            return phone_clean
+        
+        # If starts with country code but no +, add +
+        if phone_clean.startswith('91') and len(phone_clean) >= 12:
+            return f"+{phone_clean}"
+        
+        # If 10-digit number, add +91
+        if len(phone_clean) == 10 and phone_clean.isdigit():
+            return f"+91{phone_clean}"
+        
+        # Default: add +91 if no + prefix
+        if not phone_clean.startswith('+'):
+            return f"+91{phone_clean}"
+        
+        return phone_clean
+
     async def authenticate(self) -> bool:
         """
         Authenticate with the API to obtain a bearer token.
         Example: POST to /authenticate with username and phone.
         """
         auth_url = f"{self.base_url}/authenticate"
-        payload = {"username": self.username, "phone": self.phone}
+        
         try:
+            payload = {
+                "username": self.username,
+                "phone": self.format_phone_number(self.phone)
+            }
             resp = await self.send_request("POST", auth_url, json_data=payload, require_auth=False)
             token = resp.get("access_token") or resp.get("token")
             expires_in = resp.get("expires_in") or resp.get("expires", 3600)
