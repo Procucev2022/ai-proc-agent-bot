@@ -34,8 +34,10 @@ class AuthAPIService:
         try:
             logger.info("Api call to authenticate user")
     
+            logger.info(f"Making API call to authenticate user: {phone_number}")
             endpoint = f"/partialvendor/getUsersByPhoneNumber/{phone_number}"
             response_data = await self.api_client.get(endpoint)
+            logger.info(f"API response for phone {phone_number}: {response_data}")
 
             status_code = response_data.get("statusCode")
             status = response_data.get("status")
@@ -44,6 +46,15 @@ class AuthAPIService:
                 users_data = response_data.get("data", {}).get("users", [])
                 users = [APIUserSchema(**user) for user in users_data]
                 
+            if response_data.get("success") and isinstance(response_data.get("data"), dict):
+                raw_users = response_data["data"].get("users", [])
+
+                if not raw_users:
+                    return {"success": False, "error": "User not found", "is_registered": False}
+
+                # Normalize using schema
+                users: List[APIUserSchema] = [APIUserSchema(**user) for user in raw_users]
+
                 return {
                     "success": True,
                     "message": response_data.get("message", "Users fetched successfully"),

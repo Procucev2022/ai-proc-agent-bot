@@ -48,7 +48,7 @@ class GMTAPIService:
         
         auth_data = {
             "username": self.username.strip('"') if self.username else "",
-            "phone": self.phone.strip('"') if self.phone else ""
+            "phone": f"+91{self.phone.strip('\"')}" if self.phone else ""
         }
         
         try:
