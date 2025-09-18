@@ -54,6 +54,7 @@ from app.config import get_settings
 from app.services.seller_service import SellerService
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
+from app.services.exit_service import ExitService
 
 from app.database import SessionLocal, DatabaseManager
 from app.models import ConversationSession
@@ -97,6 +98,9 @@ class ChatService:
         )
         self.registration_service = RegistrationService(
             self.whatsapp_service, self.openai_service, self.entity_service, self.response_helpers, self.session_manager
+        )
+        self.exit_service = ExitService(
+            self.whatsapp_service, self.authentication_service, self.session_manager, self.db_manager
         )
         self.confirmation_handler = ConfirmationHandler(
             self.whatsapp_service, self.response_helpers
@@ -365,6 +369,15 @@ class ChatService:
 
             intent = intent_result.get('intent')
             confidence = intent_result.get('confidence', 0)
+
+            # Handle exit intent immediately - highest priority
+            if intent == "exit_system" and confidence > 50:
+                logger.info(f"Exit intent detected with {confidence}% confidence - handling system exit")
+                # Use the same phone format as used in authentication flow
+                user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+                exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                await self.session_manager.save_session(session, "user_exit")
+                return exit_result
 
             # Handle contextual intents with direct response capability
             if intent in ['contextual_reference', 'session_inquiry', 'workflow_rejection', 'alternative_request'] and confidence > 60:
