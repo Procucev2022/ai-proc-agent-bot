@@ -28,20 +28,38 @@ PINCODE_REGEX = re.compile(r"^\d{6}$")
 GSTIN_REGEX = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$")
 
 
-def sanitize_phone_number(phone: str) -> str:
-    """Sanitize phone number and ensure +91 country code format."""
+def normalize_phone_number(phone: str, default_country_code: str = "91") -> str:
+    """Normalize and format phone number to +<countrycode><number> format.
+    
+    - Strips spaces, dashes, parentheses, dots
+    - Ensures +<countrycode> prefix
+    - Defaults to +91 for 10-digit numbers (India)
+    """
     if not phone:
-        return phone
-    # Remove spaces, dashes, parentheses, dots but keep digits
-    sanitized = re.sub(r'[\s\-\(\)\.]', '', phone)
-    # Remove + if present
-    if sanitized.startswith('+'):
-        sanitized = sanitized[1:]
-    # Add country code if not present
-    if not sanitized.startswith('91') and len(sanitized) == 10:
-        sanitized = '91' + sanitized
-    # Return with + prefix
-    return '+' + sanitized if sanitized else phone
+        return ""
+
+    # Remove unwanted characters
+    phone_clean = re.sub(r'[\s\-\(\)\.\"']', '', phone.strip())
+
+    # If starts with +, assume already correct
+    if phone_clean.startswith('+'):
+        return phone_clean
+
+    # If starts with country code without +, add +
+    if phone_clean.startswith(default_country_code):
+        return f"+{phone_clean}"
+
+    # If 10-digit number, assume local number and add country code
+    if len(phone_clean) == 10 and phone_clean.isdigit():
+        return f"+{default_country_code}{phone_clean}"
+
+    # Default: just prefix with + if missing
+    if not phone_clean.startswith('+'):
+        return f"+{default_country_code}{phone_clean}"
+
+    return phone_clean
+
+
 
 
 # -------------------------------
@@ -72,7 +90,7 @@ class BuyerRegistrationSchema(BaseModel):
     def validate_phone(cls, v: Optional[str]) -> Optional[str]:
         if not v:
             return v
-        sanitized = sanitize_phone_number(v)
+        sanitized = normalize_phone_number(v)
         if not PHONE_REGEX.match(sanitized):
             raise ValueError("Invalid phone number format")
         return sanitized
@@ -111,7 +129,7 @@ class SellerRegistrationSchema(BaseModel):
     def validate_phone(cls, v: Optional[str]) -> Optional[str]:
         if not v:
             return v
-        sanitized = sanitize_phone_number(v)
+        sanitized = normalize_phone_number(v)
         if not PHONE_REGEX.match(sanitized):
             raise ValueError("Invalid phone number format")
         return sanitized

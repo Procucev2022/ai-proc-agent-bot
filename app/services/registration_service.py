@@ -17,7 +17,7 @@ from app.services.openai_service import OpenAIService
 from app.services.entity_service import EntityService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.procucev_apis.register_apis import RegisterAPIService
-from app.schemas.user import BuyerRegistrationSchema, SellerRegistrationSchema
+from app.schemas.user import BuyerRegistrationSchema, SellerRegistrationSchema, normalize_phone_number
 from app.schemas.user import User
 from app.utils.datetime_utils import utc_now
 from app.redis_db import get_auth_redis_service
@@ -367,7 +367,8 @@ class RegistrationService:
         try:
             # Prepare registration data
             registration_data = {
-                "organizationPhonenumber": user_phone,
+                "organizationPhonenumber": normalize_phone_number(user_phone),
+                "source_type": "W",
                 "whatsApp": True
             }
             
