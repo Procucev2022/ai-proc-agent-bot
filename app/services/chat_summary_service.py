@@ -32,35 +32,67 @@ class ChatSummaryService:
             # Handle both single rfq_id (backward compatibility) and multiple rfq_ids
             rfq_list = []
             if hasattr(session, 'rfq_ids') and session.rfq_ids:
-                rfq_list = session.rfq_ids
+                # Ensure it's a list and filter out None/empty values
+                if isinstance(session.rfq_ids, list):
+                    rfq_list = [rfq for rfq in session.rfq_ids if rfq]
+                else:
+                    rfq_list = [session.rfq_ids] if session.rfq_ids else []
             elif hasattr(session, 'rfq_id') and session.rfq_id:
                 rfq_list = [session.rfq_id]
-                
+
+            # Extract rich entities from session state for comprehensive summarization
+            from app.services.helpers.summarization_helpers import SummarizationHelpers
+            rich_entities = SummarizationHelpers.extract_rich_entities_for_summary(session)
+
+            # Combine extracted_entities with rich entities and product_items
+            combined_entities = {}
+            if session.extracted_entities:
+                combined_entities.update(session.extracted_entities)
+            if rich_entities:
+                combined_entities.update(rich_entities)
+
+            # Add product_items to entities if available
+            product_items = getattr(session, 'product_items', []) or []
+            if product_items:
+                combined_entities['product_items'] = product_items
+
+            # Include conversation history for better summarization
+            conversation_history = getattr(session, 'conversation_history', {})
+            openai_messages = conversation_history.get('openai_messages', []) if conversation_history else []
+
             session_data = {
                 'user_id': session.external_user_id,
                 'user_type': getattr(session, 'user_type', None),
                 'session_state': getattr(session, 'session_state', None),
                 'workflow_type': session.workflow_type,
                 'outcome': session.outcome,
-                'extracted_entities': session.extracted_entities or {},
+                'extracted_entities': combined_entities,
                 'rfq_ids': rfq_list,
                 'rfq_metadata': getattr(session, 'rfq_metadata', {}) or {},
-                'product_items': getattr(session, 'product_items', []) or [],
+                'product_items': product_items,
                 'seller_responses': getattr(session, 'seller_responses', []) or [],
                 'interaction_metrics': getattr(session, 'interaction_metrics', {}) or {},
-                'parent_session_id': getattr(session, 'parent_session_id', None)
+                'parent_session_id': getattr(session, 'parent_session_id', None),
+                'conversation_history': openai_messages
             }
             
+            # Log the data being sent for summarization (for debugging)
+            logger.info(f"Generating summary for session {session.session_id}:")
+            logger.info(f"  - RFQ IDs: {rfq_list}")
+            logger.info(f"  - Product items count: {len(product_items)}")
+            logger.info(f"  - Combined entities keys: {list(combined_entities.keys())}")
+            logger.info(f"  - Conversation history length: {len(openai_messages)}")
+
             # Call OpenAI service for summary generation
             summary_text = self.openai_service.generate_session_summary(session_data)
-            
+
             # Store summary
             with get_db_session() as db:
                 summary = ChatSummary(
                     session_id=session.session_id,
                     external_user_id=session.external_user_id,
                     ai_generated_summary=summary_text,
-                    extracted_entities=session.extracted_entities,
+                    extracted_entities=combined_entities,
                     rfq_ids=rfq_list,
                     session_outcome=session.outcome,
                     session_duration=self._calculate_duration(session)

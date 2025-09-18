@@ -18,6 +18,7 @@ from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
 from typing import TYPE_CHECKING
+from app.services.exit_service import ExitService
 
 if TYPE_CHECKING:
     from app.services.chat_service import ChatService
@@ -110,7 +111,6 @@ class AuthenticationOrchestrator:
             # Handle exit intent immediately - even for unauthenticated users
             if intent == "exit_system" and confidence > 50:
                 logger.info(f"Exit intent detected in auth flow with {confidence}% confidence")
-                from app.services.exit_service import ExitService
                 exit_service = ExitService(self.whatsapp_service, self.authentication_service,
                                          self.chat_service.session_manager if self.chat_service else None,
                                          self.chat_service.db_manager if self.chat_service else None)

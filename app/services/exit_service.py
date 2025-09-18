@@ -12,6 +12,8 @@ from app.services.whatsapp_service import WhatsAppService
 from app.services.authentication_service import AuthenticationService
 from app.services.session_management_service import SessionManagementService
 from app.database import DatabaseManager
+from app.utils.datetime_utils import utc_now
+
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +99,6 @@ class ExitService:
             session.extracted_entities = {}
 
             # Mark session as completed
-            from app.utils.datetime_utils import utc_now
             session.completed_at = utc_now().replace(tzinfo=None)
 
             # Save the cleared session
