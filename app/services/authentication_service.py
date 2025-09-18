@@ -169,14 +169,17 @@ class AuthenticationService:
             # Find user data matching the selected email
             selected_user = None
             for user in filtered_users:
-                if user.get("email") == selected_email:
+                # Check both 'email' and 'username' fields as API uses 'username' for email
+                user_email = user.get("email") or user.get("username")
+                if user_email == selected_email:
                     selected_user = user
                     break
             
             if not selected_user:
                 # If no exact match, use first user with same email pattern
                 for user in filtered_users:
-                    if selected_email in str(user.get("email", "")):
+                    user_email = user.get("email") or user.get("username")
+                    if selected_email in str(user_email or ""):
                         selected_user = user
                         break
             
@@ -184,18 +187,8 @@ class AuthenticationService:
                 logger.warning(f"No user found for email {selected_email}")
                 return None
             
-            return User(
-                id=selected_user.get("id", ""),
-                name=selected_user.get("name", ""),
-                email=selected_email,
-                phone_number=selected_user.get("phone_number", ""),
-                self_client=selected_user.get("self_client", False),
-                role=selected_user.get("role", "unknown"),
-                is_registered=True,
-                company_name=selected_user.get("company_name", ""),
-                unique_id=selected_user.get("unique_id", ""),
-                org_id=selected_user.get("org_id", "")
-            )
+            # Use from_mixed_data to handle both API response and User dict formats
+            return User.from_mixed_data(selected_user)
             
         except Exception as e:
             logger.error(f"Error creating user details from email: {e}")
@@ -211,16 +204,9 @@ class AuthenticationService:
             if not user_data:
                 return None
             
-            return User(
-                id=user_data.get("id", ""),
-                email=user_data.get("username", ""),
-                name=user_data.get("fullName", ""),
-                phone_number=user_data.get("phone", ""),
-                self_client=user_data.get("selfClient", False),
-                role="buyer" if user_data.get("selfClient") else "seller",
-                is_registered=True,
-                company_name=user_data.get("companyName", "")
-            )
+            # Use from_mixed_data to handle both API response and User dict formats
+            return User.from_mixed_data(user_data)
+            
         except Exception as e:
             logger.error(f"Error extracting user details: {e}")
             return None

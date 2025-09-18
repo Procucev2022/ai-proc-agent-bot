@@ -137,8 +137,6 @@ class APIUserSchema(BaseModel):
     phone: Optional[str] = None
     companyName: Optional[str] = None
     uniqueId: Optional[str] = None
-    org_uuid: Optional[str] = None
-    orgUuid: Optional[str] = None
     orgId: Optional[str] = None
     verificationStatus: Optional[str] = None
     
@@ -181,6 +179,10 @@ class User(BaseModel):
         # Keep original phone format from API (with country code)
         phone = api_data.get("phone")
         # Don't sanitize - keep the original format for session consistency
+        
+        # Check verification status for is_registered flag
+        verification_status = api_data.get("verificationStatus") or "PENDING_EMAIL_VERIFICATION"
+        is_registered = verification_status == "EMAIL_VERIFIED"
 
         return cls(
             id=user_id,
@@ -188,13 +190,26 @@ class User(BaseModel):
             email=api_data.get("username"),
             self_client=api_data.get("selfClient", False),
             role=role,
-            is_registered=bool(user_id),
+            is_registered=is_registered,
             phone_number=phone,
             company_name=api_data.get("companyName"),
             unique_id=api_data.get("uniqueId"),
-            org_id=api_data.get("org_uuid") or api_data.get("orgUuid") or api_data.get("orgId") or api_data.get("organizationId"),
-            verification_status=api_data.get("verificationStatus")
+            org_id=api_data.get("orgId"),
+            verification_status=verification_status
         )
+
+    @classmethod
+    def from_mixed_data(cls, data: dict) -> "User":
+        """Create User from either API response or User dict format."""
+        # Check if it's already in User format (has 'name', 'email' fields)
+        if 'name' in data and 'email' in data:
+            # Ensure is_registered follows verification_status rule
+            user_data = data.copy()
+            verification_status = user_data.get('verification_status', 'PENDING_EMAIL_VERIFICATION')
+            user_data['is_registered'] = verification_status == 'EMAIL_VERIFIED'
+            return cls(**user_data)
+        # Otherwise treat as API response format
+        return cls.from_api_response(data)
 
     @classmethod
     def invalid_user(cls, user_phone: str) -> "User":
