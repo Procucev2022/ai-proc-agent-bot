@@ -11,6 +11,7 @@ from app.models import ConversationSession, ChatSummary
 from app.services.openai_service import OpenAIService
 from app.config import get_settings
 from app.utils.logging_utils import log_service_method
+from app.services.helpers.summarization_helpers import SummarizationHelpers
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,6 @@ class ChatSummaryService:
                 rfq_list = [session.rfq_id]
 
             # Extract rich entities from session state for comprehensive summarization
-            from app.services.helpers.summarization_helpers import SummarizationHelpers
             rich_entities = SummarizationHelpers.extract_rich_entities_for_summary(session)
 
             # Combine extracted_entities with rich entities and product_items
