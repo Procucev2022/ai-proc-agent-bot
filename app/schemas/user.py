@@ -28,20 +28,39 @@ PINCODE_REGEX = re.compile(r"^\d{6}$")
 GSTIN_REGEX = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$")
 
 
-def sanitize_phone_number(phone: str) -> str:
-    """Sanitize phone number and ensure +91 country code format."""
+def normalize_phone_number(phone: str, default_country_code: str = "91") -> str:
+    """Normalize and format phone number to +<countrycode><number> format.
+    
+    - Strips spaces, dashes, parentheses, dots
+    - Ensures +<countrycode> prefix
+    - Defaults to +91 for 10-digit numbers (India)
+    """
     if not phone:
-        return phone
-    # Remove spaces, dashes, parentheses, dots but keep digits
-    sanitized = re.sub(r'[\s\-\(\)\.]', '', phone)
-    # Remove + if present
-    if sanitized.startswith('+'):
-        sanitized = sanitized[1:]
-    # Add country code if not present
-    if not sanitized.startswith('91') and len(sanitized) == 10:
-        sanitized = '91' + sanitized
-    # Return with + prefix
-    return '+' + sanitized if sanitized else phone
+        return ""
+
+    # Remove unwanted characters
+    phone_clean = re.sub(r'[\s\-()."\']', '', phone.strip())
+
+
+    # If starts with +, assume already correct
+    if phone_clean.startswith('+'):
+        return phone_clean
+
+    # If starts with country code without +, add +
+    if phone_clean.startswith(default_country_code):
+        return f"+{phone_clean}"
+
+    # If 10-digit number, assume local number and add country code
+    if len(phone_clean) == 10 and phone_clean.isdigit():
+        return f"+{default_country_code}{phone_clean}"
+
+    # Default: just prefix with + if missing
+    if not phone_clean.startswith('+'):
+        return f"+{default_country_code}{phone_clean}"
+
+    return phone_clean
+
+
 
 
 # -------------------------------
@@ -72,7 +91,7 @@ class BuyerRegistrationSchema(BaseModel):
     def validate_phone(cls, v: Optional[str]) -> Optional[str]:
         if not v:
             return v
-        sanitized = sanitize_phone_number(v)
+        sanitized = normalize_phone_number(v)
         if not PHONE_REGEX.match(sanitized):
             raise ValueError("Invalid phone number format")
         return sanitized
@@ -111,7 +130,7 @@ class SellerRegistrationSchema(BaseModel):
     def validate_phone(cls, v: Optional[str]) -> Optional[str]:
         if not v:
             return v
-        sanitized = sanitize_phone_number(v)
+        sanitized = normalize_phone_number(v)
         if not PHONE_REGEX.match(sanitized):
             raise ValueError("Invalid phone number format")
         return sanitized
@@ -137,8 +156,6 @@ class APIUserSchema(BaseModel):
     phone: Optional[str] = None
     companyName: Optional[str] = None
     uniqueId: Optional[str] = None
-    org_uuid: Optional[str] = None
-    orgUuid: Optional[str] = None
     orgId: Optional[str] = None
     verificationStatus: Optional[str] = None
     
@@ -181,6 +198,10 @@ class User(BaseModel):
         # Keep original phone format from API (with country code)
         phone = api_data.get("phone")
         # Don't sanitize - keep the original format for session consistency
+        
+        # Set is_registered to True by default
+        verification_status = api_data.get("verificationStatus") or "PENDING_EMAIL_VERIFICATION"
+        is_registered = True
 
         return cls(
             id=user_id,
@@ -188,13 +209,25 @@ class User(BaseModel):
             email=api_data.get("username"),
             self_client=api_data.get("selfClient", False),
             role=role,
-            is_registered=bool(user_id),
+            is_registered=is_registered,
             phone_number=phone,
             company_name=api_data.get("companyName"),
             unique_id=api_data.get("uniqueId"),
-            org_id=api_data.get("org_uuid") or api_data.get("orgUuid") or api_data.get("orgId") or api_data.get("organizationId"),
-            verification_status=api_data.get("verificationStatus")
+            org_id=api_data.get("orgId"),
+            verification_status=verification_status
         )
+
+    @classmethod
+    def from_mixed_data(cls, data: dict) -> "User":
+        """Create User from either API response or User dict format."""
+        # Check if it's already in User format (has 'name', 'email' fields)
+        if 'name' in data and 'email' in data:
+            # Set is_registered to True by default
+            user_data = data.copy()
+            user_data['is_registered'] = True
+            return cls(**user_data)
+        # Otherwise treat as API response format
+        return cls.from_api_response(data)
 
     @classmethod
     def invalid_user(cls, user_phone: str) -> "User":

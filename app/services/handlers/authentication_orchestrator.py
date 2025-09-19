@@ -22,7 +22,7 @@ from app.services.exit_service import ExitService
 
 if TYPE_CHECKING:
     from app.services.chat_service import ChatService
-from app.services.handlers.supportService_hanlder import SupportHelpers
+from app.services.helpers.support_helpers import SupportHelpers
 from app.services.chat_service import ChatService
 from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
 

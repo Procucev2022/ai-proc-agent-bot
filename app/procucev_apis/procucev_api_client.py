@@ -11,6 +11,7 @@ import aiohttp
 from datetime import datetime, timedelta , UTC
 from typing import Dict, Any, Optional, Literal
 from app.config import get_settings
+from app.schemas.user import normalize_phone_number
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -76,14 +77,20 @@ class ProcucevAPIClient:
             logger.info("HTTP session closed")
             self.session = None
 
+
+
     async def authenticate(self) -> bool:
         """
         Authenticate with the API to obtain a bearer token.
         Example: POST to /authenticate with username and phone.
         """
         auth_url = f"{self.base_url}/authenticate"
-        payload = {"username": self.username, "phone": self.phone}
+        
         try:
+            payload = {
+                "username": self.username,
+                "phone": normalize_phone_number(self.phone)
+            }
             resp = await self.send_request("POST", auth_url, json_data=payload, require_auth=False)
             token = resp.get("access_token") or resp.get("token")
             expires_in = resp.get("expires_in") or resp.get("expires", 3600)
