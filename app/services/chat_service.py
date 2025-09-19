@@ -30,8 +30,6 @@ from app.services.vendor_service import VendorService
 from app.services.rfq_service import RFQService
 from app.services.whatsapp_service import WhatsAppService
 from app.services.openai_service import OpenAIService
-from app.services.handlers.authentication_orchestrator import AuthenticationOrchestrator
-from app.services.helpers.support_helpers import SupportHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.excel_helpers import ExcelHelpers
@@ -101,12 +99,6 @@ class ChatService:
         self.registration_service = RegistrationService(
             self.whatsapp_service, self.openai_service, self.entity_service, self.response_helpers, self.session_manager
         )
-
-        self.auth_orchestrator = AuthenticationOrchestrator(
-            self.whatsapp_service, self.response_helpers,
-            self.authentication_service, self.registration_service,
-            self.intent_service, SupportHelpers(self.whatsapp_service), self
-        )
         self.exit_service = ExitService(
             self.whatsapp_service, self.authentication_service, self.session_manager, self.db_manager
         )
@@ -150,7 +142,7 @@ class ChatService:
             self.session_manager.add_message_to_history(session, "user", message_content, message_type)
 
             # User Authentication flow
-            auth_result = await self.auth_orchestrator.authentication_orchestrator_flow(user_phone, message_content, session)
+            auth_result = await self.authentication_orchestrator_flow(user_phone, message_content, session)
 
             # Check if authentication is still in progress
             if isinstance(auth_result, dict):
@@ -236,7 +228,27 @@ class ChatService:
         except Exception as e:
             return await self._handle_error_response(e, user_phone, "processing_message", "Please try again")
 
+    async def authentication_orchestrator_flow(self, user_phone: str, message_content: str,
+                                               session: ConversationSession) -> Dict[str, Any]:
+        """Main authentication orchestrator function."""
+        try:
+            # Initialize authentication orchestrator
+            from app.services.handlers.authentication_orchestrator import AuthenticationOrchestrator
+            from app.services.helpers.support_helpers import SupportHelpers
 
+            auth_orchestrator = AuthenticationOrchestrator(
+                self.whatsapp_service, self.response_helpers,
+                self.authentication_service, self.registration_service,
+                self.intent_service, SupportHelpers(self.whatsapp_service), self
+            )
+
+            return await auth_orchestrator.authentication_orchestrator_flow(
+                user_phone, message_content, session
+            )
+
+        except Exception as e:
+            logger.error(f"Authentication orchestrator error for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
 
 
 
