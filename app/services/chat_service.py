@@ -843,7 +843,7 @@ class ChatService:
                     db_user.is_registered = True
                     db.commit()
 
-                return await self._process_text_message(user, await self._get_conversation_context(user.phone_number),
+                return await self._process_text_message(user, await self.session_manager.get_conversation_context(user.phone_number),
                                                         message)
 
         except Exception as e:

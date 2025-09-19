@@ -39,7 +39,8 @@ def normalize_phone_number(phone: str, default_country_code: str = "91") -> str:
         return ""
 
     # Remove unwanted characters
-    phone_clean = re.sub(r'[\s\-\(\)\.\"']', '', phone.strip())
+    phone_clean = re.sub(r'[\s\-()."\']', '', phone.strip())
+
 
     # If starts with +, assume already correct
     if phone_clean.startswith('+'):
@@ -198,9 +199,9 @@ class User(BaseModel):
         phone = api_data.get("phone")
         # Don't sanitize - keep the original format for session consistency
         
-        # Check verification status for is_registered flag
+        # Set is_registered to True by default
         verification_status = api_data.get("verificationStatus") or "PENDING_EMAIL_VERIFICATION"
-        is_registered = verification_status == "EMAIL_VERIFIED"
+        is_registered = True
 
         return cls(
             id=user_id,
@@ -221,10 +222,9 @@ class User(BaseModel):
         """Create User from either API response or User dict format."""
         # Check if it's already in User format (has 'name', 'email' fields)
         if 'name' in data and 'email' in data:
-            # Ensure is_registered follows verification_status rule
+            # Set is_registered to True by default
             user_data = data.copy()
-            verification_status = user_data.get('verification_status', 'PENDING_EMAIL_VERIFICATION')
-            user_data['is_registered'] = verification_status == 'EMAIL_VERIFIED'
+            user_data['is_registered'] = True
             return cls(**user_data)
         # Otherwise treat as API response format
         return cls.from_api_response(data)
