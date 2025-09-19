@@ -30,7 +30,6 @@ from app.config import get_settings
 from app.api.webhook import router as webhook_router
 from app.database import init_database
 from app.services.chat_service import ChatService
-from app.context.middleware import ContextMiddleware
 
 
 # Get settings and configure logging
@@ -103,8 +102,6 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Add context middleware (must be first)
-app.add_middleware(ContextMiddleware)
 # Add IP restriction middleware
 if settings.allowed_ips:
     app.add_middleware(IPRestrictionMiddleware, allowed_ips=settings.allowed_ips)
