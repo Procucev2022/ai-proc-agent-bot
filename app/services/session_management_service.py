@@ -121,9 +121,9 @@ class SessionManagementService:
         
         return session
     
-    def add_message_to_history(self, session: ConversationSession, role: str, content: str, message_type: str = "text"):
+    def add_message_to_history(self, session: ConversationSession, role: str, content: str, message_type: str = "text", intent: str = None, confidence: float = None):
         """Add message to conversation history."""
-        SummarizationHelpers.add_to_conversation_history(session, role, content, message_type)
+        SummarizationHelpers.add_to_conversation_history(session, role, content, message_type, intent, confidence)
     
     async def send_and_track_message(self, phone_number: str, message: str, 
                                     session: ConversationSession, message_type: str = "text") -> None:

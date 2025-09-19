@@ -110,24 +110,35 @@ class AuthRegistrationIntentSwitch:
         
         # Analyze user choice
         choice = await self._analyze_switch_choice(message)
-        
-        if choice == "continue_current":
+
+        if choice == "exit":
+            # Clear switch state and trigger exit flow
+            del session.workflow_state["pending_auth_reg_switch"]
+            # Clear entire workflow
+            self._clear_current_workflow(session)
+            await self.whatsapp_service.send_message(
+                user_phone,
+                "Thank you for using QUA. Have a great day!"
+            )
+            return {"status": "exit_requested"}
+
+        elif choice == "continue_current":
             # Clear switch state and continue current
             del session.workflow_state["pending_auth_reg_switch"]
             return {"status": "continue_current_workflow"}
-        
+
         elif choice == "switch_to_new":
             # Extract new combination details
             new_intent = pending_switch["new_intent"]
             new_user_type = pending_switch["new_user_type"]
             new_message = pending_switch["new_message"]
-            
+
             # Clear switch state
             del session.workflow_state["pending_auth_reg_switch"]
-            
+
             # Clear current workflow
             self._clear_current_workflow(session)
-            
+
             return {
                 "status": "switch_to_new_combination",
                 "new_intent": new_intent,
@@ -135,11 +146,11 @@ class AuthRegistrationIntentSwitch:
                 "new_message": new_message,
                 "target_workflow": self._get_target_workflow(new_intent)
             }
-        
+
         else:
             # Unclear response, ask again
             await self.whatsapp_service.send_message(
-                user_phone, 
+                user_phone,
                 "Please choose 1 to continue current process or 2 to switch:"
             )
             return {"status": "clarification_requested"}
@@ -147,7 +158,11 @@ class AuthRegistrationIntentSwitch:
     async def _analyze_switch_choice(self, message: str) -> str:
         """Analyze user's choice using simple logic first, then AI if needed."""
         message_lower = message.lower().strip()
-        
+
+        # Check for exit commands first
+        if any(word in message_lower for word in ["exit", "quit", "stop", "cancel", "bye", "goodbye"]):
+            return "exit"
+
         # Simple keyword matching
         if any(word in message_lower for word in ["1", "continue", "current", "first"]):
             return "continue_current"
@@ -548,35 +563,48 @@ Analyze their response and return only:
             )
 
             response = response.strip().lower()
+            logger.info(f"AI validation response for message '{message}': '{response}'")
 
             if "switch_existing" in response:
+                logger.info("AI validation: Detected switch_existing")
                 return "switch_existing"
             elif "register_new" in response:
+                logger.info("AI validation: Detected register_new")
                 return "register_new"
             elif "continue_current" in response:
+                logger.info("AI validation: Detected continue_current")
                 return "continue_current"
             else:
-                return "unclear"
+                logger.info(f"AI validation: Response unclear - '{response}', trying fallback pattern matching")
+                # Trigger fallback by raising an exception
+                raise ValueError("AI validation returned unclear response")
 
         except Exception as e:
             logger.error(f"AI three-option validation error: {e}")
             # Fallback to simple pattern matching
             message_lower = message.lower().strip()
+            logger.info(f"AI validation failed, using fallback pattern matching for: '{message_lower}'")
 
-            if any(word in message_lower for word in ["1", "switch", "existing", "authenticate", "login"]):
+            if message_lower == "1" or any(word in message_lower for word in ["switch", "existing", "authenticate", "login"]):
+                logger.info("Fallback: Detected switch_existing intent")
                 return "switch_existing"
-            elif any(word in message_lower for word in ["2", "register", "new", "create", "signup"]):
+            elif message_lower == "2" or any(word in message_lower for word in ["register", "new", "create", "signup"]):
+                logger.info("Fallback: Detected register_new intent")
                 return "register_new"
-            elif any(word in message_lower for word in ["3", "continue", "current", "stay", "keep"]):
+            elif message_lower == "3" or any(word in message_lower for word in ["continue", "current", "stay", "keep"]):
+                logger.info("Fallback: Detected continue_current intent")
                 return "continue_current"
             else:
+                logger.info("Fallback: Response unclear")
                 return "unclear"
 
     async def _handle_switch_to_existing_account(self, user, session, target_role: str, original_message: str, authentication_service) -> Dict[str, Any]:
         """Handle switching to existing account authentication flow."""
         try:
             # Clear user token/session
-            await authentication_service.clear_user_token(user.phone_number)
+            # Normalize phone number by removing '+' prefix for token clearing
+            normalized_phone = user.phone_number.lstrip('+')
+            await authentication_service.clear_user_token(normalized_phone)
 
             # Clear current session and create new one for reauthentication
             if hasattr(authentication_service, 'session_manager') and authentication_service.session_manager:
@@ -654,7 +682,9 @@ Analyze their response and return only:
             from app.services.registration_service import RegistrationService
 
             # Clear user token/session for registration
-            await authentication_service.clear_user_token(user.phone_number)
+            # Normalize phone number by removing '+' prefix for token clearing
+            normalized_phone = user.phone_number.lstrip('+')
+            await authentication_service.clear_user_token(normalized_phone)
 
             # Clear current session and create new one for registration
             if hasattr(authentication_service, 'session_manager') and authentication_service.session_manager:

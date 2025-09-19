@@ -42,7 +42,7 @@ from app.services.handlers.purchase_intent_handler import PurchaseIntentHandler
 from app.services.handlers.attachment_decision_handler import AttachmentDecisionHandler
 from app.services.handlers.intent_switch_handler import IntentSwitchHandler
 from app.services.processors.image_message_processor import ImageMessageProcessor
-
+from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.services.excel_validation_service import ExcelValidationService
 from app.services.excel_processing_service import ExcelProcessingService
 from app.services.gmt_api_service import GMTAPIService
@@ -139,7 +139,18 @@ class ChatService:
             session = await self.session_manager.handle_session_expiry_check(user_phone, session)
 
             # Track user message in conversation history using extracted service
-            self.session_manager.add_message_to_history(session, "user", message_content, message_type)
+            # Classify intent for all user messages to enable proper message routing after auth
+            message_intent_result = None
+            try:
+                conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
+                message_intent_result = self.intent_service.classify_intent(message_content, conversation_context)
+                intent = message_intent_result.get('intent')
+                confidence = message_intent_result.get('confidence', 0)
+                self.session_manager.add_message_to_history(session, "user", message_content, message_type, intent, confidence)
+            except Exception as e:
+                # If intent classification fails, still track the message without intent
+                logger.warning(f"Intent classification failed during message tracking: {e}")
+                self.session_manager.add_message_to_history(session, "user", message_content, message_type)
 
             # User Authentication flow
             auth_result = await self.authentication_orchestrator_flow(user_phone, message_content, session)
@@ -155,7 +166,9 @@ class ChatService:
                     "redirected_to_registration", "redirected_to_email_confirmation", "otp_sent",
                     "email_selection_requested", "registration_initiated", "data_collection_in_progress",
                     "awaiting_confirmation", "registration_restarted", "otp_validated", "otp_invalid",
-                    "domain_approved", "domain_approval_required", "email_confirmation_requested"
+                    "domain_approved", "domain_approval_required", "email_confirmation_requested",
+                    "auth_reg_switch_choice_presented", "exit_completed", "switch_authentication_started",
+                    "role_switch_clarification_requested"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
@@ -166,36 +179,38 @@ class ChatService:
                     logger.info(f"Authentication flow handled - returning without main flow processing")
                     return auth_result
                 elif auth_status == "registration_completed":
-                    # Registration completed, get user details and continue to main flow
+                    # Registration completed - check user type and handle appropriately
                     user = await self.authentication_service.validate_token(user_phone)
                     if user:
-                        logger.info(f"Registration completed - proceeding to main flow")
-                        return await self._process_text_message(user, session, message_content)
+                        user_type = auth_result.get("user_type", "buyer")
+
+                        if user_type == "seller":
+                            # Sellers: Registration is complete, don't process the OTP message further
+                            logger.info(f"Seller registration completed - registration flow finished")
+                            return {"status": "registration_completed", "message": "Seller registration successful"}
+                        else:
+                            # Buyers: Apply intent filtering and continue to main flow
+                            message_to_process = ChatServiceHelpers.find_most_relevant_message_after_auth(
+                                session, message_content, auth_result
+                            )
+
+                            logger.info(f"Buyer registration completed - processing message: {message_to_process[:50]}...")
+                            return await self._process_text_message(user, session, message_to_process)
                     else:
                         return {"status": "error", "error": "Session not found after registration"}
                 elif auth_status == "authentication_completed":
-                    # Authentication completed - check if we need to process stored original message
-                    # First check auth_result for original_message, then fallback to session workflow_state
-                    original_message = auth_result.get("original_message") if isinstance(auth_result, dict) else None
-                    if not original_message:
-                        original_message = session.workflow_state.get("original_message") if session.workflow_state else None
-                    
-                    if original_message and original_message != message_content:
-                        # Process the stored original message instead of current message
-                        logger.info(f"Authentication completed - processing stored original message: {original_message}")
-                        user = await self.authentication_service.validate_token(user_phone)
-                        if user:
-                            return await self._process_text_message(user, session, original_message)
-                        else:
-                            return {"status": "error", "error": "Session not found after authentication"}
+                    # Authentication completed - find the most relevant message to process
+
+                    message_to_process = ChatServiceHelpers.find_most_relevant_message_after_auth(
+                        session, message_content, auth_result
+                    )
+
+                    logger.info(f"Authentication completed - processing message: {message_to_process[:50]}...")
+                    user = await self.authentication_service.validate_token(user_phone)
+                    if user:
+                        return await self._process_text_message(user, session, message_to_process)
                     else:
-                        # No original message or it's the same as current - process normally  
-                        logger.info(f"Authentication completed - processing current message")
-                        user = await self.authentication_service.validate_token(user_phone)
-                        if user:
-                            return await self._process_text_message(user, session, message_content)
-                        else:
-                            return {"status": "error", "error": "Session not found after authentication"}
+                        return {"status": "error", "error": "Session not found after authentication"}
 
             # Check if auth returned User (authenticated user)
             if isinstance(auth_result, User):
@@ -212,7 +227,7 @@ class ChatService:
             # Only proceed to main flow if user is properly authenticated
             user = auth_result
             if message_type == "text":
-                result = await self._process_text_message(user, session, message_content)
+                result = await self._process_text_message(user, session, message_content, message_intent_result)
             elif message_type == "interactive":
                 result = await self._process_interactive_message(user, session, message_content)
             elif message_type == "excel_upload":
@@ -254,7 +269,7 @@ class ChatService:
 
 
 
-    async def _process_text_message(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+    async def _process_text_message(self, user: User, session: ConversationSession, message: str, message_intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """Process text message through intent classification and routing."""
         try:
             # Check if user needs registration
@@ -269,11 +284,15 @@ class ChatService:
             
             # Handle pending role switch confirmation FIRST
             if session.workflow_state.get("pending_role_switch"):
+                logger.info(f"Detected pending role switch for user {user.phone_number}")
                 from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
                 auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
                 result = await auth_reg_switch.handle_role_switch_response(user, session, message, self.authentication_service)
                 await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                logger.info(f"Role switch response result: {result}")
                 return result
+            else:
+                logger.info(f"No pending role switch detected. Workflow state keys: {list(session.workflow_state.keys()) if session.workflow_state else 'None'}")
 
             # Handle pending account switch confirmation (same-role switches)
             if session.workflow_state.get("pending_account_switch"):
@@ -362,13 +381,19 @@ class ChatService:
             print(
                 f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}")
 
-            # Classify intent FIRST - if modification_request is detected, handle immediately regardless of workflow state
-            conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
-            intent_result = self.intent_service.classify_intent(message, conversation_context)
+            # Use already-classified intent from message tracking, or classify if not available
+            intent_result = message_intent_result
+            if not intent_result:
+                # Fallback: classify intent if not already done during message tracking
+                conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
+                intent_result = self.intent_service.classify_intent(message, conversation_context)
             logger.info(f"Intent classification result: {intent_result}")
 
             intent = intent_result.get('intent')
             confidence = intent_result.get('confidence', 0)
+
+            # Update the last user message in conversation history with intent data
+            self._update_last_user_message_with_intent(session, intent, confidence)
 
             # Handle exit intent immediately - highest priority
             if intent == "exit_system" and confidence > 50:
@@ -1697,3 +1722,25 @@ class ChatService:
             
         except Exception as e:
             logger.error(f"Error restarting workflow: {e}")
+
+    def _update_last_user_message_with_intent(self, session: ConversationSession, intent: str, confidence: float) -> None:
+        """Update the last user message in conversation history with intent classification results."""
+        try:
+            if not session.conversation_history or not isinstance(session.conversation_history, dict):
+                return
+
+            messages = session.conversation_history.get('messages', [])
+            if not messages:
+                return
+
+            # Find the last user message and update it with intent data
+            for i in range(len(messages) - 1, -1, -1):  # Iterate backwards
+                message = messages[i]
+                if message.get("sender") == "user":
+                    message["intent"] = intent
+                    message["confidence"] = confidence
+                    logger.info(f"Updated user message with intent: {intent} (confidence: {confidence})")
+                    break
+
+        except Exception as e:
+            logger.error(f"Error updating last user message with intent: {e}")

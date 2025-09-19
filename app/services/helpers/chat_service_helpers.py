@@ -212,7 +212,7 @@ class ChatServiceHelpers:
     def determine_conversation_stage(session: ConversationSession) -> str:
         """Determine current conversation stage based on session state."""
         workflow_state = session.workflow_state or {}
-        
+
         if workflow_state.get("pending_combined_rfq") or workflow_state.get("pending_rfq"):
             return "confirming"
         elif workflow_state.get("incomplete_products"):
@@ -229,3 +229,63 @@ class ChatServiceHelpers:
             return "completed"
         else:
             return "collecting"
+
+    @staticmethod
+    def find_most_relevant_message_after_auth(session: ConversationSession,
+                                             current_message: str, auth_result: dict = None) -> str:
+        """
+        Find the most relevant message to process after authentication/registration completion.
+
+        Priority:
+        1. Last message with 'buy_something' or 'sell_something' intent
+        2. Fall back to original_message from auth_result or session
+        3. Fall back to current_message
+
+        Args:
+            session: Current conversation session
+            current_message: Current user message
+            auth_result: Authentication result containing potential original_message
+
+        Returns:
+            str: The most relevant message to process
+        """
+        try:
+            # Get original message from auth result or session
+            original_message = None
+            if isinstance(auth_result, dict):
+                original_message = auth_result.get("original_message")
+            if not original_message and session.workflow_state:
+                original_message = session.workflow_state.get("original_message")
+
+            # Get conversation history
+            conversation_history = getattr(session, 'conversation_history', {})
+            messages = conversation_history.get('messages', []) if conversation_history else []
+
+            if not messages:
+                logger.info("No conversation history - using original or current message")
+                return original_message if original_message else current_message
+
+            # Look for last user message with buy_something or sell_something intent (newest first)
+            target_intents = ["buy_something", "sell_something"]
+
+            for message in reversed(messages):
+                if (message.get("sender") == "user" and
+                    message.get("intent") in target_intents):
+                    logger.info(f"Found message with {message.get('intent')} intent: {message.get('content')[:50]}...")
+                    return message.get("content")
+
+            # No buy/sell intent found - fall back to original message
+            if original_message:
+                logger.info(f"No buy/sell intent found - using original message: {original_message[:50]}...")
+                return original_message
+
+            # Final fallback to current message
+            logger.info(f"No original message - using current message: {current_message[:50]}...")
+            return current_message
+
+        except Exception as e:
+            logger.error(f"Error finding most relevant message after auth: {e}")
+            # Safe fallback
+            if original_message:
+                return original_message
+            return current_message

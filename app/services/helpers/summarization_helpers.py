@@ -33,7 +33,7 @@ class SummarizationHelpers:
             await whatsapp_service.send_message(phone_number, message)
     
     @staticmethod
-    def add_to_conversation_history(session: ConversationSession, sender: str, message: str, message_type: str = "text") -> None:
+    def add_to_conversation_history(session: ConversationSession, sender: str, message: str, message_type: str = "text", intent: str = None, confidence: float = None) -> None:
         """
         Add message to conversation history for better summarization context.
 
@@ -42,6 +42,8 @@ class SummarizationHelpers:
             sender: "user" or "assistant"
             message: Message content
             message_type: Type of message (text, interactive, etc.)
+            intent: Intent classification result (optional)
+            confidence: Intent confidence score (optional)
         """
         try:
             # Ensure conversation_history is a proper dictionary structure
@@ -67,13 +69,21 @@ class SummarizationHelpers:
             })
 
             # Add to legacy messages format for compatibility
-            session.conversation_history["messages"].append({
+            message_entry = {
                 "role": role,
                 "content": message,
                 "timestamp": utc_now().isoformat(),
                 "sender": sender,
                 "type": message_type
-            })
+            }
+
+            # Add intent data for user messages if provided
+            if sender == "user" and intent is not None:
+                message_entry["intent"] = intent
+                if confidence is not None:
+                    message_entry["confidence"] = confidence
+
+            session.conversation_history["messages"].append(message_entry)
 
             # Keep metadata separately for debugging/audit
             session.conversation_history["metadata"].append({

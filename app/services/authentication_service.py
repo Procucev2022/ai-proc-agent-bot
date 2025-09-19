@@ -124,7 +124,9 @@ class AuthenticationService:
         """Filter users based on intent and return structured data using schemas."""
         try:
             from app.schemas.user import APIUserSchema
-            
+
+            logger.info(f"filter_users_by_intent called: intent='{intent}', raw_users_count={len(raw_users)}")
+
             # Normalize using schema
             users: List[APIUserSchema] = [APIUserSchema(**user) for user in raw_users]
             
@@ -137,21 +139,24 @@ class AuthenticationService:
                 filtered_users = users
                         
             if not filtered_users:
+                logger.info(f"filter_users_by_intent: No matching users found for intent '{intent}'")
                 return {"success": False, "message": "No matching users found"}
-            
+
             # 2. Aggregate the emails via user.username
             unique_emails = []
             for user in filtered_users:
                 if user.username and user.username not in unique_emails:
                     unique_emails.append(user.username)
-            
+
             # Convert to User for consistent response
             user_details_list = []
             for user in filtered_users:
                 user_dict = user.dict()
                 user_detail = User.from_api_response(user_dict)
                 user_details_list.append(user_detail)
-            
+
+            logger.info(f"filter_users_by_intent success: filtered_users_count={len(filtered_users)}, unique_emails_count={len(unique_emails)}")
+
             return {
                 "success": True,
                 "filtered_users": [user.dict() for user in user_details_list],
@@ -239,25 +244,73 @@ class AuthenticationService:
     
     async def handle_email_confirmation(self, user_phone: str, message: str,
                                       session: ConversationSession) -> Dict[str, Any]:
-        """Handle email confirmation response with AI-first approach."""
+        """Handle email confirmation response with intent-aware re-filtering."""
         try:
             email_options = session.workflow_state.get("email_options", [])
             filtered_users = session.workflow_state.get("filtered_users", [])
             confirmation_stage = session.workflow_state.get("confirmation_stage", "selection")
-            
+
             if not email_options or not filtered_users:
                 return {"status": "restart_authentication"}
-            
+
+            # NEW: Check for clear intent before processing email selection
+            if confirmation_stage == "selection":
+                # Re-classify intent from the message
+                from app.services.helpers.chat_service_helpers import ChatServiceHelpers
+                from app.services.intent_service import IntentService
+
+                conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
+                intent_service = IntentService()
+                intent_result = intent_service.classify_intent(message, conversation_context)
+
+                intent = intent_result.get('intent')
+                confidence = intent_result.get('confidence', 0)
+
+                logger.info(f"Intent refinement check: {intent} ({confidence}%)")
+
+                # If clear buy/sell intent with high confidence
+                if intent in ["buy_something", "sell_something"] and confidence > 75:
+                    # Get original users and re-filter
+                    original_users = session.workflow_state.get("original_auth_users", filtered_users)
+                    filter_result = self.filter_users_by_intent(original_users, intent)
+
+                    if filter_result.get("success") and set(filter_result["unique_emails"]) != set(email_options):
+                        # Intent refinement applied - update session state
+                        logger.info(f"Intent refinement applied: {intent} ({confidence}%) - "
+                                   f"Emails: {len(email_options)} → {len(filter_result['unique_emails'])}")
+
+                        session.workflow_state["email_options"] = filter_result["unique_emails"]
+                        session.workflow_state["filtered_users"] = filter_result["filtered_users"]
+                        email_options = filter_result["unique_emails"]
+                        filtered_users = filter_result["filtered_users"]
+
+                        # If only one email remains after refinement, auto-process it
+                        if len(filter_result["unique_emails"]) == 1:
+                            selected_email = filter_result["unique_emails"][0]
+                            logger.info(f"Auto-processing single email after intent refinement: {selected_email}")
+                            return await self._process_selected_email(user_phone, session, selected_email,
+                                                                   filter_result["filtered_users"])
+
+                        # Multiple emails still remain - show refined list
+                        logger.info(f"Showing refined email list with {len(filter_result['unique_emails'])} options")
+                        return await self._request_email_selection_with_text(
+                            user_phone, session,
+                            filter_result["unique_emails"],
+                            filter_result["filtered_users"]
+                        )
+                    else:
+                        logger.info(f"Intent refinement skipped - no change in email options or filtering failed")
+
             # Check if this is a button response
             # Removed button handling - using text-based selection
-            
+
             if confirmation_stage in ["selection", "intent_filtered_selection"]:
                 # AI-first email rejection detection
                 is_rejection = await self._ai_detect_email_rejection(message)
                 if is_rejection:
                     await self.whatsapp_service.send_message(user_phone, "I understand these emails don't match yours. Let me help you register with your correct information.")
                     return {"status": "redirect_to_registration"}
-                
+
                 # AI-first email selection parsing
                 selected_email = await self._ai_parse_email_selection(message, email_options)
                 
