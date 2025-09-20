@@ -22,6 +22,7 @@ import asyncio
 
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
+from app.services.welcome_message_service import get_welcome_service
 from app.utils.datetime_utils import utc_now
 from app.utils.logging_utils import log_service_method
 from app.services.intent_service import IntentService
@@ -132,6 +133,16 @@ class ChatService:
         workflow routing, and response generation.
         """
         try:
+            # Check and send welcome message if needed (before session creation)
+            welcome_service = get_welcome_service()
+            if await welcome_service.should_send_welcome(user_phone):
+                welcome_text = "Welcome to QUA!"
+                message_response = await self.whatsapp_service.send_message(user_phone, welcome_text)
+                if message_response.success:
+                    await welcome_service.mark_welcome_sent(user_phone)
+                # Return immediately to show welcome message first
+                return {"status": "welcome_sent", "message": "Welcome message sent successfully"}
+            
             # Get or create user session using extracted service
             session = await self.session_manager.get_conversation_context(user_phone)
 
