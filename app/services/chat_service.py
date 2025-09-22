@@ -287,7 +287,9 @@ class ChatService:
             if not user.is_registered:
                 return await self._handle_registration_workflow(user, message)
 
-            logger.info("user phone", user.phone_number)
+            logger.info(f"user  phone number {user.phone_number}")
+
+
             # Handle seller RFQ selection workflow BEFORE intent classification
             if session.workflow_type and hasattr(session.workflow_type, 'value') and session.workflow_type.value == "seller_rfq_view":
                 workflow_state = session.workflow_state or {}
