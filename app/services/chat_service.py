@@ -286,6 +286,8 @@ class ChatService:
             # Check if user needs registration
             if not user.is_registered:
                 return await self._handle_registration_workflow(user, message)
+
+            logger.info("user phone", user.phone_number)
             # Handle seller RFQ selection workflow BEFORE intent classification
             if session.workflow_type and hasattr(session.workflow_type, 'value') and session.workflow_type.value == "seller_rfq_view":
                 workflow_state = session.workflow_state or {}
@@ -637,6 +639,7 @@ class ChatService:
                     ["Please complete your registration first before uploading files."],
                     "registration_required"
                 )
+
                 await self.session_manager.send_and_track_message(user.phone_number, registration_response, session)
                 return {"status": "handled", "response": "registration_required"}
 
