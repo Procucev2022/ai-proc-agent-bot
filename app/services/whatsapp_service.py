@@ -92,6 +92,7 @@ class WhatsAppService:
             }
 
             logger.info(f"WhatsApp payload - from: {self.from_number}, to: {formatted_recipient}")
+            logger.info(f"FROM_NUMBER config: {self.from_number}")
             
             response = requests.post(
                 f"{self.base_url}/sessioncomm",
@@ -544,5 +545,4 @@ class WhatsAppService:
             return ""
 
         logger.info(f"Formatted phone number: {phone[:5]}...{phone[-3:]} (length: {len(phone)})")
-        logger.info(f"WHATSAPP_FROM_NUMBER from config: {self.whatsapp_from_number}")
         return phone
