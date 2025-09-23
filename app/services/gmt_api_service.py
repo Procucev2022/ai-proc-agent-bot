@@ -609,7 +609,7 @@ class GMTAPIService:
             logger.error(f"Error fetching active RFQs: {e}, data:{data}")
             return {"success": False, "error": str(e)}
 
-    @log_procucev_api_call("seller credits checks")
+    @log_procucev_api_call("seller_credits_checks")
     async def check_seller_credits(self, seller_org_id: str) -> Dict[str, Any]:
         """
         Check seller's RFQ request credit balance.
