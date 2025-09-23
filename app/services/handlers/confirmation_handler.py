@@ -70,7 +70,7 @@ class ConfirmationHandler:
             # Unclear response - ask for clarification while keeping context
             return await self._handle_confirmation_clarification(user, session, message)
     
-    async def handle_optional_fields_response(self, user: User, session: ConversationSession, 
+    async def handle_optional_fields_response(self, user: User, session: ConversationSession,
                                             message: str) -> Dict[str, Any]:
         """Handle optional field responses."""
         # Check if user wants to skip optional fields
@@ -80,8 +80,8 @@ class ConfirmationHandler:
             return await self._proceed_to_confirmation_from_optional(user, session, message)
         # For above TODO, Add a elif logic here
         else:
-            # User provided optional information, process it and then proceed to confirmation
-            return {"status": "continue_with_purchase_intent"}
+            # User provided optional information, merge it with existing product and proceed to confirmation
+            return await self._merge_optional_fields_and_confirm(user, session, message)
     
     async def _handle_rfq_acceptance(self, user: User, session: ConversationSession, 
                                    message: str) -> Dict[str, Any]:
@@ -355,7 +355,104 @@ class ConfirmationHandler:
         response += "\n\nIf there is anything else I can assist you with, please let me know."
 
         await self.whatsapp_service.send_message(user.phone_number, response)
-    
+
+    async def _merge_optional_fields_and_confirm(self, user: User, session: ConversationSession,
+                                               message: str) -> Dict[str, Any]:
+        """Merge optional field specifications with existing product and proceed to confirmation."""
+        try:
+            # Extract specifications from the user message using entity extraction
+            from app.services.openai_service import OpenAIService
+            openai_service = OpenAIService()
+
+            # Extract only specifications from the message
+            extraction_result = openai_service.extract_entities(message, "buy_something")
+            extracted_product = extraction_result.get("products", [{}])[0] if extraction_result.get("products") else {}
+
+            # Get the existing complete product from session
+            if session.workflow_state.get("pending_optional_rfq"):
+                # Single product case
+                existing_product_info = session.workflow_state["pending_optional_rfq"]
+                existing_entities = existing_product_info["entities"]
+
+                # Merge specifications into existing product
+                self._merge_specifications_into_product(existing_entities, extracted_product, message)
+
+                # Create updated schema
+                rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(existing_entities, openai_service)
+
+                # Generate confirmation with merged data
+                summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
+                    "user_message": message,
+                    "extracted_entities": existing_entities
+                }, [])
+
+                await self.whatsapp_service.send_message(user.phone_number, summary_response)
+
+                # Move to confirmation state
+                session.workflow_state["pending_rfq"] = existing_product_info
+                del session.workflow_state["pending_optional_rfq"]
+
+            elif session.workflow_state.get("pending_optional_combined_rfq"):
+                # Combined RFQ case - merge specs into all products
+                combined_data = session.workflow_state["pending_optional_combined_rfq"]
+
+                # For combined RFQs, merge specs into the first product (or could be made smarter)
+                if combined_data.get("products"):
+                    first_product = combined_data["products"][0]
+                    existing_entities = first_product["entities"]
+                    self._merge_specifications_into_product(existing_entities, extracted_product, message)
+
+                # Generate confirmation with merged data
+                combined_schema = RFQValidationSchema(**combined_data["combined_schema"])
+                summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(
+                    combined_schema,
+                    {
+                        "user_message": message,
+                        "extracted_entities": [prod["entities"] for prod in combined_data["products"]],
+                        "total_products": len(combined_data["products"])
+                    },
+                    []
+                )
+
+                await self.whatsapp_service.send_message(user.phone_number, summary_response)
+
+                # Move to confirmation state
+                session.workflow_state["pending_combined_rfq"] = combined_data
+                del session.workflow_state["pending_optional_combined_rfq"]
+
+            return {"status": "optional_fields_merged_confirmation_sent"}
+
+        except Exception as e:
+            logger.error(f"Error merging optional fields: {e}")
+            # Fallback to original behavior
+            return {"status": "continue_with_purchase_intent"}
+
+    def _merge_specifications_into_product(self, existing_entities: dict, extracted_product: dict, message: str):
+        """Merge specifications from extracted product into existing product entities."""
+        # Merge brand if provided
+        if extracted_product.get("brand"):
+            existing_entities["brand"] = extracted_product["brand"]
+
+        # Merge remarks/specifications
+        extracted_remarks = extracted_product.get("remarks")
+        if extracted_remarks:
+            # If existing remarks exist, append new ones
+            if existing_entities.get("remarks"):
+                existing_entities["remarks"] += f", {extracted_remarks}"
+            else:
+                existing_entities["remarks"] = extracted_remarks
+        elif not existing_entities.get("remarks"):
+            # If no remarks in extracted but user provided message, use the message as remarks
+            existing_entities["remarks"] = message.strip()
+
+        # Merge other optional fields if they don't exist in existing product
+        optional_fields = ["projectDesc", "division"]
+        for field in optional_fields:
+            if extracted_product.get(field) and not existing_entities.get(field):
+                existing_entities[field] = extracted_product[field]
+
+        logger.info(f"Merged specifications into existing product: {existing_entities.get('description', 'Unknown')}")
+
     # async def _check_bfs_availability(self, user_phone: str) -> None:
     #     """Check BFS availability after successful RFQ creation."""
     #     try:

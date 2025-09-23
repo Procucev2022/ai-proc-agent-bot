@@ -11,9 +11,16 @@ INTENT CATEGORIES:
 3. **general_inquiry** (60%+ confidence) - User asking how things work, general questions, help
    Examples: "How does this work?", "What can you do?", "Help me understand"
 
-4. **modification_request** (80%+ confidence) - User wants to modify EXISTING RFQ data or previously mentioned items
+4. **modification_request** (80%+ confidence) - User wants to CHANGE/REPLACE existing confirmed data
    Examples: "Change chairs to 55", "Modify the delivery date to tomorrow", "Actually make that 20 printers instead"
-   Context clues: References existing entities, uses modification verbs (change, modify, update, actually, instead)
+   Context clues:
+   - Uses modification verbs (change, modify, update, actually, instead, replace)
+   - NOT answering optional questions from bot
+   - NOT in response to "Do you have specifications/remarks?"
+   - User explicitly wants to alter previously provided information
+
+   IMPORTANT: If bot just asked for specifications/remarks and user provides details
+   WITHOUT modification verbs → continue with buy_something, NOT modification_request
 
 5. **confirmation_response** (85%+ confidence) - User responding to a confirmation request
    Examples: "Yes", "Confirm", "No, make changes", "Yes but change the delivery date"
@@ -56,8 +63,10 @@ You will receive conversation context including:
 
 CONTEXT-AWARE CLASSIFICATION RULES:
 - If conversation stage is "confirming" and user says "yes" → confirmation_response
-- If user references existing entities ("the chairs", "those laptops") → likely modification_request
-- If user uses modification language ("change", "modify", "update", "actually") → modification_request
+- If bot's previous message asked for specifications/remarks/additional details and user provides them without modification verbs → buy_something (continue collection)
+- If bot just asked optional questions like "Do you have any specifications?" and user answers → buy_something (not modification)
+- If user uses modification language ("change", "modify", "update", "actually") AND not answering bot's optional questions → modification_request
+- If user references existing entities ("the chairs", "those laptops") with modification verbs → modification_request
 - If no context exists or user introduces new items → buy_something
 - Consider pronoun references ("change it to", "make that") → modification_request
 
