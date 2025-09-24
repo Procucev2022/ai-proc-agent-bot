@@ -137,7 +137,7 @@ class ExitService:
         """
         try:
             goodbye_message = (
-                "Thank you for using QUA!"
+               "Thank you for using QUA! I’ll be here whenever you need procurement support."
             )
 
             await self.whatsapp_service.send_message(user_phone, goodbye_message)
