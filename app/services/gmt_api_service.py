@@ -14,6 +14,7 @@ import aiohttp
 import json
 
 from app.config import get_settings
+from app.utils.procucev_api_logger import log_procucev_api_call
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,8 @@ class GMTAPIService:
             
             # Transform our RFQ data to GMT API format
             gmt_rfq_data = self._transform_rfq_to_gmt_format(rfq_data, user_id, org_id)
+
+            logger.info(f"Payload for creating RFQ :{gmt_rfq_data}")
             
             # GMT API endpoint for creating RFQ
             create_url = f"{self.base_url}/rest/gmt/createRFQByClient"
@@ -167,7 +170,7 @@ class GMTAPIService:
         Returns:
             GMT API compatible RFQ data
         """
-        
+        logger.info(f"transfrom_rfq_to_gmt_format : {rfq_data}")
         # Create GMT-compatible RFQ item
         rfq_item = {
             "brand": rfq_data.get("preferred_brand", "Generic"),
@@ -184,26 +187,39 @@ class GMTAPIService:
         
         # Create delivery location
         delivery_location = {
-            "state": rfq_data.get("delivery_state", "Karnataka"),
-            "city": rfq_data.get("delivery_city", "Bangalore"),
-            "pincode": rfq_data.get("delivery_pincode", "560001")
-        }
-        
-        # Format delivery date
+     "state": rfq_data.get("delivery_state", "Karnataka"),
+     "city": rfq_data.get("delivery_city", "Bangalore"),
+     "pincode": rfq_data.get("delivery_pincode", "560001")
+}
+        # Handle delivery date with proper error handling
         delivery_date = rfq_data.get("deadline")
+        formatted_delivery_date = None
+
         if delivery_date:
-            if isinstance(delivery_date, str):
-                # Try to parse and reformat
-                try:
-                    parsed_date = datetime.fromisoformat(delivery_date.replace('Z', '+00:00'))
-                    delivery_date = parsed_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')
-                except:
-                    delivery_date = "2025-12-31T18:30:00.000Z"
-            else:
-                delivery_date = "2025-12-31T18:30:00.000Z"
-        else:
-            delivery_date = "2025-12-31T18:30:00.000Z"
-        
+            try:
+                if isinstance(delivery_date, datetime):
+                    formatted_delivery_date = delivery_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+                    logger.info(f"Converted datetime object to GMT format: {formatted_delivery_date}")
+                elif isinstance(delivery_date, str):
+                    # Try to parse ISO format string
+                    try:
+                        parsed_date = datetime.fromisoformat(delivery_date.replace('Z', '+00:00'))
+                        formatted_delivery_date = parsed_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+                        logger.info(f"Parsed string date to GMT format: {formatted_delivery_date}")
+                    except ValueError as e:
+                        logger.error(f"Failed to parse date string '{delivery_date}': {e}")
+                        formatted_delivery_date = None
+                else:
+                    logger.error(f"Unsupported delivery date type: {type(delivery_date)}")
+                    formatted_delivery_date = None
+
+            except Exception as e:
+                logger.error(f"Error processing delivery date: {e}")
+                formatted_delivery_date = None
+
+        if not formatted_delivery_date:
+            logger.warning(f"Using default delivery date: {formatted_delivery_date}")
+
         # Handle attachments if present
         rfq_documents = []
         attachments = rfq_data.get("attachments", [])
@@ -245,7 +261,7 @@ class GMTAPIService:
         gmt_payload = {
             "createdBy": user_id,
             "projectDesc": rfq_data.get("product_name", f"RFQ_{datetime.now().strftime('%Y%m%d_%H%M%S')}"),
-            "deliveryDate": delivery_date,
+            "deliveryDate": formatted_delivery_date,
             "noPrFlag": True,
             "procurementFlag": True,  # Added procurement flag as requested
             "sourceType": rfq_data.get("sourceType", "W"),  # W=WhatsApp, C=Chatbot
@@ -485,6 +501,7 @@ class GMTAPIService:
             logger.error(f"Error in bulk upload: {e}")
             return {"success": False, "error": str(e)}
 
+    @log_procucev_api_call("rfq_status_api")
     async def get_rfq_status(self, client_id: str, rfq_ids: List[str] = None) -> Dict[str, Any]:
 
         """
@@ -534,6 +551,7 @@ class GMTAPIService:
 
 
     # Seller-specific API methods
+    @log_procucev_api_call("fetch_active_rfqs")
     async def fetch_active_rfqs(self, org_id: str) -> Dict[str, Any]:
         """
         Fetch active RFQs based on seller's category.
@@ -598,6 +616,7 @@ class GMTAPIService:
             logger.error(f"Error fetching active RFQs: {e}, data:{data}")
             return {"success": False, "error": str(e)}
 
+    @log_procucev_api_call("seller_credits_checks")
     async def check_seller_credits(self, seller_org_id: str) -> Dict[str, Any]:
         """
         Check seller's RFQ request credit balance.
@@ -639,6 +658,8 @@ class GMTAPIService:
             logger.error(f"Error checking seller credits: {e}, data:{data}")
             return {"success": False, "error": str(e)}
 
+
+    @log_procucev_api_call("send_rfq_emails")
     async def send_rfq_email(self, rfq_ids: List[str], seller_email: str, seller_id: str) -> Dict[str, Any]:
         """
         Send RFQ details to seller via email.
@@ -747,6 +768,7 @@ class GMTAPIService:
             logger.error(f"Error updating RFQ sent flag: {e}")
             return {"success": False, "error": str(e)}
 
+    @log_procucev_api_call("get_subscription_plans")
     async def get_subscription_plans(self) -> Dict[str, Any]:
         """
         Get available subscription plans for sellers.
@@ -841,6 +863,7 @@ class GMTAPIService:
             logger.error(f"Error generating payment link: {e}")
             return {"success": False, "error": str(e)}
 
+    @log_procucev_api_call("fetch_seller_open_rfqs_for_reminder")
     async def fetch_seller_open_rfqs_for_reminder(self, seller_id: str) -> Dict[str, Any]:
         """
         Fetch open RFQs where seller has not submitted bids yet for end-of-flow reminder.

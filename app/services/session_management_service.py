@@ -108,6 +108,7 @@ class SessionManagementService:
                     user_phone,
                     "Welcome Back!"
                 )
+
                 
                 # Generate enhanced session summary for timeout (non-blocking)
                 await self._handle_session_completion_enhanced(session)
