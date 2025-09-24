@@ -87,18 +87,24 @@ class IntentService:
     def _get_fallback_classification(self, message: str, context: dict = None, error: str = None) -> Dict[str, Any]:
         """
         Provide fallback classification when OpenAI fails.
-        
+
         Uses simple rule-based classification with context awareness as backup.
-        
+
         Args:
-            message: Original user message
+            message: Original user message (can be string or dict for multimodal content)
             context: Optional conversation context
             error: Optional error message
-            
+
         Returns:
             Fallback classification result
         """
-        message_lower = message.lower()
+        # Handle non-string message content (e.g., image data)
+        if isinstance(message, dict):
+            message_lower = "image attachment"
+        elif not isinstance(message, str):
+            message_lower = str(message).lower()
+        else:
+            message_lower = message.lower()
         
         # Default context analysis
         default_context_analysis = {

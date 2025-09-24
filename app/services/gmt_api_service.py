@@ -233,15 +233,22 @@ class GMTAPIService:
                 file_type = attachment.get("file_type", "image/jpeg")
                 content_size = len(attachment["file_content"])
                 
-                rfq_documents.append({
+                # Debug: Log attachment structure being sent to GMT API
+                attachment_payload = {
                     "fileName": filename,
                     "fileType": file_type,
                     "fileContent": attachment["file_content"],
                     "documentType": "specification",
                     "uploadedAt": attachment.get("uploaded_at", datetime.now().strftime('%Y-%m-%dT%H:%M:%S.000Z'))
-                })
-                
+                }
+
+                rfq_documents.append(attachment_payload)
+
+                # Debug: Log first 100 chars of file content to verify it's not empty
+                content_preview = str(attachment["file_content"])[:100] if attachment["file_content"] else "EMPTY"
                 logger.info(f"Added attachment {i+1} to GMT RFQ: {filename} ({file_type}, {content_size} chars base64)")
+                logger.info(f"  File content preview: {content_preview}...")
+                logger.info(f"  Full attachment structure keys: {list(attachment_payload.keys())}")
             else:
                 logger.warning(f"Skipping attachment {i+1} - missing file_content or file_name")
         

@@ -94,7 +94,15 @@ class SummarizationHelpers:
             })
 
             message_count = len(session.conversation_history["openai_messages"])
-            content_preview = message[:100] + ('...' if len(message) > 100 else '')
+
+            # Handle non-string message content for preview
+            if isinstance(message, dict):
+                content_preview = "image attachment"
+            elif isinstance(message, str):
+                content_preview = message[:100] + ('...' if len(message) > 100 else '')
+            else:
+                content_preview = str(message)[:100] + ('...' if len(str(message)) > 100 else '')
+
             logger.info(f"Stored message {message_count}: {role} -> {content_preview}")
 
             # Keep only last 50 messages to avoid database bloat
@@ -309,10 +317,24 @@ class SummarizationHelpers:
             user_messages = [msg for msg in conversation_messages if msg.get("sender") == "user"]
             
             for msg in user_messages[-5:]:  # Last 5 user messages
-                content = msg.get("content", "").lower()
+                content = msg.get("content", "")
+
+                # Handle non-string content (e.g., image data)
+                if isinstance(content, dict):
+                    content = "image attachment"
+                elif not isinstance(content, str):
+                    content = str(content)
+
+                content = content.lower()
                 for keyword in decision_keywords:
                     if keyword in content:
-                        decisions.append(f"User specified: {msg.get('content', '')[:100]}")
+                        # Safe content extraction for decisions
+                        original_content = msg.get('content', '')
+                        if isinstance(original_content, dict):
+                            content_preview = "image attachment"
+                        else:
+                            content_preview = str(original_content)[:100]
+                        decisions.append(f"User specified: {content_preview}")
                         break
             
             # Add decisions from rich entities

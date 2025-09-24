@@ -85,19 +85,19 @@ class OpenAIService:
     def _build_messages_with_history(self, context: dict = None, current_message: str = "") -> list:
         """
         Build message array with conversation history for OpenAI API calls.
-        
+
         This method extracts OpenAI-ready messages from context and optionally
         appends the current message, enabling conversation continuity.
-        
+
         Args:
             context: Conversation context with openai_messages array
             current_message: Current user message to append
-            
+
         Returns:
             List of message dicts ready for OpenAI API
         """
         input_messages = []
-        
+
         # Add conversation history if available
         if context and context.get('conversation_history', {}).get('openai_messages'):
             openai_messages = context['conversation_history']['openai_messages']
@@ -108,18 +108,49 @@ class OpenAIService:
                 logger.info(f"Added {len(history_messages)} history messages to OpenAI context")
         else:
             logger.info("No conversation history available - using only current message")
-        
-        # Add current message if provided
+
+        # Add current message if provided - but handle image content properly
         if current_message:
-            input_messages.append({"role": "user", "content": current_message})
-        
+            # Check if current_message contains image content that should be handled differently
+            if self._is_image_content(current_message, context):
+                # For image content, use a text description instead of raw content
+                input_messages.append({"role": "user", "content": "User sent an image attachment"})
+                logger.info("Converted image content to text description for OpenAI")
+            else:
+                input_messages.append({"role": "user", "content": current_message})
+
         # Log the complete input being sent to OpenAI
         logger.info(f"OpenAI Input ({len(input_messages)} messages):")
         for i, msg in enumerate(input_messages):
-            content_preview = msg.get('content', '')[:100] + ('...' if len(msg.get('content', '')) > 100 else '')
+            content_preview = str(msg.get('content', ''))[:100] + ('...' if len(str(msg.get('content', ''))) > 100 else '')
             logger.info(f"  {i+1}. {msg.get('role')}: {content_preview}")
-        
+
         return input_messages
+
+    def _is_image_content(self, message: str, context: dict = None) -> bool:
+        """
+        Check if the message content represents image data.
+
+        Args:
+            message: The message content
+            context: Additional context that might contain image information
+
+        Returns:
+            True if this is image content, False otherwise
+        """
+        # Check if message looks like stringified JSON with image data
+        if isinstance(message, str) and ('mime_type' in message and 'image' in message):
+            return True
+
+        # Check if context indicates this is from an image message
+        if context:
+            user_msg = context.get('user_message', '')
+            if isinstance(user_msg, dict) and 'mime_type' in user_msg:
+                return True
+            elif isinstance(user_msg, str) and ('mime_type' in user_msg and 'image' in user_msg):
+                return True
+
+        return False
         
     @log_service_method("openai_service")
     def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
@@ -143,7 +174,12 @@ class OpenAIService:
             with open(self.tools_dir / "intent_classification.json", 'r') as f:
                 intent_tool = json.load(f)
             
-            input_messages = [{"role": "user", "content": message}]
+            # Handle image content properly for intent classification
+            if self._is_image_content(message, context):
+                input_messages = [{"role": "user", "content": "User sent an image attachment"}]
+                logger.info("Converted image content to text description for intent classification")
+            else:
+                input_messages = [{"role": "user", "content": message}]
             
             # Build comprehensive context information for the prompt
             context_info = ""
