@@ -258,9 +258,19 @@ class GMTAPIService:
             logger.info(f"Successfully prepared {len(rfq_documents)} attachments for GMT API")
 
         # Build GMT API payload
+        # Create project description from all RFQ item names, comma-separated, within 100 chars
+        rfq_items = rfq_data.get("rfq_items", [])
+        if rfq_items:
+            item_names = [item.get("name", item.get("description", "")) for item in rfq_items if item.get("name") or item.get("description")]
+            project_desc = ", ".join(item_names)[:100] if item_names else rfq_data.get("product_name", f"RFQ_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        else:
+            project_desc = rfq_data.get("product_name", f"RFQ_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+
+        logger.info(f"project desc:{project_desc}")
+        
         gmt_payload = {
             "createdBy": user_id,
-            "projectDesc": rfq_data.get("product_name", f"RFQ_{datetime.now().strftime('%Y%m%d_%H%M%S')}"),
+            "projectDesc": project_desc,
             "deliveryDate": formatted_delivery_date,
             "noPrFlag": True,
             "procurementFlag": True,  # Added procurement flag as requested
