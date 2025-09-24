@@ -136,7 +136,7 @@ class ChatService:
             # Check and send welcome message if needed (before session creation)
             welcome_service = get_welcome_service()
             if await welcome_service.should_send_welcome(user_phone):
-                welcome_text = "Welcome to QUA!"
+                welcome_text = "Hello 👋, I'm QUA – your Procurement Assistant."
                 message_response = await self.whatsapp_service.send_message(user_phone, welcome_text)
                 if message_response.success:
                     await welcome_service.mark_welcome_sent(user_phone)

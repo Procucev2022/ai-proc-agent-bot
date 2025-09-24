@@ -646,7 +646,7 @@ Return only the selected email address or "none" if no clear selection.
             
             if otp_response.get("statusCode") in ["1001", "200"] or otp_response.get("status") == "Success":
                 # Don't increment retry count for successful OTP send - only for failed validations
-                message = f"OTP sent to your email: {email}\n\nPlease enter the OTP you received, or reply 'RESEND' to get a new OTP:"
+                message = f"An OTP has been sent to your email: {email}.\nPlease enter this OTP to complete your authentication."
                 await self.whatsapp_service.send_message(user_phone, message)
                 
                 return {
