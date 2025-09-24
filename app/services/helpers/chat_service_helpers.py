@@ -178,14 +178,27 @@ class ChatServiceHelpers:
     def build_conversation_context(session: ConversationSession, current_message: str) -> dict:
         """
         Build comprehensive conversation context for intent classification and context-aware services.
-        
+
         Args:
             session: Current conversation session
             current_message: Current user message
-            
+
         Returns:
             Dict containing full conversation context including session state, history, entities, and user context
         """
+        # Extract bot's last message from conversation history for intent classification
+        bot_last_message = None
+        bot_last_message_type = None
+        conversation_history = session.conversation_history or {"openai_messages": [], "metadata": []}
+
+        # Look through recent messages to find the last bot message
+        if conversation_history.get("metadata"):
+            for msg_data in reversed(conversation_history["metadata"]):
+                if msg_data.get("role") == "assistant":
+                    bot_last_message = msg_data.get("content", "")
+                    bot_last_message_type = msg_data.get("message_type", "text")
+                    break
+
         return {
             'current_message': current_message,
             'session_metadata': {
@@ -194,7 +207,9 @@ class ChatServiceHelpers:
                 'outcome': session.outcome,
                 'created_at': session.created_at.isoformat() if session.created_at else None
             },
-            'conversation_history': session.conversation_history or {"openai_messages": [], "metadata": []},
+            'conversation_history': conversation_history,
+            'bot_last_message': bot_last_message,
+            'bot_last_message_type': bot_last_message_type,
             'workflow_state': session.workflow_state or {},
             'extracted_entities': session.extracted_entities or {},
             'whatsapp_context': session.whatsapp_context or {},
@@ -204,7 +219,7 @@ class ChatServiceHelpers:
                     session.workflow_state.get("pending_rfq")
                 ),
                 'has_extracted_entities': bool(
-                    session.workflow_state.get("extracted_entities") or 
+                    session.workflow_state.get("extracted_entities") or
                     session.extracted_entities
                 ),
                 'has_incomplete_products': bool(session.workflow_state.get("incomplete_products")),

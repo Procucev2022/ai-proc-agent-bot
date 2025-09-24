@@ -163,33 +163,33 @@ class ProductsArrayHandler:
         """Generate clarification questions for incomplete products."""
         all_questions = []
         all_missing_fields = []
-        
+
         # Group missing fields across all products to avoid repetition
         common_missing_fields = set()
         for prod in incomplete_products:
             common_missing_fields.update(prod["missing_fields"])
-        
+
         # Check if all products have the same missing fields
         all_same_missing = True
         first_missing = set(incomplete_products[0]["missing_fields"])
         print(f"  First product missing fields: {first_missing}")
-        
+
         for prod in incomplete_products[1:]:
             prod_missing = set(prod["missing_fields"])
             print(f"  Product {prod['index']} missing fields: {prod_missing}")
             if prod_missing != first_missing:
                 all_same_missing = False
                 break
-        
+
         print(f"  All products have same missing fields: {all_same_missing}")
-        
+
         if all_same_missing and len(incomplete_products) > 1:
             # All products missing the same fields - ask once for all
             await self._generate_combined_questions(incomplete_products, all_questions, all_missing_fields)
         else:
             # Products have different missing fields - ask individually
             await self._generate_individual_questions(incomplete_products, all_questions, all_missing_fields)
-        
+
         print(f"  All questions to ask: {all_questions}")
         return all_questions, all_missing_fields
     
@@ -197,47 +197,93 @@ class ProductsArrayHandler:
         """Generate combined questions for products with same missing fields."""
         rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(incomplete_products[0]["entities"], self.openai_service)
         combined_questions = rfq_schema.get_combined_questions()
-        
-        if combined_questions["has_mandatory"] or combined_questions["has_optional"]:
-            product_names = [prod["entities"].get("description", f"Product {prod['index']}") for prod in incomplete_products]
-            all_questions.append(f"For all products ({', '.join(product_names)}):")
-            
-            # Add mandatory fields first
-            if combined_questions["has_mandatory"]:
-                # all_questions.append("*Required information:*")
-                all_questions.extend(combined_questions["mandatory"])
-            
 
-                
+        if combined_questions["has_mandatory"] or combined_questions["has_optional"]:
+            # Safely generate product names with fallbacks
+            product_names = []
+            for i, prod in enumerate(incomplete_products):
+                description = prod["entities"].get("description")
+                if description and description.strip():
+                    product_names.append(description)
+                else:
+                    # Use index from prod dict, or fallback to list index
+                    index = prod.get("index", i + 1)
+                    product_names.append(f"Product {index}")
+
+            all_questions.append(f"For all products ({', '.join(product_names)}):")
+
+            # Add mandatory fields first - filter out None values
+            if combined_questions["has_mandatory"]:
+                mandatory_questions = [q for q in combined_questions["mandatory"] if q is not None and str(q).strip()]
+                all_questions.extend(mandatory_questions)
+
             all_missing_fields.extend(incomplete_products[0]["missing_fields"])
     
     async def _generate_individual_questions(self, incomplete_products: list, all_questions: list, all_missing_fields: list):
         """Generate individual questions for products with different missing fields."""
-        for prod in incomplete_products:
-            print(f"  Processing incomplete product {prod['index']}: {prod['entities'].get('description', 'Unknown')}")
-            print(f"    Missing fields: {prod['missing_fields']}")
-            
-            rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(prod["entities"], self.openai_service)
-            
-            # Get combined questions from data model
-            combined_questions = rfq_schema.get_combined_questions()
-            product_desc = prod["entities"].get("description", f"Product {prod['index']}")
-            
-            print(f"    Combined questions: mandatory={len(combined_questions['mandatory'])}, optional={len(combined_questions['optional'])}")
-            
-            # Format questions for this product
-            if combined_questions["has_mandatory"] or combined_questions["has_optional"]:
-                if len(incomplete_products) > 1:
-                    all_questions.append(f"For {product_desc}:")
-                
-                # Add mandatory fields first
-                if combined_questions["has_mandatory"]:
-                    # all_questions.append("*Required information:*")
-                    all_questions.extend(combined_questions["mandatory"])
-                
+        # First, identify delivery fields that should always be asked for all products
+        delivery_fields = {'delivery_date', 'delivery_location_0_state', 'delivery_location_0_city', 'delivery_location_0_pincode'}
 
-                    
-                all_missing_fields.extend(prod["missing_fields"])
+        # Collect all delivery questions needed across all products
+        all_delivery_missing = set()
+        product_specific_questions = []
+
+        for prod in incomplete_products:
+            prod_missing = set(prod["missing_fields"])
+            delivery_missing = prod_missing & delivery_fields
+            product_specific_missing = prod_missing - delivery_fields
+
+            all_delivery_missing.update(delivery_missing)
+
+            if product_specific_missing:
+                product_specific_questions.append({
+                    "product": prod,
+                    "missing_fields": list(product_specific_missing)
+                })
+
+        # Ask delivery questions once for all products (if any)
+        if all_delivery_missing:
+            # Safely generate product names with fallbacks
+            product_names = []
+            for i, prod in enumerate(incomplete_products):
+                description = prod["entities"].get("description")
+                if description and description.strip():
+                    product_names.append(description)
+                else:
+                    # Use index from prod dict, or fallback to list index
+                    index = prod.get("index", i + 1)
+                    product_names.append(f"Product {index}")
+
+            all_questions.append(f"For all products ({', '.join(product_names)}):")
+
+            # Get delivery question text from schema
+            sample_schema = ChatServiceHelpers.create_rfq_schema_from_entities(incomplete_products[0]["entities"], self.openai_service)
+            combined_questions = sample_schema.get_combined_questions()
+
+            # Filter to only include delivery-related questions - filter out None values
+            for question in combined_questions.get("mandatory", []):
+                if question is not None and str(question).strip():
+                    all_questions.append(question)
+
+            all_missing_fields.extend(list(all_delivery_missing))
+
+        # Ask product-specific questions individually
+        for item in product_specific_questions:
+            prod = item["product"]
+            missing_fields = item["missing_fields"]
+
+            product_desc = prod["entities"].get("description", f"Product {prod['index']}")
+            rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(prod["entities"], self.openai_service)
+            combined_questions = rfq_schema.get_combined_questions()
+
+            print(f"  Processing product-specific questions for {product_desc}: {missing_fields}")
+
+            if combined_questions["has_mandatory"]:
+                all_questions.append(f"For {product_desc}:")
+                # Filter out None values from mandatory questions
+                mandatory_questions = [q for q in combined_questions["mandatory"] if q is not None and str(q).strip()]
+                all_questions.extend(mandatory_questions)
+                all_missing_fields.extend(missing_fields)
     
     async def _handle_complete_products(self, user: User, session: ConversationSession,
                                       message: str, complete_products: list, chat_summaries: list) -> Dict[str, Any]:
