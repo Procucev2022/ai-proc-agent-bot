@@ -1033,19 +1033,19 @@ Respond only with: "yes" or "no"
             seller_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Seller"]
             
             if buyer_emails and seller_emails:
-                message = f"Hi there!\nAre you looking to buy or sell today?\n\nPlease select your email address:\n\n"
+                message = f"Welcome! Are you looking to buy or sell today?\nPlease select your profile by choosing the associated email address:\n"
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
-                    type_label = f" - {user_type}" if user_type else ""
-                    message += f"{i}. {email}{type_label}\n"
-                message += "\nReply with the number of your email address."
+                    type_label = f" — {user_type}" if user_type else ""
+                    message += f"{email}{type_label}\n"
+                message += "Reply with the number corresponding to your email address to continue."
             else:
-                message = f"Hi there!\nPlease select your email address:\n\n"
+                message = f"Welcome! Please select your profile by choosing the associated email address:\n"
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
-                    type_label = f" - {user_type}" if user_type else ""
-                    message += f"{i}. {email}{type_label}\n"
-                message += "\nReply with the number of your email address."
+                    type_label = f" — {user_type}" if user_type else ""
+                    message += f"{email}{type_label}\n"
+                message += "Reply with the number corresponding to your email address to continue."
             
             await self.whatsapp_service.send_message(user_phone, message)
             
