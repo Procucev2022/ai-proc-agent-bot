@@ -84,7 +84,11 @@ class ChatServiceHelpers:
             schema_data["remarks"] = entities["remarks"]
         if entities.get("brand"):
             schema_data["preferred_brand"] = entities["brand"]
-        
+
+        # Handle attachments
+        if entities.get("attachments"):
+            schema_data["attachments"] = entities["attachments"]
+
         return schema_data
     
     @staticmethod

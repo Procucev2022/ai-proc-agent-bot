@@ -99,11 +99,22 @@ class ConfirmationHandler:
         elif session.workflow_state.get("pending_rfq"):
             # Single RFQ format
             product_info = session.workflow_state["pending_rfq"]
-            schema_data = product_info.get("schema_data", {})
-            if schema_data:
-                rfq_schema = RFQValidationSchema(**schema_data)
-            else:
-                rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_info["entities"], None)
+            entities = product_info["entities"]
+
+            # Merge attachments from extracted_entities into entities
+            if session.workflow_state.get("extracted_entities") and session.workflow_state["extracted_entities"]:
+                extracted_attachments = session.workflow_state["extracted_entities"][0].get("attachments", [])
+                if extracted_attachments:
+                    entities["attachments"] = extracted_attachments
+                    logger.info(f"Merged {len(extracted_attachments)} attachments from extracted_entities into entities")
+
+            # Debug: Log entities to see if attachments are present
+            logger.info(f"Entities keys: {list(entities.keys())}")
+            logger.info(f"Entities attachments: {entities.get('attachments', 'MISSING')}")
+
+            # Always rebuild from entities to ensure attachments are included
+            # (schema_data might be stale and not include recently added attachments)
+            rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(entities, None)
             
             gmt_result = await self._submit_rfq_to_backend(rfq_schema, user)
             rfq_results = [gmt_result]
@@ -259,7 +270,11 @@ class ConfirmationHandler:
             
             # Extract attachments from schema
             attachments = schema_dict.get("attachments", [])
-            
+
+            # Debug: Log schema_dict to see what's available
+            logger.info(f"Schema dict keys: {list(schema_dict.keys())}")
+            logger.info(f"Schema dict attachments field: {schema_dict.get('attachments', 'MISSING')}")
+
             # Log attachment information
             if attachments:
                 logger.info(f"RFQ contains {len(attachments)} attachment(s):")
@@ -343,7 +358,7 @@ class ConfirmationHandler:
         if rfq_ids:
             # Single RFQ case (matches your example format)
             if successful_count == 1:
-                response = f"Thank you! Your RFQ has been created successfully.\n\nRFQ ID: {rfq_ids[0]}\nUse this reference number to track your request."
+                response = f"Your RFQ has been created successfully.\n\nRFQ ID: {rfq_ids[0]}\nUse this ID to track your request. Let me know if you need further assistance"
             # Multiple RFQs case
             else:
                 rfq_ids_text = "\n".join([f"RFQ ID: {rfq_id}" for rfq_id in rfq_ids])

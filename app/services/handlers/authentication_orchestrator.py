@@ -408,10 +408,19 @@ class AuthenticationOrchestrator:
             
             new_intent = new_intent_result.get('intent')
             confidence = new_intent_result.get('confidence', 0)
-            
+
+            # Handle exit intent immediately before processing registration stages
+            if new_intent == "exit_system" and confidence > 50:
+                logger.info(f"Exit intent detected in registration workflow with {confidence}% confidence")
+                exit_service = ExitService(self.whatsapp_service, self.authentication_service,
+                                         self.chat_service.session_manager if self.chat_service else None,
+                                         self.chat_service.db_manager if self.chat_service else None)
+                exit_result = await exit_service.handle_exit_intent(user_phone, session)
+                return exit_result
+
             registration_stage = session.workflow_state.get("registration_stage")
             current_user_type = session.workflow_state.get("user_type", "buyer")
-            
+
             # Check if user wants to switch intent during registration
             if await self._should_handle_intent_switch_during_registration(new_intent, confidence, current_user_type):
                 logger.info(f"AuthOrchestrator: Intent switch detected during registration: {new_intent}")
@@ -549,7 +558,7 @@ class AuthenticationOrchestrator:
             return True
         elif current_user_type == "buyer" and new_intent == "sell_something":
             return True
-        elif new_intent in ["cancel", "stop"]:
+        elif new_intent in ["cancel", "stop", "exit_system"]:
             return True
             
         return False
@@ -580,6 +589,14 @@ class AuthenticationOrchestrator:
                     user_phone, "Registration cancelled. How can I help you?"
                 )
                 return {"status": "registration_cancelled"}
+            elif intent == "exit_system":
+                # Handle exit during registration
+                logger.info(f"Exit system intent detected during registration switch handling")
+                exit_service = ExitService(self.whatsapp_service, self.authentication_service,
+                                         self.chat_service.session_manager if self.chat_service else None,
+                                         self.chat_service.db_manager if self.chat_service else None)
+                exit_result = await exit_service.handle_exit_intent(user_phone, session)
+                return exit_result
             else:
                 # Continue with current registration
                 return {"status": "continue_registration"}

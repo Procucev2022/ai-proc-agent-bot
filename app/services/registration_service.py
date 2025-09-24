@@ -246,7 +246,8 @@ class RegistrationService:
             message += f"• GSTIN: {entities.get('gstin', 'N/A')}\n"
             message += f"• Products/Services: {entities.get('products_services', 'N/A')}\n\n"
         
-        message += "Reply 'yes' to confirm or 'no' to restart registration."
+        message += "Reply 'YES' to confirm or 'NO' to restart registration.\n"
+        message += "📩 Please re-check your email, as an OTP will be sent to complete the registration process."
         return message
     
     async def handle_registration_confirmation(self, user_phone: str, message_content: str,
@@ -439,7 +440,7 @@ class RegistrationService:
                 
                 session.workflow_type = "registration"
                 
-                message = f"OTP sent to your email: {email}\n\nPlease enter the OTP you received, or reply 'RESEND' to get a new OTP:"
+                message = f"An OTP has been sent to your email: {email}.\nPlease enter this OTP to complete your registration."
                 if self.session_manager:
                     await self.session_manager.send_and_track_message(user_phone, message, session)
                 else:

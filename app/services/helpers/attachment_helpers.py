@@ -132,9 +132,17 @@ class AttachmentHelpers:
             True if successful, False otherwise
         """
         try:
+            logger.info(f"approve_pending_attachment called - filename: {attachment_filename}")
+            logger.info(f"Session workflow state keys: {list(session.workflow_state.keys())}")
+
             pending_attachments = session.workflow_state.get("pending_attachments", [])
-            
+
+            logger.info(f"Found {len(pending_attachments)} pending attachments")
+            for i, att in enumerate(pending_attachments):
+                logger.info(f"  Attachment {i+1}: {att.get('file_name', 'unknown')} - status: {att.get('status', 'unknown')}")
+
             if not pending_attachments:
+                logger.info("No pending attachments to approve")
                 return False
             
             if attachment_filename:
@@ -144,9 +152,9 @@ class AttachmentHelpers:
                         attachment["status"] = "approved"
                         break
             else:
-                # Approve all pending attachments
+                # Approve all pending attachments (including those without status set)
                 for attachment in pending_attachments:
-                    if attachment.get("status") == "pending":
+                    if attachment.get("status") != "rejected":  # Approve anything not explicitly rejected
                         attachment["status"] = "approved"
             
             session.workflow_state["awaiting_attachment_decision"] = False
@@ -163,11 +171,13 @@ class AttachmentHelpers:
                 session.workflow_state["extracted_entities"][0]["attachments"] = []
             
             # Add approved attachments
+            approved_count = 0
             for attachment in pending_attachments:
                 if attachment.get("status") == "approved":
                     session.workflow_state["extracted_entities"][0]["attachments"].append(attachment)
-            
-            logger.info(f"Approved attachments in session")
+                    approved_count += 1
+
+            logger.info(f"Approved {approved_count} attachments in session - total attachments now: {len(session.workflow_state['extracted_entities'][0]['attachments'])}")
             return True
             
         except Exception as e:
