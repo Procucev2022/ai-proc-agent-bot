@@ -19,7 +19,9 @@ Key responsibilities:
 import json
 import logging
 import os
+import re
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from openai import OpenAI
@@ -28,7 +30,6 @@ from app.tools.interaction_logger import get_interaction_logger
 from app.utils.logging_utils import log_service_method
 from app.utils.datetime_utils import format_date_display
 from app.utils.datetime_utils import format_date_for_validation_error
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -2284,19 +2285,69 @@ Determine the best category for the input item based on the similar items and th
             current_date = datetime.now()
             current_date_str = current_date.strftime("%Y-%m-%d")
             
-            # Handle common relative dates before calling OpenAI
+            # Handle complex patterns before calling OpenAI
             normalized_date = None
-            if raw_date_input.lower().strip() in ["tomorrow", "tommorrow"]:
-                tomorrow = current_date + timedelta(days=1)
-                normalized_date = tomorrow.strftime("%Y-%m-%d")
-            elif raw_date_input.lower().strip() == "today":
-                normalized_date = current_date_str
-            elif raw_date_input.lower().strip() in ["day after tomorrow", "day after tommorrow"]:
-                day_after_tomorrow = current_date + timedelta(days=2)
-                normalized_date = day_after_tomorrow.strftime("%Y-%m-%d")
+            raw_input_lower = raw_date_input.lower().strip()
+            
+            # Complex offset patterns that benefit from local processing
+            if ("in " in raw_input_lower and "day" in raw_input_lower) or ("days from now" in raw_input_lower) or ("days from tomorrow" in raw_input_lower):
+                match = re.search(r'(?:in )?(\d+) days?(?: from (?:now|tomorrow))?', raw_input_lower)
+                if match:
+                    days = int(match.group(1))
+                    base_date = current_date + timedelta(days=1) if "from tomorrow" in raw_input_lower else current_date
+                    future_date = base_date + timedelta(days=days)
+                    normalized_date = future_date.strftime("%Y-%m-%d")
+            elif "in " in raw_input_lower and "week" in raw_input_lower:
+                match = re.search(r'in (\d+) weeks?', raw_input_lower)
+                if match:
+                    weeks = int(match.group(1))
+                    future_date = current_date + timedelta(weeks=weeks)
+                    normalized_date = future_date.strftime("%Y-%m-%d")
+            elif "in " in raw_input_lower and "month" in raw_input_lower:
+                match = re.search(r'in (\d+) months?', raw_input_lower)
+                if match:
+                    months = int(match.group(1))
+                    future_date = current_date + timedelta(days=months * 30)  # Approximate
+                    normalized_date = future_date.strftime("%Y-%m-%d")
+            
+            # Simple absolute date patterns (DD/MM/YYYY)
+            elif "/" in raw_date_input and len(raw_date_input.split("/")) == 3:
+                # Try DD/MM/YYYY format first
+                match = re.match(r'(\d{1,2})/(\d{1,2})/(\d{4})', raw_date_input.strip())
+                if match:
+                    day, month, year = match.groups()
+                    try:
+                        parsed_date = datetime(int(year), int(month), int(day))
+                        normalized_date = parsed_date.strftime("%Y-%m-%d")
+                    except ValueError:
+                        # Try MM/DD/YYYY format
+                        try:
+                            parsed_date = datetime(int(year), int(day), int(month))
+                            normalized_date = parsed_date.strftime("%Y-%m-%d")
+                        except ValueError:
+                            pass  # Let OpenAI handle it
+            
+            # Handle weekday patterns
+            if not normalized_date:
+                normalized_date = self._handle_weekday_patterns(raw_input_lower, current_date)
             
             # If we handled it locally, return the result
             if normalized_date:
+                # Validate that the date is not in the past
+                try:
+                    parsed_date = datetime.strptime(normalized_date, "%Y-%m-%d")
+                    if parsed_date.date() < current_date.date():
+                        return {
+                            "is_valid": False,
+                            "normalized_date": None,
+                            "validation_issues": ["Past date not allowed"],
+                            "user_friendly_message": f"The date {parsed_date.strftime('%d %b %Y')} is in the past. Kindly share a valid delivery date from today onward.",
+                            "confidence": 95,
+                            "success": True
+                        }
+                except ValueError:
+                    pass
+                
                 result = {
                     "is_valid": True,
                     "normalized_date": normalized_date,
@@ -2419,6 +2470,59 @@ Determine the best category for the input item based on the similar items and th
                 "confidence": 20,
                 "success": False
             }
+    
+    def _handle_weekday_patterns(self, raw_input_lower: str, current_date: datetime) -> str:
+        """Handle weekday patterns like 'next Friday', 'this Wednesday', etc."""
+        
+        weekdays = {
+            'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
+            'friday': 4, 'saturday': 5, 'sunday': 6
+        }
+        
+        # Pattern: "next [weekday]"
+        match = re.search(r'next (monday|tuesday|wednesday|thursday|friday|saturday|sunday)', raw_input_lower)
+        if match:
+            target_weekday = weekdays[match.group(1)]
+            days_ahead = target_weekday - current_date.weekday()
+            if days_ahead <= 0:  # Target day already passed this week
+                days_ahead += 7
+            # For "next", always go to next week
+            if days_ahead < 7:
+                days_ahead += 7
+            target_date = current_date + timedelta(days=days_ahead)
+            return target_date.strftime("%Y-%m-%d")
+        
+        # Pattern: "this [weekday]"
+        match = re.search(r'this (monday|tuesday|wednesday|thursday|friday|saturday|sunday)', raw_input_lower)
+        if match:
+            target_weekday = weekdays[match.group(1)]
+            days_ahead = target_weekday - current_date.weekday()
+            if days_ahead < 0:  # Target day already passed this week, go to next week
+                days_ahead += 7
+            target_date = current_date + timedelta(days=days_ahead)
+            return target_date.strftime("%Y-%m-%d")
+        
+        # Pattern: "coming [weekday]"
+        match = re.search(r'coming (monday|tuesday|wednesday|thursday|friday|saturday|sunday)', raw_input_lower)
+        if match:
+            target_weekday = weekdays[match.group(1)]
+            days_ahead = target_weekday - current_date.weekday()
+            if days_ahead <= 0:  # Target day already passed this week
+                days_ahead += 7
+            target_date = current_date + timedelta(days=days_ahead)
+            return target_date.strftime("%Y-%m-%d")
+        
+        # Pattern: "[weekday] of coming week" or "[weekday] of next week"
+        match = re.search(r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday) of (?:coming|next) week', raw_input_lower)
+        if match:
+            target_weekday = weekdays[match.group(1)]
+            # Calculate days to next week's target day
+            days_to_next_monday = 7 - current_date.weekday()
+            days_ahead = days_to_next_monday + target_weekday
+            target_date = current_date + timedelta(days=days_ahead)
+            return target_date.strftime("%Y-%m-%d")
+        
+        return None
 
     @log_service_method("openai_service")
     def detect_opt_out_intent(self, message: str) -> Dict[str, Any]:
