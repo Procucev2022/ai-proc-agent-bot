@@ -28,8 +28,7 @@ from openai import OpenAI
 from app.config import get_settings
 from app.tools.interaction_logger import get_interaction_logger
 from app.utils.logging_utils import log_service_method
-from app.utils.datetime_utils import format_date_display
-from app.utils.datetime_utils import format_date_for_validation_error
+from app.utils.datetime_utils import format_date_display, format_date_for_validation_error, add_business_days, calculate_working_days_from_now
 
 logger = logging.getLogger(__name__)
 
@@ -2321,89 +2320,7 @@ Determine the best category for the input item based on the similar items and th
             current_date = datetime.now()
             current_date_str = current_date.strftime("%Y-%m-%d")
             
-            # Handle complex patterns before calling OpenAI
-            normalized_date = None
-            raw_input_lower = raw_date_input.lower().strip()
-            
-            # Complex offset patterns that benefit from local processing
-            if ("in " in raw_input_lower and "day" in raw_input_lower) or ("days from now" in raw_input_lower) or ("days from tomorrow" in raw_input_lower):
-                match = re.search(r'(?:in )?(\d+) days?(?: from (?:now|tomorrow))?', raw_input_lower)
-                if match:
-                    days = int(match.group(1))
-                    base_date = current_date + timedelta(days=1) if "from tomorrow" in raw_input_lower else current_date
-                    future_date = base_date + timedelta(days=days)
-                    normalized_date = future_date.strftime("%Y-%m-%d")
-            elif "in " in raw_input_lower and "week" in raw_input_lower:
-                match = re.search(r'in (\d+) weeks?', raw_input_lower)
-                if match:
-                    weeks = int(match.group(1))
-                    future_date = current_date + timedelta(weeks=weeks)
-                    normalized_date = future_date.strftime("%Y-%m-%d")
-            elif "in " in raw_input_lower and "month" in raw_input_lower:
-                match = re.search(r'in (\d+) months?', raw_input_lower)
-                if match:
-                    months = int(match.group(1))
-                    future_date = current_date + timedelta(days=months * 30)  # Approximate
-                    normalized_date = future_date.strftime("%Y-%m-%d")
-            
-            # Simple absolute date patterns (DD/MM/YYYY)
-            elif "/" in raw_date_input and len(raw_date_input.split("/")) == 3:
-                # Try DD/MM/YYYY format first
-                match = re.match(r'(\d{1,2})/(\d{1,2})/(\d{4})', raw_date_input.strip())
-                if match:
-                    day, month, year = match.groups()
-                    try:
-                        parsed_date = datetime(int(year), int(month), int(day))
-                        normalized_date = parsed_date.strftime("%Y-%m-%d")
-                    except ValueError:
-                        # Try MM/DD/YYYY format
-                        try:
-                            parsed_date = datetime(int(year), int(day), int(month))
-                            normalized_date = parsed_date.strftime("%Y-%m-%d")
-                        except ValueError:
-                            pass  # Let OpenAI handle it
-            
-            # Handle weekday patterns
-            if not normalized_date:
-                normalized_date = self._handle_weekday_patterns(raw_input_lower, current_date)
-            
-            # If we handled it locally, return the result
-            if normalized_date:
-                # Validate that the date is not in the past
-                try:
-                    parsed_date = datetime.strptime(normalized_date, "%Y-%m-%d")
-                    if parsed_date.date() < current_date.date():
-                        return {
-                            "is_valid": False,
-                            "normalized_date": None,
-                            "validation_issues": ["Past date not allowed"],
-                            "user_friendly_message": f"The date {parsed_date.strftime('%d %b %Y')} is in the past. Kindly share a valid delivery date from today onward.",
-                            "confidence": 95,
-                            "success": True
-                        }
-                except ValueError:
-                    pass
-                
-                result = {
-                    "is_valid": True,
-                    "normalized_date": normalized_date,
-                    "validation_issues": [],
-                    "user_friendly_message": f"Delivery date set to {normalized_date}",
-                    "confidence": 95,
-                    "success": True
-                }
-                
-                # Log local date validation
-                self.interaction_logger.log_entity_extraction(
-                    user_input=raw_date_input,
-                    entities={"date_validation": result},
-                    completeness=100,
-                    workflow_type="date_validation_local",
-                    model_used="local_processing",
-                    processing_time=time.time() - start_time
-                )
-                
-                return result
+            # Use AI for all date parsing to handle spelling mistakes and variations
             
             # Load date validation tool for complex cases
             with open(self.tools_dir / "date_validation.json", 'r') as f:
@@ -2421,7 +2338,7 @@ Determine the best category for the input item based on the similar items and th
             response = self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
-                instructions=self._load_prompt("date_validation", "_get_date_validation_prompt", current_year=current_date.year, current_date=current_date_str),
+                instructions=self._load_prompt("date_validation", "_get_date_validation_prompt", current_year=current_date.year, current_date=current_date_str, current_month=current_date.month),
                 tools=[date_tool],
                 tool_choice={"type": "function", "name": "validate_delivery_date"}
             )
@@ -2446,9 +2363,43 @@ Determine the best category for the input item based on the similar items and th
                                 args.get("normalized_date", ""), formatted_date
                             )
                     
+                    # Handle case where AI says valid but doesn't provide normalized_date
+                    is_valid = args.get("is_valid", False)
+                    normalized_date = args.get("normalized_date")
+                    
+                    if is_valid and not normalized_date:
+                        # AI said valid but didn't provide date - calculate it locally
+                        try:
+                            current_date_obj = datetime.strptime(current_date_str, "%Y-%m-%d")
+                            
+                            # Handle working days
+                            working_days_match = re.search(r'(\d+)\s*(?:working|business)\s*days?\s*from\s*now', raw_date_input.lower())
+                            if working_days_match:
+                                working_days = int(working_days_match.group(1))
+                                normalized_date = calculate_working_days_from_now(working_days)
+                                logger.info(f"Calculated {working_days} working days from now: {normalized_date}")
+                            elif "this weekend" in raw_date_input.lower():
+                                # Find this Saturday
+                                days_until_saturday = (5 - current_date_obj.weekday()) % 7
+                                if days_until_saturday == 0 and current_date_obj.weekday() == 5:
+                                    # Already Saturday
+                                    normalized_date = current_date_obj.strftime("%Y-%m-%d")
+                                else:
+                                    saturday = current_date_obj + timedelta(days=days_until_saturday)
+                                    normalized_date = saturday.strftime("%Y-%m-%d")
+                            elif "next weekend" in raw_date_input.lower():
+                                # Find next Saturday
+                                days_until_next_saturday = ((5 - current_date_obj.weekday()) % 7) + 7
+                                next_saturday = current_date_obj + timedelta(days=days_until_next_saturday)
+                                normalized_date = next_saturday.strftime("%Y-%m-%d")
+                        except Exception as e:
+                            logger.warning(f"Failed to calculate date locally: {e}")
+                            is_valid = False
+                            normalized_date = None
+                    
                     result = {
-                        "is_valid": args.get("is_valid", False),
-                        "normalized_date": args.get("normalized_date"),
+                        "is_valid": is_valid,
+                        "normalized_date": normalized_date,
                         "validation_issues": args.get("validation_issues", []),
                         "user_friendly_message": user_friendly_message,
                         "confidence": args.get("confidence", 0),
@@ -2507,58 +2458,7 @@ Determine the best category for the input item based on the similar items and th
                 "success": False
             }
     
-    def _handle_weekday_patterns(self, raw_input_lower: str, current_date: datetime) -> str:
-        """Handle weekday patterns like 'next Friday', 'this Wednesday', etc."""
-        
-        weekdays = {
-            'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
-            'friday': 4, 'saturday': 5, 'sunday': 6
-        }
-        
-        # Pattern: "next [weekday]"
-        match = re.search(r'next (monday|tuesday|wednesday|thursday|friday|saturday|sunday)', raw_input_lower)
-        if match:
-            target_weekday = weekdays[match.group(1)]
-            days_ahead = target_weekday - current_date.weekday()
-            if days_ahead <= 0:  # Target day already passed this week
-                days_ahead += 7
-            # For "next", always go to next week
-            if days_ahead < 7:
-                days_ahead += 7
-            target_date = current_date + timedelta(days=days_ahead)
-            return target_date.strftime("%Y-%m-%d")
-        
-        # Pattern: "this [weekday]"
-        match = re.search(r'this (monday|tuesday|wednesday|thursday|friday|saturday|sunday)', raw_input_lower)
-        if match:
-            target_weekday = weekdays[match.group(1)]
-            days_ahead = target_weekday - current_date.weekday()
-            if days_ahead < 0:  # Target day already passed this week, go to next week
-                days_ahead += 7
-            target_date = current_date + timedelta(days=days_ahead)
-            return target_date.strftime("%Y-%m-%d")
-        
-        # Pattern: "coming [weekday]"
-        match = re.search(r'coming (monday|tuesday|wednesday|thursday|friday|saturday|sunday)', raw_input_lower)
-        if match:
-            target_weekday = weekdays[match.group(1)]
-            days_ahead = target_weekday - current_date.weekday()
-            if days_ahead <= 0:  # Target day already passed this week
-                days_ahead += 7
-            target_date = current_date + timedelta(days=days_ahead)
-            return target_date.strftime("%Y-%m-%d")
-        
-        # Pattern: "[weekday] of coming week" or "[weekday] of next week"
-        match = re.search(r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday) of (?:coming|next) week', raw_input_lower)
-        if match:
-            target_weekday = weekdays[match.group(1)]
-            # Calculate days to next week's target day
-            days_to_next_monday = 7 - current_date.weekday()
-            days_ahead = days_to_next_monday + target_weekday
-            target_date = current_date + timedelta(days=days_ahead)
-            return target_date.strftime("%Y-%m-%d")
-        
-        return None
+
 
     @log_service_method("openai_service")
     def detect_opt_out_intent(self, message: str) -> Dict[str, Any]:
