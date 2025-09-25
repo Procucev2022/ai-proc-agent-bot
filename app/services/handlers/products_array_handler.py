@@ -364,23 +364,10 @@ class ProductsArrayHandler:
         
         # Check if this is a response to optional questions
         if optional_questions and not session.workflow_state.get("optional_fields_asked"):
-            # Use OpenAI to generate a natural optional fields message
-            optional_context = {
-                "conversation_stage": "optional_fields_inquiry",
-                "user_message": message,
-                "extracted_entities": [prod["entities"] for prod in complete_products],
-                "total_products": len(complete_products),
-                "product_descriptions": [prod["entities"].get("description", f"Product {i+1}") for i, prod in enumerate(complete_products)],
-                "available_optional_fields": optional_questions,
-                "action_needed": "Ask about optional fields for multiple products in a natural, user-friendly way"
-            }
-            
-            optional_message = await self.response_helpers.generate_contextual_response(
-                optional_context, 
-                optional_questions,
-                "optional_fields_inquiry",
-                chat_summaries
-            )
+            # Use the same structured format as single product
+            optional_intro = "Would you like to provide any additional details such as:"
+            optional_text = "\n".join(f"• {q}" for q in optional_questions)
+            optional_message = f"{optional_intro}\n\n{optional_text}\n\n You may send the details now or reply 'No' to continue."
             
             await self.whatsapp_service.send_message(user.phone_number, optional_message)
             

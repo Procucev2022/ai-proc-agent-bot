@@ -153,7 +153,7 @@ class ChatService:
             # Classify intent for all user messages to enable proper message routing after auth
             message_intent_result = None
 
-            # TODO : Should the Classify Intent call be here??
+            # Classify intent once for all message routing and tracking
             try:
                 conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
                 message_intent_result = self.intent_service.classify_intent(message_content, conversation_context)
@@ -164,6 +164,7 @@ class ChatService:
                 # If intent classification fails, still track the message without intent
                 logger.warning(f"Intent classification failed during message tracking: {e}")
                 self.session_manager.add_message_to_history(session, "user", message_content, message_type)
+                message_intent_result = {"intent": "general_inquiry", "confidence": 0}
 
             # User Authentication flow
             auth_result = await self.authentication_orchestrator_flow(user_phone, message_content, session, message_intent_result)

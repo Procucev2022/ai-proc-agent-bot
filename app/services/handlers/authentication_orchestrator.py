@@ -100,11 +100,12 @@ class AuthenticationOrchestrator:
             elif workflow_type_str in ["workflowtype.registration", "registration"]:
                 return await self._handle_registration_workflow(user_phone, message_content, session, {})
             
-            # Step 5: Use passed intent result or classify if not provided
+            # Step 5: Intent result should always be provided from ChatService
+            # If not provided, there's a bug in the calling code
             if not intent_result:
-                from app.services.helpers.chat_service_helpers import ChatServiceHelpers
-                conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
-                intent_result = self.intent_service.classify_intent(message_content, conversation_context)
+                logger.warning("Intent result not provided to authentication orchestrator - this should not happen")
+                # Use a fallback general inquiry intent instead of re-classifying
+                intent_result = {"intent": "general_inquiry", "confidence": 50}
 
             # Store intent result in session for use in authentication handlers
             session.workflow_state = session.workflow_state or {}
@@ -374,15 +375,13 @@ class AuthenticationOrchestrator:
                     user_phone, message_content, session
                 )
             else:
-                # No valid auth stage - classify intent and start new flow
-                logger.info(f"No valid auth stage, classifying intent for new flow")
-                from app.services.helpers.chat_service_helpers import ChatServiceHelpers
-                conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
-                new_intent_result = self.intent_service.classify_intent(message_content, conversation_context)
+                # No valid auth stage - use stored intent and start new flow
+                logger.info(f"No valid auth stage, starting new flow with stored intent")
+                stored_intent_result = session.workflow_state.get("current_intent_result", {"intent": "general_inquiry", "confidence": 50})
 
                 # Handle exit intent immediately before starting new flow
-                intent = new_intent_result.get('intent')
-                confidence = new_intent_result.get('confidence', 0)
+                intent = stored_intent_result.get('intent')
+                confidence = stored_intent_result.get('confidence', 0)
                 if intent == "exit_system" and confidence > 50:
                     logger.info(f"Exit intent detected in auth workflow with {confidence}% confidence")
                     exit_service = ExitService(self.whatsapp_service, self.authentication_service,
@@ -391,7 +390,7 @@ class AuthenticationOrchestrator:
                     exit_result = await exit_service.handle_exit_intent(user_phone, session)
                     return exit_result
 
-                return await self._start_authentication_flow(user_phone, message_content, session, new_intent_result)
+                return await self._start_authentication_flow(user_phone, message_content, session, stored_intent_result)
                 
         except Exception as e:
             logger.error(f"Authentication workflow error: {e}")
@@ -408,11 +407,17 @@ class AuthenticationOrchestrator:
             if switch_result:
                 return switch_result
             
-            # Classify intent to detect potential switches
-            from app.services.helpers.chat_service_helpers import ChatServiceHelpers
-            conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
-            new_intent_result = self.intent_service.classify_intent(message_content, conversation_context)
-            
+            # Use stored intent result or classify only if needed for switch detection
+            stored_intent_result = session.workflow_state.get("current_intent_result")
+            if stored_intent_result:
+                new_intent_result = stored_intent_result
+            else:
+                # Only classify if we don't have stored intent (should rarely happen)
+                logger.warning("No stored intent in registration workflow - classifying for switch detection")
+                from app.services.helpers.chat_service_helpers import ChatServiceHelpers
+                conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
+                new_intent_result = self.intent_service.classify_intent(message_content, conversation_context)
+
             new_intent = new_intent_result.get('intent')
             confidence = new_intent_result.get('confidence', 0)
 

@@ -161,12 +161,12 @@ class GMTAPIService:
     def _transform_rfq_to_gmt_format(self, rfq_data: Dict[str, Any], user_id: str = None, org_id: str = None) -> Dict[str, Any]:
         """
         Transform our internal RFQ format to GMT API format.
-        
+
         Args:
             rfq_data: Internal RFQ data structure
             user_id: User ID for the RFQ creator
             org_id: Organization ID for the RFQ creator
-            
+
         Returns:
             GMT API compatible RFQ data
         """
@@ -257,10 +257,13 @@ class GMTAPIService:
         elif rfq_documents:
             logger.info(f"Successfully prepared {len(rfq_documents)} attachments for GMT API")
 
+        # Generate project description from multiple products
+        project_desc = self._generate_project_desc(rfq_data)
+
         # Build GMT API payload
         gmt_payload = {
             "createdBy": user_id,
-            "projectDesc": rfq_data.get("product_name", f"RFQ_{datetime.now().strftime('%Y%m%d_%H%M%S')}"),
+            "projectDesc": project_desc,
             "deliveryDate": formatted_delivery_date,
             "noPrFlag": True,
             "procurementFlag": True,  # Added procurement flag as requested
@@ -291,6 +294,71 @@ class GMTAPIService:
             logger.info(f"Attachments in payload: {json.dumps(doc_summary, indent=2)}")
         
         return gmt_payload
+
+    def _generate_project_desc(self, rfq_data: Dict[str, Any]) -> str:
+        """
+        Generate project description from product names with 100 character limit.
+
+        Args:
+            rfq_data: RFQ data containing product information
+
+        Returns:
+            Project description string (max 100 chars)
+        """
+        product_names = []
+
+        # Extract from main rfq_data product_name
+        if rfq_data.get("product_name"):
+            product_names.append(rfq_data["product_name"])
+
+        # Extract from rfq_items array if available
+        rfq_items = rfq_data.get("rfq_items", [])
+        if isinstance(rfq_items, list):
+            for item in rfq_items:
+                if isinstance(item, dict):
+                    # Try different possible description fields
+                    desc = (item.get("description") or
+                           item.get("product_name") or
+                           item.get("item_description"))
+                    if desc and desc not in product_names:
+                        product_names.append(desc)
+
+        # Extract from entities if available (for multi-product RFQs)
+        entities = rfq_data.get("entities", [])
+        if isinstance(entities, list):
+            for entity in entities:
+                if isinstance(entity, dict):
+                    desc = (entity.get("product_name") or
+                           entity.get("description") or
+                           entity.get("projectDesc"))
+                    if desc and desc not in product_names:
+                        product_names.append(desc)
+
+        # Remove duplicates while preserving order and clean up names
+        unique_names = []
+        seen = set()
+        for name in product_names:
+            if name and isinstance(name, str):
+                clean_name = name.strip()
+                if clean_name and clean_name.lower() not in seen:
+                    unique_names.append(clean_name)
+                    seen.add(clean_name.lower())
+
+        if unique_names:
+            # Join with commas and spaces
+            project_desc = ", ".join(unique_names)
+
+            # Truncate to 100 characters if needed
+            if len(project_desc) > 100:
+                project_desc = project_desc[:97] + "..."
+
+            logger.info(f"Generated project description: {project_desc}")
+            return project_desc
+        else:
+            # Fallback to timestamp-based name
+            fallback_desc = f"RFQ_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            logger.info(f"Using fallback project description: {fallback_desc}")
+            return fallback_desc
     
     async def get_client_rfqs(self, client_id: str = "4004") -> Dict[str, Any]:
         """Get RFQ IDs for a client."""
