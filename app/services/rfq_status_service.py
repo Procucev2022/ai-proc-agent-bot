@@ -42,11 +42,20 @@ class RFQStatusService:
             
             # Check if we have RFQ statuses to show button
             if result.get("rfq_statuses") and self.rfq_service.settings.rfq_followup_note:
-                # Send message with URL button for better UX
-                await self.whatsapp_service.send_rfq_status_with_button(
+                # Send message with URL button for better UX using existing configurable buttons function
+                button_config = [{
+                    "id": "view_details",
+                    "title": "Click to view details",
+                    "url": self.rfq_service.settings.rfq_followup_note
+                }]
+                
+                button_message = f"{response_message}\n\nUse the button for detailed status information."
+                
+                await self.whatsapp_service.send_configurable_buttons(
                     recipient_id=user.phone_number,
-                    message=response_message,
-                    details_url=self.rfq_service.settings.rfq_followup_note
+                    body=button_message,
+                    buttons_config=button_config,
+                    footer="Tap the button to open details page"
                 )
             else:
                 # Fallback to regular text message if no button needed

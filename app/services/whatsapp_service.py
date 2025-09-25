@@ -295,38 +295,7 @@ class WhatsAppService:
             logger.error(f"Error sending button message: {e}")
             return MessageResponse(success=False, error=str(e))
     
-    async def send_rfq_status_with_button(self, recipient_id: str, message: str, details_url: str) -> MessageResponse:
-        """
-        Send RFQ status message with a clickable button for viewing details.
-        
-        Args:
-            recipient_id: WhatsApp number
-            message: Status message text
-            details_url: URL for the details button
-        """
-        try:
-            # Try to send with URL button first
-            button_config = [{
-                "id": "view_details",
-                "title": "Click to view details",
-                "url": details_url
-            }]
-            
-            # Format message with button instruction
-            button_message = f"{message}\n\nUse the button for detailed status information."
-            
-            return await self.send_configurable_buttons(
-                recipient_id=recipient_id,
-                body=button_message,
-                buttons_config=button_config,
-                footer="Tap the button to open details page"
-            )
-            
-        except Exception as e:
-            logger.error(f"Error sending RFQ status with button: {e}")
-            # Fallback to regular message with URL
-            fallback_message = f"{message}\n\nFor more details, visit: {details_url}"
-            return await self.send_message(recipient_id, fallback_message)
+
     
     async def send_configurable_buttons(self, 
                                       recipient_id: str, 
