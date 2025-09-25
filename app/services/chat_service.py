@@ -152,6 +152,8 @@ class ChatService:
             # Track user message in conversation history using extracted service
             # Classify intent for all user messages to enable proper message routing after auth
             message_intent_result = None
+
+            # TODO : Should the Classify Intent call be here??
             try:
                 conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
                 message_intent_result = self.intent_service.classify_intent(message_content, conversation_context)
@@ -164,7 +166,7 @@ class ChatService:
                 self.session_manager.add_message_to_history(session, "user", message_content, message_type)
 
             # User Authentication flow
-            auth_result = await self.authentication_orchestrator_flow(user_phone, message_content, session)
+            auth_result = await self.authentication_orchestrator_flow(user_phone, message_content, session, message_intent_result)
 
             # Check if authentication is still in progress
             if isinstance(auth_result, dict):
@@ -206,7 +208,9 @@ class ChatService:
                             )
 
                             logger.info(f"Buyer registration completed - processing message: {message_to_process[:50]}...")
-                            return await self._process_text_message(user, session, message_to_process)
+                            # Get the original intent result from session or use current one
+                            stored_intent_result = session.workflow_state.get("current_intent_result", message_intent_result)
+                            return await self._process_text_message(user, session, message_to_process, stored_intent_result)
                     else:
                         return {"status": "error", "error": "Session not found after registration"}
                 elif auth_status == "authentication_completed":
@@ -219,7 +223,9 @@ class ChatService:
                     logger.info(f"Authentication completed - processing message: {message_to_process[:50]}...")
                     user = await self.authentication_service.validate_token(user_phone)
                     if user:
-                        return await self._process_text_message(user, session, message_to_process)
+                        # Get the original intent result from session or use current one
+                        stored_intent_result = session.workflow_state.get("current_intent_result", message_intent_result)
+                        return await self._process_text_message(user, session, message_to_process, stored_intent_result)
                     else:
                         return {"status": "error", "error": "Session not found after authentication"}
 
@@ -230,7 +236,7 @@ class ChatService:
                     logger.info(f"User authenticated - proceeding to main flow: {auth_result.phone_number}")
                 else:
                     # Invalid user but not registered, handle as general inquiry
-                    return await self._process_text_message(auth_result, session, message_content)
+                    return await self._process_text_message(auth_result, session, message_content, message_intent_result)
             else:
                 logger.error(f"Unexpected auth_result type: {type(auth_result)}")
                 return {"status": "error", "error": "Authentication failed"}
@@ -255,7 +261,7 @@ class ChatService:
             return await self._handle_error_response(e, user_phone, "processing_message", "Please try again")
 
     async def authentication_orchestrator_flow(self, user_phone: str, message_content: str,
-                                               session: ConversationSession) -> Dict[str, Any]:
+                                               session: ConversationSession, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """Main authentication orchestrator function."""
         try:
             # Initialize authentication orchestrator
@@ -269,7 +275,7 @@ class ChatService:
             )
 
             return await auth_orchestrator.authentication_orchestrator_flow(
-                user_phone, message_content, session
+                user_phone, message_content, session, intent_result
             )
 
         except Exception as e:
@@ -396,12 +402,14 @@ class ChatService:
             print(
                 f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}")
 
-            # Use already-classified intent from message tracking, or classify if not available
+            # Use already-classified intent from message tracking or fallback to classification
             intent_result = message_intent_result
             if not intent_result:
-                # Fallback: classify intent if not already done during message tracking
+                # Fallback: classify intent if not provided (shouldn't happen with our optimization)
                 conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
                 intent_result = self.intent_service.classify_intent(message, conversation_context)
+                logger.warning(f"Had to fallback to intent classification - this shouldn't happen")
+
             logger.info(f"Intent classification result: {intent_result}")
 
             intent = intent_result.get('intent')

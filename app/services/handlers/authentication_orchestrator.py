@@ -46,8 +46,8 @@ class AuthenticationOrchestrator:
         self.chat_service = chat_service
         self.auth_reg_switch = AuthRegistrationIntentSwitch(whatsapp_service)
 
-    async def authentication_orchestrator_flow(self, user_phone: str, message_content: str, 
-                                             session: ConversationSession) -> Dict[str, Any]:
+    async def authentication_orchestrator_flow(self, user_phone: str, message_content: str,
+                                             session: ConversationSession, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """Main authentication orchestrator function following the specified flow."""
         try:
             logger.info(f"Starting authentication flow for {user_phone}")
@@ -100,10 +100,15 @@ class AuthenticationOrchestrator:
             elif workflow_type_str in ["workflowtype.registration", "registration"]:
                 return await self._handle_registration_workflow(user_phone, message_content, session, {})
             
-            # Step 5: Classify intent for new workflows
-            from app.services.helpers.chat_service_helpers import ChatServiceHelpers
-            conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
-            intent_result = self.intent_service.classify_intent(message_content, conversation_context)
+            # Step 5: Use passed intent result or classify if not provided
+            if not intent_result:
+                from app.services.helpers.chat_service_helpers import ChatServiceHelpers
+                conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
+                intent_result = self.intent_service.classify_intent(message_content, conversation_context)
+
+            # Store intent result in session for use in authentication handlers
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state["current_intent_result"] = intent_result
            
             intent = intent_result.get('intent')
             confidence = intent_result.get('confidence', 0)
@@ -359,8 +364,10 @@ class AuthenticationOrchestrator:
             
             if auth_stage == "email_confirmation":
                 logger.info(f"Processing email confirmation with message: {message_content}")
+                # Get stored intent result from session
+                stored_intent_result = session.workflow_state.get("current_intent_result", {})
                 return await self.authentication_service.handle_email_confirmation(
-                    user_phone, message_content, session
+                    user_phone, message_content, session, stored_intent_result
                 )
             elif auth_stage == "email_otp":
                 return await self.authentication_service.handle_email_otp_validation(
@@ -442,8 +449,10 @@ class AuthenticationOrchestrator:
                 logger.info(f"AuthOrchestrator: Registration result: {result}")
                 return result
             elif registration_stage == "email_confirmation":
+                # Get stored intent result from session
+                stored_intent_result = session.workflow_state.get("current_intent_result", {})
                 return await self.authentication_service.handle_email_confirmation(
-                    user_phone, message_content, session
+                    user_phone, message_content, session, stored_intent_result
                 )
             elif registration_stage == "email_otp":
                 return await self.registration_service.handle_registration_otp_validation(
