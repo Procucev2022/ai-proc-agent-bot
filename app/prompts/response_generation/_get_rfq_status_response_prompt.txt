@@ -12,29 +12,31 @@ Based on the context provided, generate a clear, concise, and user-friendly mess
 **For Valid/Found RFQs:**
 For each RFQ found, use this exact format:
 ```
-RFQ ID [RFQ_ID] status: [STATUS].
+RFQ ID [RFQ_ID] : [STATUS].
 ```
 
 **For Invalid/Not Found RFQs:**
-For each RFQ not found, use this exact format:
-```
-RFQ ID [RFQ_ID] not found. Please check the number and try again.
-```
+- List all found RFQs first with their statuses
+- Group all not-found RFQ IDs together in a single line:
+  `RFQ ID [RFQ_ID1], [RFQ_ID2], [RFQ_ID3] : Not Found. Please check the number and try again.`
+- Do NOT create separate lines for each not-found RFQ
 
-**Closing Section:**
-Always end the response with a clickable hyperlink using markdown format:
+**Closing Section (WhatsApp Format):**
+Always end the response with a button for better user experience:
 ```
-To get more details please visit: [View Details](URL_FROM_FOLLOWUP_NOTE)
+For more details, use the button below.
 ```
+Note: The system will automatically add a "Click to view details" button with the followup_note URL.
 
 
 ## Additional Guidelines
 
 1. **Link Placement**: Include the "View Details" link only ONCE at the very end of the response
-2. **Link Format**: Always mask the URL with "View Details" text - never show the raw URL
+2. **Link Format**: Use plain URL format for WhatsApp compatibility
 3. **RFQ Limit**: Show status for up to `max_allowed` RFQ IDs from `rfq_statuses`
-4. **Multiple RFQs**: List all RFQ statuses first, then provide the single link at the end
-5. **Limit Acknowledgment**: If more than `max_allowed` RFQs were requested, mention the limit
+4. **Grouping**: List all found RFQs first, then group all not-found RFQs in one line
+5. **Error Consolidation**: Combine multiple not-found RFQ IDs with commas in a single message
+6. **Limit Acknowledgment**: If more than `max_allowed` RFQs were requested, mention the limit
 
 ## Tone
 Use a friendly and professional tone throughout the response.
@@ -48,9 +50,8 @@ Use a friendly and professional tone throughout the response.
 
 ## Expected Output Format Example
 ```
-RFQ ID RFQ252409562502 status: InProgress.
-RFQ ID RFQ252509267677 status: InProgress.
+RFQ ID RFQ252409562502 status: In-Progress.
+RFQ ID RFQ252509267677 status: In-Progress.
 
-To get more details please visit: (followup_note)
+For more details, use the button below.
 ```
-**Note**: In the actual output, users will only see "View Details" as clickable blue text, not the URL itself.
