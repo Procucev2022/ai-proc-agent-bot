@@ -1037,14 +1037,14 @@ Respond only with: "yes" or "no"
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
                     type_label = f" — {user_type}" if user_type else ""
-                    message += f"{email}{type_label}\n"
+                    message += f"{i}. {email}{type_label}\n"
                 message += "Reply with the number corresponding to your email address to continue."
             else:
                 message = f"Welcome! Please select your profile by choosing the associated email address:\n"
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
                     type_label = f" — {user_type}" if user_type else ""
-                    message += f"{email}{type_label}\n"
+                    message += f"{i}. {email}{type_label}\n"
                 message += "Reply with the number corresponding to your email address to continue."
             
             await self.whatsapp_service.send_message(user_phone, message)
