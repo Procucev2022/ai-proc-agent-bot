@@ -13,14 +13,41 @@ INTENT CATEGORIES:
 
 4. **modification_request** (80%+ confidence) - User wants to CHANGE/REPLACE existing confirmed data
    Examples: "Change chairs to 55", "Modify the delivery date to tomorrow", "Actually make that 20 printers instead"
+
+   **MODIFICATION VERBS & PATTERNS:**
+   - Direct modification: "change", "modify", "update", "alter", "edit"
+   - Replacement: "actually", "instead", "rather", "make that", "switch to"
+   - Correction: "wait", "no", "sorry", "I meant", "let me correct that"
+   - Substitution: "replace with", "swap for", "use X instead of Y"
+
+   **MODIFICATION EXAMPLES:**
+   - "Change the quantity to 100" (direct change)
+   - "Actually, make that Dell laptops instead of HP" (replacement)
+   - "Wait, I meant tomorrow not today" (correction)
+   - "Switch the delivery to our main office" (substitution)
+   - "Update the specs to include 16GB RAM" (enhancement)
+
    Context clues:
-   - Uses modification verbs (change, modify, update, actually, instead, replace)
-   - NOT answering optional questions from bot
-   - NOT in response to "Do you have specifications/remarks?"
+   - Uses modification verbs/patterns above
+   - References existing entities ("the chairs", "that order", "the delivery date")
+   - NOT answering clarification questions from bot
    - User explicitly wants to alter previously provided information
 
-   IMPORTANT: If bot just asked for specifications/remarks and user provides details
-   WITHOUT modification verbs → continue with buy_something, NOT modification_request
+   IMPORTANT: If bot asked clarification questions for missing mandatory fields and user provides the requested info (even mentioning delivery date, location, etc.) WITHOUT modification verbs → continue with buy_something, NOT modification_request
+
+   **CLARIFICATION vs MODIFICATION EXAMPLES:**
+
+   CLARIFICATION (→ buy_something):
+   - Bot: "What is the delivery date?" User: "27th Sept"
+   - Bot: "Any specifications for the laptops?" User: "16GB RAM, Windows 11"
+   - Bot: "Which division is this for?" User: "IT Department"
+   - Bot: "What quantity do you need?" User: "50 units"
+
+   MODIFICATION (→ modification_request):
+   - User: "Change the delivery date to 27th Sept" (unprompted change)
+   - User: "Actually make the quantity 50 instead of 30" (correction)
+   - User: "Update the specs to include 16GB RAM" (enhancement)
+   - User: "Switch that to IT Department" (reference + change)
 
 5. **confirmation_response** (85%+ confidence) - User responding to a confirmation request
    Examples: "Yes", "Confirm", "No, make changes", "Yes but change the delivery date"
@@ -65,7 +92,9 @@ CONTEXT-AWARE CLASSIFICATION RULES:
 - If conversation stage is "confirming" and user says "yes" → confirmation_response
 - If bot's previous message asked for specifications/remarks/additional details and user provides them without modification verbs → buy_something (continue collection)
 - If bot just asked optional questions like "Do you have any specifications?" and user answers → buy_something (not modification)
-- If user uses modification language ("change", "modify", "update", "actually") AND not answering bot's optional questions → modification_request
+- **CRITICAL: If bot just asked clarification questions for missing mandatory fields (delivery date, location, division, etc.) and user provides the requested information → buy_something (continue collection, NOT modification)**
+- **If user is answering clarification questions about incomplete products (filling missing mandatory fields) → buy_something (this is completing data, not modifying existing data)**
+- If user uses modification language ("change", "modify", "update", "actually") AND not answering bot's clarification/optional questions → modification_request
 - If user references existing entities ("the chairs", "those laptops") with modification verbs → modification_request
 - If no context exists or user introduces new items → buy_something
 - Consider pronoun references ("change it to", "make that") → modification_request

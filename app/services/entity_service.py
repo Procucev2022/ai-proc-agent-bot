@@ -433,23 +433,40 @@ class EntityService:
 
     def _validate_dates_in_products(self, products: list, original_message: str) -> tuple:
         """Validate delivery dates in products list.
-        
+
         Returns:
             tuple: (validated_products, has_date_validation_error)
         """
         validated_products = []
         has_date_validation_error = False
-        
+
+        # Collect unique delivery dates to avoid redundant API calls
+        unique_dates = {}
+        date_validation_cache = {}
+
+        for product in products:
+            delivery_date = product.get("deliveryDate")
+            if delivery_date:
+                unique_dates[delivery_date] = unique_dates.get(delivery_date, 0) + 1
+
+        # Validate each unique date only once
+        for date in unique_dates.keys():
+            if date not in date_validation_cache:
+                print(f"EntityService: Validating unique delivery date: {date} (appears in {unique_dates[date]} products)")
+                validation_result = self.openai_service.validate_delivery_date(
+                    raw_date_input=date,
+                    extracted_date=date
+                )
+                date_validation_cache[date] = validation_result
+
+        # Apply validation results to all products
         for product in products:
             validated_product = product.copy()
             delivery_date = product.get("deliveryDate")
-            
-            if delivery_date:
-                validation_result = self.openai_service.validate_delivery_date(
-                    raw_date_input=delivery_date,
-                    extracted_date=delivery_date
-                )
-                
+
+            if delivery_date and delivery_date in date_validation_cache:
+                validation_result = date_validation_cache[delivery_date]
+
                 if validation_result.get("is_valid"):
                     validated_product["deliveryDate"] = validation_result.get("normalized_date")
                     # Clear any existing date validation error when date is valid
@@ -464,7 +481,7 @@ class EntityService:
             else:
                 # If no delivery date provided, preserve any existing validation error
                 pass
-            
+
             validated_products.append(validated_product)
         
         return validated_products, has_date_validation_error

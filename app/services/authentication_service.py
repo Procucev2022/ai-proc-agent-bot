@@ -243,7 +243,7 @@ class AuthenticationService:
             return {"status": "error", "error": str(e)}
     
     async def handle_email_confirmation(self, user_phone: str, message: str,
-                                      session: ConversationSession) -> Dict[str, Any]:
+                                      session: ConversationSession, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """Handle email confirmation response with intent-aware re-filtering."""
         try:
             email_options = session.workflow_state.get("email_options", [])
@@ -255,13 +255,18 @@ class AuthenticationService:
 
             # NEW: Check for clear intent before processing email selection
             if confirmation_stage == "selection":
-                # Re-classify intent from the message
-                from app.services.helpers.chat_service_helpers import ChatServiceHelpers
-                from app.services.intent_service import IntentService
+                # Use the passed intent result or fallback to stored result
+                if not intent_result:
+                    intent_result = session.workflow_state.get("current_intent_result", {})
 
-                conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
-                intent_service = IntentService()
-                intent_result = intent_service.classify_intent(message, conversation_context)
+                # If still no intent result, re-classify as fallback
+                if not intent_result:
+                    from app.services.helpers.chat_service_helpers import ChatServiceHelpers
+                    from app.services.intent_service import IntentService
+
+                    conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
+                    intent_service = IntentService()
+                    intent_result = intent_service.classify_intent(message, conversation_context)
 
                 intent = intent_result.get('intent')
                 confidence = intent_result.get('confidence', 0)
@@ -1033,19 +1038,19 @@ Respond only with: "yes" or "no"
             seller_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Seller"]
             
             if buyer_emails and seller_emails:
-                message = f"Welcome! Are you looking to buy or sell today?\nPlease select your profile by choosing the associated email address:\n"
+                message = f"Welcome! Are you looking to buy or sell today ?\n\nPlease select your profile by choosing the associated email address:\n"
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
                     type_label = f" — {user_type}" if user_type else ""
-                    message += f"{email}{type_label}\n"
-                message += "Reply with the number corresponding to your email address to continue."
+                    message += f"  {i}. {email}{type_label}\n"
+                message += "\nReply with the number corresponding to your email address to continue."
             else:
                 message = f"Welcome! Please select your profile by choosing the associated email address:\n"
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
                     type_label = f" — {user_type}" if user_type else ""
-                    message += f"{email}{type_label}\n"
-                message += "Reply with the number corresponding to your email address to continue."
+                    message += f"  {i}. {email}{type_label}\n"
+                message += "\nReply with the number corresponding to your email address to continue."
             
             await self.whatsapp_service.send_message(user_phone, message)
             
