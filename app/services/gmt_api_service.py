@@ -536,13 +536,18 @@ class GMTAPIService:
                 'Accept': 'application/json'
             }
 
-            data = {"clientId": "a936fe27-b0b4-4da9-9b03-88f08f2ce14e"}
+            data = {"clientId": client_id}
             # Only add rfqIds if we have valid (non-None) RFQ IDs
             if rfq_ids and any(rfq_id is not None for rfq_id in rfq_ids):
-                # Filter out None values
-                valid_rfq_ids = [rfq_id for rfq_id in rfq_ids if rfq_id is not None]
+                # Filter out None values and add RFQ prefix if missing
+                valid_rfq_ids = [
+                    f"RFQ{rfq_id}" if not str(rfq_id).upper().startswith('RFQ') else rfq_id
+                    for rfq_id in rfq_ids
+                    if rfq_id is not None
+                ]
+
                 if valid_rfq_ids:  # Double check we have valid IDs after filtering
-                    data["rfqIds"] = ["RFQ240801156789", "RFQ252409352114", "252209233367"]
+                    data["rfqIds"] = valid_rfq_ids
 
 
 
