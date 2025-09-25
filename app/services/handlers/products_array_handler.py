@@ -210,8 +210,6 @@ class ProductsArrayHandler:
                     index = prod.get("index", i + 1)
                     product_names.append(f"Product {index}")
 
-            all_questions.append(f"For all products ({', '.join(product_names)}):")
-
             # Add mandatory fields first - filter out None values
             if combined_questions["has_mandatory"]:
                 mandatory_questions = [q for q in combined_questions["mandatory"] if q is not None and str(q).strip()]
@@ -254,7 +252,7 @@ class ProductsArrayHandler:
                     index = prod.get("index", i + 1)
                     product_names.append(f"Product {index}")
 
-            all_questions.append(f"For all products ({', '.join(product_names)}):")
+            # Don't add any prefix for delivery questions - they apply to all products by default
 
             # Get delivery question text from schema
             sample_schema = ChatServiceHelpers.create_rfq_schema_from_entities(incomplete_products[0]["entities"], self.openai_service)
@@ -279,7 +277,9 @@ class ProductsArrayHandler:
             print(f"  Processing product-specific questions for {product_desc}: {missing_fields}")
 
             if combined_questions["has_mandatory"]:
-                all_questions.append(f"For {product_desc}:")
+                # Only add product prefix if there are multiple products
+                if len(incomplete_products) > 1:
+                    all_questions.append(f"For {product_desc}:")
                 # Filter out None values from mandatory questions
                 mandatory_questions = [q for q in combined_questions["mandatory"] if q is not None and str(q).strip()]
                 all_questions.extend(mandatory_questions)

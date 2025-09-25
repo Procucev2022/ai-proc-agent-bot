@@ -1341,7 +1341,6 @@ Analyze their response to determine their true choice.
                     if args.get("questions"):
                         questions_text = "\n".join(f"• {q}" for q in args["questions"])
                         
-                        response_parts.append(f"To proceed with your request, please mention the modifications you wish to make.")
                         response_parts.append(f"Please provide the following:\n\n{questions_text}")
                     generated_response = "\n\n".join(response_parts)
                     
@@ -2234,12 +2233,12 @@ Determine the best category for the input item based on the similar items and th
                     return "\n\n".join(response_parts)
             
             # Fallback response
-            return "Here's a summary of your RFQ. Would you like to proceed with creating it?"
+            return "Here's a summary of your RFQ."
             
         except Exception as e:
             error_msg = str(e)
             logger.error(f"RFQ confirmation generation failed: {error_msg}")
-            return "Here's a summary of your RFQ. Would you like to proceed with creating it?"
+            return "Here's a summary of your RFQ."
     
     def _clean_for_json_serialization(self, obj):
         """Recursively clean object for JSON serialization."""
