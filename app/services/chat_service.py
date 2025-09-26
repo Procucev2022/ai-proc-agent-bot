@@ -999,18 +999,6 @@ class ChatService:
             # Route to authentication email confirmation handler
             return await self._handle_authentication_email_button(user, session, button_id)
         
-        # Handle view details button for RFQ status
-        if button_id == "view_details":
-            workflow_state = session.workflow_state or {}
-            details_url = workflow_state.get("rfq_details_url")
-            if details_url:
-                url_message = f"Here's the detailed status page:\n{details_url}"
-                await self.whatsapp_service.send_message(user.phone_number, url_message)
-                return {"status": "details_url_sent", "url": details_url}
-            else:
-                await self.whatsapp_service.send_message(user.phone_number, "Details link not available.")
-                return {"status": "no_details_url"}
-        
         # Default button handling
         return {"status": "button_handled", "button_id": button_id}
 

@@ -40,29 +40,8 @@ class RFQStatusService:
             # Step: Send WhatsApp message with button for status details
             response_message = result["response_message"]
             
-            # Check if we have RFQ statuses to show button
-            if result.get("rfq_statuses") and self.rfq_service.settings.rfq_followup_note:
-                # Store URL in session for button handler
-                session.workflow_state = session.workflow_state or {}
-                session.workflow_state["rfq_details_url"] = self.rfq_service.settings.rfq_followup_note
-                
-                # Send message with reply button
-                button_config = [{
-                    "id": "view_details",
-                    "title": "View Details"
-                }]
-                
-                button_message = f"{response_message}\n\nClick the button below to get the detailed status page."
-                
-                await self.whatsapp_service.send_configurable_buttons(
-                    recipient_id=user.phone_number,
-                    body=button_message,
-                    buttons_config=button_config,
-                    footer="Tap to get details link"
-                )
-            else:
-                # Fallback to regular text message if no button needed
-                await self.whatsapp_service.send_message(user.phone_number, response_message)
+            # Send regular text message
+            await self.whatsapp_service.send_message(user.phone_number, response_message)
 
             # Update session workflow type for tracking
             session.workflow_type = "rfq_status_check"
