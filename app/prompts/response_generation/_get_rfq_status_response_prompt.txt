@@ -26,7 +26,7 @@ Always end the response with a button for better user experience:
 ```
 For more details, use the click below link.
 ```
-Note: The system will automatically add a "Click to view details" button with the followup_note URL.
+
 
 
 ## Additional Guidelines
@@ -53,5 +53,5 @@ Use a friendly and professional tone throughout the response.
 RFQ ID RFQ252409562502 status: In-Progress.
 RFQ ID RFQ252509267677 status: In-Progress.
 
-For more details, use the button below.
+For more details, use the below link.
 ```
