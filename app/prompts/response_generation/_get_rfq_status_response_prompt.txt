@@ -9,6 +9,9 @@ Based on the context provided, generate a clear, concise, and user-friendly mess
 - If specific RFQ IDs were provided: ✅ Here are the statuses for your requested RFQs:
 - If no specific RFQ IDs were provided: ℹ️ Here are the statuses of some of your recent RFQs:
 
+Spacing:
+Add one blank line after the opening line.
+
 **For Valid/Found RFQs:**
 For each RFQ found, use this exact format with bold RFQ IDs:
 ```
@@ -62,4 +65,10 @@ Use a friendly and professional tone throughout the response.
 - `has_results`: Boolean indicating if any results were found
 - `max_allowed`: Maximum number of RFQs to display
 
+Example Output Format
+ℹ️ Here are the statuses of some of your recent RFQs:
 
+*RFQ252409562502* : In Progress.
+*RFQ252509267677* : In Progress.
+
+👉 Are you looking for a specific RFQ? Please provide the RFQ number.
