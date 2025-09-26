@@ -218,6 +218,29 @@ class WhatsAppService:
         except Exception as e:
             logger.error(f"Error sending interactive message: {e}")
             return MessageResponse(success=False, error=str(e))
+    
+    async def send_cta_button_message(self, recipient_id: str, body_text: str, button_text: str, url: str) -> MessageResponse:
+        """
+        Send message with CTA (Call-to-Action) button.
+        
+        Args:
+            recipient_id: WhatsApp number to send to
+            body_text: Main message text
+            button_text: Text displayed on the button
+            url: URL to open when button is clicked
+        """
+        content = {
+            "body": {"text": body_text},
+            "action": {
+                "name": "cta_url",
+                "parameters": {
+                    "display_text": button_text,
+                    "url": url
+                }
+            }
+        }
+        
+        return await self.send_interactive_message(recipient_id, "cta_url", content)
         
     async def send_list_message(self, recipient_id: str, header: str, body: str, items: List[Dict[str, str]]) -> MessageResponse:
         """
