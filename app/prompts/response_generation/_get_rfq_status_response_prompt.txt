@@ -12,13 +12,13 @@ Based on the context provided, generate a clear, concise, and user-friendly mess
 **For Valid/Found RFQs:**
 For each RFQ found, use this exact format:
 ```
-RFQ ID [RFQ_ID] : [STATUS].
+[RFQ_ID] : [STATUS].
 ```
 
 **For Invalid/Not Found RFQs:**
 - List all found RFQs first with their statuses
 - Group all not-found RFQ IDs together in a single line:
-  `RFQ ID [RFQ_ID1], [RFQ_ID2], [RFQ_ID3] : Not Found. Please check the number and try again.`
+  `[RFQ_ID1], [RFQ_ID2], [RFQ_ID3] : Not Found. Please check the number and try again.`
 - Do NOT create separate lines for each not-found RFQ
 
 **Closing Section (WhatsApp Format):**
