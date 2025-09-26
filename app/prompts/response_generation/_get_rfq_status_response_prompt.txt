@@ -6,37 +6,55 @@ Based on the context provided, generate a clear, concise, and user-friendly mess
 ## Response Structure
 
 **Opening Line:**
-- If specific RFQ IDs were provided: Reference them directly
-- If no specific RFQ IDs were provided: "No specific RFQ IDs were provided. However, here are the statuses of some RFQs currently in progress:"
+- If specific RFQ IDs were provided: ✅ Here are the statuses for your requested RFQs:
+- If no specific RFQ IDs were provided: ℹ️ Here are the statuses of some of your recent RFQs:
+
+Spacing:
+Add one blank line after the opening line.
 
 **For Valid/Found RFQs:**
-For each RFQ found, use this exact format:
+For each RFQ found, use this exact format with bold RFQ IDs:
 ```
-[RFQ_ID] : [STATUS].
+*[RFQ_ID]* : [STATUS].
 ```
 
 **For Invalid/Not Found RFQs:**
 - List all found RFQs first with their statuses
-- Group all not-found RFQ IDs together in a single line:
-  `[RFQ_ID1], [RFQ_ID2], [RFQ_ID3] : Not Found. Please check the number and try again.`
+- Group all not-found RFQ IDs together in a single line with bold formatting:
+  `*[RFQ_ID1]*, *[RFQ_ID2]*, *[RFQ_ID3]* : Not Found. Please check the number and try again.`
 - Do NOT create separate lines for each not-found RFQ
 
 **Closing Section (WhatsApp Format):**
 Always end the response with a button for better user experience:
 ```
-For more details, use the click below link.
+👉 Are you looking for a specific RFQ? Please provide the RFQ number.
 ```
 
 
 
+## Status Formatting Rules
+
+Convert API status values to user-friendly formats:
+- `InProgress` → `In Progress`
+- `PendingApproval` → `Pending Approval`
+- `UnderReview` → `Under Review`
+- `AwaitingQuotes` → `Awaiting Quotes`
+- `QuotesReceived` → `Quotes Received`
+- `InEvaluation` → `In Evaluation`
+- `OrderPlaced` → `Order Placed`
+- `Completed` → `Completed`
+- `Cancelled` → `Cancelled`
+- `Rejected` → `Rejected`
+- `OnHold` → `On Hold`
+- 'Not found'-> 'Not Found'
+
 ## Additional Guidelines
 
-1. **Link Placement**: Include the "View Details" link only ONCE at the very end of the response
-2. **Link Format**: Use plain URL format for WhatsApp compatibility
-3. **RFQ Limit**: Show status for up to `max_allowed` RFQ IDs from `rfq_statuses`
-4. **Grouping**: List all found RFQs first, then group all not-found RFQs in one line
-5. **Error Consolidation**: Combine multiple not-found RFQ IDs with commas in a single message
-6. **Limit Acknowledgment**: If more than `max_allowed` RFQs were requested, mention the limit
+1. **RFQ Limit**: Show status for up to `max_allowed` RFQ IDs from `rfq_statuses`
+2. **Grouping**: List all found RFQs first, then group all not-found RFQs in one line
+3. **Error Consolidation**: Combine multiple not-found RFQ IDs with commas in a single message
+4. **Limit Acknowledgment**: If more than `max_allowed` RFQs were requested, mention the limit
+5. **Status Display**: Always format status values according to the Status Formatting Rules above
 
 ## Tone
 Use a friendly and professional tone throughout the response.
@@ -46,12 +64,11 @@ Use a friendly and professional tone throughout the response.
 - `rfq_ids`: Array of requested RFQ IDs (may be empty)
 - `has_results`: Boolean indicating if any results were found
 - `max_allowed`: Maximum number of RFQs to display
-- `followup_note`: URL for the "View Details" link
 
-## Expected Output Format Example
-```
-RFQ ID RFQ252409562502 status: In-Progress.
-RFQ ID RFQ252509267677 status: In-Progress.
+Example Output Format
+ℹ️ Here are the statuses of some of your recent RFQs:
 
-For more details, use the below link.
-```
+*RFQ252409562502* : In Progress.
+*RFQ252509267677* : In Progress.
+
+👉 Are you looking for a specific RFQ? Please provide the RFQ number.
