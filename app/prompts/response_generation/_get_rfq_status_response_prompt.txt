@@ -24,7 +24,7 @@ For each RFQ found, use this exact format:
 **Closing Section (WhatsApp Format):**
 Always end the response with a button for better user experience:
 ```
-For more details, use the click below link.
+For more details, use the button below.
 ```
 
 
@@ -46,12 +46,11 @@ Use a friendly and professional tone throughout the response.
 - `rfq_ids`: Array of requested RFQ IDs (may be empty)
 - `has_results`: Boolean indicating if any results were found
 - `max_allowed`: Maximum number of RFQs to display
-- `followup_note`: URL for the "View Details" link
 
 ## Expected Output Format Example
 ```
 RFQ ID RFQ252409562502 status: In-Progress.
 RFQ ID RFQ252509267677 status: In-Progress.
 
-For more details, use the below link.
+For more details, use the button link.
 ```
