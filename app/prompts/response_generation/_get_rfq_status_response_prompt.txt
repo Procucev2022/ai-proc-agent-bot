@@ -31,12 +31,10 @@ For more details, use the button below.
 
 ## Additional Guidelines
 
-1. **Link Placement**: Include the "View Details" link only ONCE at the very end of the response
-2. **Link Format**: Use plain URL format for WhatsApp compatibility
-3. **RFQ Limit**: Show status for up to `max_allowed` RFQ IDs from `rfq_statuses`
-4. **Grouping**: List all found RFQs first, then group all not-found RFQs in one line
-5. **Error Consolidation**: Combine multiple not-found RFQ IDs with commas in a single message
-6. **Limit Acknowledgment**: If more than `max_allowed` RFQs were requested, mention the limit
+1. **RFQ Limit**: Show status for up to `max_allowed` RFQ IDs from `rfq_statuses`
+2. **Grouping**: List all found RFQs first, then group all not-found RFQs in one line
+3. **Error Consolidation**: Combine multiple not-found RFQ IDs with commas in a single message
+4. **Limit Acknowledgment**: If more than `max_allowed` RFQs were requested, mention the limit
 
 ## Tone
 Use a friendly and professional tone throughout the response.

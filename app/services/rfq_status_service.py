@@ -39,12 +39,14 @@ class RFQStatusService:
 
             # Step: Send WhatsApp message with button for status details
             response_message = result["response_message"]
+
+            print("response _message", response_message)
             
             # Send CTA button message with link to procurement dashboard
             await self.whatsapp_service.send_cta_button_message(
                 recipient_id=user.phone_number,
                 body_text=response_message,
-                button_text="View Details",
+                button_text="Click to view details",
                 url="https://p2pdevuiindia.azurewebsites.net/login"
             )
 
