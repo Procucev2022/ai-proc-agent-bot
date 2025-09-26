@@ -10,15 +10,15 @@ Based on the context provided, generate a clear, concise, and user-friendly mess
 - If no specific RFQ IDs were provided: "No specific RFQ IDs were provided. However, here are the statuses of some RFQs currently in progress:"
 
 **For Valid/Found RFQs:**
-For each RFQ found, use this exact format:
+For each RFQ found, use this exact format with bold RFQ IDs:
 ```
-[RFQ_ID] : [STATUS].
+*[RFQ_ID]* : [STATUS].
 ```
 
 **For Invalid/Not Found RFQs:**
 - List all found RFQs first with their statuses
-- Group all not-found RFQ IDs together in a single line:
-  `[RFQ_ID1], [RFQ_ID2], [RFQ_ID3] : Not Found. Please check the number and try again.`
+- Group all not-found RFQ IDs together in a single line with bold formatting:
+  `*[RFQ_ID1]*, *[RFQ_ID2]*, *[RFQ_ID3]* : Not Found. Please check the number and try again.`
 - Do NOT create separate lines for each not-found RFQ
 
 **Closing Section (WhatsApp Format):**
@@ -29,12 +29,28 @@ For more details, use the button below.
 
 
 
+## Status Formatting Rules
+
+Convert API status values to user-friendly formats:
+- `InProgress` → `In Progress`
+- `PendingApproval` → `Pending Approval`
+- `UnderReview` → `Under Review`
+- `AwaitingQuotes` → `Awaiting Quotes`
+- `QuotesReceived` → `Quotes Received`
+- `InEvaluation` → `In Evaluation`
+- `OrderPlaced` → `Order Placed`
+- `Completed` → `Completed`
+- `Cancelled` → `Cancelled`
+- `Rejected` → `Rejected`
+- `OnHold` → `On Hold`
+
 ## Additional Guidelines
 
 1. **RFQ Limit**: Show status for up to `max_allowed` RFQ IDs from `rfq_statuses`
 2. **Grouping**: List all found RFQs first, then group all not-found RFQs in one line
 3. **Error Consolidation**: Combine multiple not-found RFQ IDs with commas in a single message
 4. **Limit Acknowledgment**: If more than `max_allowed` RFQs were requested, mention the limit
+5. **Status Display**: Always format status values according to the Status Formatting Rules above
 
 ## Tone
 Use a friendly and professional tone throughout the response.
@@ -47,8 +63,8 @@ Use a friendly and professional tone throughout the response.
 
 ## Expected Output Format Example
 ```
-RFQ ID RFQ252409562502 status: In-Progress.
-RFQ ID RFQ252509267677 status: In-Progress.
+*RFQ252409562502* : In-Progress.
+*RFQ252509267677* : In-Progress.
 
-For more details, use the button link.
+For more details, use the button below.
 ```

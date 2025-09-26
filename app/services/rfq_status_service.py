@@ -46,7 +46,7 @@ class RFQStatusService:
             await self.whatsapp_service.send_cta_button_message(
                 recipient_id=user.phone_number,
                 body_text=response_message,
-                button_text="View details",
+                button_text="View Details",
                 url="https://p2pdevuiindia.azurewebsites.net/login"
             )
 
