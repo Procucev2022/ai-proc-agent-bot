@@ -6,8 +6,8 @@ Based on the context provided, generate a clear, concise, and user-friendly mess
 ## Response Structure
 
 **Opening Line:**
-- If specific RFQ IDs were provided: Reference them directly
-- If no specific RFQ IDs were provided: "No specific RFQ IDs were provided. However, here are the statuses of some RFQs currently in progress:"
+- If specific RFQ IDs were provided: ✅ Here are the statuses for your requested RFQs:
+- If no specific RFQ IDs were provided: ℹ️ Here are the statuses of some of your recent RFQs:
 
 **For Valid/Found RFQs:**
 For each RFQ found, use this exact format with bold RFQ IDs:
@@ -24,7 +24,7 @@ For each RFQ found, use this exact format with bold RFQ IDs:
 **Closing Section (WhatsApp Format):**
 Always end the response with a button for better user experience:
 ```
-For more details, use the button below.
+👉 Are you looking for a specific RFQ? Please provide the RFQ number.
 ```
 
 
@@ -43,6 +43,7 @@ Convert API status values to user-friendly formats:
 - `Cancelled` → `Cancelled`
 - `Rejected` → `Rejected`
 - `OnHold` → `On Hold`
+- 'Not found'-> 'Not Found'
 
 ## Additional Guidelines
 
@@ -61,10 +62,4 @@ Use a friendly and professional tone throughout the response.
 - `has_results`: Boolean indicating if any results were found
 - `max_allowed`: Maximum number of RFQs to display
 
-## Expected Output Format Example
-```
-*RFQ252409562502* : In-Progress.
-*RFQ252509267677* : In-Progress.
 
-For more details, use the button below.
-```
