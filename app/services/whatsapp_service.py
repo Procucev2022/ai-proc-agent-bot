@@ -349,22 +349,15 @@ class WhatsAppService:
                 if not button.get("title"):
                     raise ValueError(f"Button {i} must have a 'title' field")
                 
-                # Check if this is a URL button
-                if button.get("url"):
-                    button_list.append({
-                        "type": "url",
-                        "url": button.get("url"),
-                        "text": button.get("title")
-                    })
-                else:
-                    # Regular reply button
-                    button_list.append({
-                        "type": "reply",
-                        "reply": {
-                            "id": button.get("id", f"btn_{i}"),
-                            "title": button.get("title")
-                        }
-                    })
+                # WhatsApp interactive buttons only support reply type
+                # URL buttons are not supported in interactive messages
+                button_list.append({
+                    "type": "reply",
+                    "reply": {
+                        "id": button.get("id", f"btn_{i}"),
+                        "title": button.get("title")
+                    }
+                })
             
             content = {
                 "body": {"text": body},
