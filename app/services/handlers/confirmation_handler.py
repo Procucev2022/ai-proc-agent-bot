@@ -168,10 +168,25 @@ class ConfirmationHandler:
         
         return {"status": "multiple_rfqs_created", "successful_count": successful_count}
     
-    async def _handle_rfq_modification(self, user: User, session: ConversationSession, 
+    async def _handle_rfq_modification(self, user: User, session: ConversationSession,
                                      message: str) -> Dict[str, Any]:
         """Handle RFQ modification requests."""
         logger.info("User declined or has conditions - treating as modification request")
+
+        # Send modification message with confirmation buttons
+        modification_message = "I understand you'd like to make changes. Please tell me what you'd like to modify, and I'll help you update your request."
+
+        buttons_config = [
+            {"id": "confirm_rfq", "title": "Confirm"},
+            {"id": "no_rfq", "title": "Modify"}
+        ]
+        await self.whatsapp_service.send_configurable_buttons(
+            user.phone_number,
+            modification_message,
+            buttons_config,
+            "Confirmation Required"
+        )
+
         # Don't delete pending confirmations - let the modification flow handle it
         return {"status": "modification_requested", "continue_with_purchase_intent": True}
     

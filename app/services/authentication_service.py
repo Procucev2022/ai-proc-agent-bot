@@ -259,14 +259,11 @@ class AuthenticationService:
                 if not intent_result:
                     intent_result = session.workflow_state.get("current_intent_result", {})
 
-                # If still no intent result, re-classify as fallback
+                # If still no intent result, use a safe default instead of re-classifying
                 if not intent_result:
-                    from app.services.helpers.chat_service_helpers import ChatServiceHelpers
-                    from app.services.intent_service import IntentService
+                    logger.warning("No intent result available during email confirmation - using default")
+                    intent_result = {"intent": "general_inquiry", "confidence": 50}
 
-                    conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
-                    intent_service = IntentService()
-                    intent_result = intent_service.classify_intent(message, conversation_context)
 
                 intent = intent_result.get('intent')
                 confidence = intent_result.get('confidence', 0)

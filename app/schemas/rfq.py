@@ -123,7 +123,7 @@ class RFQCreateRequestSchema(BaseModel):
     """
     # Required fields
     created_by: str = Field(..., alias="createdBy", description="User who created the RFQ")
-    project_desc: str = Field(..., alias="projectDesc", description="Project description")
+    project_desc: Optional[str] = Field(None, alias="projectDesc", description="Project description (auto-populated by system)")
     delivery_date: datetime = Field(..., alias="deliveryDate", description="Required delivery date")
     division: Optional[str] = Field(None, description="Division/department (auto-populated via categorization)")
     user: str = Field(..., description="User ID")
@@ -295,7 +295,7 @@ class RFQValidationSchema(BaseModel):
     field collection and progress tracking. Supports division auto-population.
     """
     # Core mandatory fields
-    project_desc: Optional[str] = Field(None, description="Project description")
+    project_desc: Optional[str] = Field(None, description="Project description (auto-populated by system)")
     delivery_date: Optional[datetime] = Field(None, description="Required delivery date")
     division: Optional[str] = Field(None, description="Division/department")
     user_id: Optional[str] = Field(None, description="User ID")
@@ -321,10 +321,9 @@ class RFQValidationSchema(BaseModel):
     def get_missing_mandatory_fields(self) -> List[str]:
         """Return list of missing mandatory fields based on GMT API requirements."""
         missing = []
-        
+
         # User-providable mandatory fields (from GMT API)
-        if not self.project_desc:
-            missing.append("project_desc")
+        # Note: project_desc is now auto-populated by system, not required from user
         if not self.delivery_date and not self.date_validation_error:
             missing.append("delivery_date")
         
@@ -370,12 +369,10 @@ class RFQValidationSchema(BaseModel):
     
     def get_completeness_percentage(self) -> float:
         """Calculate completeness percentage based on filled fields."""
-        total_fields = 10  # 7 mandatory + 3 optional
+        total_fields = 9  # 6 mandatory + 3 optional (project_desc is auto-populated)
         filled_fields = 0
-        
-        # Check mandatory fields
-        if self.project_desc:
-            filled_fields += 1
+
+        # Check mandatory fields (project_desc excluded as it's auto-populated)
         if self.delivery_date:
             filled_fields += 1
         if self.division:
@@ -410,7 +407,6 @@ class RFQValidationSchema(BaseModel):
         
         # Question mapping for better user experience
         question_map = {
-            "project_description": "What is the project description or item name?",
             "delivery_date": "What is the required delivery date?",
             "division_confirmation": "Please confirm the division for this request",
             "division_selection": "Which division or department is this for?",
@@ -422,9 +418,6 @@ class RFQValidationSchema(BaseModel):
             "delivery_city": "What is the delivery city?", 
             "delivery_pincode": "What is the delivery pincode?"
         }
-        
-        if "project_desc" in missing:
-            questions.append(question_map["project_description"])
         
         if "delivery_date" in missing and not self.date_validation_error:
             questions.append(question_map["delivery_date"])
@@ -529,10 +522,10 @@ class RFQValidationSchema(BaseModel):
 class RFQUpdateSchema(BaseModel):
     """
     Schema for updating existing RFQ records.
-    
+
     Allows partial updates to RFQ fields during the collection process.
     """
-    project_desc: Optional[str] = Field(None, description="Project description")
+    project_desc: Optional[str] = Field(None, description="Project description (auto-populated by system)")
     delivery_date: Optional[datetime] = Field(None, description="Required delivery date")
     division: Optional[str] = Field(None, description="Division/department")
     remarks: Optional[str] = Field(None, description="Additional remarks")
