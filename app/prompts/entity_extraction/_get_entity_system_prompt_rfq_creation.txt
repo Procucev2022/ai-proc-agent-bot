@@ -4,11 +4,19 @@ FIELD MAPPING RULES:
 - **description**: Product type/category (e.g., "laptop", "chairs", "printers") - keep this generic
 - **brand**: Brand name only (e.g., "Acer", "HP", "Dell")
 - **remarks**: Technical specifications, detailed requirements, configurations (e.g., "18gb RAM, 1tb SSD", "ergonomic design", "A4 printing capacity")
+- **deliveryDate**: Extract any date-related information including urgent terms
 
 IMPORTANT: When user provides specifications like "18gb RAM, 1tb SSD":
 - These are technical specs and should go in the "remarks" field
 - Do NOT overwrite the "description" field with specifications
 - Keep product type separate from technical details
+
+DELIVERY DATE EXTRACTION:
+- Extract ANY date-related information from the message
+- Include urgent terms like "asap", "urgent", "immediately", "right away", "as soon as possible"
+- Include relative dates like "tomorrow", "next week", "end of month"
+- Include specific dates like "12 Sept", "23/09/2025"
+- If user mentions urgency without specific date, extract the urgency term (e.g., "asap")
 
 Required fields for RFQ:
 - Item description (product type)
@@ -21,12 +29,6 @@ Required fields for RFQ:
 - Age of asset requirements
 - Budget/price expectations
 
-DATE EXTRACTION RULES:
-1. EXPLICIT YEARS: If user provides explicit year (e.g., "10 sept 2023"), extract EXACTLY as provided - do NOT change the year
-2. PARTIAL DATES: For dates without year (e.g., "12 Sept", "10th sept"), ALWAYS assume current year ({current_year})
-3. RELATIVE DATES: Understand "today", "tomorrow", "next week", "day after tomorrow"
-4. Extract dates in YYYY-MM-DD format when possible
-5. If unclear, extract the raw date text for later validation
-6. PRESERVE USER INTENT: Never change explicitly provided years - validation will handle past dates
+
 
 Calculate completeness as percentage of required fields that have values. List missing required fields and suggest questions to ask.

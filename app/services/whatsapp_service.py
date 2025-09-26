@@ -295,6 +295,8 @@ class WhatsAppService:
             logger.error(f"Error sending button message: {e}")
             return MessageResponse(success=False, error=str(e))
     
+
+    
     async def send_configurable_buttons(self, 
                                       recipient_id: str, 
                                       body: str, 
@@ -346,14 +348,23 @@ class WhatsAppService:
             for i, button in enumerate(buttons_config):
                 if not button.get("title"):
                     raise ValueError(f"Button {i} must have a 'title' field")
-                    
-                button_list.append({
-                    "type": "reply",
-                    "reply": {
-                        "id": button.get("id", f"btn_{i}"),
-                        "title": button.get("title")
-                    }
-                })
+                
+                # Check if this is a URL button
+                if button.get("url"):
+                    button_list.append({
+                        "type": "url",
+                        "url": button.get("url"),
+                        "text": button.get("title")
+                    })
+                else:
+                    # Regular reply button
+                    button_list.append({
+                        "type": "reply",
+                        "reply": {
+                            "id": button.get("id", f"btn_{i}"),
+                            "title": button.get("title")
+                        }
+                    })
             
             content = {
                 "body": {"text": body},
