@@ -11,7 +11,7 @@ from celery import shared_task
 from datetime import datetime
 
 from app.database import execute_remote_query, get_remote_db_session
-from app.services.auto_categorization_service import AutoCategorizationService
+from app.services.enhanced_auto_categorization_service import EnhancedAutoCategorizationService
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -44,8 +44,8 @@ def process_uncategorized_rfqs(self):
 
         logger.info(f"Found {len(uncategorized_items)} uncategorized items to process")
 
-        # Initialize auto-categorization service
-        auto_cat_service = AutoCategorizationService()
+        # Initialize enhanced auto-categorization service
+        auto_cat_service = EnhancedAutoCategorizationService()
 
         processed_count = 0
         failed_count = 0
@@ -111,13 +111,13 @@ def get_uncategorized_items(limit: int = 50) -> List[Dict[str, Any]]:
     return execute_remote_query(query, {'limit': limit})
 
 
-def process_single_item(item: Dict[str, Any], auto_cat_service: AutoCategorizationService) -> Dict[str, Any]:
+def process_single_item(item: Dict[str, Any], auto_cat_service: EnhancedAutoCategorizationService) -> Dict[str, Any]:
     """
     Process a single item for auto-categorization.
     
     Args:
         item: Item data dictionary
-        auto_cat_service: Initialized AutoCategorizationService instance
+        auto_cat_service: Initialized EnhancedAutoCategorizationService instance
         
     Returns:
         Processing result dictionary
@@ -137,8 +137,8 @@ def process_single_item(item: Dict[str, Any], auto_cat_service: AutoCategorizati
             rfq_id=rfq_id
         )
         
-        if result.get('success') and result.get('category'):
-            category = result['category']
+        if result.get('success') and result.get('client_category'):
+            category = result['client_category']
             
             # Update category in rfq_items table
             success = update_rfq_item_category(item_uuid, category)
@@ -243,3 +243,18 @@ def update_rfq_item_category(item_uuid: str, category: str) -> bool:
     except Exception as e:
         logger.error(f"Error updating item category: {e}")
         return False
+
+
+if __name__ == "__main__":
+    """Run the auto-categorization task directly."""
+    import logging
+
+    logging.basicConfig(level=logging.INFO)
+
+    print("Running auto-categorization task...")
+    result = process_uncategorized_rfqs()
+
+    print(f"Result: {result}")
+    print(f"Status: {result.get('status')}")
+    print(f"Processed: {result.get('processed', 0)}")
+    print(f"Failed: {result.get('failed', 0)}")
