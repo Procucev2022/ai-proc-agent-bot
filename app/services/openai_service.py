@@ -2809,3 +2809,31 @@ If multiple emails and user selected a number, include selection."""
         return prompt
 
 
+    async def parse_confirmation_response(self, user_message: str) -> str:
+        """
+        Parse confirmation response using OpenAI.
+        
+        Args:
+            user_message: User's confirmation response
+            
+        Returns:
+            Parsed response: "yes", "no", or original message if unclear
+        """
+        
+        try:
+            prompt_path = os.path.join(self.prompts_dir, "confirmation_response_classification.txt")
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                instructions = f.read()
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": user_message}],
+                instructions=instructions
+            )
+            
+            result = response.output_text.strip().lower()
+            return result if result in ["yes", "no"] else "unclear"
+            
+        except Exception as e:
+            logger.error(f"Error parsing confirmation response: {e}")
+            return "unclear"

@@ -16,6 +16,9 @@ from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.schemas.rfq import RFQValidationSchema
 from app.utils.datetime_utils import utc_now
+from app.tools.confirmation_tool import ConfirmationTool
+from app.services.confirmation_service import ConfirmationService
+from app.services.openai_service import OpenAIService
 
 logger = logging.getLogger(__name__)
 
@@ -26,25 +29,47 @@ class ConfirmationHandler:
     def __init__(self, whatsapp_service: WhatsAppService, response_helpers: ResponseHelpers):
         self.whatsapp_service = whatsapp_service
         self.response_helpers = response_helpers
+        
+        # Initialize confirmation service
+
+        
+        openai_service = OpenAIService()
+        confirmation_tool = ConfirmationTool(openai_service)
+        self.confirmation_service = ConfirmationService(confirmation_tool)
     
     async def handle_confirmation_button(self, user: User, session: ConversationSession, 
                                        button_id: str) -> Dict[str, Any]:
-        """Handle Confirm/Modify confirmation button responses."""
+        """Handle Confirm/Modify confirmation button responses using confirmation service."""
         logger.info(f"Confirmation button response from {user.phone_number}: {button_id}")
         
         if button_id == "confirm_rfq":
             # User clicked "Confirm" - proceed with RFQ acceptance
+            logger.info(f"Confirmation service: Button 'confirm_rfq' treated as 'yes' from {user.phone_number}")
             return await self._handle_rfq_acceptance(user, session, "Confirm")
             
         elif button_id == "no_rfq":
             # User clicked "Modify" - handle exactly like current "No" response
+            logger.info(f"Confirmation service: Button 'no_rfq' treated as 'no' from {user.phone_number}")
             return await self._handle_rfq_modification(user, session, "No")
         
         return {"status": "unknown_button", "button_id": button_id}
     
     async def handle_pending_confirmations(self, user: User, session: ConversationSession, 
                                          message: str, intent_result: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle pending confirmation responses."""
+        """Handle pending confirmation responses using confirmation service."""
+        # First try to parse confirmation using the confirmation service
+        confirmation_result = await self.confirmation_service.parse_confirmation(message)
+        
+        if confirmation_result == "yes":
+            # User confirmed - create RFQs
+            logger.info(f"Confirmation service detected 'yes' response from {user.phone_number}")
+            return await self._handle_rfq_acceptance(user, session, message)
+        elif confirmation_result == "no":
+            # User declined - handle modification
+            logger.info(f"Confirmation service detected 'no' response from {user.phone_number}")
+            return await self._handle_rfq_modification(user, session, message)
+        
+        # Fallback to intent-based analysis if confirmation service couldn't parse
         confirmation_intent_type = intent_result.get('intent')
         confirmation_confidence = intent_result.get('confidence', 0)
         context_analysis = intent_result.get('context_analysis', {})
@@ -72,13 +97,23 @@ class ConfirmationHandler:
     
     async def handle_optional_fields_response(self, user: User, session: ConversationSession,
                                             message: str) -> Dict[str, Any]:
-        """Handle optional field responses."""
-        # Check if user wants to skip optional fields
-        # Issue TODO : Add intelligent identification here to understands intent (Negative/Positive), Check all the keyword implementations
+        """Handle optional field responses using confirmation service."""
+        # Use confirmation service to parse user response
+        confirmation_result = await self.confirmation_service.parse_confirmation(message)
+        
+        if confirmation_result == "no":
+            # User wants to skip optional fields, proceed to confirmation
+            logger.info(f"Confirmation service detected skip request from {user.phone_number}")
+            return await self._proceed_to_confirmation_from_optional(user, session, message)
+        elif confirmation_result == "yes":
+            # User wants to provide optional information
+            logger.info(f"Confirmation service detected user wants to provide optional info from {user.phone_number}")
+            return await self._merge_optional_fields_and_confirm(user, session, message)
+        
+        # Fallback to keyword-based detection if confirmation service couldn't parse
         if any(keyword in message.lower() for keyword in ["no", "skip", "proceed", "continue", "next"]):
             # User wants to skip optional fields, proceed to confirmation
             return await self._proceed_to_confirmation_from_optional(user, session, message)
-        # For above TODO, Add a elif logic here
         else:
             # User provided optional information, merge it with existing product and proceed to confirmation
             return await self._merge_optional_fields_and_confirm(user, session, message)

@@ -16,6 +16,7 @@ from app.services.whatsapp_service import WhatsAppService
 from app.services.openai_service import OpenAIService
 from app.services.entity_service import EntityService
 from app.services.helpers.response_helpers import ResponseHelpers
+from app.services.confirmation_service import ConfirmationService
 from app.procucev_apis.register_apis import RegisterAPIService
 from app.schemas.user import BuyerRegistrationSchema, SellerRegistrationSchema, normalize_phone_number
 from app.schemas.user import User
@@ -33,11 +34,13 @@ class RegistrationService:
                  openai_service: OpenAIService = None,
                  entity_service: EntityService = None,
                  response_helpers: ResponseHelpers = None,
+                 confirmation_service: ConfirmationService = None,
                  session_manager=None):
         self.whatsapp_service = whatsapp_service or WhatsAppService()
         self.openai_service = openai_service or OpenAIService()
         self.entity_service = entity_service or EntityService()
         self.response_helpers = response_helpers or ResponseHelpers(self.openai_service)
+        self.confirmation_service = confirmation_service
         self.register_api_service = RegisterAPIService()
         self.auth_redis_service = get_auth_redis_service()
         self.support_notification_service = SupportNotificationService()
@@ -257,9 +260,12 @@ class RegistrationService:
             user_type = session.workflow_state.get("user_type", "buyer")
             entities = session.workflow_state.get("registration_entities", {})
             
-            message_lower = message_content.lower().strip()
+            # Use confirmation service to parse response
+            confirmation = await self.confirmation_service.parse_confirmation(message_content) if self.confirmation_service else None
+            logger.info(f"User confirmation , {confirmation}")
+
             
-            if message_lower in ["yes", "y", "confirm", "correct", "ok"]:
+            if confirmation == "yes":
                 # User confirmed, proceed based on user type
                 logger.info(f"User confirmed registration details")
                 
@@ -282,7 +288,7 @@ class RegistrationService:
                 else:
                     return result
                     
-            elif message_lower in ["no", "n", "restart", "wrong", "incorrect"]:
+            elif confirmation == "no":
                 # User wants to restart
                 logger.info(f"User requested registration restart")
                 session.workflow_state = {
