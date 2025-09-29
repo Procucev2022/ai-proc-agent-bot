@@ -451,7 +451,17 @@ class ConfirmationHandler:
                     "extracted_entities": existing_entities
                 }, [])
 
-                await self.whatsapp_service.send_message(user.phone_number, summary_response)
+                # Send confirmation message with buttons
+                buttons_config = [
+                    {"id": "confirm_rfq", "title": "Confirm"},
+                    {"id": "no_rfq", "title": "Modify"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    summary_response,
+                    buttons_config,
+                    "Confirmation Required"
+                )
 
                 # Move to confirmation state
                 session.workflow_state["pending_rfq"] = existing_product_info
@@ -479,7 +489,17 @@ class ConfirmationHandler:
                     []
                 )
 
-                await self.whatsapp_service.send_message(user.phone_number, summary_response)
+                # Send confirmation message with buttons
+                buttons_config = [
+                    {"id": "confirm_rfq", "title": "Confirm"},
+                    {"id": "no_rfq", "title": "Modify"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    summary_response,
+                    buttons_config,
+                    "Confirmation Required"
+                )
 
                 # Move to confirmation state
                 session.workflow_state["pending_combined_rfq"] = combined_data
