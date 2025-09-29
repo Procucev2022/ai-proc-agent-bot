@@ -258,7 +258,7 @@ class ConfirmationHandler:
                 "extracted_entities": product_info["entities"]
             }, chat_summaries)
             
-            # Send confirmation message with buttons directly
+            # Send confirmation message with buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
                 {"id": "no_rfq", "title": "Modify"}
@@ -292,7 +292,7 @@ class ConfirmationHandler:
                 chat_summaries
             )
             
-            # Send confirmation message with buttons directly
+            # Send confirmation message with buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
                 {"id": "no_rfq", "title": "Modify"}

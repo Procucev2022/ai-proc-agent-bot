@@ -331,7 +331,18 @@ class ProductsArrayHandler:
             "user_message": message,
             "extracted_entities": product_info["entities"]
         }, chat_summaries)
-        await self.whatsapp_service.send_message(user.phone_number, summary_response)
+        
+        # Send confirmation message with buttons
+        buttons_config = [
+            {"id": "confirm_rfq", "title": "Confirm"},
+            {"id": "no_rfq", "title": "Modify"}
+        ]
+        await self.whatsapp_service.send_configurable_buttons(
+            user.phone_number,
+            summary_response,
+            buttons_config,
+            "Confirmation Required"
+        )
         
         # Store for confirmation (serialize schema to dict)
         product_info_serializable = {
@@ -395,7 +406,18 @@ class ProductsArrayHandler:
             },
             chat_summaries
         )
-        await self.whatsapp_service.send_message(user.phone_number, summary_response)
+        
+        # Send confirmation message with buttons
+        buttons_config = [
+            {"id": "confirm_rfq", "title": "Confirm"},
+            {"id": "no_rfq", "title": "Modify"}
+        ]
+        await self.whatsapp_service.send_configurable_buttons(
+            user.phone_number,
+            summary_response,
+            buttons_config,
+            "Confirmation Required"
+        )
         
         # Store for confirmation (single combined RFQ)
         session.workflow_state["pending_combined_rfq"] = {
