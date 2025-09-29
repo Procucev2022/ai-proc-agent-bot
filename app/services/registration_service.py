@@ -9,7 +9,7 @@ Handles complete user registration flow including:
 """
 
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from app.schemas.user import User
 from app.models import ConversationSession, UserType
 from app.services.whatsapp_service import WhatsAppService
@@ -176,13 +176,9 @@ class RegistrationService:
                     "collected_entities": existing_entities
                 }
             else:
-                # Step 5: All data collected, show confirmation
+                # Step 5: All data collected, show confirmation with buttons
                 logger.info(f"Step 5: All data collected, requesting confirmation")
-                confirmation_message = await self._generate_confirmation_message(existing_entities, user_type)
-                if self.session_manager:
-                    await self.session_manager.send_and_track_message(user_phone, confirmation_message, session)
-                else:
-                    await self.whatsapp_service.send_message(user_phone, confirmation_message)
+                await self._send_confirmation_with_buttons(user_phone, existing_entities, user_type, session)
                 
                 # Step 6: Session update - mark as awaiting confirmation
                 session.workflow_type = "registration"
@@ -249,21 +245,47 @@ class RegistrationService:
             message += f"• GSTIN: {entities.get('gstin', 'N/A')}\n"
             message += f"• Products/Services: {entities.get('products_services', 'N/A')}\n\n"
         
-        message += "Reply 'YES' to confirm or 'NO' to restart registration.\n"
         message += "📩 Please re-check your email, as an OTP will be sent to complete the registration process."
         return message
     
+    async def _send_confirmation_with_buttons(self, user_phone: str, entities: Dict, user_type: str, session: ConversationSession) -> None:
+        """Send confirmation message with interactive buttons."""
+        message = await self._generate_confirmation_message(entities, user_type)
+        
+        buttons = [
+            {"id": "confirm_registration", "title": "Confirm"},
+            {"id": "restart_registration", "title": "Restart"}
+        ]
+        
+        # Try to send with buttons first
+        button_response = await self.whatsapp_service.send_configurable_buttons(
+            user_phone, message, buttons
+        )
+        
+        if not button_response.success:
+            # Fallback to text message if buttons fail
+            fallback_message = message + "\n\nReply 'YES' to confirm or 'NO' to restart registration."
+            if self.session_manager:
+                await self.session_manager.send_and_track_message(user_phone, fallback_message, session)
+            else:
+                await self.whatsapp_service.send_message(user_phone, fallback_message)
+    
     async def handle_registration_confirmation(self, user_phone: str, message_content: str,
                                              session: ConversationSession) -> Dict[str, Any]:
-        """Handle user confirmation response."""
+        """Handle user confirmation response from buttons or keywords."""
         try:
             user_type = session.workflow_state.get("user_type", "buyer")
             entities = session.workflow_state.get("registration_entities", {})
             
-            # Use confirmation service to parse response
-            confirmation = await self.confirmation_service.parse_confirmation(message_content) if self.confirmation_service else None
-            logger.info(f"User confirmation , {confirmation}")
-
+            # Check for button responses first
+            button_response = self._parse_button_response(message_content)
+            if button_response:
+                confirmation = button_response
+                logger.info(f"Button confirmation: {confirmation}")
+            else:
+                # Fallback to keyword/AI parsing
+                confirmation = await self.confirmation_service.parse_confirmation(message_content) if self.confirmation_service else None
+                logger.info(f"Keyword/AI confirmation: {confirmation}")
             
             if confirmation == "yes":
                 # User confirmed, proceed based on user type
@@ -309,12 +331,8 @@ class RegistrationService:
                     "user_type": user_type
                 }
             else:
-                # Unclear response, ask again
-                clarification_message = "Please reply 'yes' to confirm your details or 'no' to restart registration."
-                if self.session_manager:
-                    await self.session_manager.send_and_track_message(user_phone, clarification_message, session)
-                else:
-                    await self.whatsapp_service.send_message(user_phone, clarification_message)
+                # Unclear response, ask again with buttons
+                await self._send_clarification_with_buttons(user_phone, session)
                 
                 return {
                     "status": "awaiting_confirmation",
@@ -324,6 +342,40 @@ class RegistrationService:
         except Exception as e:
             logger.error(f"Registration confirmation error: {e}")
             return await self._redirect_to_support(user_phone, "confirmation_error", str(e), session)
+    
+    def _parse_button_response(self, message_content: str) -> Optional[str]:
+        """Parse button response from WhatsApp interactive message."""
+        message_lower = message_content.lower().strip()
+        
+        # Check for button IDs or titles
+        if message_lower in ["confirm_registration", "confirm"]:
+            return "yes"
+        elif message_lower in ["restart_registration", "restart"]:
+            return "no"
+        
+        return None
+    
+    async def _send_clarification_with_buttons(self, user_phone: str, session: ConversationSession) -> None:
+        """Send clarification message with buttons."""
+        message = "Please confirm your registration details."
+        
+        buttons = [
+            {"id": "confirm_registration", "title": "Confirm"},
+            {"id": "restart_registration", "title": "Restart"}
+        ]
+        
+        # Try to send with buttons first
+        button_response = await self.whatsapp_service.send_configurable_buttons(
+            user_phone, message, buttons
+        )
+        
+        if not button_response.success:
+            # Fallback to text message if buttons fail
+            fallback_message = "Please reply 'yes' to confirm your details or 'no' to restart registration."
+            if self.session_manager:
+                await self.session_manager.send_and_track_message(user_phone, fallback_message, session)
+            else:
+                await self.whatsapp_service.send_message(user_phone, fallback_message)
     
     async def _generate_contextual_registration_questions(self, missing_fields: List[str], 
                                                         user_type: str, existing_entities: Dict,

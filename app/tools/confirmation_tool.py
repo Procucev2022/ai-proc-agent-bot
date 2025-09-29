@@ -13,7 +13,9 @@ class ConfirmationTool:
                 'accept', 'accepted', 'agree', 'approved', 'approve', '1', 'one', 'affirmative',
                 'absolutely', 'definitely', 'ofcourse', 'of course', 'indeed', 'certainly',
                 'fine', 'alright', 'all right', 'good', 'done', 'perfect', 'cool',
-                '👍', '✓', '✔', '✅', 'हाँ', 'हां', 'ha', 'ji', 'ji ha', 'sahi', 'theek hai', 'thik hai'
+                '👍', '✓', '✔', '✅', 'हाँ', 'हां', 'ha', 'ji', 'ji ha', 'sahi', 'theek hai', 'thik hai',
+                # Button responses
+                'confirm_registration'
             ],
             "no": [
                 'no', 'n', 'nah', 'nope', 'na', 'noo', 'nooo', 'nay', 'cancel', 'cancelled',
@@ -21,7 +23,9 @@ class ConfirmationTool:
                 'decline', 'declined', 'reject', 'rejected', 'disagree', 'not ok', 'not okay',
                 'notok', 'nok', '0', 'zero', 'negative', 'abort', 'back', 'goback', 'go back',
                 'reset', 'redo', 're-do', 'again', 'start over', 'startover', 'begin again',
-                '2', 'two', '👎', '✗', '✘', '❌', 'नहीं', 'nahi', 'nhi', 'galat', 'wapas'
+                '2', 'two', '👎', '✗', '✘', '❌', 'नहीं', 'nahi', 'nhi', 'galat', 'wapas',
+                # Button responses
+                'restart_registration'
             ]
         }
 
