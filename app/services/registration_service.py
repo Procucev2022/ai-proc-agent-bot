@@ -17,7 +17,7 @@ from app.services.openai_service import OpenAIService
 from app.services.entity_service import EntityService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.procucev_apis.register_apis import RegisterAPIService
-from app.schemas.user import BuyerRegistrationSchema, SellerRegistrationSchema
+from app.schemas.user import BuyerRegistrationSchema, SellerRegistrationSchema, normalize_phone_number
 from app.schemas.user import User
 from app.utils.datetime_utils import utc_now
 from app.redis_db import get_auth_redis_service
@@ -200,13 +200,13 @@ class RegistrationService:
     async def _get_buyer_introduction_message(self) -> str:
         """Get buyer registration introduction message."""
         return (
-            "Hello Buyer, welcome to QUA.\n To get started, please share\n\n  1. Full name,\n 2. Company name,\n 3. Business email,\n 4. Company pincode.\n\n We’ll have you registered right away."
+            "Hello Buyer \n To get started, please share\n\n  1. Full name,\n 2. Company name,\n 3. Business email,\n 4. Company pincode.\n\n We’ll have you registered right away."
         )
     
     async def _get_seller_introduction_message(self) -> str:
         """Get seller registration introduction message."""
         return (
-            "Hello Seller, welcome to QUA.\n To get started, please share your\n 1.Full name,\n 2. Company name, \n 3. Business email, \n 4. Location with Pincode,\n 5. GSTIN number,\n 6. The products or services you offer. \n\nWe’ll have you registered right away."
+            "Hello Seller\n To get started, please share your\n 1.Full name,\n 2. Company name, \n 3. Business email, \n 4. Location with Pincode,\n 5. GSTIN number,\n 6. The products or services you offer. \n\nWe’ll have you registered right away."
         )
     
     def _build_registration_context(self, session: ConversationSession, current_message: str) -> str:
@@ -246,7 +246,8 @@ class RegistrationService:
             message += f"• GSTIN: {entities.get('gstin', 'N/A')}\n"
             message += f"• Products/Services: {entities.get('products_services', 'N/A')}\n\n"
         
-        message += "Reply 'yes' to confirm or 'no' to restart registration."
+        message += "Reply 'YES' to confirm or 'NO' to restart registration.\n"
+        message += "📩 Please re-check your email, as an OTP will be sent to complete the registration process."
         return message
     
     async def handle_registration_confirmation(self, user_phone: str, message_content: str,
@@ -367,7 +368,8 @@ class RegistrationService:
         try:
             # Prepare registration data
             registration_data = {
-                "organizationPhonenumber": user_phone,
+                "organizationPhonenumber": normalize_phone_number(user_phone),
+                "source_type": "W",
                 "whatsApp": True
             }
             
@@ -438,7 +440,7 @@ class RegistrationService:
                 
                 session.workflow_type = "registration"
                 
-                message = f"OTP sent to your email: {email}\n\nPlease enter the OTP you received, or reply 'RESEND' to get a new OTP:"
+                message = f"An OTP has been sent to your email: {email}.\nPlease enter this OTP to complete your registration."
                 if self.session_manager:
                     await self.session_manager.send_and_track_message(user_phone, message, session)
                 else:

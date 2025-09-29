@@ -33,37 +33,58 @@ class SummarizationHelpers:
             await whatsapp_service.send_message(phone_number, message)
     
     @staticmethod
-    def add_to_conversation_history(session: ConversationSession, sender: str, message: str, message_type: str = "text") -> None:
+    def add_to_conversation_history(session: ConversationSession, sender: str, message: str, message_type: str = "text", intent: str = None, confidence: float = None) -> None:
         """
         Add message to conversation history for better summarization context.
-        
+
         Args:
             session: ConversationSession object
-            sender: "user" or "assistant" 
+            sender: "user" or "assistant"
             message: Message content
             message_type: Type of message (text, interactive, etc.)
+            intent: Intent classification result (optional)
+            confidence: Intent confidence score (optional)
         """
         try:
             # Ensure conversation_history is a proper dictionary structure
             if not session.conversation_history or not isinstance(session.conversation_history, dict):
-                session.conversation_history = {"openai_messages": [], "metadata": []}
+                session.conversation_history = {"openai_messages": [], "metadata": [], "messages": []}
                 logger.info("Initialized new conversation history")
-            
+
             # Ensure required keys exist and are lists
             if "openai_messages" not in session.conversation_history or not isinstance(session.conversation_history["openai_messages"], list):
                 session.conversation_history["openai_messages"] = []
             if "metadata" not in session.conversation_history or not isinstance(session.conversation_history["metadata"], list):
                 session.conversation_history["metadata"] = []
-            
+            if "messages" not in session.conversation_history or not isinstance(session.conversation_history["messages"], list):
+                session.conversation_history["messages"] = []
+
             # Convert sender to OpenAI role format
             role = "assistant" if sender == "assistant" else "user"
-            
+
             # Add to OpenAI-native message format
             session.conversation_history["openai_messages"].append({
                 "role": role,
                 "content": message
             })
-            
+
+            # Add to legacy messages format for compatibility
+            message_entry = {
+                "role": role,
+                "content": message,
+                "timestamp": utc_now().isoformat(),
+                "sender": sender,
+                "type": message_type
+            }
+
+            # Add intent data for user messages if provided
+            if sender == "user" and intent is not None:
+                message_entry["intent"] = intent
+                if confidence is not None:
+                    message_entry["confidence"] = confidence
+
+            session.conversation_history["messages"].append(message_entry)
+
             # Keep metadata separately for debugging/audit
             session.conversation_history["metadata"].append({
                 "timestamp": utc_now().isoformat(),
@@ -71,17 +92,26 @@ class SummarizationHelpers:
                 "type": message_type,
                 "role": role
             })
-            
+
             message_count = len(session.conversation_history["openai_messages"])
-            content_preview = message[:100] + ('...' if len(message) > 100 else '')
+
+            # Handle non-string message content for preview
+            if isinstance(message, dict):
+                content_preview = "image attachment"
+            elif isinstance(message, str):
+                content_preview = message[:100] + ('...' if len(message) > 100 else '')
+            else:
+                content_preview = str(message)[:100] + ('...' if len(str(message)) > 100 else '')
+
             logger.info(f"Stored message {message_count}: {role} -> {content_preview}")
-            
+
             # Keep only last 50 messages to avoid database bloat
             if message_count > 50:
                 session.conversation_history["openai_messages"] = session.conversation_history["openai_messages"][-50:]
+                session.conversation_history["messages"] = session.conversation_history["messages"][-50:]
                 session.conversation_history["metadata"] = session.conversation_history["metadata"][-50:]
                 logger.info(f"Trimmed conversation history to last 50 messages")
-                
+
         except Exception as e:
             logger.error(f"Error adding to conversation history: {e}")
     
@@ -89,48 +119,73 @@ class SummarizationHelpers:
     def extract_rich_entities_for_summary(session: ConversationSession) -> Dict[str, Any]:
         """
         Extract rich entity data from session state for summarization.
-        
+
         Captures all the detailed product information, user preferences,
         and workflow state that should be included in AI summaries.
-        
+
         Args:
             session: ConversationSession object
-            
+
         Returns:
             Dictionary of rich entity data for summarization
         """
         try:
             rich_entities = {}
-            
+
             if session.workflow_state:
                 # Extract RFQ information
                 if session.workflow_state.get("pending_rfq"):
                     rich_entities["rfq_details"] = session.workflow_state["pending_rfq"]
-                
+
                 if session.workflow_state.get("pending_combined_rfq"):
                     rich_entities["combined_rfq"] = session.workflow_state["pending_combined_rfq"]
-                
-                # Extract product information
+
+                # Extract product information from various sources
                 if session.workflow_state.get("complete_products"):
                     rich_entities["completed_products"] = session.workflow_state["complete_products"]
-                
+
                 if session.workflow_state.get("incomplete_products"):
                     rich_entities["incomplete_products"] = session.workflow_state["incomplete_products"]
-                
+
                 if session.workflow_state.get("extracted_entities"):
                     rich_entities["products_discussed"] = session.workflow_state["extracted_entities"]
-                
+
                 # Extract user preferences and constraints
                 preference_keys = [
-                    "user_preferences", "budget_constraints", "delivery_requirements", 
+                    "user_preferences", "budget_constraints", "delivery_requirements",
                     "product_specifications", "optional_fields_asked", "pending_confirmations"
                 ]
                 for key in preference_keys:
                     if session.workflow_state.get(key):
                         rich_entities[key] = session.workflow_state[key]
-            
+
+                # Extract conversation flow information
+                flow_keys = [
+                    "conversation_stage", "last_user_intent", "workflow_step",
+                    "completion_percentage", "missing_fields", "confirmed_details"
+                ]
+                for key in flow_keys:
+                    if session.workflow_state.get(key):
+                        rich_entities[key] = session.workflow_state[key]
+
+            # Add session-level product_items if available
+            if hasattr(session, 'product_items') and session.product_items:
+                rich_entities["session_product_items"] = session.product_items
+
+            # Add interaction metrics if available
+            if hasattr(session, 'interaction_metrics') and session.interaction_metrics:
+                rich_entities["interaction_metrics"] = session.interaction_metrics
+
+            # Add seller responses if available
+            if hasattr(session, 'seller_responses') and session.seller_responses:
+                rich_entities["seller_responses"] = session.seller_responses
+
+            # Add RFQ metadata if available
+            if hasattr(session, 'rfq_metadata') and session.rfq_metadata:
+                rich_entities["rfq_metadata"] = session.rfq_metadata
+
             return rich_entities
-            
+
         except Exception as e:
             logger.error(f"Error extracting rich entities: {e}")
             return {}
@@ -262,10 +317,24 @@ class SummarizationHelpers:
             user_messages = [msg for msg in conversation_messages if msg.get("sender") == "user"]
             
             for msg in user_messages[-5:]:  # Last 5 user messages
-                content = msg.get("content", "").lower()
+                content = msg.get("content", "")
+
+                # Handle non-string content (e.g., image data)
+                if isinstance(content, dict):
+                    content = "image attachment"
+                elif not isinstance(content, str):
+                    content = str(content)
+
+                content = content.lower()
                 for keyword in decision_keywords:
                     if keyword in content:
-                        decisions.append(f"User specified: {msg.get('content', '')[:100]}")
+                        # Safe content extraction for decisions
+                        original_content = msg.get('content', '')
+                        if isinstance(original_content, dict):
+                            content_preview = "image attachment"
+                        else:
+                            content_preview = str(original_content)[:100]
+                        decisions.append(f"User specified: {content_preview}")
                         break
             
             # Add decisions from rich entities
@@ -303,9 +372,15 @@ class SummarizationHelpers:
                     self.outcome = data.get('outcome')
                     rfq_ids = data.get('rfq_ids', [])
                     self.rfq_id = rfq_ids[0] if rfq_ids else None
+                    self.rfq_ids = rfq_ids
                     self.extracted_entities = data.get('enhanced_entities', {})
                     self.created_at = data.get('created_at')
                     self.completed_at = data.get('completed_at')
+                    self.workflow_state = data.get('workflow_state', {})
+                    self.product_items = data.get('product_items', [])
+                    self.interaction_metrics = data.get('interaction_metrics', {})
+                    self.seller_responses = data.get('seller_responses', [])
+                    self.rfq_metadata = data.get('rfq_metadata', {})
             
             mock_session = MockSession(session_data)
             

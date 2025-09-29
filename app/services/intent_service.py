@@ -73,6 +73,10 @@ class IntentService:
             # Handle contextual intents with intelligent responses
             if intent in ['contextual_reference', 'session_inquiry', 'workflow_rejection', 'alternative_request'] and confidence > 60:
                 return self._handle_contextual_intent(intent, message, context, classification_result)
+
+            # Handle exit intent - return immediately without contextual processing
+            if intent == 'exit_system' and confidence > 50:
+                return classification_result
             
             return classification_result
             
@@ -83,18 +87,24 @@ class IntentService:
     def _get_fallback_classification(self, message: str, context: dict = None, error: str = None) -> Dict[str, Any]:
         """
         Provide fallback classification when OpenAI fails.
-        
+
         Uses simple rule-based classification with context awareness as backup.
-        
+
         Args:
-            message: Original user message
+            message: Original user message (can be string or dict for multimodal content)
             context: Optional conversation context
             error: Optional error message
-            
+
         Returns:
             Fallback classification result
         """
-        message_lower = message.lower()
+        # Handle non-string message content (e.g., image data)
+        if isinstance(message, dict):
+            message_lower = "image attachment"
+        elif not isinstance(message, str):
+            message_lower = str(message).lower()
+        else:
+            message_lower = message.lower()
         
         # Default context analysis
         default_context_analysis = {
@@ -106,14 +116,27 @@ class IntentService:
         
         # Context-aware fallback classification
         if context:
-            # Check for modification requests using context
+            # Extract key context information
             has_pending_confirmations = context.get('workflow_state', {}).get('pending_combined_rfq') or context.get('workflow_state', {}).get('pending_rfq')
+            has_incomplete_products = context.get('session_status', {}).get('has_incomplete_products', False)
             existing_entities = context.get('extracted_entities', {}) or context.get('workflow_state', {}).get('extracted_entities', [])
-            
-            # Modification request detection
+            bot_last_message = context.get('bot_last_message', '')
+
+            # Clarification response detection (highest priority)
+            # If user has incomplete products, bot just sent a message, and user isn't using modification language
             modification_keywords = ["change", "modify", "update", "actually", "instead", "make that", "switch to"]
-            if (any(keyword in message_lower for keyword in modification_keywords) and 
-                (existing_entities or has_pending_confirmations)):
+            has_modification_keywords = any(keyword in message_lower for keyword in modification_keywords)
+
+            if (has_incomplete_products and bot_last_message and not has_modification_keywords):
+                intent = "buy_something"  # Continue collection workflow
+                confidence = 85
+                default_context_analysis.update({
+                    "references_existing_data": True,
+                    "conversation_stage": "collecting"
+                })
+
+            # Modification request detection
+            elif (has_modification_keywords and (existing_entities or has_pending_confirmations)):
                 intent = "modification_request"
                 confidence = 70
                 default_context_analysis.update({

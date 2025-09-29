@@ -19,16 +19,16 @@ Key responsibilities:
 import json
 import logging
 import os
+import re
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from openai import OpenAI
 from app.config import get_settings
 from app.tools.interaction_logger import get_interaction_logger
 from app.utils.logging_utils import log_service_method
-from app.utils.datetime_utils import format_date_display
-from app.utils.datetime_utils import format_date_for_validation_error
-from datetime import datetime
+from app.utils.datetime_utils import format_date_display, format_date_for_validation_error, add_business_days, calculate_working_days_from_now
 
 logger = logging.getLogger(__name__)
 
@@ -85,19 +85,19 @@ class OpenAIService:
     def _build_messages_with_history(self, context: dict = None, current_message: str = "") -> list:
         """
         Build message array with conversation history for OpenAI API calls.
-        
+
         This method extracts OpenAI-ready messages from context and optionally
         appends the current message, enabling conversation continuity.
-        
+
         Args:
             context: Conversation context with openai_messages array
             current_message: Current user message to append
-            
+
         Returns:
             List of message dicts ready for OpenAI API
         """
         input_messages = []
-        
+
         # Add conversation history if available
         if context and context.get('conversation_history', {}).get('openai_messages'):
             openai_messages = context['conversation_history']['openai_messages']
@@ -108,18 +108,49 @@ class OpenAIService:
                 logger.info(f"Added {len(history_messages)} history messages to OpenAI context")
         else:
             logger.info("No conversation history available - using only current message")
-        
-        # Add current message if provided
+
+        # Add current message if provided - but handle image content properly
         if current_message:
-            input_messages.append({"role": "user", "content": current_message})
-        
+            # Check if current_message contains image content that should be handled differently
+            if self._is_image_content(current_message, context):
+                # For image content, use a text description instead of raw content
+                input_messages.append({"role": "user", "content": "User sent an image attachment"})
+                logger.info("Converted image content to text description for OpenAI")
+            else:
+                input_messages.append({"role": "user", "content": current_message})
+
         # Log the complete input being sent to OpenAI
         logger.info(f"OpenAI Input ({len(input_messages)} messages):")
         for i, msg in enumerate(input_messages):
-            content_preview = msg.get('content', '')[:100] + ('...' if len(msg.get('content', '')) > 100 else '')
+            content_preview = str(msg.get('content', ''))[:100] + ('...' if len(str(msg.get('content', ''))) > 100 else '')
             logger.info(f"  {i+1}. {msg.get('role')}: {content_preview}")
-        
+
         return input_messages
+
+    def _is_image_content(self, message: str, context: dict = None) -> bool:
+        """
+        Check if the message content represents image data.
+
+        Args:
+            message: The message content
+            context: Additional context that might contain image information
+
+        Returns:
+            True if this is image content, False otherwise
+        """
+        # Check if message looks like stringified JSON with image data
+        if isinstance(message, str) and ('mime_type' in message and 'image' in message):
+            return True
+
+        # Check if context indicates this is from an image message
+        if context:
+            user_msg = context.get('user_message', '')
+            if isinstance(user_msg, dict) and 'mime_type' in user_msg:
+                return True
+            elif isinstance(user_msg, str) and ('mime_type' in user_msg and 'image' in user_msg):
+                return True
+
+        return False
         
     @log_service_method("openai_service")
     def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
@@ -143,7 +174,12 @@ class OpenAIService:
             with open(self.tools_dir / "intent_classification.json", 'r') as f:
                 intent_tool = json.load(f)
             
-            input_messages = [{"role": "user", "content": message}]
+            # Handle image content properly for intent classification
+            if self._is_image_content(message, context):
+                input_messages = [{"role": "user", "content": "User sent an image attachment"}]
+                logger.info("Converted image content to text description for intent classification")
+            else:
+                input_messages = [{"role": "user", "content": message}]
             
             # Build comprehensive context information for the prompt
             context_info = ""
@@ -1305,7 +1341,6 @@ Analyze their response to determine their true choice.
                     if args.get("questions"):
                         questions_text = "\n".join(f"• {q}" for q in args["questions"])
                         
-                        response_parts.append(f"To proceed with your request, we will create a Request for Quotation (RFQ).")
                         response_parts.append(f"Please provide the following:\n\n{questions_text}")
                     generated_response = "\n\n".join(response_parts)
                     
@@ -2198,12 +2233,12 @@ Determine the best category for the input item based on the similar items and th
                     return "\n\n".join(response_parts)
             
             # Fallback response
-            return "Here's a summary of your RFQ. Would you like to proceed with creating it?"
+            return "Here's a summary of your RFQ."
             
         except Exception as e:
             error_msg = str(e)
             logger.error(f"RFQ confirmation generation failed: {error_msg}")
-            return "Here's a summary of your RFQ. Would you like to proceed with creating it?"
+            return "Here's a summary of your RFQ."
     
     def _clean_for_json_serialization(self, obj):
         """Recursively clean object for JSON serialization."""
@@ -2284,39 +2319,7 @@ Determine the best category for the input item based on the similar items and th
             current_date = datetime.now()
             current_date_str = current_date.strftime("%Y-%m-%d")
             
-            # Handle common relative dates before calling OpenAI
-            normalized_date = None
-            if raw_date_input.lower().strip() in ["tomorrow", "tommorrow"]:
-                tomorrow = current_date + timedelta(days=1)
-                normalized_date = tomorrow.strftime("%Y-%m-%d")
-            elif raw_date_input.lower().strip() == "today":
-                normalized_date = current_date_str
-            elif raw_date_input.lower().strip() in ["day after tomorrow", "day after tommorrow"]:
-                day_after_tomorrow = current_date + timedelta(days=2)
-                normalized_date = day_after_tomorrow.strftime("%Y-%m-%d")
-            
-            # If we handled it locally, return the result
-            if normalized_date:
-                result = {
-                    "is_valid": True,
-                    "normalized_date": normalized_date,
-                    "validation_issues": [],
-                    "user_friendly_message": f"Delivery date set to {normalized_date}",
-                    "confidence": 95,
-                    "success": True
-                }
-                
-                # Log local date validation
-                self.interaction_logger.log_entity_extraction(
-                    user_input=raw_date_input,
-                    entities={"date_validation": result},
-                    completeness=100,
-                    workflow_type="date_validation_local",
-                    model_used="local_processing",
-                    processing_time=time.time() - start_time
-                )
-                
-                return result
+            # Use AI for all date parsing to handle spelling mistakes and variations
             
             # Load date validation tool for complex cases
             with open(self.tools_dir / "date_validation.json", 'r') as f:
@@ -2334,7 +2337,7 @@ Determine the best category for the input item based on the similar items and th
             response = self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
-                instructions=self._load_prompt("date_validation", "_get_date_validation_prompt", current_year=current_date.year, current_date=current_date_str),
+                instructions=self._load_prompt("date_validation", "_get_date_validation_prompt", current_year=current_date.year, current_date=current_date_str, current_month=current_date.month),
                 tools=[date_tool],
                 tool_choice={"type": "function", "name": "validate_delivery_date"}
             )
@@ -2359,9 +2362,43 @@ Determine the best category for the input item based on the similar items and th
                                 args.get("normalized_date", ""), formatted_date
                             )
                     
+                    # Handle case where AI says valid but doesn't provide normalized_date
+                    is_valid = args.get("is_valid", False)
+                    normalized_date = args.get("normalized_date")
+                    
+                    if is_valid and not normalized_date:
+                        # AI said valid but didn't provide date - calculate it locally
+                        try:
+                            current_date_obj = datetime.strptime(current_date_str, "%Y-%m-%d")
+                            
+                            # Handle working days
+                            working_days_match = re.search(r'(\d+)\s*(?:working|business)\s*days?\s*from\s*now', raw_date_input.lower())
+                            if working_days_match:
+                                working_days = int(working_days_match.group(1))
+                                normalized_date = calculate_working_days_from_now(working_days)
+                                logger.info(f"Calculated {working_days} working days from now: {normalized_date}")
+                            elif "this weekend" in raw_date_input.lower():
+                                # Find this Saturday
+                                days_until_saturday = (5 - current_date_obj.weekday()) % 7
+                                if days_until_saturday == 0 and current_date_obj.weekday() == 5:
+                                    # Already Saturday
+                                    normalized_date = current_date_obj.strftime("%Y-%m-%d")
+                                else:
+                                    saturday = current_date_obj + timedelta(days=days_until_saturday)
+                                    normalized_date = saturday.strftime("%Y-%m-%d")
+                            elif "next weekend" in raw_date_input.lower():
+                                # Find next Saturday
+                                days_until_next_saturday = ((5 - current_date_obj.weekday()) % 7) + 7
+                                next_saturday = current_date_obj + timedelta(days=days_until_next_saturday)
+                                normalized_date = next_saturday.strftime("%Y-%m-%d")
+                        except Exception as e:
+                            logger.warning(f"Failed to calculate date locally: {e}")
+                            is_valid = False
+                            normalized_date = None
+                    
                     result = {
-                        "is_valid": args.get("is_valid", False),
-                        "normalized_date": args.get("normalized_date"),
+                        "is_valid": is_valid,
+                        "normalized_date": normalized_date,
                         "validation_issues": args.get("validation_issues", []),
                         "user_friendly_message": user_friendly_message,
                         "confidence": args.get("confidence", 0),
@@ -2419,6 +2456,8 @@ Determine the best category for the input item based on the similar items and th
                 "confidence": 20,
                 "success": False
             }
+    
+
 
     @log_service_method("openai_service")
     def detect_opt_out_intent(self, message: str) -> Dict[str, Any]:

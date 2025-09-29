@@ -58,7 +58,7 @@ class AuthenticationService:
             
             # Token expired or not found - send welcome message
             logger.info(f"Token expired for user {user_phone}, sending welcome message")
-            # await self.whatsapp_service.send_message(user_phone, "Welcome to QUA!")
+
             return False
         except Exception as e:
             logger.error(f"Authentication error for {user_phone}: {e}")
@@ -101,6 +101,7 @@ class AuthenticationService:
         try:
             logger.info(f"Authenticating user {user_phone} with intent: {intent}")
             auth_response = await self.auth_api_service.authenticate_user(user_phone)
+            logger.info(f"Auth API service response: {auth_response}")
 
             if auth_response.get("success"):
                 raw_response = auth_response.get("data", [])                
@@ -123,7 +124,9 @@ class AuthenticationService:
         """Filter users based on intent and return structured data using schemas."""
         try:
             from app.schemas.user import APIUserSchema
-            
+
+            logger.info(f"filter_users_by_intent called: intent='{intent}', raw_users_count={len(raw_users)}")
+
             # Normalize using schema
             users: List[APIUserSchema] = [APIUserSchema(**user) for user in raw_users]
             
@@ -136,21 +139,24 @@ class AuthenticationService:
                 filtered_users = users
                         
             if not filtered_users:
+                logger.info(f"filter_users_by_intent: No matching users found for intent '{intent}'")
                 return {"success": False, "message": "No matching users found"}
-            
+
             # 2. Aggregate the emails via user.username
             unique_emails = []
             for user in filtered_users:
                 if user.username and user.username not in unique_emails:
                     unique_emails.append(user.username)
-            
+
             # Convert to User for consistent response
             user_details_list = []
             for user in filtered_users:
                 user_dict = user.dict()
                 user_detail = User.from_api_response(user_dict)
                 user_details_list.append(user_detail)
-            
+
+            logger.info(f"filter_users_by_intent success: filtered_users_count={len(filtered_users)}, unique_emails_count={len(unique_emails)}")
+
             return {
                 "success": True,
                 "filtered_users": [user.dict() for user in user_details_list],
@@ -168,14 +174,17 @@ class AuthenticationService:
             # Find user data matching the selected email
             selected_user = None
             for user in filtered_users:
-                if user.get("email") == selected_email:
+                # Check both 'email' and 'username' fields as API uses 'username' for email
+                user_email = user.get("email") or user.get("username")
+                if user_email == selected_email:
                     selected_user = user
                     break
             
             if not selected_user:
                 # If no exact match, use first user with same email pattern
                 for user in filtered_users:
-                    if selected_email in str(user.get("email", "")):
+                    user_email = user.get("email") or user.get("username")
+                    if selected_email in str(user_email or ""):
                         selected_user = user
                         break
             
@@ -183,18 +192,8 @@ class AuthenticationService:
                 logger.warning(f"No user found for email {selected_email}")
                 return None
             
-            return User(
-                id=selected_user.get("id", ""),
-                name=selected_user.get("name", ""),
-                email=selected_email,
-                phone_number=selected_user.get("phone_number", ""),
-                self_client=selected_user.get("self_client", False),
-                role=selected_user.get("role", "unknown"),
-                is_registered=True,
-                company_name=selected_user.get("company_name", ""),
-                unique_id=selected_user.get("unique_id", ""),
-                org_id=selected_user.get("org_id", "")
-            )
+            # Use from_mixed_data to handle both API response and User dict formats
+            return User.from_mixed_data(selected_user)
             
         except Exception as e:
             logger.error(f"Error creating user details from email: {e}")
@@ -210,16 +209,9 @@ class AuthenticationService:
             if not user_data:
                 return None
             
-            return User(
-                id=user_data.get("id", ""),
-                email=user_data.get("username", ""),
-                name=user_data.get("fullName", ""),
-                phone_number=user_data.get("phone", ""),
-                self_client=user_data.get("selfClient", False),
-                role="buyer" if user_data.get("selfClient") else "seller",
-                is_registered=True,
-                company_name=user_data.get("companyName", "")
-            )
+            # Use from_mixed_data to handle both API response and User dict formats
+            return User.from_mixed_data(user_data)
+            
         except Exception as e:
             logger.error(f"Error extracting user details: {e}")
             return None
@@ -251,26 +243,76 @@ class AuthenticationService:
             return {"status": "error", "error": str(e)}
     
     async def handle_email_confirmation(self, user_phone: str, message: str,
-                                      session: ConversationSession) -> Dict[str, Any]:
-        """Handle email confirmation response with AI-first approach."""
+                                      session: ConversationSession, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Handle email confirmation response with intent-aware re-filtering."""
         try:
             email_options = session.workflow_state.get("email_options", [])
             filtered_users = session.workflow_state.get("filtered_users", [])
             confirmation_stage = session.workflow_state.get("confirmation_stage", "selection")
-            
+
             if not email_options or not filtered_users:
                 return {"status": "restart_authentication"}
-            
+
+            # NEW: Check for clear intent before processing email selection
+            if confirmation_stage == "selection":
+                # Use the passed intent result or fallback to stored result
+                if not intent_result:
+                    intent_result = session.workflow_state.get("current_intent_result", {})
+
+                # If still no intent result, use a safe default instead of re-classifying
+                if not intent_result:
+                    logger.warning("No intent result available during email confirmation - using default")
+                    intent_result = {"intent": "general_inquiry", "confidence": 50}
+
+
+                intent = intent_result.get('intent')
+                confidence = intent_result.get('confidence', 0)
+
+                logger.info(f"Intent refinement check: {intent} ({confidence}%)")
+
+                # If clear buy/sell intent with high confidence
+                if intent in ["buy_something", "sell_something"] and confidence > 75:
+                    # Get original users and re-filter
+                    original_users = session.workflow_state.get("original_auth_users", filtered_users)
+                    filter_result = self.filter_users_by_intent(original_users, intent)
+
+                    if filter_result.get("success") and set(filter_result["unique_emails"]) != set(email_options):
+                        # Intent refinement applied - update session state
+                        logger.info(f"Intent refinement applied: {intent} ({confidence}%) - "
+                                   f"Emails: {len(email_options)} → {len(filter_result['unique_emails'])}")
+
+                        session.workflow_state["email_options"] = filter_result["unique_emails"]
+                        session.workflow_state["filtered_users"] = filter_result["filtered_users"]
+                        email_options = filter_result["unique_emails"]
+                        filtered_users = filter_result["filtered_users"]
+
+                        # If only one email remains after refinement, auto-process it
+                        if len(filter_result["unique_emails"]) == 1:
+                            selected_email = filter_result["unique_emails"][0]
+                            logger.info(f"Auto-processing single email after intent refinement: {selected_email}")
+                            return await self._process_selected_email(user_phone, session, selected_email,
+                                                                   filter_result["filtered_users"])
+
+                        # Multiple emails still remain - show refined list
+                        logger.info(f"Showing refined email list with {len(filter_result['unique_emails'])} options")
+                        return await self._request_email_selection_with_text(
+                            user_phone, session,
+                            filter_result["unique_emails"],
+                            filter_result["filtered_users"]
+                        )
+                    else:
+                        logger.info(f"Intent refinement skipped - no change in email options or filtering failed")
+
             # Check if this is a button response
             # Removed button handling - using text-based selection
-            
+
             if confirmation_stage in ["selection", "intent_filtered_selection"]:
                 # AI-first email rejection detection
                 is_rejection = await self._ai_detect_email_rejection(message)
                 if is_rejection:
                     await self.whatsapp_service.send_message(user_phone, "I understand these emails don't match yours. Let me help you register with your correct information.")
                     return {"status": "redirect_to_registration"}
-                
+
                 # AI-first email selection parsing
                 selected_email = await self._ai_parse_email_selection(message, email_options)
                 
@@ -361,9 +403,9 @@ class AuthenticationService:
                 email = emails[0]
                 user_type = self._get_user_type_for_email(email, filtered_users)
                 if user_type:
-                    email_text = f"Hi {username}! Welcome to QUA,\nIs this your {user_type.lower()} email: {email}?"
+                    email_text = f"Hi {username}! \nIs this your {user_type.lower()} email: {email}?"
                 else:
-                    email_text = f"Hi {username}! Welcome to QUA,\nIs this your email: {email}?"
+                    email_text = f"Hi {username}! \nIs this your email: {email}?"
             else:
                 # Multiple emails - show with buyer/seller labels and QUA welcome
                 email_list_items = []
@@ -385,9 +427,9 @@ class AuthenticationService:
                 
                 # Check if we have mixed user types for better messaging
                 if buyer_emails and seller_emails:
-                    email_text = f"Hi {username}! Welcome to QUA,\nWould you like to buy or sell today?\n\n{email_list}\n\nReply with the number of your email address."
+                    email_text = f"Hi {username}! \nWould you like to buy or sell today?\n\n{email_list}\n\nReply with the number of your email address."
                 else:
-                    email_text = f"Hi {username}! Welcome to QUA,\nPlease select your email address:\n\n{email_list}\n\nReply with the number of your email address."
+                    email_text = f"Hi {username}! \nPlease select your email address:\n\n{email_list}\n\nReply with the number of your email address."
             
             response = self.openai_service.generate_response(
                 context={"username": username, "email_text": email_text},
@@ -401,10 +443,10 @@ class AuthenticationService:
             logger.error(f"Error generating email confirmation response: {e}")
             # Fallback message
             if len(emails) == 1:
-                return f"Hi {username}! Welcome to QUA,\nCould you please confirm your email address to proceed: {emails[0]}?"
+                return f"Hi {username}! \nCould you please confirm your email address to proceed: {emails[0]}?"
             else:
                 email_list = "\n".join([f"{i+1}. {email}" for i, email in enumerate(emails)])
-                return f"Hi {username}! Welcome to QUA,\nPlease select your email address:\n\n{email_list}\n\nReply with the number of your email address."
+                return f"Hi {username}! \nPlease select your email address:\n\n{email_list}\n\nReply with the number of your email address."
     
     async def _parse_email_selection(self, message: str, email_options: List[str]) -> Optional[str]:
         """Parse email selection from user message."""
@@ -606,7 +648,7 @@ Return only the selected email address or "none" if no clear selection.
             
             if otp_response.get("statusCode") in ["1001", "200"] or otp_response.get("status") == "Success":
                 # Don't increment retry count for successful OTP send - only for failed validations
-                message = f"OTP sent to your email: {email}\n\nPlease enter the OTP you received, or reply 'RESEND' to get a new OTP:"
+                message = f"An OTP has been sent to your email: {email}.\nPlease enter this OTP to complete your authentication."
                 await self.whatsapp_service.send_message(user_phone, message)
                 
                 return {
@@ -891,7 +933,7 @@ Return only the selected email address or "none" if no clear selection.
             session.workflow_state["confirmation_stage"] = "confirmation"
             
             # Generate confirmation message
-            message = f"Welcome to QUA, We found the following email address associated with your phone number. Could you please help us verify it?\n\n{selected_email}\n\nPlease reply 'Yes' to confirm or 'No' if this is incorrect."
+            message = f"We found the following email address associated with your phone number. Could you please help us verify it?\n\n{selected_email}\n\nPlease reply 'Yes' to confirm or 'No' if this is incorrect."
             
             await self.whatsapp_service.send_message(user_phone, message)
             
@@ -993,19 +1035,19 @@ Respond only with: "yes" or "no"
             seller_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Seller"]
             
             if buyer_emails and seller_emails:
-                message = f"Hi there!, Welcome to QUA,\nAre you looking to buy or sell today?\n\nPlease select your email address:\n\n"
+                message = f"Welcome! Are you looking to buy or sell today ?\n\nPlease select your profile by choosing the associated email address:\n"
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
-                    type_label = f" - {user_type}" if user_type else ""
-                    message += f"{i}. {email}{type_label}\n"
-                message += "\nReply with the number of your email address."
+                    type_label = f" — {user_type}" if user_type else ""
+                    message += f"  {i}. {email}{type_label}\n"
+                message += "\nReply with the number corresponding to your email address to continue."
             else:
-                message = f"Hi there!, Welcome to QUA,\nPlease select your email address:\n\n"
+                message = f"Welcome! Please select your profile by choosing the associated email address:\n"
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
-                    type_label = f" - {user_type}" if user_type else ""
-                    message += f"{i}. {email}{type_label}\n"
-                message += "\nReply with the number of your email address."
+                    type_label = f" — {user_type}" if user_type else ""
+                    message += f"  {i}. {email}{type_label}\n"
+                message += "\nReply with the number corresponding to your email address to continue."
             
             await self.whatsapp_service.send_message(user_phone, message)
             

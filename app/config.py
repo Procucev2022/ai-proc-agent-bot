@@ -148,7 +148,7 @@ class Settings:
         # RFQ Status settings
         self.rfq_max_allowed = int(os.getenv("RFQ_MAX_ALLOWED", "5"))
         self.rfq_followup_note = os.getenv("RFQ_FOLLOWUP_NOTE",
-                                           "If you want to know the status for any other RFQ number or visit the link for details: https://p2pdevuiindia.azurewebsites.net/login")
+                                           "https://p2pdevuiindia.azurewebsites.net/login")
 
         # Fetch RFQ limit
         self.rfq_fetch_limit = int(os.getenv("RFQ_FETCH_LIMIT", "3"))

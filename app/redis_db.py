@@ -94,6 +94,15 @@ class BaseRedisService:
             logger.error(f"Redis EXPIRE error for key {key}: {e}")
             return False
     
+    async def expireat(self, key: str, timestamp: int) -> bool:
+        """Set expiry time for a key at specific Unix timestamp."""
+        await self.init_client()
+        try:
+            return await self.client.expireat(key, timestamp)
+        except Exception as e:
+            logger.error(f"Redis EXPIREAT error for key {key}: {e}")
+            return False
+    
     async def incr(self, key: str) -> Optional[int]:
         await self.init_client()
         try:

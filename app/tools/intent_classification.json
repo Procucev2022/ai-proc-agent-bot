@@ -7,7 +7,7 @@
         "properties": {
             "intent": {
                 "type": "string",
-                "enum": ["buy_something", "sell_something", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "ambiguous", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request"],
+                "enum": ["buy_something", "sell_something", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "ambiguous", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request", "exit_system"],
                 "description": "The primary classified intent category based on user message analysis and conversation context"
             },
             "confidence": {
@@ -83,9 +83,14 @@
                         "type": "number",
                         "minimum": 0,
                         "maximum": 100
+                    },
+                    "exit_system": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
                     }
                 },
-                "required": ["buy_something", "sell_something", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request"],
+                "required": ["buy_something", "sell_something", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request", "exit_system"],
                 "additionalProperties": false,
                 "description": "Confidence scores for all intent categories"
             },
@@ -186,9 +191,30 @@
                         "required": ["registration_type", "is_additional_account"],
                         "additionalProperties": false,
                         "description": "Details about registration if this is a register_account intent"
+                    },
+                    "exit_details": {
+                        "type": "object",
+                        "properties": {
+                            "exit_type": {
+                                "type": ["string", "null"],
+                                "enum": ["logout", "quit", "goodbye", "end_session", "cancel", "stop", null],
+                                "description": "Specific type of exit intent detected"
+                            },
+                            "is_definitive": {
+                                "type": "boolean",
+                                "description": "Whether the exit intent is definitive or tentative"
+                            },
+                            "wants_cleanup": {
+                                "type": "boolean",
+                                "description": "Whether user explicitly wants to clear all data/start fresh"
+                            }
+                        },
+                        "required": ["exit_type", "is_definitive", "wants_cleanup"],
+                        "additionalProperties": false,
+                        "description": "Details about exit if this is an exit_system intent"
                     }
                 },
-                "required": ["references_existing_data", "conversation_stage", "modification_details", "confirmation_details", "reference_details", "account_switch_details", "registration_details"],
+                "required": ["references_existing_data", "conversation_stage", "modification_details", "confirmation_details", "reference_details", "account_switch_details", "registration_details", "exit_details"],
                 "additionalProperties": false,
                 "description": "Analysis of conversation context and how it affects intent classification"
             },

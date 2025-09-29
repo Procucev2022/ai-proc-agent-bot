@@ -105,9 +105,10 @@ class SessionManagementService:
             # Only send expiration message if appropriate
             if await SessionHelpers.should_send_expiration_message(session):    
                 await self.whatsapp_service.send_message(
-                    user_phone, 
-                    "Your session has expired. Let's start fresh!"
+                    user_phone,
+                    "Welcome Back!"
                 )
+
                 
                 # Generate enhanced session summary for timeout (non-blocking)
                 await self._handle_session_completion_enhanced(session)
@@ -121,9 +122,9 @@ class SessionManagementService:
         
         return session
     
-    def add_message_to_history(self, session: ConversationSession, role: str, content: str, message_type: str = "text"):
+    def add_message_to_history(self, session: ConversationSession, role: str, content: str, message_type: str = "text", intent: str = None, confidence: float = None):
         """Add message to conversation history."""
-        SummarizationHelpers.add_to_conversation_history(session, role, content, message_type)
+        SummarizationHelpers.add_to_conversation_history(session, role, content, message_type, intent, confidence)
     
     async def send_and_track_message(self, phone_number: str, message: str, 
                                     session: ConversationSession, message_type: str = "text") -> None:

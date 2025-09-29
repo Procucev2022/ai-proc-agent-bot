@@ -14,6 +14,7 @@ import aiohttp
 import json
 
 from app.config import get_settings
+from app.utils.procucev_api_logger import log_procucev_api_call
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ class GMTAPIService:
         
         auth_data = {
             "username": self.username.strip('"') if self.username else "",
-            "phone": self.phone.strip('"') if self.phone else ""
+            "phone": f"+91{self.phone.strip('\"')}" if self.phone else ""
         }
         
         try:
@@ -107,6 +108,8 @@ class GMTAPIService:
             
             # Transform our RFQ data to GMT API format
             gmt_rfq_data = self._transform_rfq_to_gmt_format(rfq_data, user_id, org_id)
+
+            logger.info(f"Payload for creating RFQ :{gmt_rfq_data}")
             
             # GMT API endpoint for creating RFQ
             create_url = f"{self.base_url}/rest/gmt/createRFQByClient"
@@ -158,16 +161,16 @@ class GMTAPIService:
     def _transform_rfq_to_gmt_format(self, rfq_data: Dict[str, Any], user_id: str = None, org_id: str = None) -> Dict[str, Any]:
         """
         Transform our internal RFQ format to GMT API format.
-        
+
         Args:
             rfq_data: Internal RFQ data structure
             user_id: User ID for the RFQ creator
             org_id: Organization ID for the RFQ creator
-            
+
         Returns:
             GMT API compatible RFQ data
         """
-        
+        logger.info(f"transfrom_rfq_to_gmt_format : {rfq_data}")
         # Create GMT-compatible RFQ item
         rfq_item = {
             "brand": rfq_data.get("preferred_brand", "Generic"),
@@ -184,26 +187,39 @@ class GMTAPIService:
         
         # Create delivery location
         delivery_location = {
-            "state": rfq_data.get("delivery_state", "Karnataka"),
-            "city": rfq_data.get("delivery_city", "Bangalore"),
-            "pincode": rfq_data.get("delivery_pincode", "560001")
-        }
-        
-        # Format delivery date
+     "state": rfq_data.get("delivery_state", "Karnataka"),
+     "city": rfq_data.get("delivery_city", "Bangalore"),
+     "pincode": rfq_data.get("delivery_pincode", "560001")
+}
+        # Handle delivery date with proper error handling
         delivery_date = rfq_data.get("deadline")
+        formatted_delivery_date = None
+
         if delivery_date:
-            if isinstance(delivery_date, str):
-                # Try to parse and reformat
-                try:
-                    parsed_date = datetime.fromisoformat(delivery_date.replace('Z', '+00:00'))
-                    delivery_date = parsed_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')
-                except:
-                    delivery_date = "2025-12-31T18:30:00.000Z"
-            else:
-                delivery_date = "2025-12-31T18:30:00.000Z"
-        else:
-            delivery_date = "2025-12-31T18:30:00.000Z"
-        
+            try:
+                if isinstance(delivery_date, datetime):
+                    formatted_delivery_date = delivery_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+                    logger.info(f"Converted datetime object to GMT format: {formatted_delivery_date}")
+                elif isinstance(delivery_date, str):
+                    # Try to parse ISO format string
+                    try:
+                        parsed_date = datetime.fromisoformat(delivery_date.replace('Z', '+00:00'))
+                        formatted_delivery_date = parsed_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+                        logger.info(f"Parsed string date to GMT format: {formatted_delivery_date}")
+                    except ValueError as e:
+                        logger.error(f"Failed to parse date string '{delivery_date}': {e}")
+                        formatted_delivery_date = None
+                else:
+                    logger.error(f"Unsupported delivery date type: {type(delivery_date)}")
+                    formatted_delivery_date = None
+
+            except Exception as e:
+                logger.error(f"Error processing delivery date: {e}")
+                formatted_delivery_date = None
+
+        if not formatted_delivery_date:
+            logger.warning(f"Using default delivery date: {formatted_delivery_date}")
+
         # Handle attachments if present
         rfq_documents = []
         attachments = rfq_data.get("attachments", [])
@@ -217,15 +233,22 @@ class GMTAPIService:
                 file_type = attachment.get("file_type", "image/jpeg")
                 content_size = len(attachment["file_content"])
                 
-                rfq_documents.append({
+                # Debug: Log attachment structure being sent to GMT API
+                attachment_payload = {
                     "fileName": filename,
                     "fileType": file_type,
                     "fileContent": attachment["file_content"],
                     "documentType": "specification",
                     "uploadedAt": attachment.get("uploaded_at", datetime.now().strftime('%Y-%m-%dT%H:%M:%S.000Z'))
-                })
-                
+                }
+
+                rfq_documents.append(attachment_payload)
+
+                # Debug: Log first 100 chars of file content to verify it's not empty
+                content_preview = str(attachment["file_content"])[:100] if attachment["file_content"] else "EMPTY"
                 logger.info(f"Added attachment {i+1} to GMT RFQ: {filename} ({file_type}, {content_size} chars base64)")
+                logger.info(f"  File content preview: {content_preview}...")
+                logger.info(f"  Full attachment structure keys: {list(attachment_payload.keys())}")
             else:
                 logger.warning(f"Skipping attachment {i+1} - missing file_content or file_name")
         
@@ -234,11 +257,24 @@ class GMTAPIService:
         elif rfq_documents:
             logger.info(f"Successfully prepared {len(rfq_documents)} attachments for GMT API")
 
+        # Generate project description from multiple products
+        project_desc = self._generate_project_desc(rfq_data)
+
         # Build GMT API payload
+        # Create project description from all RFQ item names, comma-separated, within 100 chars
+        rfq_items = rfq_data.get("rfq_items", [])
+        if rfq_items:
+            item_names = [item.get("name", item.get("description", "")) for item in rfq_items if item.get("name") or item.get("description")]
+            project_desc = ", ".join(item_names)[:100] if item_names else rfq_data.get("product_name", f"RFQ_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        else:
+            project_desc = rfq_data.get("product_name", f"RFQ_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+
+        logger.info(f"project desc:{project_desc}")
+        
         gmt_payload = {
             "createdBy": user_id,
-            "projectDesc": rfq_data.get("product_name", f"RFQ_{datetime.now().strftime('%Y%m%d_%H%M%S')}"),
-            "deliveryDate": delivery_date,
+            "projectDesc": project_desc,
+            "deliveryDate": formatted_delivery_date,
             "noPrFlag": True,
             "procurementFlag": True,  # Added procurement flag as requested
             "sourceType": rfq_data.get("sourceType", "W"),  # W=WhatsApp, C=Chatbot
@@ -268,6 +304,71 @@ class GMTAPIService:
             logger.info(f"Attachments in payload: {json.dumps(doc_summary, indent=2)}")
         
         return gmt_payload
+
+    def _generate_project_desc(self, rfq_data: Dict[str, Any]) -> str:
+        """
+        Generate project description from product names with 100 character limit.
+
+        Args:
+            rfq_data: RFQ data containing product information
+
+        Returns:
+            Project description string (max 100 chars)
+        """
+        product_names = []
+
+        # Extract from main rfq_data product_name
+        if rfq_data.get("product_name"):
+            product_names.append(rfq_data["product_name"])
+
+        # Extract from rfq_items array if available
+        rfq_items = rfq_data.get("rfq_items", [])
+        if isinstance(rfq_items, list):
+            for item in rfq_items:
+                if isinstance(item, dict):
+                    # Try different possible description fields
+                    desc = (item.get("description") or
+                           item.get("product_name") or
+                           item.get("item_description"))
+                    if desc and desc not in product_names:
+                        product_names.append(desc)
+
+        # Extract from entities if available (for multi-product RFQs)
+        entities = rfq_data.get("entities", [])
+        if isinstance(entities, list):
+            for entity in entities:
+                if isinstance(entity, dict):
+                    desc = (entity.get("product_name") or
+                           entity.get("description") or
+                           entity.get("projectDesc"))
+                    if desc and desc not in product_names:
+                        product_names.append(desc)
+
+        # Remove duplicates while preserving order and clean up names
+        unique_names = []
+        seen = set()
+        for name in product_names:
+            if name and isinstance(name, str):
+                clean_name = name.strip()
+                if clean_name and clean_name.lower() not in seen:
+                    unique_names.append(clean_name)
+                    seen.add(clean_name.lower())
+
+        if unique_names:
+            # Join with commas and spaces
+            project_desc = ", ".join(unique_names)
+
+            # Truncate to 100 characters if needed
+            if len(project_desc) > 100:
+                project_desc = project_desc[:97] + "..."
+
+            logger.info(f"Generated project description: {project_desc}")
+            return project_desc
+        else:
+            # Fallback to timestamp-based name
+            fallback_desc = f"RFQ_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            logger.info(f"Using fallback project description: {fallback_desc}")
+            return fallback_desc
     
     async def get_client_rfqs(self, client_id: str = "4004") -> Dict[str, Any]:
         """Get RFQ IDs for a client."""
@@ -478,6 +579,7 @@ class GMTAPIService:
             logger.error(f"Error in bulk upload: {e}")
             return {"success": False, "error": str(e)}
 
+    @log_procucev_api_call("rfq_status_api")
     async def get_rfq_status(self, client_id: str, rfq_ids: List[str] = None) -> Dict[str, Any]:
 
         """
@@ -505,10 +607,16 @@ class GMTAPIService:
             data = {"clientId": client_id}
             # Only add rfqIds if we have valid (non-None) RFQ IDs
             if rfq_ids and any(rfq_id is not None for rfq_id in rfq_ids):
-                # Filter out None values
-                valid_rfq_ids = [rfq_id for rfq_id in rfq_ids if rfq_id is not None]
+                # Filter out None values and add RFQ prefix if missing
+                valid_rfq_ids = [
+                    f"RFQ{rfq_id}" if not str(rfq_id).upper().startswith('RFQ') else rfq_id
+                    for rfq_id in rfq_ids
+                    if rfq_id is not None
+                ]
+
                 if valid_rfq_ids:  # Double check we have valid IDs after filtering
                     data["rfqIds"] = valid_rfq_ids
+
 
 
 
@@ -527,6 +635,7 @@ class GMTAPIService:
 
 
     # Seller-specific API methods
+    @log_procucev_api_call("fetch_active_rfqs")
     async def fetch_active_rfqs(self, org_id: str) -> Dict[str, Any]:
         """
         Fetch active RFQs based on seller's category.
@@ -591,6 +700,7 @@ class GMTAPIService:
             logger.error(f"Error fetching active RFQs: {e}, data:{data}")
             return {"success": False, "error": str(e)}
 
+    @log_procucev_api_call("seller_credits_checks")
     async def check_seller_credits(self, seller_org_id: str) -> Dict[str, Any]:
         """
         Check seller's RFQ request credit balance.
@@ -632,6 +742,8 @@ class GMTAPIService:
             logger.error(f"Error checking seller credits: {e}, data:{data}")
             return {"success": False, "error": str(e)}
 
+
+    @log_procucev_api_call("send_rfq_emails")
     async def send_rfq_email(self, rfq_ids: List[str], seller_email: str, seller_id: str) -> Dict[str, Any]:
         """
         Send RFQ details to seller via email.
@@ -740,6 +852,7 @@ class GMTAPIService:
             logger.error(f"Error updating RFQ sent flag: {e}")
             return {"success": False, "error": str(e)}
 
+    @log_procucev_api_call("get_subscription_plans")
     async def get_subscription_plans(self) -> Dict[str, Any]:
         """
         Get available subscription plans for sellers.
@@ -834,6 +947,7 @@ class GMTAPIService:
             logger.error(f"Error generating payment link: {e}")
             return {"success": False, "error": str(e)}
 
+    @log_procucev_api_call("fetch_seller_open_rfqs_for_reminder")
     async def fetch_seller_open_rfqs_for_reminder(self, seller_id: str) -> Dict[str, Any]:
         """
         Fetch open RFQs where seller has not submitted bids yet for end-of-flow reminder.

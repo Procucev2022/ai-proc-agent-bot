@@ -39,7 +39,7 @@ def init_database():
         pool_pre_ping=True,
         pool_recycle=300
     )
-    SessionLocal = sessionmaker(bind=engine)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
     # Create all tables
     Base.metadata.create_all(bind=engine)
@@ -123,7 +123,7 @@ def get_db_session():
             pool_pre_ping=True,
             pool_recycle=300
         )
-        SessionLocal = sessionmaker(bind=engine)
+        SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
         
     return SessionLocal()
 
@@ -154,7 +154,7 @@ def get_remote_db_session():
             echo=settings.sql_debug
         )
         
-        RemoteSessionLocal = sessionmaker(bind=remote_engine)
+        RemoteSessionLocal = sessionmaker(bind=remote_engine, autoflush=False, autocommit=False)
         
         logger.info("Remote database connection initialized for item categorization")
         
@@ -284,7 +284,39 @@ class DatabaseManager:
 
         Returns dictionary with pool statistics and health information.
         """
-        pass
+        global engine, remote_engine
+
+        status = {}
+
+        # Main database pool status
+        if engine and hasattr(engine, 'pool'):
+            pool = engine.pool
+            status['main_db'] = {
+                'size': pool.size(),
+                'checked_in': pool.checkedin(),
+                'checked_out': pool.checkedout(),
+                'overflow': pool.overflow(),
+                'invalid': pool.invalid(),
+                'pool_status': 'healthy' if pool.checkedin() > 0 else 'depleted'
+            }
+        else:
+            status['main_db'] = {'status': 'not_initialized'}
+
+        # Remote database pool status
+        if remote_engine and hasattr(remote_engine, 'pool'):
+            pool = remote_engine.pool
+            status['remote_db'] = {
+                'size': pool.size(),
+                'checked_in': pool.checkedin(),
+                'checked_out': pool.checkedout(),
+                'overflow': pool.overflow(),
+                'invalid': pool.invalid(),
+                'pool_status': 'healthy' if pool.checkedin() > 0 else 'depleted'
+            }
+        else:
+            status['remote_db'] = {'status': 'not_initialized'}
+
+        return status
 
     def execute_health_check(self):
         """
