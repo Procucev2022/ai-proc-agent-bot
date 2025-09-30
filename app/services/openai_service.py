@@ -46,13 +46,33 @@ class OpenAIService:
         self.client = OpenAI(
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             base_url=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            default_query={"api-version": "preview"}, 
+            default_query={"api-version": "preview"},
         )
         self.default_model = self.settings.openai_model_default
         self.advanced_model = self.settings.openai_model_advanced
         self.tools_dir = Path(__file__).parent.parent / "tools"
         self.prompts_dir = Path(__file__).parent.parent / "prompts"
         self.interaction_logger = get_interaction_logger()
+
+        # OpenAI call tracking for performance monitoring
+        self.call_counts = {}
+
+    def _track_openai_call(self, call_type: str, user_phone: str = None):
+        """Track OpenAI API calls for performance monitoring."""
+        request_key = user_phone or "global"
+        if request_key not in self.call_counts:
+            self.call_counts[request_key] = {}
+        if call_type not in self.call_counts[request_key]:
+            self.call_counts[request_key][call_type] = 0
+        self.call_counts[request_key][call_type] += 1
+
+        # Log the call for immediate visibility
+        logger.info(f"OpenAI call: {call_type} for {request_key} (total: {self.call_counts[request_key][call_type]})")
+
+    def get_call_summary(self, user_phone: str = None) -> dict:
+        """Get summary of OpenAI calls for a request."""
+        request_key = user_phone or "global"
+        return self.call_counts.get(request_key, {})
         
     def _load_prompt(self, category: str, prompt_name: str, **kwargs) -> str:
         """
@@ -224,6 +244,9 @@ class OpenAIService:
                         "content": f"CONVERSATION CONTEXT:{context_info}\n\nAnalyze the user's message considering this context."
                     })
             
+            # Track this OpenAI call
+            self._track_openai_call("intent_classification")
+
             response = self.client.responses.create(
                 model=self.default_model,
                 input=input_messages,
@@ -336,7 +359,10 @@ class OpenAIService:
             # Add current year for date extraction
             from datetime import datetime
             current_year = datetime.now().year
-            
+
+            # Track this OpenAI call
+            self._track_openai_call("entity_extraction")
+
             response = self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": message}],
@@ -516,6 +542,9 @@ class OpenAIService:
                 chat_summaries=summaries_text
             )
             
+            # Track this OpenAI call
+            self._track_openai_call("entity_extraction_with_summaries")
+
             response = self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": message}],
@@ -600,11 +629,14 @@ class OpenAIService:
             
             # Load reference detection prompt
             prompt_content = self._load_prompt(
-                "reference_detection", 
+                "reference_detection",
                 "_get_reference_detection_prompt",
                 message=message
             )
-            
+
+            # Track this OpenAI call
+            self._track_openai_call("reference_detection")
+
             response = self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": message}],
@@ -705,7 +737,10 @@ CONTEXT:
 The user was asked to choose between continuing their current workflow or switching to the new intent.
 Analyze their response to determine their true choice.
 """
-            
+
+            # Track this OpenAI call
+            self._track_openai_call("intent_switch_analysis")
+
             response = self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": context_text}],
@@ -2422,7 +2457,7 @@ Determine the best category for the input item based on the similar items and th
                 "is_valid": False,
                 "normalized_date": None,
                 "validation_issues": ["Validation failed"],
-                "user_friendly_message": "Please provide a valid future date",
+                "user_friendly_message": "Kindly share a valid delivery date from today onward.",
                 "confidence": 30,
                 "success": False
             }

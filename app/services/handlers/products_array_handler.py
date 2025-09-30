@@ -28,17 +28,24 @@ class ProductsArrayHandler:
         self.response_helpers = response_helpers
         self.session_manager = session_manager
     
-    async def handle_products_array(self, user: User, session: ConversationSession, 
-                                  message: str, products: list, chat_summaries: list = None, 
+    async def handle_products_array(self, user: User, session: ConversationSession,
+                                  message: str, products: list, chat_summaries: list = None,
                                   date_validation_error: bool = False) -> Dict[str, Any]:
         """Handle products array (single or multiple products)."""
         try:
             print(f"ProductsArrayHandler: Processing {len(products)} products")
             logger.info(f"Handling {len(products)} products from message")
-            
+
+            # Check if we have existing incomplete products that need to be merged with new data
+            existing_incomplete = session.workflow_state.get("incomplete_products", [])
+            if existing_incomplete:
+                print(f"ProductsArrayHandler: Found {len(existing_incomplete)} existing incomplete products, merging with new data")
+                products = await self._merge_with_existing_incomplete_products(existing_incomplete, products)
+                print(f"ProductsArrayHandler: After merging, processing {len(products)} total products")
+
             # Track categories from all products in product_items
             await self._track_product_categories(session, products)
-            
+
             # Check completeness for each product and identify which ones need more info
             incomplete_products, complete_products = await self._categorize_products_by_completeness(products)
             
@@ -135,9 +142,8 @@ class ProductsArrayHandler:
         session.workflow_state["complete_products"] = ChatServiceHelpers.serialize_products_for_session(complete_products)
         await self.session_manager.save_session(session, 'rfq_creation')
         
-        # Generate and send clarification response directly with our specific questions
-        clarification_message = "\n".join(all_questions)
-        print(f"  Final clarification message: {clarification_message}")
+        # Keep questions as a list for proper bullet formatting
+        print(f"  Final clarification questions: {all_questions}")
         
         # Build context and send response directly
         context = ChatServiceHelpers.build_context("clarification", message, {}, completeness,
@@ -150,7 +156,7 @@ class ProductsArrayHandler:
         context["products"] = products
         context["date_validation_error"] = date_validation_error
         
-        response = await self.response_helpers.generate_clarification_response([clarification_message], completeness, context, chat_summaries)
+        response = await self.response_helpers.generate_clarification_response(all_questions, completeness, context, chat_summaries)
         await self.whatsapp_service.send_message(user.phone_number, response)
         
         return {
@@ -169,6 +175,9 @@ class ProductsArrayHandler:
         for prod in incomplete_products:
             common_missing_fields.update(prod["missing_fields"])
 
+        # Check if any product has date validation error
+        has_date_error = any(prod["entities"].get("date_validation_error") for prod in incomplete_products)
+        
         # Check if all products have the same missing fields
         all_same_missing = True
         first_missing = set(incomplete_products[0]["missing_fields"])
@@ -185,15 +194,17 @@ class ProductsArrayHandler:
 
         if all_same_missing and len(incomplete_products) > 1:
             # All products missing the same fields - ask once for all
-            await self._generate_combined_questions(incomplete_products, all_questions, all_missing_fields)
+            await self._generate_combined_questions(incomplete_products, all_questions, all_missing_fields, has_date_error)
         else:
             # Products have different missing fields - ask individually
-            await self._generate_individual_questions(incomplete_products, all_questions, all_missing_fields)
+            await self._generate_individual_questions(incomplete_products, all_questions, all_missing_fields, has_date_error)
 
+        # Remove duplicate questions while preserving order
+        all_questions = list(dict.fromkeys(all_questions))
         print(f"  All questions to ask: {all_questions}")
         return all_questions, all_missing_fields
     
-    async def _generate_combined_questions(self, incomplete_products: list, all_questions: list, all_missing_fields: list):
+    async def _generate_combined_questions(self, incomplete_products: list, all_questions: list, all_missing_fields: list, has_date_error: bool = False):
         """Generate combined questions for products with same missing fields."""
         rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(incomplete_products[0]["entities"], self.openai_service)
         combined_questions = rfq_schema.get_combined_questions()
@@ -210,14 +221,17 @@ class ProductsArrayHandler:
                     index = prod.get("index", i + 1)
                     product_names.append(f"Product {index}")
 
-            # Add mandatory fields first - filter out None values
+            # Add mandatory fields first - filter out None values and delivery date if there's a date error
             if combined_questions["has_mandatory"]:
                 mandatory_questions = [q for q in combined_questions["mandatory"] if q is not None and str(q).strip()]
+                if has_date_error:
+                    # Filter out delivery date question when there's a date validation error
+                    mandatory_questions = [q for q in mandatory_questions if "delivery date" not in q.lower()]
                 all_questions.extend(mandatory_questions)
 
             all_missing_fields.extend(incomplete_products[0]["missing_fields"])
     
-    async def _generate_individual_questions(self, incomplete_products: list, all_questions: list, all_missing_fields: list):
+    async def _generate_individual_questions(self, incomplete_products: list, all_questions: list, all_missing_fields: list, has_date_error: bool = False):
         """Generate individual questions for products with different missing fields."""
         # First, identify delivery fields that should always be asked for all products
         delivery_fields = {'delivery_date', 'delivery_location_0_state', 'delivery_location_0_city', 'delivery_location_0_pincode'}
@@ -258,9 +272,11 @@ class ProductsArrayHandler:
             sample_schema = ChatServiceHelpers.create_rfq_schema_from_entities(incomplete_products[0]["entities"], self.openai_service)
             combined_questions = sample_schema.get_combined_questions()
 
-            # Filter to only include delivery-related questions - filter out None values
+            # Filter to only include delivery-related questions - filter out None values and delivery date if there's a date error
             for question in combined_questions.get("mandatory", []):
                 if question is not None and str(question).strip():
+                    if has_date_error and "delivery date" in question.lower():
+                        continue  # Skip delivery date question when there's a date validation error
                     all_questions.append(question)
 
             all_missing_fields.extend(list(all_delivery_missing))
@@ -280,8 +296,10 @@ class ProductsArrayHandler:
                 # Only add product prefix if there are multiple products
                 if len(incomplete_products) > 1:
                     all_questions.append(f"For {product_desc}:")
-                # Filter out None values from mandatory questions
+                # Filter out None values from mandatory questions and delivery date if there's a date error
                 mandatory_questions = [q for q in combined_questions["mandatory"] if q is not None and str(q).strip()]
+                if has_date_error:
+                    mandatory_questions = [q for q in mandatory_questions if "delivery date" not in q.lower()]
                 all_questions.extend(mandatory_questions)
                 all_missing_fields.extend(missing_fields)
     
@@ -418,3 +436,130 @@ class ProductsArrayHandler:
         for field in fields_to_clear:
             if field in session.workflow_state:
                 del session.workflow_state[field]
+
+    async def _merge_with_existing_incomplete_products(self, existing_incomplete: list, new_products: list) -> list:
+        """
+        Merge newly extracted product data with existing incomplete products.
+
+        Logic:
+        1. If new products contain only supplementary info (delivery location, date),
+           merge this info into all existing products that need it
+        2. If new products contain actual new product descriptions,
+           add them as additional products
+        3. Return the merged list of all products
+        """
+        try:
+            print(f"ProductsArrayHandler: Merging {len(existing_incomplete)} existing with {len(new_products)} new products")
+
+            # Extract existing product entities
+            existing_entities = []
+            for existing_prod in existing_incomplete:
+                if isinstance(existing_prod, dict) and "entities" in existing_prod:
+                    existing_entities.append(existing_prod["entities"])
+                else:
+                    existing_entities.append(existing_prod)
+
+            # Check if new products are re-extractions of existing products or genuinely new ones
+            new_products_with_descriptions = []
+            supplementary_data = {}
+
+            # Get existing product descriptions for comparison
+            existing_descriptions = set()
+            for existing_entity in existing_entities:
+                desc = existing_entity.get("description") or existing_entity.get("projectDesc")
+                if desc:
+                    existing_descriptions.add(desc.lower().strip())
+
+            for new_product in new_products:
+                has_description = bool(new_product.get("description") or new_product.get("projectDesc"))
+
+                if has_description:
+                    # Check if this is a re-extraction of an existing product
+                    new_desc = (new_product.get("description") or new_product.get("projectDesc", "")).lower().strip()
+
+                    if new_desc in existing_descriptions:
+                        # This is a re-extraction of an existing product, treat as supplementary data for that product
+                        print(f"ProductsArrayHandler: Detected re-extraction of existing product: {new_desc}")
+                        # Instead of adding as new product, we'll merge this data with the existing product later
+                        continue
+                    else:
+                        # This is genuinely a new product
+                        new_products_with_descriptions.append(new_product)
+                        print(f"ProductsArrayHandler: Found genuinely new product: {new_desc}")
+                else:
+                    # This is supplementary data (location, date, etc.) that should be applied to existing products
+                    for field in ["state", "city", "pincode", "deliveryDate", "division", "brand", "remarks"]:
+                        if new_product.get(field):
+                            supplementary_data[field] = new_product[field]
+
+            print(f"ProductsArrayHandler: Found {len(new_products_with_descriptions)} new products with descriptions")
+            print(f"ProductsArrayHandler: Found supplementary data: {list(supplementary_data.keys())}")
+
+            # Create a map of re-extracted products by description for merging
+            reextracted_products_map = {}
+            for new_product in new_products:
+                desc = (new_product.get("description") or new_product.get("projectDesc", "")).lower().strip()
+                if desc and desc in existing_descriptions:
+                    reextracted_products_map[desc] = new_product
+
+            # Merge data into existing products
+            merged_products = []
+            for existing_entity in existing_entities:
+                merged_entity = existing_entity.copy()
+
+                # Check if we have a re-extracted version of this product with new data
+                existing_desc_raw = existing_entity.get("description") or existing_entity.get("projectDesc") or ""
+                existing_desc = existing_desc_raw.lower().strip() if existing_desc_raw else ""
+                if existing_desc and existing_desc in reextracted_products_map:
+                    reextracted_product = reextracted_products_map[existing_desc]
+                    print(f"ProductsArrayHandler: Merging re-extracted data for product: {existing_desc}")
+
+                    # Merge all non-None fields from re-extracted product
+                    for field, value in reextracted_product.items():
+                        if value is not None and (merged_entity.get(field) is None or merged_entity.get(field) == ""):  # Only fill if field is None or empty
+                            merged_entity[field] = value
+                            print(f"ProductsArrayHandler: Applied {field}={value} to {existing_desc}")
+                    
+                    # Handle date validation error updates
+                    if "date_validation_error" in reextracted_product:
+                        # Only update if there's actually an error message
+                        if reextracted_product["date_validation_error"]:
+                            merged_entity["date_validation_error"] = reextracted_product["date_validation_error"]
+                            print(f"ProductsArrayHandler: Updated date_validation_error for {existing_desc}")
+                        else:
+                            # Empty error message means clear the error
+                            if "date_validation_error" in merged_entity:
+                                del merged_entity["date_validation_error"]
+                                print(f"ProductsArrayHandler: Cleared empty date_validation_error for {existing_desc}")
+                    
+                    # Clear date validation error if delivery date is now valid and no error in new extraction
+                    if reextracted_product.get("deliveryDate") and not reextracted_product.get("date_validation_error"):
+                        if "date_validation_error" in merged_entity:
+                            del merged_entity["date_validation_error"]
+                            print(f"ProductsArrayHandler: Cleared date_validation_error for {existing_desc} (valid date provided)")
+
+                # Apply global supplementary data to fields that are missing or None
+                for field, value in supplementary_data.items():
+                    if merged_entity.get(field) is None or merged_entity.get(field) == "":  # Only fill if field is None or empty
+                        merged_entity[field] = value
+                        print(f"ProductsArrayHandler: Applied supplementary {field}={value} to existing product")
+                
+
+
+                # Final cleanup: Clear date validation error if delivery date exists and is valid
+                if merged_entity.get("deliveryDate") and "date_validation_error" in merged_entity:
+                    del merged_entity["date_validation_error"]
+                    print(f"ProductsArrayHandler: Final cleanup - cleared date_validation_error for valid delivery date")
+                
+                merged_products.append(merged_entity)
+
+            # Add any new products with descriptions
+            merged_products.extend(new_products_with_descriptions)
+
+            print(f"ProductsArrayHandler: Final merged result: {len(merged_products)} total products")
+            return merged_products
+
+        except Exception as e:
+            logger.error(f"Error merging products: {e}")
+            # Fallback: return existing + new
+            return existing_entities + new_products if 'existing_entities' in locals() else new_products

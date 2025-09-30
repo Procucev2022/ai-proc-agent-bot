@@ -8,6 +8,7 @@ It provides methods for creating RFQs, managing vendors, and other procurement o
 import logging
 import asyncio
 import base64
+import time
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import aiohttp
@@ -15,6 +16,7 @@ import json
 
 from app.config import get_settings
 from app.utils.procucev_api_logger import log_procucev_api_call
+from app.redis_db import get_redis_service
 
 logger = logging.getLogger(__name__)
 
@@ -34,43 +36,59 @@ class GMTAPIService:
         self.phone = self.settings.gmt_phone
         self.token = None
         self.token_expires_at = None
+        self.redis_service = get_redis_service()
+        self.token_cache_key = "gmt_api:auth_token"
         logger.info(f"GMT API Service initialized with base_url: {self.base_url}")
         logger.info(f"Username: {self.username}, Phone: {self.phone}")
         
+    @log_procucev_api_call("gmt_api_authenticate")
     async def authenticate(self) -> bool:
         """Authenticate with new GMT API using username/phone."""
+        start_time = time.time()
         auth_url = f"{self.base_url}/authenticate"
         logger.info(f"Attempting authentication at: {auth_url}")
-        
+
         headers = {
             'Content-Type': 'application/json',
             'Accept': 'application/json'
         }
-        
+
         auth_data = {
             "username": self.username.strip('"') if self.username else "",
             "phone": f"+91{self.phone.strip('\"')}" if self.phone else ""
         }
-        
+
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(auth_url, json=auth_data, headers=headers, timeout=30) as response:
+                    response_time = time.time() - start_time
+                    logger.info(f"GMT API authenticate response received in {response_time:.3f}s")
+
                     if response.status == 200:
                         response_text = await response.text()
                         try:
                             auth_response = json.loads(response_text)
-                            
+
                             if auth_response.get('status') == 'success':
                                 self.token = auth_response.get('access_token')
                                 expires_in = auth_response.get('expires_in', 36000) - 300  # Subtract 5 minutes for safety
                                 self.token_expires_at = datetime.now().timestamp() + expires_in
-                                
+
+                                # Cache token in Redis
+                                token_data = {
+                                    "access_token": self.token,
+                                    "expires_at": self.token_expires_at,
+                                    "created_at": datetime.now().isoformat()
+                                }
+                                await self.redis_service.set(self.token_cache_key, token_data, ex=expires_in)
+
                                 logger.info(f"GMT API authentication successful. Token expires in {expires_in} seconds")
+                                logger.info(f"Token cached in Redis with {expires_in}s expiry")
                                 return True
                             else:
                                 logger.error(f"GMT API authentication failed: {auth_response}")
                                 return False
-                                
+
                         except json.JSONDecodeError:
                             logger.error(f"Invalid JSON response: {response_text}")
                             return False
@@ -78,18 +96,39 @@ class GMTAPIService:
                         error_text = await response.text()
                         logger.error(f"GMT API authentication failed: {response.status} - {error_text}")
                         return False
-                        
+
         except Exception as e:
             logger.error(f"GMT API authentication error: {e}")
             return False
     
     async def ensure_authenticated(self) -> bool:
-        """Ensure we have a valid authentication token."""
-        if not self.token or (self.token_expires_at and datetime.now().timestamp() > self.token_expires_at):
-            logger.info("Token expired or missing, re-authenticating...")
-            return await self.authenticate()
-        return True
+        """Ensure we have a valid authentication token, checking Redis cache first."""
+        # First check if we have a valid token in memory
+        if self.token and self.token_expires_at and datetime.now().timestamp() < self.token_expires_at:
+            return True
+
+        # Check Redis cache for existing valid token
+        try:
+            cached_token_data = await self.redis_service.get(self.token_cache_key, as_json=True)
+            if cached_token_data and isinstance(cached_token_data, dict):
+                cached_expires_at = cached_token_data.get("expires_at")
+                if cached_expires_at and datetime.now().timestamp() < cached_expires_at:
+                    self.token = cached_token_data.get("access_token")
+                    self.token_expires_at = cached_expires_at
+                    logger.info("Retrieved valid token from Redis cache")
+                    return True
+                else:
+                    logger.info("Cached token expired, will re-authenticate")
+            else:
+                logger.info("No valid token found in cache")
+        except Exception as e:
+            logger.warning(f"Error checking token cache: {e}")
+
+        # If no valid cached token, authenticate and cache new token
+        logger.info("Token expired or missing, re-authenticating...")
+        return await self.authenticate()
     
+    @log_procucev_api_call("gmt_api_create_rfq")
     async def create_rfq(self, rfq_data: Dict[str, Any], user_id: str = None, org_id: str = None) -> Dict[str, Any]:
         """
         Create RFQ in GMT system.
@@ -121,7 +160,10 @@ class GMTAPIService:
             }
             
             async with aiohttp.ClientSession() as session:
+                request_start_time = time.time()
                 async with session.post(create_url, json=gmt_rfq_data, headers=headers, timeout=30) as response:
+                    response_time = time.time() - request_start_time
+                    logger.info(f"GMT API create_rfq response received in {response_time:.3f}s")
                     if response.status == 200:
                         response_data = await response.json()
                         
@@ -480,6 +522,7 @@ class GMTAPIService:
             logger.error(f"Error getting RFQ details: {e}")
             return {"success": False, "error": str(e)}
     
+    @log_procucev_api_call("gmt_api_bulk_upload_rfq")
     async def bulk_upload_rfq(self, excel_data: Dict[str, str]) -> Dict[str, Any]:
         """
         Upload RFQ data using GMT bulk upload API.

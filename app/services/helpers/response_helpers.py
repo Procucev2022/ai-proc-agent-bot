@@ -395,23 +395,30 @@ class ResponseHelpers:
             return "Excellent! Your RFQ is now complete. I'll process this request and get back to you soon."
     
     async def generate_clarification_response(self, questions: list, completeness: float, context: dict, chat_summaries: list = None) -> str:
-        """Generate clarification response using OpenAI with optional chat summary context."""
+        """Generate clarification response using predefined structure - no OpenAI needed."""
         try:
-            # Check for date validation errors in context
+            # Get date validation errors (already formatted)
             date_validation_errors = self._extract_date_validation_errors(context)
-            if date_validation_errors:
-                # Prepend date validation errors to questions
-                date_error_messages = [error for error in date_validation_errors]
-                questions = date_error_messages + questions
-            
-            # Enhance context with chat summaries if available
-            enhanced_context = context.copy()
-            if chat_summaries:
-                enhanced_context["chat_summaries"] = chat_summaries
-                enhanced_context["has_historical_context"] = True
-                print(f"ResponseHelpers: Enhanced clarification context with {len(chat_summaries)} chat summaries")
-            
-            return self.openai_service.generate_clarification_response(questions, completeness, enhanced_context)
+
+            # Combine only the actual questions
+            all_questions = date_validation_errors + questions
+
+            if not all_questions:
+                return "Thank you for the information! Let me process your RFQ."
+
+            # Debug: Log the questions being formatted
+            logger.info(f"Clarification questions being formatted: {all_questions}")
+
+            # Simple, clean formatting without duplication
+            questions_text = "\n".join(f"• {q}" for q in all_questions)
+            logger.info(f"Formatted questions text: {questions_text}")
+
+            # Only add progress acknowledgment if we have some progress
+            if completeness > 0:
+                return f"Thank you for that information!\n\nPlease provide the following:\n\n{questions_text}"
+            else:
+                return f"Please provide the following:\n\n{questions_text}"
+
         except Exception as e:
             logger.error(f"Error generating clarification response: {e}")
             questions_text = "\n".join(f"• {q}" for q in questions)
@@ -549,4 +556,5 @@ class ResponseHelpers:
                     if isinstance(product, dict) and product.get("date_validation_error"):
                         date_errors.append(product["date_validation_error"])
         
-        return date_errors
+        # Remove duplicate error messages while preserving order
+        return list(dict.fromkeys(date_errors))

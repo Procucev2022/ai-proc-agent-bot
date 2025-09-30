@@ -200,13 +200,13 @@ class RegistrationService:
     async def _get_buyer_introduction_message(self) -> str:
         """Get buyer registration introduction message."""
         return (
-            "Hello Buyer \n To get started, please share\n\n  1. Full name,\n 2. Company name,\n 3. Business email,\n 4. Company pincode.\n\n We’ll have you registered right away."
+            "Hello Buyer \n To get started, please share\n\n 1. Full name,\n 2. Company name,\n 3. Business email,\n 4. Company pincode.\n\n We’ll have you registered right away."
         )
     
     async def _get_seller_introduction_message(self) -> str:
         """Get seller registration introduction message."""
         return (
-            "Hello Seller\n To get started, please share your\n 1.Full name,\n 2. Company name, \n 3. Business email, \n 4. Location with Pincode,\n 5. GSTIN number,\n 6. The products or services you offer. \n\nWe’ll have you registered right away."
+            "Hello Seller\n To get started, please share your\n 1. Full name,\n 2. Company name, \n 3. Business email, \n 4. Location with Pincode,\n 5. GSTIN number,\n 6. The products or services you offer. \n\nWe’ll have you registered right away."
         )
     
     def _build_registration_context(self, session: ConversationSession, current_message: str) -> str:
@@ -515,8 +515,7 @@ class RegistrationService:
                         
                         if domain_result.get("approved"):
                             success_message = (
-                                "Registration successful—thank you! How can I help you today? "
-                                "Want to raise an RFQ or any other support?"
+                                "Registration successful—thank you!"
                             )
                         else:
                             success_message = (

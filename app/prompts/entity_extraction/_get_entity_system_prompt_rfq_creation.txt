@@ -14,7 +14,7 @@ IMPORTANT: When user provides specifications like "18gb RAM, 1tb SSD":
 DELIVERY DATE EXTRACTION:
 - Extract ANY date-related information from the message
 - Include urgent terms like "asap", "urgent", "immediately", "right away", "as soon as possible"
-- Include relative dates like "tomorrow", "next week", "end of month"
+- Include relative dates like "tomorrow", "next week", "end of month", "this weekend", "next weekend", etc
 - Include specific dates like "12 Sept", "23/09/2025"
 - If user mentions urgency without specific date, extract the urgency term (e.g., "asap")
 

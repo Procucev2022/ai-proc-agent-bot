@@ -8,9 +8,11 @@ by the data model and orchestration layer.
 
 import json
 import os
+from datetime import datetime
 from typing import Dict
 
 from ..services.openai_service import OpenAIService
+from ..utils.datetime_utils import format_date_display
 
 
 class EntityService:
@@ -457,6 +459,15 @@ class EntityService:
                     raw_date_input=date,
                     extracted_date=date
                 )
+                
+                # Additional programmatic check for AI-returned date
+                if validation_result.get("is_valid") and validation_result.get("normalized_date"):
+                    if not self._is_date_future_or_today(validation_result.get("normalized_date")):
+                        validation_result["is_valid"] = False
+                        extracted_date = format_date_display(datetime.strptime(validation_result.get("normalized_date"), "%Y-%m-%d"))
+                        validation_result["user_friendly_message"] = f"The date {extracted_date} is in the past. Kindly share a valid delivery date from today onward."
+                        print(f"EntityService: AI date validation override - date is in past: {extracted_date}")
+                
                 date_validation_cache[date] = validation_result
 
         # Apply validation results to all products
@@ -501,6 +512,14 @@ class EntityService:
                 raw_date_input=delivery_date,
                 extracted_date=delivery_date
             )
+            
+            # Additional programmatic check for AI-returned date
+            if validation_result.get("is_valid") and validation_result.get("normalized_date"):
+                if not self._is_date_future_or_today(validation_result.get("normalized_date")):
+                    validation_result["is_valid"] = False
+                    extracted_date = format_date_display(datetime.strptime(validation_result.get("normalized_date"), "%Y-%m-%d"))
+                    validation_result["user_friendly_message"] = f"The date {extracted_date} is in the past. Kindly share a valid delivery date from today onward."
+                    print(f"EntityService: AI date validation override - date is in past: {extracted_date}")
             
             if validation_result.get("is_valid"):
                 validated_entities["deliveryDate"] = validation_result.get("normalized_date")
@@ -712,6 +731,19 @@ class EntityService:
         except Exception as e:
             print(f"EntityService: Error in AI reference merging: {e}")
             return products
+    
+    def _is_date_future_or_today(self, date_str: str) -> bool:
+        """Check if date string is today or in the future."""
+        try:
+            if not date_str:
+                return False
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+            current_date = datetime.now().date()
+            return date_obj >= current_date
+        except:
+            return False
+    
+
 
     def _get_schema(self, workflow_type: str) -> dict:
         """Load schema from JSON file for reference."""
