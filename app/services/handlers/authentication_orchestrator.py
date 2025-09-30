@@ -55,7 +55,7 @@ class AuthenticationOrchestrator:
             # Check if this is a role switch scenario
             role_switch_in_progress = session.workflow_state.get("role_switch_in_progress", False)
             target_user_type = session.workflow_state.get("user_type")
-            
+
             if role_switch_in_progress:
                 logger.info(f"Role switch in progress - forcing authentication for {target_user_type}")
                 # Skip token validation and force authentication for new role
@@ -86,17 +86,16 @@ class AuthenticationOrchestrator:
                 if user_details and user_details.is_registered:
                     logger.info(f"Token valid - User authenticated: {user_details.id}")
                     return user_details
-                
-                      
+                # If token expired, continue to check for active workflows
 
-            
+
             # Step 4: Check for existing auth/registration workflows
             workflow_type_str = str(session.workflow_type).lower() if session.workflow_type else None
             logger.info(f"Current workflow_type: {workflow_type_str}")
-            
+
             if workflow_type_str in ["workflowtype.authentication", "authentication"]:
                 logger.info("Routing to existing authentication workflow")
-                return await self._handle_authentication_workflow(user_phone, message_content, session, {})
+                return await self._handle_authentication_workflow(user_phone, message_content, session, intent_result or {})
             elif workflow_type_str in ["workflowtype.registration", "registration"]:
                 return await self._handle_registration_workflow(user_phone, message_content, session, {})
             
@@ -350,10 +349,8 @@ class AuthenticationOrchestrator:
             
             # Check for intent switch during authentication stages
             if auth_stage in ["email_confirmation", "email_otp"]:
-                # Classify intent to detect potential switches
-                from app.services.helpers.chat_service_helpers import ChatServiceHelpers
-                conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
-                new_intent_result = self.intent_service.classify_intent(message_content, conversation_context)
+                # Use pre-classified intent from ChatService to detect potential switches
+                new_intent_result = intent_result
                 
                 new_intent = new_intent_result.get('intent')
                 confidence = new_intent_result.get('confidence', 0)
@@ -412,11 +409,9 @@ class AuthenticationOrchestrator:
             if stored_intent_result:
                 new_intent_result = stored_intent_result
             else:
-                # Only classify if we don't have stored intent (should rarely happen)
-                logger.warning("No stored intent in registration workflow - classifying for switch detection")
-                from app.services.helpers.chat_service_helpers import ChatServiceHelpers
-                conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
-                new_intent_result = self.intent_service.classify_intent(message_content, conversation_context)
+                # Use the intent result already classified by ChatService
+                new_intent_result = intent_result
+                logger.info("Using pre-classified intent from ChatService for registration workflow")
 
             new_intent = new_intent_result.get('intent')
             confidence = new_intent_result.get('confidence', 0)

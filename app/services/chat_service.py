@@ -135,13 +135,15 @@ class ChatService:
         try:
             # Check and send welcome message if needed (before session creation)
             welcome_service = get_welcome_service()
+            welcome_sent = False
             if await welcome_service.should_send_welcome(user_phone):
                 welcome_text = "Hello 👋, I'm QUA – your Procurement Assistant."
                 message_response = await self.whatsapp_service.send_message(user_phone, welcome_text)
                 if message_response.success:
                     await welcome_service.mark_welcome_sent(user_phone)
-                # Return immediately to show welcome message first
-                return {"status": "welcome_sent", "message": "Welcome message sent successfully"}
+                    welcome_sent = True
+                    logger.info(f"Welcome message sent to {user_phone}, continuing to process their message")
+                # Continue processing user's message instead of returning early
             
             # Get or create user session using extracted service
             session = await self.session_manager.get_conversation_context(user_phone)
@@ -165,6 +167,9 @@ class ChatService:
                 logger.warning(f"Intent classification failed during message tracking: {e}")
                 self.session_manager.add_message_to_history(session, "user", message_content, message_type)
                 message_intent_result = {"intent": "general_inquiry", "confidence": 0}
+
+            # Track meaningful messages during auth/registration flows for later processing
+            self._track_meaningful_message_during_auth_flow(session, message_content, message_intent_result)
 
             # User Authentication flow
             auth_result = await self.authentication_orchestrator_flow(user_phone, message_content, session, message_intent_result)
@@ -196,6 +201,25 @@ class ChatService:
                     # Registration completed - check user type and handle appropriately
                     user = await self.authentication_service.validate_token(user_phone)
                     if user:
+                        # Refresh user cache after successful registration to include the new account
+                        logger.info(f"Refreshing user cache after registration completion for {user_phone}")
+                        try:
+                            # Clear existing cache first to force fresh API call
+                            from app.services.user_cache_service import get_user_cache_service
+                            user_cache_service = get_user_cache_service()
+                            await user_cache_service.clear_user_data(user_phone)
+
+                            # Make fresh API call to get updated user data including new account
+                            auth_response = await self.authentication_service.user_authenticate(
+                                user_phone, "refresh_cache_post_registration", session, intent="general_inquiry"
+                            )
+                            if auth_response.get("success"):
+                                logger.info(f"User cache refreshed successfully after registration for {user_phone}")
+                            else:
+                                logger.warning(f"Failed to refresh user cache after registration for {user_phone}")
+                        except Exception as e:
+                            logger.error(f"Error refreshing user cache after registration for {user_phone}: {e}")
+                            # Continue with flow even if cache refresh fails
                         user_type = auth_result.get("user_type", "buyer")
 
                         if user_type == "seller":
@@ -203,30 +227,64 @@ class ChatService:
                             logger.info(f"Seller registration completed - registration flow finished")
                             return {"status": "registration_completed", "message": "Seller registration successful"}
                         else:
-                            # Buyers: Apply intent filtering and continue to main flow
-                            message_to_process = ChatServiceHelpers.find_most_relevant_message_after_auth(
-                                session, message_content, auth_result
-                            )
+                            # Buyers: Check if approved for main flow
+                            redirect_to_main_flow = auth_result.get("redirect_to_main_flow", False)
+                            approved = auth_result.get("approved", False)
 
-                            logger.info(f"Buyer registration completed - processing message: {message_to_process[:50]}...")
-                            # Get the original intent result from session or use current one
-                            stored_intent_result = session.workflow_state.get("current_intent_result", message_intent_result)
-                            return await self._process_text_message(user, session, message_to_process, stored_intent_result)
+                            if redirect_to_main_flow and approved:
+                                # Domain approved buyers: Continue to main flow
+                                message_to_process, intent_to_process = self._get_meaningful_message_after_auth(
+                                    session, message_content, message_intent_result
+                                )
+                                logger.info(f"Approved buyer registration completed - processing message: {message_to_process[:50]}...")
+                                return await self._process_text_message(user, session, message_to_process, intent_to_process)
+                            else:
+                                # Domain NOT approved buyers: Registration complete, no further processing
+                                logger.info(f"Unapproved buyer registration completed - awaiting manual approval")
+                                return {"status": "registration_completed", "message": "Buyer registration successful - awaiting approval"}
                     else:
                         return {"status": "error", "error": "Session not found after registration"}
                 elif auth_status == "authentication_completed":
-                    # Authentication completed - find the most relevant message to process
+                    # Authentication completed - check user type before processing
+                    user_type = auth_result.get("user_type")
 
-                    message_to_process = ChatServiceHelpers.find_most_relevant_message_after_auth(
-                        session, message_content, auth_result
+                    if user_type == "seller":
+                        # For sellers, just complete authentication without processing further messages
+                        # Sellers will interact with RFQs on their own initiative
+                        logger.info(f"Seller authentication completed - skipping message processing")
+                        await self.session_manager.save_session(session, None)
+                        return {"status": "authentication_completed", "user_type": "seller"}
+
+                    # For buyers, process the meaningful message after authentication
+                    message_to_process, intent_to_process = self._get_meaningful_message_after_auth(
+                        session, message_content, message_intent_result
                     )
 
                     logger.info(f"Authentication completed - processing message: {message_to_process[:50]}...")
                     user = await self.authentication_service.validate_token(user_phone)
                     if user:
-                        # Get the original intent result from session or use current one
-                        stored_intent_result = session.workflow_state.get("current_intent_result", message_intent_result)
-                        return await self._process_text_message(user, session, message_to_process, stored_intent_result)
+                        # Ensure user cache is populated after authentication
+                        logger.info(f"Ensuring user cache is populated after authentication for {user_phone}")
+                        try:
+                            from app.services.user_cache_service import get_user_cache_service
+                            user_cache_service = get_user_cache_service()
+                            cached_data = await user_cache_service.get_user_data(user_phone)
+
+                            if not cached_data:
+                                # No cache exists, make API call to populate it
+                                auth_response = await self.authentication_service.user_authenticate(
+                                    user_phone, "refresh_cache_post_auth", session, intent="general_inquiry"
+                                )
+                                if auth_response.get("success"):
+                                    logger.info(f"User cache populated successfully after authentication for {user_phone}")
+                                else:
+                                    logger.warning(f"Failed to populate user cache after authentication for {user_phone}")
+                            else:
+                                logger.info(f"User cache already exists after authentication for {user_phone}")
+                        except Exception as e:
+                            logger.error(f"Error ensuring user cache after authentication for {user_phone}: {e}")
+                            # Continue with flow even if cache population fails
+                        return await self._process_text_message(user, session, message_to_process, intent_to_process)
                     else:
                         return {"status": "error", "error": "Session not found after authentication"}
 
@@ -255,6 +313,19 @@ class ChatService:
                 await self.session_manager.save_session(session, "rfq_creation")
             else:
                 result = {"status": "error", "error": f"Unknown message type: {message_type}"}
+
+            # Log OpenAI call summary for performance monitoring
+            call_summary = self.openai_service.get_call_summary(user_phone)
+            if call_summary:
+                total_calls = sum(call_summary.values())
+                call_breakdown = ", ".join([f"{call_type}: {count}" for call_type, count in call_summary.items()])
+                logger.info(f"OpenAI calls for {user_phone}: {total_calls} total ({call_breakdown})")
+
+            # Include welcome message information in the result if it was sent
+            if welcome_sent:
+                if isinstance(result, dict):
+                    result["welcome_message_sent"] = True
+                    logger.info(f"Both welcome message and user message processed for {user_phone}")
 
             return result
 
@@ -521,7 +592,7 @@ class ChatService:
                 if registration_type in ["buyer", "seller"]:
                     if user.is_registered:
                         # User is authenticated - treat as account switch with registration option
-                        current_role = getattr(user, 'role', 'buyer')
+                        current_role = user.role.value if hasattr(user.role, 'value') else user.role
                         from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
                         auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
 
@@ -551,22 +622,56 @@ class ChatService:
 
             # Check for role switch (authenticated user wanting to switch from buyer to seller or vice versa)
             if user.is_registered and confidence > 0.7:
-                current_role = getattr(user, 'role', 'buyer')
+                current_role = user.role.value if hasattr(user.role, 'value') else user.role
                 if intent == "sell_something" and current_role == "buyer":
+                    # Cross-role switch: buyer -> seller, check if user has seller accounts
+                    from app.services.user_cache_service import get_user_cache_service
                     from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
+
+                    user_cache_service = get_user_cache_service()
+                    account_options = await user_cache_service.get_account_options_for_intent_switch(
+                        user.phone_number, "sell_something", getattr(user, 'email', None) or getattr(user, 'username', None)
+                    )
+
                     auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
-                    result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "seller")
+                    if account_options and account_options.get("success") and account_options.get("has_target_accounts"):
+                        # User has seller accounts - show enhanced selection
+                        logger.info("Cross-role switch (buyer->seller) with cached seller accounts - using enhanced selection")
+                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "seller")
+                    else:
+                        # No cached seller accounts - use standard role switch
+                        logger.info("Cross-role switch (buyer->seller) without cached seller accounts - using standard flow")
+                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "seller")
+
                     await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
                     return result
+
                 elif intent == "buy_something" and current_role == "seller":
+                    # Cross-role switch: seller -> buyer, check if user has buyer accounts
+                    from app.services.user_cache_service import get_user_cache_service
                     from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
+
+                    user_cache_service = get_user_cache_service()
+                    account_options = await user_cache_service.get_account_options_for_intent_switch(
+                        user.phone_number, "buy_something", getattr(user, 'email', None) or getattr(user, 'username', None)
+                    )
+
                     auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
-                    result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "buyer")
+                    if account_options and account_options.get("success") and account_options.get("has_target_accounts"):
+                        # User has buyer accounts - show enhanced selection
+                        logger.info("Cross-role switch (seller->buyer) with cached buyer accounts - using enhanced selection")
+                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "buyer")
+                    else:
+                        # No cached buyer accounts - use standard role switch
+                        logger.info("Cross-role switch (seller->buyer) without cached buyer accounts - using standard flow")
+                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "buyer")
+
                     await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
                     return result
             
             # Route based on already classified intent (intent was classified earlier in the function)
             if intent == "buy_something" and confidence > 0.7:
+                # Normal buy_something flow - user wants to buy with current account
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result,
                                                                                  self._should_use_summary_aware_extraction)
             elif intent == "confirmation_response" and confidence > 0.7:
@@ -584,6 +689,7 @@ class ChatService:
             elif intent == "rfq_status_check" and confidence > 0.7:
                 return await self._handle_rfq_status_inquiry(user, message, session)
             elif intent == "sell_something" and confidence > 0.7:
+                # Normal sell_something flow - user wants to sell with current account
                 return await self._handle_seller_flow(user, session, message)
             elif intent == "account_switch" and confidence > 0.7:
                 return await self._handle_account_switch_intent(user, session, message, intent_result)
@@ -980,6 +1086,67 @@ class ChatService:
             return await self._handle_error_response(e, user.phone_number, "account_switch_error",
                                                      "I had trouble processing your account switch request. Please try again.")
 
+    async def _check_for_enhanced_account_selection(self, user: User, session: ConversationSession, message: str, target_intent: str) -> Dict[str, Any]:
+        """
+        Check if we should use enhanced account selection for same-role switches.
+
+        This method checks the cached user data to see if the user has multiple accounts
+        for the target intent and shows them actual account options instead of generic choices.
+
+        Args:
+            user: Current user
+            session: Current session
+            message: User's message
+            target_intent: Target intent (buy_something/sell_something)
+
+        Returns:
+            Dict with status and result - 'handled' if enhanced selection was used, 'not_applicable' otherwise
+        """
+        try:
+            from app.services.user_cache_service import get_user_cache_service
+            from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
+
+            current_role = user.role.value if hasattr(user.role, 'value') else user.role
+            target_role = "buyer" if target_intent == "buy_something" else "seller"
+            current_email = getattr(user, 'email', None) or getattr(user, 'username', None)
+
+            logger.info(f"Enhanced account selection check: current_role={current_role}, target_role={target_role}, target_intent={target_intent}")
+
+            # Only apply enhanced selection for same-role switches
+            if current_role != target_role:
+                logger.info("Cross-role switch detected - enhanced selection not applicable")
+                return {"status": "not_applicable", "reason": "cross_role_switch"}
+
+            # Check if we have cached user data
+            user_cache_service = get_user_cache_service()
+            account_options = await user_cache_service.get_account_options_for_intent_switch(
+                user.phone_number, target_intent, current_email
+            )
+
+            if not account_options or not account_options.get("success"):
+                logger.info("No cached data available - enhanced selection not applicable")
+                return {"status": "not_applicable", "reason": "no_cached_data"}
+
+            has_target_accounts = account_options.get("has_target_accounts", False)
+
+            if not has_target_accounts:
+                logger.info("No target accounts available - enhanced selection not applicable")
+                return {"status": "not_applicable", "reason": "no_target_accounts"}
+
+            # We have target accounts - use enhanced account selection
+            logger.info("Enhanced account selection applicable - showing actual account options")
+
+            auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
+            result = await auth_reg_switch.handle_account_switch_confirmation(user, session, message, target_role)
+
+            await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+
+            return {"status": "handled", "result": result}
+
+        except Exception as e:
+            logger.error(f"Error in enhanced account selection check: {e}")
+            return {"status": "error", "error": str(e)}
+
     async def _handle_button_response(self, user: User, session: ConversationSession, button_id: str) -> Dict[
         str, Any]:
         """Handle button interaction responses."""
@@ -1053,13 +1220,8 @@ class ChatService:
     Dict[str, Any]:
         """Handle common error response pattern."""
         logger.error(f"Error in {error_type}: {error}")
-        error_context = {"error_type": error_type, "conversation_stage": "error"}
-        error_response = await self.response_helpers.generate_contextual_response(
-            error_context,
-            [fallback_message],
-            "error"
-        )
-        await self.whatsapp_service.send_message(user_phone, error_response)
+        # Use the fallback message directly instead of generating with OpenAI to avoid unnecessary API calls
+        await self.whatsapp_service.send_message(user_phone, fallback_message)
         return {"status": "error", "error": str(error)}
 
     async def _save_session(self, session: ConversationSession, workflow_type: str) -> ConversationSession:
@@ -1769,3 +1931,104 @@ class ChatService:
 
         except Exception as e:
             logger.error(f"Error updating last user message with intent: {e}")
+
+    def _track_meaningful_message_during_auth_flow(self, session: ConversationSession, message_content: str, intent_result: Dict[str, Any]) -> None:
+        """Track the last meaningful message for processing after auth/registration completes."""
+        try:
+            if not intent_result:
+                return
+
+            intent = intent_result.get('intent')
+            confidence = intent_result.get('confidence', 0)
+
+            # Check if this is a meaningful message that should be processed after auth/registration
+            meaningful_intents = [
+                "buy_something", "sell_something", "general_inquiry",
+                "modification_request", "reference_request", "rfq_status_check"
+            ]
+
+            # Skip OTP-like messages and auth/registration flow responses
+            if self._is_auth_flow_response(message_content, intent):
+                logger.info(f"Skipping auth/registration flow response: '{message_content[:50]}...' with intent: {intent}")
+                return
+
+            # Always replace with the most recent meaningful message
+            if intent in meaningful_intents and confidence > 50:
+                session.workflow_state = session.workflow_state or {}
+                session.workflow_state["last_meaningful_message"] = message_content
+                session.workflow_state["last_meaningful_intent_result"] = intent_result
+                logger.info(f"Tracked meaningful message: '{message_content[:50]}...' with intent: {intent} (confidence: {confidence}%)")
+
+        except Exception as e:
+            logger.error(f"Error tracking meaningful message: {e}")
+
+    def _is_auth_flow_response(self, message_content: str, intent: str) -> bool:
+        """Check if this message is an auth/registration flow response that shouldn't be processed as business intent."""
+        try:
+            message_lower = message_content.lower().strip()
+
+            # OTP patterns (4-6 digits, possibly with spaces)
+            import re
+            if re.match(r'^\s*\d{4,6}\s*$', message_content.strip()):
+                return True
+
+            # Confirmation responses
+            if message_lower in ["yes", "y", "no", "n", "confirm", "correct", "ok", "restart", "wrong", "incorrect"]:
+                return True
+
+            # Email addresses (during email confirmation)
+            if "@" in message_content and "." in message_content:
+                return True
+
+            # Resend requests
+            if message_lower in ["resend", "send again", "retry"]:
+                return True
+
+            # If classified as register_account but looks like OTP, it's probably misclassified
+            if intent == "register_account" and re.search(r'\d{4,6}', message_content):
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Error checking auth flow response: {e}")
+            return False
+
+    def _get_meaningful_message_after_auth(self, session: ConversationSession, current_message: str, current_intent_result: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+        """Get the most meaningful message to process after auth/registration completes."""
+        try:
+            # Check if we have a tracked meaningful message from during the auth/registration flow
+            workflow_state = session.workflow_state or {}
+            tracked_message = workflow_state.get("last_meaningful_message")
+            tracked_intent_result = workflow_state.get("last_meaningful_intent_result")
+
+            if tracked_message and tracked_intent_result:
+                logger.info(f"Using tracked meaningful message: '{tracked_message[:50]}...' with intent: {tracked_intent_result.get('intent')}")
+
+                # Clean up the tracked message since we're using it now
+                workflow_state.pop("last_meaningful_message", None)
+                workflow_state.pop("last_meaningful_intent_result", None)
+
+                return tracked_message, tracked_intent_result
+            else:
+                # No tracked message - check if current message is an auth flow response
+                current_intent = current_intent_result.get('intent', '')
+                if self._is_auth_flow_response(current_message, current_intent):
+                    logger.info(f"No meaningful message tracked and current message is auth flow response. Creating default general inquiry.")
+                    # Return a default general inquiry since user completed auth/registration without meaningful business request
+                    default_message = "Hello, how can I help you today?"
+                    default_intent_result = {
+                        "intent": "general_inquiry",
+                        "confidence": 75,
+                        "context_analysis": {"conversation_stage": "post_auth_default"}
+                    }
+                    return default_message, default_intent_result
+                else:
+                    # Current message is meaningful, use it
+                    logger.info(f"No tracked meaningful message found, using current message: '{current_message[:50]}...'")
+                    return current_message, current_intent_result
+
+        except Exception as e:
+            logger.error(f"Error getting meaningful message after auth: {e}")
+            # Fallback to current message
+            return current_message, current_intent_result
