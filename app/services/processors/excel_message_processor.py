@@ -13,7 +13,7 @@ from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.excel_helpers import ExcelHelpers
 from app.services.excel_validation_service import ExcelValidationService
 from app.services.excel_processing_service import ExcelProcessingService
-from app.services.gmt_api_service import GMTAPIService
+from app.procucev_apis.rfq_apis import RFQAPIService
 from app.utils.datetime_utils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -162,8 +162,8 @@ class ExcelMessageProcessor:
             api_data = processing_service.encode_for_api(template_bytes, processing_result['filename'])
             
             # Submit to GMT API
-            gmt_service = GMTAPIService()
-            gmt_result = await gmt_service.bulk_upload_rfq(api_data)
+            rfq_service = RFQAPIService()
+            gmt_result = await rfq_service.bulk_upload_rfq(api_data)
             
             if gmt_result.get('success'):
                 # Generate completion response using OpenAI

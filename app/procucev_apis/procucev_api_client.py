@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional, Literal
 from app.config import get_settings
 from app.schemas.user import normalize_phone_number
 from app.redis_db import get_redis_service
+from app.utils.procucev_api_logger import manual_log_api_call
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -48,6 +49,14 @@ class ProcucevAPIClient:
         self.redis_service = get_redis_service()
         self.token_cache_key = "procucev_api:auth_token"
 
+    def __del__(self):
+        """Cleanup session on object destruction."""
+        if self.session and not self.session.closed:
+            try:
+                asyncio.create_task(self.session.close())
+            except Exception:
+                pass
+
     async def __aenter__(self):
         await self.create_session()
         return self
@@ -76,7 +85,7 @@ class ProcucevAPIClient:
             
     async def close_session(self):
         """Close the aiohttp session cleanly."""
-        if self.session:
+        if self.session and not self.session.closed:
             await self.session.close()
             logger.info("HTTP session closed")
             self.session = None
@@ -167,9 +176,13 @@ class ProcucevAPIClient:
         json_data: Optional[Dict[str, Any]] = None,
         data: Optional[Any] = None,
         headers: Optional[Dict[str, str]] = None,
-        require_auth: bool = False
+        require_auth: bool = False,
+        api_title: Optional[str] = None
     ) -> Dict[str, Any]:
         """ Base HTTP request handler with retry/backoff. """
+        # Start timing for logging
+        start_time = time.time()
+        
         # check session initialisation
         if self.session is None:
             await self.create_session()
@@ -177,6 +190,17 @@ class ProcucevAPIClient:
         # Build full URL
         url = url_or_endpoint if url_or_endpoint.startswith("http") else f"{self.base_url}{url_or_endpoint}"
         headers = headers.copy() if headers else {}
+        
+        # Prepare input data for logging
+        input_data = {
+            "method": method,
+            "url": url,
+            "params": params,
+            "payload": json_data,
+            "data": str(data) if data else None,
+            "headers": {k: v for k, v in headers.items() if k.lower() != "authorization"},  # Exclude auth header
+            "require_auth": require_auth
+        }
 
         # Ensure authentication if needed
         if require_auth:
@@ -202,20 +226,30 @@ class ProcucevAPIClient:
                         continue
                     # Success (2xx)
                     if 200 <= status < 300:
-                        return await self.normalize_response(resp, text)
+                        result = await self.normalize_response(resp, text)
+                        # Log successful API call
+                        processing_time = time.time() - start_time
+                        title = api_title or f"{method} {url_or_endpoint}"
+                        manual_log_api_call(title, url, input_data, result, processing_time)
+                        return result
                     # Error: attempt to parse error message, then return error response
                     try:
                         error_payload = await resp.json()
                     except Exception:
                         error_payload = {"error": text}
                     logger.error(f"HTTP {status} error: {error_payload}")
-                    return {
+                    error_result = {
                         "success": False,
                         "status_code": status,
                         "message": error_payload.get("error", "Request failed"),
                         "data": error_payload,
                         "timestamp": datetime.now(UTC).isoformat() + "Z"
                     }
+                    # Log error response
+                    processing_time = time.time() - start_time
+                    title = api_title or f"{method} {url_or_endpoint}"
+                    manual_log_api_call(title, url, input_data, error_result, processing_time)
+                    return error_result
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 request_time = time.time() - request_start_time
                 error_type = "Network error"
@@ -230,13 +264,18 @@ class ProcucevAPIClient:
                 
                 if attempt == self.max_retries - 1:
                     logger.error(f"Max retries exceeded for {method} {url}")
-                    return {
+                    error_result = {
                         "success": False,
                         "status_code": 500,
                         "message": f"{error_type}. Please check your connection and try again.",
                         "data": None,
                         "timestamp": datetime.now(UTC).isoformat() + "Z"
                     }
+                    # Log network error
+                    processing_time = time.time() - start_time
+                    title = api_title or f"{method} {url_or_endpoint}"
+                    manual_log_api_call(title, url, input_data, error_result, processing_time)
+                    return error_result
                 
                 # Exponential backoff with jitter
                 backoff_time = self.retry_delay * (2 ** attempt) + (attempt * 0.1)
@@ -245,13 +284,18 @@ class ProcucevAPIClient:
 
         # Should never reach here, but just in case
         logger.error(f"Exceeded retry loop for {method} {url}")
-        return {
+        final_error_result = {
             "success": False,
             "status_code": 500,
             "message": "Service temporarily unavailable. Please try again later.",
             "data": None,
             "timestamp": datetime.now(UTC).isoformat() + "Z"
         }
+        # Log final fallback error
+        processing_time = time.time() - start_time
+        title = api_title or f"{method} {url_or_endpoint}"
+        manual_log_api_call(title, url, input_data, final_error_result, processing_time)
+        return final_error_result
 
     async def normalize_response(self, resp: aiohttp.ClientResponse, raw_text: str) -> Dict[str, Any]:
         """

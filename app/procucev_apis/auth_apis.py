@@ -11,7 +11,6 @@ from datetime import datetime
 
 from app.procucev_apis.procucev_api_client import ProcucevAPIClient
 from app.schemas.user import APIUserSchema
-from app.utils.procucev_api_logger import log_procucev_api_call
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,6 @@ class AuthAPIService:
         self.api_client = ProcucevAPIClient()
 
     
-    @log_procucev_api_call("authenticate_user")
     async def authenticate_user(self, phone_number: str) -> Dict[str, Any]:
         """
         Authenticate user by phone number.
@@ -36,7 +34,7 @@ class AuthAPIService:
     
             logger.info(f"Making API call to authenticate user: {phone_number}")
             endpoint = f"/partialvendor/getUsersByPhoneNumber/{phone_number}"
-            response_data = await self.api_client.get(endpoint)
+            response_data = await self.api_client.get(endpoint, api_title="authenticate_user")
             logger.info(f"API response for phone {phone_number}: {response_data}")
 
             status_code = response_data.get("statusCode")

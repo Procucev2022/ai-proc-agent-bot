@@ -39,8 +39,6 @@ class RFQStatusService:
 
             # Step: Send WhatsApp message with button for status details
             response_message = result["response_message"]
-
-            print("response _message", response_message)
             
             # Send CTA button message with link to procurement dashboard
             await self.whatsapp_service.send_cta_button_message(
