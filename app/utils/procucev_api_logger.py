@@ -25,13 +25,17 @@ class ProcucevAPILogger:
         today = datetime.now().strftime("%Y-%m-%d")
         return os.path.join(self.log_dir, f"procucev_api_calls_{today}.jsonl")
     
-    def log_api_call(self, api_endpoint: str, input_data: Dict[str, Any], response_data: Dict[str, Any], processing_time: float, timestamp: Optional[str] = None):
+    def log_api_call(self, api_title: str, api_url: str, input_data: Dict[str, Any], response_data: Dict[str, Any], processing_time: float, timestamp: Optional[str] = None):
         if timestamp is None:
             timestamp = datetime.utcnow().isoformat()
         
+        base_url = os.getenv('GMT_BASE_URL', 'https://api.procucev.com')
+        api_url = f"{base_url}{api_url}"
+        
         log_entry = {
             "timestamp": timestamp,
-            "api": api_endpoint,
+            "api_title": api_title,
+            "api_url": api_url,
             "input": input_data,
             "response": response_data,
             "processing_time_seconds": round(processing_time, 6)
@@ -46,42 +50,51 @@ class ProcucevAPILogger:
 
 procucev_api_logger = ProcucevAPILogger()
 
-def log_procucev_api_call(api_name: str = None):
+def manual_log_api_call(api_title: str, endpoint: str, input_data: Dict[str, Any], response_data: Dict[str, Any], processing_time: float):
+    """Manually log API call with specific input data."""
+    timestamp = datetime.utcnow().isoformat()
+    procucev_api_logger.log_api_call(api_title, endpoint, input_data, response_data, processing_time, timestamp)
+
+def log_procucev_api_call(api_title: str = None, endpoint: str = None):
     def decorator(func):
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
             start_time = time.time()
             timestamp = datetime.utcnow().isoformat()
-            method_name = api_name or func.__name__
+            title = api_title or func.__name__
+            base_url = os.getenv('GMT_BASE_URL', 'https://api.procucev.com')
+            url = f"{base_url}{endpoint}" if endpoint else f"{base_url}/{func.__name__}"
             input_data = {"args": [str(arg) for arg in args[1:]] if len(args) > 1 else [], "kwargs": kwargs}
             
             try:
                 result = await func(*args, **kwargs)
                 processing_time = time.time() - start_time
-                procucev_api_logger.log_api_call(method_name, input_data, result, processing_time, timestamp)
+                procucev_api_logger.log_api_call(title, url, input_data, result, processing_time, timestamp)
                 return result
             except Exception as e:
                 processing_time = time.time() - start_time
                 error_response = {"error": str(e), "success": False, "timestamp": datetime.utcnow().isoformat()}
-                procucev_api_logger.log_api_call(method_name, input_data, error_response, processing_time, timestamp)
+                procucev_api_logger.log_api_call(title, url, input_data, error_response, processing_time, timestamp)
                 raise
         
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
             start_time = time.time()
             timestamp = datetime.utcnow().isoformat()
-            method_name = api_name or func.__name__
+            title = api_title or func.__name__
+            base_url = os.getenv('GMT_BASE_URL', 'https://api.procucev.com')
+            url = f"{base_url}{endpoint}" if endpoint else f"{base_url}/{func.__name__}"
             input_data = {"args": [str(arg) for arg in args[1:]] if len(args) > 1 else [], "kwargs": kwargs}
             
             try:
                 result = func(*args, **kwargs)
                 processing_time = time.time() - start_time
-                procucev_api_logger.log_api_call(method_name, input_data, result, processing_time, timestamp)
+                procucev_api_logger.log_api_call(title, url, input_data, result, processing_time, timestamp)
                 return result
             except Exception as e:
                 processing_time = time.time() - start_time
                 error_response = {"error": str(e), "success": False, "timestamp": datetime.utcnow().isoformat()}
-                procucev_api_logger.log_api_call(method_name, input_data, error_response, processing_time, timestamp)
+                procucev_api_logger.log_api_call(title, url, input_data, error_response, processing_time, timestamp)
                 raise
         
         return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper

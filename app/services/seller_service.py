@@ -15,7 +15,7 @@ from app.utils.datetime_utils import utc_now
 from typing import Dict, Any, List
 from app.models import ConversationSession, User
 from app.services.whatsapp_service import WhatsAppService
-from app.services.gmt_api_service import GMTAPIService
+from app.procucev_apis.seller_apis import SellerAPIService
 from app.config import get_settings
 from app.services.openai_service import OpenAIService
 from app.services.helpers.response_helpers import ResponseHelpers
@@ -46,7 +46,7 @@ class SellerService:
         self.chat_summary_service = ChatSummaryService()
         self.daily_summary_service = DailySummaryService()
         self.whatsapp_service = WhatsAppService()
-        self.gmt_api_service = GMTAPIService()
+        self.seller_api_service = SellerAPIService()
         self.settings = get_settings()
         self.openai_service = OpenAIService()
         self.rfq_status_service = RFQStatusService()
@@ -452,7 +452,7 @@ class SellerService:
         """Handle seller's plan upgrade request."""
         try:
             # Fetch available subscription plans only if not already available
-            plans_result = await self.gmt_api_service.get_subscription_plans()
+            plans_result = await self.seller_api_service.get_subscription_plans()
             available_plans = plans_result.get("plans", [])
 
             if not plans_result.get("success"):
@@ -489,7 +489,7 @@ class SellerService:
         """Handle seller's plan selection response."""
         try:
             # Fetch available subscription plans only if not already available
-            plans_result = await self.gmt_api_service.get_subscription_plans()
+            plans_result = await self.seller_api_service.get_subscription_plans()
             available_plans = plans_result.get("plans", [])
             # Extract plan selection from message using AI
             selected_plan = await self._extract_plan_selection(message, available_plans)
@@ -509,7 +509,7 @@ class SellerService:
                 }
 
             # Generate payment link
-            payment_result = await self.gmt_api_service.generate_payment_link(
+            payment_result = await self.seller_api_service.generate_payment_link(
                 selected_plan.get("id"),
                 user.id
             )
@@ -577,7 +577,7 @@ class SellerService:
 
             # Send batch RFQ email request
             try:
-                batch_result = await self.gmt_api_service.send_rfq_email(
+                batch_result = await self.seller_api_service.send_rfq_email(
                     rfq_ids=selected_rfq_ids,
                     seller_email=user.email,
                     seller_id=user.id
@@ -591,8 +591,8 @@ class SellerService:
                     # Update sent flags for successful emails
                     successful_rfq_ids = [result["rfq_id"] for result in successful_results]
                     if successful_rfq_ids:
-                        await self.gmt_api_service.update_rfq_seller_sent_flag(
-                            successful_rfq_ids, seller_id
+                        await self.seller_api_service.update_rfq_seller_sent_flag(
+                            successful_rfq_ids[0], seller_id
                         )
 
                     # Format results for consistency
@@ -736,7 +736,7 @@ class SellerService:
     async def _check_seller_credits(self, seller_id: str) -> Dict[str, Any]:
         """Check seller's credit balance."""
         try:
-            return await self.gmt_api_service.check_seller_credits(seller_id)
+            return await self.seller_api_service.check_seller_credits(seller_id)
         except Exception as e:
             logger.error(f"Error checking seller credits: {e}")
             return {"success": False, "error": str(e), "credits_available": 0}
@@ -744,7 +744,7 @@ class SellerService:
     async def _fetch_seller_rfqs(self, org_id: str) -> Dict[str, Any]:
         """Fetch active RFQs for seller's category."""
         try:
-            return await self.gmt_api_service.fetch_active_rfqs(org_id)
+            return await self.seller_api_service.fetch_active_rfqs(org_id)
         except Exception as e:
             logger.error(f"Error fetching seller RFQs: {e}")
             return {"success": False, "error": str(e)}
@@ -810,7 +810,7 @@ class SellerService:
         - Haven't received bids from this seller yet
         """
         try:
-            return await self.gmt_api_service.fetch_seller_open_rfqs_for_reminder(seller_id)
+            return await self.seller_api_service.fetch_seller_open_rfqs_for_reminder(seller_id)
         except Exception as e:
             logger.error(f"Error fetching seller open RFQs for reminder: {e}")
             return {"success": False, "error": str(e)}

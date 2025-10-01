@@ -11,7 +11,7 @@ import asyncio
 from typing import Dict, Any, List
 from app.models import User, ConversationSession
 from app.services.whatsapp_service import WhatsAppService
-from app.services.gmt_api_service import GMTAPIService
+from app.procucev_apis.rfq_apis import RFQAPIService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.schemas.rfq import RFQValidationSchema
@@ -278,7 +278,7 @@ class ConfirmationHandler:
     async def _submit_rfq_to_backend(self, rfq_schema, user) -> dict:
         """Submit RFQ directly to backend via GMT API service."""
         try:
-            gmt_service = GMTAPIService()
+            rfq_service = RFQAPIService()
             
             # Convert schema to dict using the newer method
             schema_dict = rfq_schema.model_dump() if hasattr(rfq_schema, 'model_dump') else rfq_schema.dict()
@@ -319,7 +319,7 @@ class ConfirmationHandler:
             
             # Submit to backend via GMT API
             logger.info(f"Creating RFQ with user_id={user.id}, org_id={user.org_id}")
-            result = await gmt_service.create_rfq(rfq_data, user_id=user.id, org_id=user.org_id)
+            result = await rfq_service.create_rfq(rfq_data, user_id=user.id, org_id=user.org_id)
             
             # Log the GMT API response for debugging
             logger.info(f"GMT API Response: {result}")

@@ -46,7 +46,7 @@ from app.services.processors.image_message_processor import ImageMessageProcesso
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.services.excel_validation_service import ExcelValidationService
 from app.services.excel_processing_service import ExcelProcessingService
-from app.services.gmt_api_service import GMTAPIService
+from app.procucev_apis.rfq_apis import RFQAPIService
 from app.services.chat_summary_service import ChatSummaryService
 from app.services.daily_summary_service import DailySummaryService
 from app.services.rfq_background_service import RFQBackgroundService
@@ -883,8 +883,8 @@ class ChatService:
             api_data = processing_service.encode_for_api(template_bytes, processing_result['filename'])
 
             # Submit to GMT API
-            gmt_service = GMTAPIService()
-            gmt_result = await gmt_service.bulk_upload_rfq(api_data)
+            rfq_service = RFQAPIService()
+            gmt_result = await rfq_service.bulk_upload_rfq(api_data)
 
             if gmt_result.get('success'):
                 # Generate completion response using OpenAI

@@ -30,6 +30,7 @@ from app.config import get_settings
 from app.api.webhook import router as webhook_router
 from app.database import init_database
 from app.services.chat_service import ChatService
+import gc
 
 
 # Get settings and configure logging
@@ -87,6 +88,16 @@ async def lifespan(app: FastAPI):
     yield
     
     logger.info("Shutting down AI Procurement Agent application")
+    
+    # Cleanup any remaining aiohttp sessions
+    import aiohttp
+    for obj in gc.get_objects():
+        if isinstance(obj, aiohttp.ClientSession) and not obj.closed:
+            try:
+                await obj.close()
+                logger.info("Closed remaining aiohttp session")
+            except Exception as e:
+                logger.warning(f"Error closing session: {e}")
 
 
 # Initialize FastAPI application
