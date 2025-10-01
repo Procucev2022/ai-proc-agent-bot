@@ -27,6 +27,7 @@ from app.procucev_apis.auth_apis import AuthAPIService
 from app.procucev_apis.register_apis import RegisterAPIService
 from app.services.support_notification_service import SupportNotificationService
 from app.services.user_cache_service import get_user_cache_service
+from app.context import user_context
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,10 @@ class AuthenticationService:
             logger.info(f"user token validation called for {normalized_phone}")
             user_data = await self.auth_redis_service.retrieve(normalized_phone)
             if user_data:
+
+                # Save user details in global context
+                user_context.set(normalized_phone, {"user_details": user_data})
+
                 # Token automatically refreshed in retrieve method
                 logger.info(f"Token validated and refreshed for user {normalized_phone}")
                 return user_data
