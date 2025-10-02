@@ -8,7 +8,7 @@ Extracted from ChatService to reduce complexity.
 
 import logging
 from typing import Dict, Any, List
-from app.models import User, ConversationSession
+from app.models import WorkflowType, User, ConversationSession
 from app.services.whatsapp_service import WhatsAppService
 from app.services.openai_service import OpenAIService
 from app.services.helpers.response_helpers import ResponseHelpers
@@ -140,7 +140,7 @@ class ProductsArrayHandler:
         # Store incomplete products for follow-up (serialize datetime objects)
         session.workflow_state["incomplete_products"] = ChatServiceHelpers.serialize_products_for_session(incomplete_products)
         session.workflow_state["complete_products"] = ChatServiceHelpers.serialize_products_for_session(complete_products)
-        await self.session_manager.save_session(session, 'rfq_creation')
+        await self.session_manager.save_session(session, WorkflowType.rfq_creation)
         
         # Keep questions as a list for proper bullet formatting
         print(f"  Final clarification questions: {all_questions}")
@@ -337,7 +337,7 @@ class ProductsArrayHandler:
                 "schema_data": rfq_schema.model_dump() if hasattr(rfq_schema, 'model_dump') else {}
             })
             
-            await self.session_manager.save_session(session, 'rfq_creation')
+            await self.session_manager.save_session(session, WorkflowType.rfq_creation)
             
             return {
                 "status": "optional_fields_inquiry",
@@ -361,7 +361,7 @@ class ProductsArrayHandler:
         
         # Clear incomplete products since we're now in confirmation phase
         self._clear_workflow_state(session)
-        await self.session_manager.save_session(session, 'rfq_creation')
+        await self.session_manager.save_session(session, WorkflowType.rfq_creation)
         
         return {
             "status": "single_product_confirmation",
@@ -396,7 +396,7 @@ class ProductsArrayHandler:
                 "products": ChatServiceHelpers.serialize_products_for_session(complete_products)
             }
             
-            await self.session_manager.save_session(session, 'rfq_creation')
+            await self.session_manager.save_session(session, WorkflowType.rfq_creation)
             
             return {
                 "status": "optional_fields_inquiry",
@@ -423,7 +423,7 @@ class ProductsArrayHandler:
         
         # Clear incomplete products since we're now in confirmation phase
         self._clear_workflow_state(session)
-        await self.session_manager.save_session(session, 'rfq_creation')
+        await self.session_manager.save_session(session, WorkflowType.rfq_creation)
         
         return {
             "status": "combined_rfq_confirmation",

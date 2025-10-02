@@ -13,8 +13,9 @@ import logging
 import asyncio
 from app.utils.datetime_utils import utc_now
 from typing import Dict, Any, List
-from app.models import ConversationSession, User
+from app.models import WorkflowType, ConversationSession, User
 from app.services.whatsapp_service import WhatsAppService
+from app.services.workflow_manager import WorkflowManager
 from app.procucev_apis.seller_apis import SellerAPIService
 from app.config import get_settings
 from app.services.openai_service import OpenAIService
@@ -143,12 +144,12 @@ class SellerService:
                 response_message = await self.response_helpers.generate_seller_contextual_response(context)
 
             # Update session workflow state
-            session.workflow_type = "seller_rfq_view"
+            WorkflowManager.set_workflow_type(session, WorkflowType.seller_rfq_view, caller="seller_service")
             session.workflow_state = {
                 "seller_workflow_state": "awaiting_general_response"
             }
 
-            await self.session_manager.save_session(session, "seller_rfq_view")
+            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             # ADD THIS: Schedule end-of-flow reminder after 5 minutes for payment link
             asyncio.create_task(self._schedule_end_of_flow_reminder(user, session))
@@ -470,7 +471,7 @@ class SellerService:
             # Update session state to await plan selection
             session.workflow_state["seller_workflow_state"] = "awaiting_plan_selection"
 
-            await self.session_manager.save_session(session, "seller_rfq_view")
+            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             return {
                 "success": True,
@@ -530,7 +531,7 @@ class SellerService:
             session.workflow_state["seller_workflow_state"] = "payment_link_sent"
             session.workflow_state["selected_plan"] = selected_plan
 
-            await self.session_manager.save_session(session, "seller_rfq_view")
+            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             # ADD THIS: Schedule end-of-flow reminder after 5 minutes for payment link
             asyncio.create_task(self._schedule_end_of_flow_reminder(user, session))
@@ -653,7 +654,7 @@ class SellerService:
             session.workflow_state["seller_workflow_state"] = "completed"
             session.workflow_state["email_results"] = email_results
 
-            await self.session_manager.save_session(session, "seller_rfq_view")
+            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             # ADD THIS: Schedule end-of-flow reminder after 5 minutes
             asyncio.create_task(self._schedule_end_of_flow_reminder(user, session))
@@ -688,7 +689,7 @@ class SellerService:
             # Update state to handle general responses (plan upgrade requests)
             session.workflow_state["seller_workflow_state"] = "awaiting_general_response"
 
-            await self.session_manager.save_session(session, "seller_rfq_view")
+            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             # ADD THIS: Schedule end-of-flow reminder after 5 minutes if no further interaction
             asyncio.create_task(self._schedule_conditional_end_of_flow_reminder(user, session))
@@ -713,7 +714,7 @@ class SellerService:
             # Store the current session state timestamp
             current_timestamp = utc_now()
             session.workflow_state["last_activity_timestamp"] = current_timestamp.isoformat()
-            await self.session_manager.save_session(session, "seller_rfq_view")
+            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             # Wait for 5 minutes
             await asyncio.sleep(300)  # 5 minutes = 300 seconds
@@ -786,7 +787,7 @@ class SellerService:
             # Complete the session
             session.outcome = 'completed'
             session.completed_at = utc_now().replace(tzinfo=None)
-            await self.session_manager.save_session(session, "seller_rfq_view")
+            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             return {
                 "success": True,
@@ -829,7 +830,7 @@ class SellerService:
         # Complete the session
         session.outcome = 'completed'
         session.completed_at = utc_now().replace(tzinfo=None)
-        await self.session_manager.save_session(session, "seller_rfq_view")
+        await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
         return {
             "success": True,
@@ -853,7 +854,7 @@ class SellerService:
         # Complete the session
         session.outcome = 'completed'
         session.completed_at = utc_now().replace(tzinfo=None)
-        await self.session_manager.save_session(session, "seller_rfq_view")
+        await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
         return {
             "success": True,

@@ -49,9 +49,13 @@ INTENT CATEGORIES:
    - User: "Update the specs to include 16GB RAM" (enhancement)
    - User: "Switch that to IT Department" (reference + change)
 
-5. **confirmation_response** (85%+ confidence) - User responding to a confirmation request
-   Examples: "Yes", "Confirm", "No, make changes", "Yes but change the delivery date"
-   Context clues: Previous bot message asked for confirmation, simple yes/no responses
+5. **confirmation_response** (85%+ confidence) - User responding to a confirmation request OR optional field questions
+   Examples: "Yes", "Confirm", "No, make changes", "Yes but change the delivery date", "No" (when asked about optional fields/attachments)
+   Context clues:
+   - Previous bot message asked for confirmation → yes/no responses
+   - Bot asked optional field questions (brand, remarks, specifications, attachments) → yes/no/skip responses
+   - Context shows "Has Pending Optional Fields: True" or "Has Pending Attachment Decision: True"
+   IMPORTANT: If user says "No" when bot asked about optional fields/brands/specifications/attachments → confirmation_response (declining optional fields), NOT workflow_rejection
 
 6. **rfq_status_check** (70%+ confidence) - User checking status of existing RFQ or inquiry
    Examples: "What's the status of my RFQ?", "Track my request", "Any updates on my order?", "When will I receive vendor responses?", "Has my quote been processed?", "Check my order status"
@@ -73,6 +77,10 @@ INTENT CATEGORIES:
 10. **workflow_rejection** (80%+ confidence) - User rejecting current workflow approach
     Examples: "I don't want to raise an RFQ", "This isn't working", "Let's try something else"
     Context clues: Rejection language, dissatisfaction with current approach
+    IMPORTANT: Do NOT classify as workflow_rejection if:
+    - User says "No" when context shows "Has Pending Optional Fields: True" → confirmation_response instead
+    - User says "No" when context shows conversation_stage is "optional_fields" → confirmation_response instead
+    - User is simply declining optional questions about brand/specs/remarks/attachments → confirmation_response instead
 
 11. **alternative_request** (75%+ confidence) - User wanting different approach or service
     Examples: "Do you have this in stock?", "Can I buy directly?", "Search your inventory"
@@ -90,6 +98,10 @@ You will receive conversation context including:
 
 CONTEXT-AWARE CLASSIFICATION RULES:
 - If conversation stage is "confirming" and user says "yes" → confirmation_response
+- **CRITICAL: If conversation stage is "optional_fields" OR context shows "Has Pending Optional Fields: True" OR "Has Pending Attachment Decision: True":**
+  - User says "No" / "Skip" / "None" → confirmation_response (declining optional fields, NOT workflow_rejection)
+  - User says "Yes" and provides details → buy_something (adding optional data)
+  - User provides brand/specs/remarks → buy_something (adding optional data)
 - If bot's previous message asked for specifications/remarks/additional details and user provides them without modification verbs → buy_something (continue collection)
 - If bot just asked optional questions like "Do you have any specifications?" and user answers → buy_something (not modification)
 - **CRITICAL: If bot just asked clarification questions for missing mandatory fields (delivery date, location, division, etc.) and user provides the requested information → buy_something (continue collection, NOT modification)**

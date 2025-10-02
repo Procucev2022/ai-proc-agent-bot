@@ -164,8 +164,15 @@ class ConfirmationHandler:
             session = SessionHelpers.calculate_session_averages(session)
         
         # Clear session AFTER summarization data is captured
-        session.workflow_state = {"extracted_entities": []}
-        
+        # Only clear workflow if RFQ creation was successful
+        if successful_count > 0:
+            session.workflow_type = None
+            session.workflow_state = {}
+            logger.info(f"Cleared workflow_type and workflow_state after successful RFQ creation")
+        else:
+            session.workflow_state = {"extracted_entities": []}
+            logger.warning(f"RFQ creation failed, keeping workflow_type intact")
+
         return {"status": "multiple_rfqs_created", "successful_count": successful_count}
     
     async def _handle_rfq_modification(self, user: User, session: ConversationSession,

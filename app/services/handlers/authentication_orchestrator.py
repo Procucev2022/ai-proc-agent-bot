@@ -12,8 +12,9 @@ Handles complete authentication flow orchestration including:
 
 import logging
 from typing import Dict, Any, Optional, List
-from app.models import User, ConversationSession
+from app.models import WorkflowType, User, ConversationSession
 from app.services.whatsapp_service import WhatsAppService
+from app.services.workflow_manager import WorkflowManager
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
@@ -314,7 +315,7 @@ class AuthenticationOrchestrator:
                 return await self._redirect_to_registration_flow(user_phone, session, user_type)
 
             # Store user data for email confirmation
-            session.workflow_type = "authentication"
+            WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="authentication_orchestrator")
             session.workflow_state = {
                 "authentication_stage": "email_confirmation",
                 "filtered_users": filtered_users,
@@ -440,7 +441,7 @@ class AuthenticationOrchestrator:
                 logger.info(f"AuthOrchestrator: Processing registration data collection (stage: {registration_stage})")
 
                 # Ensure workflow_type stays as registration
-                session.workflow_type = "registration"
+                WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="authentication_orchestrator")
 
                 result = await self.registration_service.handle_registration_data_collection(
                     user_phone, message_content, session
@@ -627,7 +628,7 @@ class AuthenticationOrchestrator:
             existing_last_activity = session.workflow_state.get("last_activity_at")
             
             # Ensure workflow_type is consistently set
-            session.workflow_type = "registration"
+            WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="authentication_orchestrator")
             session.workflow_state = {
                 "registration_stage": "data_collection",
                 "user_type": user_type,
@@ -648,7 +649,7 @@ class AuthenticationOrchestrator:
             logger.info(f"AuthOrchestrator: Registration initiation result: {result}")
             
             # Ensure workflow_type remains registration
-            session.workflow_type = "registration"
+            WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="authentication_orchestrator")
             
             return {
                 "status": "redirected_to_registration",

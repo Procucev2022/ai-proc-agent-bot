@@ -10,8 +10,9 @@ Handles intent switching between 4 combinations:
 
 import logging
 from typing import Dict, Any, List, Optional
-from app.models import ConversationSession
+from app.models import WorkflowType, ConversationSession
 from app.services.whatsapp_service import WhatsAppService
+from app.services.workflow_manager import WorkflowManager
 from app.services.openai_service import OpenAIService
 from app.utils.datetime_utils import utc_now
 from app.services.user_cache_service import get_user_cache_service
@@ -763,7 +764,7 @@ Analyze their response and return only:
                 )
 
                 # Update current session to match new session
-                session.workflow_type = "authentication"
+                WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="handler")
                 session.workflow_state = {
                     "target_role": target_role,
                     "authentication_stage": "start",
@@ -847,7 +848,7 @@ Analyze their response and return only:
                 )
 
                 # Update current session to match new session
-                session.workflow_type = "registration"
+                WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="handler")
                 session.workflow_state = {
                     "target_role": target_role,
                     "registration_stage": "start",
@@ -974,6 +975,16 @@ Analyze their response and return only:
                         )
 
                         logger.info(f"Traditional auth flow result for {target_role}: {result.get('status')}")
+
+                        # Retrieve meaningful message from cache if available
+                        cached_meaningful = await self.user_cache_service.get_meaningful_message(normalized_phone)
+                        if cached_meaningful:
+                            result["original_message"] = cached_meaningful["message"]
+                            result["original_intent_result"] = cached_meaningful["intent_result"]
+                            logger.info(f"Retrieved and attached meaningful message to result: {cached_meaningful['message'][:50]}...")
+                            # Clear from cache after retrieval
+                            await self.user_cache_service.clear_meaningful_message(normalized_phone)
+
                         return result
                     else:
                         logger.error(f"Selected email {selected_email} not found in fresh API response")
