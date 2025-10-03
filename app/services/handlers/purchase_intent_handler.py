@@ -8,8 +8,9 @@ Extracted from ChatService to reduce complexity.
 
 import logging
 from typing import Dict, Any
-from app.models import User, ConversationSession
+from app.models import WorkflowType, User, ConversationSession
 from app.services.whatsapp_service import WhatsAppService
+from app.services.workflow_manager import WorkflowManager
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.utils.datetime_utils import utc_now
 
@@ -151,7 +152,7 @@ class PurchaseIntentHandler:
         )
         
         await self.whatsapp_service.send_message(user.phone_number, response)
-        await self.session_manager.save_session(session, 'rfq_creation')
+        await self.session_manager.save_session(session, WorkflowType.rfq_creation)
         
         return {
             "status": "modification_clarification_sent",

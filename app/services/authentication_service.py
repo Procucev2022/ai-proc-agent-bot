@@ -15,11 +15,12 @@ import logging
 from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime
 from app.schemas.user import User
-from app.models import ConversationSession, UserType
+from app.models import ConversationSession, UserType, WorkflowType
 from app.services.whatsapp_service import WhatsAppService
 from app.services.openai_service import OpenAIService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.authentication_helpers import AuthenticationHelpers
+from app.services.workflow_manager import WorkflowManager
 from app.utils.datetime_utils import utc_now
 from app.redis_db import get_auth_redis_service
 from app.schemas.user import User
@@ -613,7 +614,7 @@ Return only the selected email address or "none" if no clear selection.
                 }
             elif user_type == "seller":
                 # Sellers: Redirect to email OTP validation
-                session.workflow_type = "authentication"
+                WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="authentication_service")
                 session.workflow_state["authentication_stage"] = "email_otp"
                 session.workflow_state["otp_email"] = selected_email
                 session.workflow_state["otp_retry_count"] = 0

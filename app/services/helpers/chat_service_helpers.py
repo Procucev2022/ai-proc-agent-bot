@@ -223,6 +223,8 @@ class ChatServiceHelpers:
                     session.extracted_entities
                 ),
                 'has_incomplete_products': bool(session.workflow_state.get("incomplete_products")),
+                'has_pending_optional': bool(session.workflow_state.get("pending_optional_rfq")),
+                'has_pending_attachment_decision': bool(session.workflow_state.get("pending_attachment_decision")),
                 'current_stage': ChatServiceHelpers.determine_conversation_stage(session)
             }
         }
@@ -234,6 +236,8 @@ class ChatServiceHelpers:
 
         if workflow_state.get("pending_combined_rfq") or workflow_state.get("pending_rfq"):
             return "confirming"
+        elif workflow_state.get("pending_optional_rfq") or workflow_state.get("pending_attachment_decision"):
+            return "optional_fields"
         elif workflow_state.get("incomplete_products"):
             return "collecting_details"
         elif workflow_state.get("extracted_entities"):

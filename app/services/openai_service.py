@@ -216,7 +216,9 @@ class OpenAIService:
                     context_info += f"\n\nCURRENT SESSION STATE:"
                     context_info += f"\n- Workflow Type: {context.get('workflow_type', 'unknown')}"
                     context_info += f"\n- Has Pending Confirmations: {bool(workflow_state.get('pending_combined_rfq') or workflow_state.get('pending_rfq'))}"
-                    
+                    context_info += f"\n- Has Pending Optional Fields: {bool(workflow_state.get('pending_optional_rfq'))}"
+                    context_info += f"\n- Has Pending Attachment Decision: {bool(workflow_state.get('pending_attachment_decision'))}"
+
                     # Add extracted entities information
                     if workflow_state.get('extracted_entities'):
                         entities = workflow_state['extracted_entities']

@@ -5,8 +5,9 @@ This service can be used by both chat_service and seller_service.
 
 import logging
 from typing import Dict, Any
-from app.models import User, ConversationSession
+from app.models import WorkflowType, User, ConversationSession
 from app.services.rfq_service import RFQService
+from app.services.workflow_manager import WorkflowManager
 from app.services.whatsapp_service import WhatsAppService
 from app.services.session_management_service import SessionManagementService
 from app.services.chat_summary_service import ChatSummaryService
@@ -49,8 +50,8 @@ class RFQStatusService:
             )
 
             # Update session workflow type for tracking
-            session.workflow_type = "rfq_status_check"
-            await self.session_manager.save_session(session, "rfq_status_check")
+            WorkflowManager.set_workflow_type(session, WorkflowType.rfq_status_check, caller="rfq_status_service")
+            await self.session_manager.save_session(session, WorkflowType.rfq_status_check)
 
             return {
                 "status": result.get("status"),
