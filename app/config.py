@@ -157,6 +157,9 @@ class Settings:
         self.support_email = os.getenv("SUPPORT_EMAIL", "support@procucev.com")
         self.email_signature = os.getenv("EMAIL_SIGNATURE", "Regards\nQUA")
         self.email_templates_path = os.getenv("EMAIL_TEMPLATES_PATH", "app/email_templates")
+        
+        # Support configuration
+        self.support_contact_info = os.getenv("SUPPORT_CONTACT_INFO", "info@procucev.com")
 
         # Seller Workflow Configuration
         self.seller_rfq_fetch_limit: int = 3
