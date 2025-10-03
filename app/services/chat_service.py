@@ -434,12 +434,7 @@ class ChatService:
             logger.info(f"user  phone number {user.phone_number}")
 
 
-            # Handle seller RFQ selection workflow BEFORE intent classification
-            if session.workflow_type and hasattr(session.workflow_type, 'value') and session.workflow_type.value == "seller_rfq_view":
-                workflow_state = session.workflow_state or {}
-                current_seller_state = workflow_state.get("seller_workflow_state")
-                # Seller is responding to RFQ list - handle this immediately
-                return await self._handle_seller_flow(user, session, message)
+
             
             # Handle pending role switch confirmation FIRST
             if session.workflow_state.get("pending_role_switch"):
@@ -662,6 +657,14 @@ class ChatService:
                 logger.info("Continuing existing RFQ workflow")
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None,
                                                                                  self._should_use_summary_aware_extraction)
+
+            # Handle seller RFQ selection workflow BEFORE intent classification
+            if session.workflow_type and hasattr(session.workflow_type,
+                                                 'value') and session.workflow_type.value == "seller_rfq_view":
+                workflow_state = session.workflow_state or {}
+                current_seller_state = workflow_state.get("seller_workflow_state")
+                # Seller is responding to RFQ list - handle this immediately
+                return await self._handle_seller_flow(user, session, message)
 
             # Check if user recently completed registration and handle follow-up messages
             recently_registered = session.workflow_state.get("recently_completed_registration", False)
