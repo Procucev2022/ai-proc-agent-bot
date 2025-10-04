@@ -7,7 +7,7 @@ Handles token clearing, session cleanup, and sends appropriate goodbye messages.
 
 import logging
 from typing import Dict, Any, Optional
-from app.models import ConversationSession
+from app.models import WorkflowType, ConversationSession
 from app.services.whatsapp_service import WhatsAppService
 from app.services.authentication_service import AuthenticationService
 from app.services.session_management_service import SessionManagementService
@@ -103,7 +103,7 @@ class ExitService:
 
             # Save the cleared session
             if self.session_manager:
-                await self.session_manager.save_session(session, "user_exit")
+                await self.session_manager.save_session(session, WorkflowType.user_exit)
             else:
                 # Fallback to direct database save
                 self.db_manager.save_conversation_session({

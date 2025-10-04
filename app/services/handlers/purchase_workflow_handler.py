@@ -7,8 +7,9 @@ product processing, optional fields, and confirmation flow.
 
 import logging
 from typing import Dict, Any, List
-from app.models import User, ConversationSession
+from app.models import WorkflowType, User, ConversationSession
 from app.services.entity_service import EntityService
+from app.services.workflow_manager import WorkflowManager
 from app.services.rfq_service import RFQService
 from app.services.whatsapp_service import WhatsAppService
 from app.services.openai_service import OpenAIService

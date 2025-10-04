@@ -13,8 +13,9 @@ import logging
 import asyncio
 from app.utils.datetime_utils import utc_now
 from typing import Dict, Any, List
-from app.models import ConversationSession, User
+from app.models import WorkflowType, ConversationSession, User
 from app.services.whatsapp_service import WhatsAppService
+from app.services.workflow_manager import WorkflowManager
 from app.procucev_apis.seller_apis import SellerAPIService
 from app.config import get_settings
 from app.services.openai_service import OpenAIService
@@ -143,12 +144,12 @@ class SellerService:
                 response_message = await self.response_helpers.generate_seller_contextual_response(context)
 
             # Update session workflow state
-            session.workflow_type = "seller_rfq_view"
+            WorkflowManager.set_workflow_type(session, WorkflowType.seller_rfq_view, caller="seller_service")
             session.workflow_state = {
                 "seller_workflow_state": "awaiting_general_response"
             }
 
-            await self.session_manager.save_session(session, "seller_rfq_view")
+            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             # ADD THIS: Schedule end-of-flow reminder after 5 minutes for payment link
             asyncio.create_task(self._schedule_end_of_flow_reminder(user, session))
@@ -251,7 +252,7 @@ class SellerService:
             logger.info(f"Seller Intent is {seller_intent}")
 
 
-            credits = await self._check_seller_credits(user.id)
+            credits = await self._check_seller_credits(user.org_id)
             credits_available = credits.get("credits_available")
 
             # Route based on AI-classified intent
@@ -470,7 +471,7 @@ class SellerService:
             # Update session state to await plan selection
             session.workflow_state["seller_workflow_state"] = "awaiting_plan_selection"
 
-            await self.session_manager.save_session(session, "seller_rfq_view")
+            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             return {
                 "success": True,
@@ -530,7 +531,7 @@ class SellerService:
             session.workflow_state["seller_workflow_state"] = "payment_link_sent"
             session.workflow_state["selected_plan"] = selected_plan
 
-            await self.session_manager.save_session(session, "seller_rfq_view")
+            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             # ADD THIS: Schedule end-of-flow reminder after 5 minutes for payment link
             asyncio.create_task(self._schedule_end_of_flow_reminder(user, session))
@@ -560,11 +561,12 @@ class SellerService:
         except Exception as e:
             logger.error(f"Error scheduling end-of-flow reminder: {e}")
 
-    async def _process_rfq_email_requests(self, user: User, session: ConversationSession,selected_rfq_ids: List[str]) -> Dict[str, Any]:
-        """Process RFQ email requests after credit verification using batch API."""
+    async def _process_rfq_email_requests(self, user: User, session: ConversationSession,
+                                          selected_rfq_ids: List[str]) -> Dict[str, Any]:
+        """Process RFQ email requests after credit verification using batch API with enhanced error handling."""
         try:
             seller_id = user.id
-            print("selected rfqw_id", selected_rfq_ids)
+            
 
             # Send acknowledgment
             ack_context = {
@@ -580,7 +582,7 @@ class SellerService:
                 batch_result = await self.seller_api_service.send_rfq_email(
                     rfq_ids=selected_rfq_ids,
                     seller_email=user.email,
-                    seller_id=user.id
+                    seller_id=user.org_id
                 )
 
                 if batch_result.get("success"):
@@ -595,7 +597,7 @@ class SellerService:
                             successful_rfq_ids[0], seller_id
                         )
 
-                    # Format results for consistency
+                    # Format results for consistency with enhanced error handling
                     email_results = []
 
                     # Add successful results
@@ -603,15 +605,20 @@ class SellerService:
                         email_results.append({
                             "rfq_id": result["rfq_id"],
                             "success": True,
-                            "error": None
+                            "error": None,
+                            "error_code": None
                         })
 
-                    # Add failed results
+                    # Add failed results with error code analysis
                     for result in failed_results:
+                        error_code = result.get("error_code")
+                        error_message = result.get("error", "Unknown error")
+
                         email_results.append({
                             "rfq_id": result["rfq_id"],
                             "success": False,
-                            "error": result.get("error", "Unknown error")
+                            "error": error_message,
+                            "error_code": error_code
                         })
 
                     successful_emails = len(successful_results)
@@ -619,12 +626,16 @@ class SellerService:
                 else:
                     # Handle batch failure - all emails failed
                     logger.error(f"Batch email request failed: {batch_result.get('error')}")
+                    batch_error_code = batch_result.get("error_code")
+                    batch_error = batch_result.get("error", "Batch request failed")
+
                     email_results = []
                     for rfq_id in selected_rfq_ids:
                         email_results.append({
                             "rfq_id": rfq_id,
                             "success": False,
-                            "error": batch_result.get("error", "Batch request failed")
+                            "error": batch_error,
+                            "error_code": batch_error_code
                         })
                     successful_emails = 0
 
@@ -636,15 +647,21 @@ class SellerService:
                     email_results.append({
                         "rfq_id": rfq_id,
                         "success": False,
-                        "error": f"Batch request error: {str(e)}"
+                        "error": f"Batch request error: {str(e)}",
+                        "error_code": "API_ERROR"
                     })
                 successful_emails = 0
 
-            # Send final status message
+            # Analyze error codes and categorize results
+            error_analysis = self._analyze_email_errors(email_results)
+
+            # Send appropriate status message based on error analysis
             status_context = {
-                "workflow_state": "rfq_email_status",
+                "workflow_state": "rfq_email_status_with_errors",
                 "email_results": email_results,
-                "total_requested": len(selected_rfq_ids)
+                "total_requested": len(selected_rfq_ids),
+                "successful_emails": successful_emails,
+                "error_analysis": error_analysis
             }
 
             status_message = await self.response_helpers.generate_seller_contextual_response(status_context)
@@ -652,10 +669,11 @@ class SellerService:
             # Complete workflow
             session.workflow_state["seller_workflow_state"] = "completed"
             session.workflow_state["email_results"] = email_results
+            session.workflow_state["error_analysis"] = error_analysis
 
-            await self.session_manager.save_session(session, "seller_rfq_view")
+            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
-            # ADD THIS: Schedule end-of-flow reminder after 5 minutes
+            # Schedule end-of-flow reminder after 5 minutes
             asyncio.create_task(self._schedule_end_of_flow_reminder(user, session))
 
             return {
@@ -663,12 +681,59 @@ class SellerService:
                 "workflow_step": "rfq_emails_processed",
                 "message": status_message,
                 "emails_sent": successful_emails,
+                "error_analysis": error_analysis,
                 "message_already_sent": False
             }
 
         except Exception as e:
             logger.error(f"Error processing RFQ email requests: {e}")
             return await self._handle_workflow_error(user, session, str(e))
+
+    def _analyze_email_errors(self, email_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Analyze email errors and categorize them by error code."""
+        error_analysis = {
+            "has_errors": False,
+            "error_categories": {
+                "NO_CREDITS": [],
+                "RFQ_NOT_FOUND": [],
+                "API_ERROR": [],
+                "UNKNOWN": []
+            },
+            "error_counts": {
+                "NO_CREDITS": 0,
+                "RFQ_NOT_FOUND": 0,
+                "API_ERROR": 0,
+                "UNKNOWN": 0
+            },
+            "total_failed": 0,
+            "total_successful": 0
+        }
+
+        for result in email_results:
+            if result["success"]:
+                error_analysis["total_successful"] += 1
+            else:
+                error_analysis["has_errors"] = True
+                error_analysis["total_failed"] += 1
+
+                error_code = result.get("error_code", "UNKNOWN")
+                rfq_id = result.get("rfq_id")
+
+                # Categorize by error code
+                if error_code == "NO_CREDITS":
+                    error_analysis["error_categories"]["NO_CREDITS"].append(rfq_id)
+                    error_analysis["error_counts"]["NO_CREDITS"] += 1
+                elif error_code == "RFQ_NOT_FOUND":
+                    error_analysis["error_categories"]["RFQ_NOT_FOUND"].append(rfq_id)
+                    error_analysis["error_counts"]["RFQ_NOT_FOUND"] += 1
+                elif error_code == "API_ERROR":
+                    error_analysis["error_categories"]["API_ERROR"].append(rfq_id)
+                    error_analysis["error_counts"]["API_ERROR"] += 1
+                else:
+                    error_analysis["error_categories"]["UNKNOWN"].append(rfq_id)
+                    error_analysis["error_counts"]["UNKNOWN"] += 1
+
+        return error_analysis
 
     async def _handle_no_credits_response(self, user: User, session: ConversationSession) -> Dict[str, Any]:
         """Handle response when seller has no credits."""
@@ -688,7 +753,7 @@ class SellerService:
             # Update state to handle general responses (plan upgrade requests)
             session.workflow_state["seller_workflow_state"] = "awaiting_general_response"
 
-            await self.session_manager.save_session(session, "seller_rfq_view")
+            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             # ADD THIS: Schedule end-of-flow reminder after 5 minutes if no further interaction
             asyncio.create_task(self._schedule_conditional_end_of_flow_reminder(user, session))
@@ -713,7 +778,7 @@ class SellerService:
             # Store the current session state timestamp
             current_timestamp = utc_now()
             session.workflow_state["last_activity_timestamp"] = current_timestamp.isoformat()
-            await self.session_manager.save_session(session, "seller_rfq_view")
+            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             # Wait for 5 minutes
             await asyncio.sleep(300)  # 5 minutes = 300 seconds
@@ -758,7 +823,7 @@ class SellerService:
         """
         try:
             # Fetch open RFQs where seller has not submitted bids
-            reminder_result = await self._fetch_seller_open_rfqs_for_reminder(user.id)
+            reminder_result = await self._fetch_seller_open_rfqs_for_reminder(user.org_id)
 
             if not reminder_result.get("success"):
                 # If API fails, send generic closing message
@@ -786,7 +851,7 @@ class SellerService:
             # Complete the session
             session.outcome = 'completed'
             session.completed_at = utc_now().replace(tzinfo=None)
-            await self.session_manager.save_session(session, "seller_rfq_view")
+            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             return {
                 "success": True,
@@ -829,7 +894,7 @@ class SellerService:
         # Complete the session
         session.outcome = 'completed'
         session.completed_at = utc_now().replace(tzinfo=None)
-        await self.session_manager.save_session(session, "seller_rfq_view")
+        await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
         return {
             "success": True,
@@ -853,7 +918,7 @@ class SellerService:
         # Complete the session
         session.outcome = 'completed'
         session.completed_at = utc_now().replace(tzinfo=None)
-        await self.session_manager.save_session(session, "seller_rfq_view")
+        await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
         return {
             "success": True,

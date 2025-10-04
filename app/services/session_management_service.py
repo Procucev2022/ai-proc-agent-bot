@@ -7,15 +7,17 @@ and session lifecycle operations. Extracted from ChatService to reduce complexit
 
 import logging
 import asyncio
-from typing import Dict, Any, Optional
+import inspect
+from typing import Dict, Any, Optional, Union
 from datetime import date, timedelta
-from app.models import User, ConversationSession
+from app.models import User, ConversationSession, WorkflowType
 from app.database import DatabaseManager
 from app.services.helpers.session_helpers import SessionHelpers
 from app.services.helpers.summarization_helpers import SummarizationHelpers
 from app.services.chat_summary_service import ChatSummaryService
 from app.services.daily_summary_service import DailySummaryService
 from app.services.whatsapp_service import WhatsAppService
+from app.services.workflow_manager import WorkflowManager
 from app.utils.datetime_utils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -147,16 +149,57 @@ class SessionManagementService:
                 logger.error(f"Failed to send message after tracking error: {send_error}")
                 raise
     
-    async def save_session(self, session: ConversationSession, workflow_type: str) -> ConversationSession:
-        """Save updated session to database."""
+    async def save_session(self, session: ConversationSession,
+                          workflow_type: Optional[Union[WorkflowType, str]] = None) -> ConversationSession:
+        """
+        Save updated session to database.
+
+        Args:
+            session: Conversation session to save
+            workflow_type: Workflow type (MUST be WorkflowType enum, strings deprecated)
+
+        Returns:
+            Updated conversation session
+        """
         try:
+            # Initialize workflow_state if needed
+            WorkflowManager.initialize_workflow_state(session)
+
+            # Handle workflow_type - prefer enum, but support string during migration
+            if workflow_type:
+                if isinstance(workflow_type, WorkflowType):
+                    # Preferred: Enum passed
+                    workflow_value = workflow_type.value
+                elif isinstance(workflow_type, str):
+                    # Deprecated: String passed - convert to enum and warn
+                    logger.warning(f"[DEPRECATED] save_session called with string workflow_type: '{workflow_type}'. "
+                                 f"Use WorkflowType enum instead. Caller: {inspect.stack()[1].function}")
+                    try:
+                        workflow_enum = WorkflowType(workflow_type)
+                        workflow_value = workflow_enum.value
+                    except (ValueError, KeyError):
+                        logger.error(f"[SESSION_SAVE_ERROR] Invalid workflow_type string: '{workflow_type}'. "
+                                   f"Defaulting to general_inquiry.")
+                        workflow_value = WorkflowType.general_inquiry.value
+                else:
+                    logger.error(f"[SESSION_SAVE_ERROR] workflow_type is neither enum nor string: {type(workflow_type)}")
+                    workflow_value = WorkflowType.general_inquiry.value
+            else:
+                # No workflow_type passed - use current from session
+                current_workflow = WorkflowManager.get_workflow_type(session)
+                workflow_value = (
+                    current_workflow.value
+                    if current_workflow
+                    else WorkflowType.general_inquiry.value
+                )
+
             # Clean workflow_state to ensure JSON serialization
             clean_workflow_state = self._clean_for_json_serialization(session.workflow_state) if session.workflow_state else {}
-            
+
             session_data = {
                 'session_id': session.session_id,
                 'external_user_id': session.external_user_id,
-                'workflow_type': workflow_type,
+                'workflow_type': workflow_value,
                 'outcome': session.outcome.value if session.outcome and hasattr(session.outcome, 'value') else session.outcome,
                 'workflow_state': clean_workflow_state,
                 'conversation_history': session.conversation_history,

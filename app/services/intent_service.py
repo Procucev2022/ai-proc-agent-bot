@@ -173,7 +173,8 @@ class IntentService:
             "general_inquiry": 20,
             "modification_request": 10,
             "confirmation_response": 10,
-            "rfq_status_check": 10
+            "rfq_status_check": 10,
+            "support": 10
         }
         all_scores[intent] = confidence
         
@@ -189,7 +190,9 @@ class IntentService:
     
     def _get_general_fallback_intent(self, message_lower: str) -> tuple:
         """Get general intent classification without context."""
-        if any(keyword in message_lower for keyword in ["status", "track", "progress", "update", "rfq id", "reference", "submitted", "pending", "completed", "check my order", "my request", "my rfq", "order status", "quote status", "vendor responses", "response received", "when will i receive"]):
+        if any(keyword in message_lower for keyword in ["support", "contact support", "customer service", "technical support", "help me", "need help", "assistance", "contact customer"]):
+            return "support", 80
+        elif any(keyword in message_lower for keyword in ["status", "track", "progress", "update", "rfq id", "reference", "submitted", "pending", "completed", "check my order", "my request", "my rfq", "order status", "quote status", "vendor responses", "response received", "when will i receive"]):
             return "rfq_status_check", 70
         elif any(keyword in message_lower for keyword in ["do you have", "available", "stock", "inventory", "search", "rfq", "quote", "buy", "purchase", "need to buy", "looking for", "need"]):
             return "buy_something", 60

@@ -103,6 +103,8 @@ class ResponseHelpers:
                 return await self._generate_email_processing_response(context)
             elif workflow_state == "rfq_email_status":
                 return await self._generate_email_status_response(context)
+            elif workflow_state == "rfq_email_status_with_errors":
+                return await self._generate_rfq_email_status_with_errors_response(context)
             elif workflow_state == "invalid_rfq_selection":
                 return await self._generate_invalid_rfq_response(context)
             elif workflow_state == "invalid_plan_selection":
@@ -135,6 +137,60 @@ class ResponseHelpers:
             logger.error(f"Error generating seller contextual response: {e}")
             return self._get_fallback_message(context.get("workflow_state"))
 
+    # Add these new workflow states to your response_helpers.py
+
+    async def _generate_rfq_email_status_with_errors_response(self, context: Dict[str, Any]) -> str:
+        """Generate response for RFQ email status with error code handling."""
+        return await self._generate_common_seller_response(
+            "rfq_email_status_with_errors", "general_assistance", context,
+            self._get_email_status_with_errors_openai_fallback(context)
+        )
+
+    def _get_email_status_with_errors_openai_fallback(self, context: Dict[str, Any]) -> str:
+        """Fallback for email status response with error code handling."""
+        successful = context.get("successful_emails", 0)
+        total = context.get("total_requested", 0)
+        error_analysis = context.get("error_analysis", {})
+
+        if successful == total:
+            return f"Successfully sent all {successful} RFQ details to your email!"
+
+        message = f"Email Status Summary:\n"
+        message += f"Successful: {successful}\n"
+        message += f"Failed: {error_analysis.get('total_failed', 0)}\n\n"
+
+        # Handle specific error codes
+        error_counts = error_analysis.get("error_counts", {})
+        error_categories = error_analysis.get("error_categories", {})
+
+        if error_counts.get("NO_CREDITS", 0) > 0:
+            no_credit_rfqs = error_categories.get("NO_CREDITS", [])
+            message += f"Insufficient Credits ({len(no_credit_rfqs)} RFQs):\n"
+            message += f"RFQ IDs: {', '.join(no_credit_rfqs)}\n"
+            message += "Please purchase more credits to access these RFQs.\n\n"
+
+        if error_counts.get("RFQ_NOT_FOUND", 0) > 0:
+            not_found_rfqs = error_categories.get("RFQ_NOT_FOUND", [])
+            message += f"RFQs Not Found ({len(not_found_rfqs)} RFQs):\n"
+            message += f"RFQ IDs: {', '.join(not_found_rfqs)}\n"
+            message += "These RFQs may have expired or been withdrawn.\n\n"
+
+        if error_counts.get("API_ERROR", 0) > 0:
+            api_error_rfqs = error_categories.get("API_ERROR", [])
+            message += f"Technical Issues ({len(api_error_rfqs)} RFQs):\n"
+            message += f"RFQ IDs: {', '.join(api_error_rfqs)}\n"
+            message += "Please try again later or contact support.\n\n"
+
+        if error_counts.get("UNKNOWN", 0) > 0:
+            unknown_error_rfqs = error_categories.get("UNKNOWN", [])
+            message += f"Unknown Errors ({len(unknown_error_rfqs)} RFQs):\n"
+            message += f"RFQ IDs: {', '.join(unknown_error_rfqs)}\n"
+            message += "Please contact support@procurev.com for assistance.\n\n"
+
+        if successful > 0:
+            message += f"{successful} RFQ details were sent successfully to your email."
+
+        return message.strip()
     async def _generate_end_of_flow_reminder_response(self, context: Dict[str, Any]) -> str:
         """Generate end-of-flow reminder response showing open RFQs."""
         return await self._generate_common_seller_response(
