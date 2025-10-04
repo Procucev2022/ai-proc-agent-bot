@@ -15,6 +15,7 @@ from app.config import get_settings
 from app.schemas.user import normalize_phone_number
 from app.redis_db import get_redis_service
 from app.utils.procucev_api_logger import manual_log_api_call
+from app.services.global_error_handler import handle_api_error
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -264,6 +265,18 @@ class ProcucevAPIClient:
                 
                 if attempt == self.max_retries - 1:
                     logger.error(f"Max retries exceeded for {method} {url}")
+                    
+                    # Notify support team about API failure
+                    try:
+                        await handle_api_error(
+                            api_name=api_title or f"Procucev API {method}",
+                            endpoint=url_or_endpoint,
+                            error_message=f"{error_type}: {str(e)}",
+                            payload=json_data
+                        )
+                    except Exception as notify_error:
+                        logger.error(f"Failed to notify support team: {notify_error}")
+                    
                     error_result = {
                         "success": False,
                         "status_code": 500,

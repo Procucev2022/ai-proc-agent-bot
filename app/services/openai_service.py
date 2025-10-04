@@ -25,10 +25,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from openai import OpenAI
+from openai import APIError, APITimeoutError, RateLimitError, APIConnectionError
 from app.config import get_settings
 from app.tools.interaction_logger import get_interaction_logger
 from app.utils.logging_utils import log_service_method
 from app.utils.datetime_utils import format_date_display, format_date_for_validation_error, add_business_days, calculate_working_days_from_now
+from app.services.global_error_handler import handle_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +296,30 @@ class OpenAIService:
             )
             return self._get_fallback_intent_response("No function call in response")
             
+        except (APIError, APITimeoutError, RateLimitError, APIConnectionError) as e:
+            error_msg = str(e)
+            
+            # Handle OpenAI API errors with support notification
+            try:
+                await handle_api_error(
+                    api_name="OpenAI API",
+                    endpoint="/responses/create",
+                    error_message=f"Intent classification failed: {error_msg}",
+                    payload={"model": self.default_model, "operation": "intent_classification"}
+                )
+            except Exception as notify_error:
+                logger.error(f"Failed to notify support team: {notify_error}")
+            
+            # Log error
+            self.interaction_logger.log_error(
+                interaction_type="intent_classification",
+                user_input=message,
+                error_message=error_msg,
+                model_used=self.default_model
+            )
+            
+            logger.error(f"Intent classification failed: {error_msg}")
+            return self._get_fallback_intent_response(error_msg)
         except Exception as e:
             error_msg = str(e)
             
@@ -485,6 +511,30 @@ class OpenAIService:
             )
             return {"products": [], "completeness": 0, "missing_fields": [], "confidence": 0, "next_questions": [], "success": False}
             
+        except (APIError, APITimeoutError, RateLimitError, APIConnectionError) as e:
+            error_msg = str(e)
+            
+            # Handle OpenAI API errors with support notification
+            try:
+                await handle_api_error(
+                    api_name="OpenAI API",
+                    endpoint="/responses/create",
+                    error_message=f"Entity extraction failed: {error_msg}",
+                    payload={"model": self.default_model, "operation": "entity_extraction", "workflow_type": workflow_type}
+                )
+            except Exception as notify_error:
+                logger.error(f"Failed to notify support team: {notify_error}")
+            
+            # Log error
+            self.interaction_logger.log_error(
+                interaction_type="entity_extraction",
+                user_input=message,
+                error_message=error_msg,
+                model_used=self.default_model
+            )
+            
+            logger.error(f"Entity extraction failed: {error_msg}")
+            return {"products": [], "completeness": 0, "missing_fields": [], "confidence": 0, "next_questions": [], "success": False}
         except Exception as e:
             error_msg = str(e)
             
@@ -780,6 +830,29 @@ Analyze their response to determine their true choice.
                 "success": False
             }
             
+        except (APIError, APITimeoutError, RateLimitError, APIConnectionError) as e:
+            error_msg = str(e)
+            
+            # Handle OpenAI API errors with support notification
+            try:
+                await handle_api_error(
+                    api_name="OpenAI API",
+                    endpoint="/responses/create",
+                    error_message=f"Intent switch analysis failed: {error_msg}",
+                    payload={"model": self.default_model, "operation": "intent_switch_analysis"}
+                )
+            except Exception as notify_error:
+                logger.error(f"Failed to notify support team: {notify_error}")
+            
+            logger.error(f"Intent switch analysis failed: {error_msg}")
+            return {
+                "chosen_action": "continue_current",
+                "confidence": 20, 
+                "reasoning": f"Technical issue occurred: {error_msg}",
+                "detected_keywords": [],
+                "ambiguity_level": "high", 
+                "success": False
+            }
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Intent switch analysis failed: {error_msg}")
@@ -923,6 +996,22 @@ Analyze their response to determine their true choice.
             
             return response.output_text or "I apologize, but I'm having trouble generating a response right now."
             
+        except (APIError, APITimeoutError, RateLimitError, APIConnectionError) as e:
+            error_msg = str(e)
+            
+            # Handle OpenAI API errors with support notification
+            try:
+                await handle_api_error(
+                    api_name="OpenAI API",
+                    endpoint="/responses/create",
+                    error_message=f"Response generation failed: {error_msg}",
+                    payload={"model": self.default_model, "operation": "response_generation"}
+                )
+            except Exception as notify_error:
+                logger.error(f"Failed to notify support team: {notify_error}")
+            
+            logger.error(f"Response generation failed: {error_msg}")
+            return self._get_fallback_response(context, query_results or [])
         except Exception as e:
             logger.error(f"Response generation failed: {str(e)}")
             return self._get_fallback_response(context, query_results or [])
@@ -1152,14 +1241,14 @@ Analyze their response to determine their true choice.
                 "reference_details": {"reference_type": None, "has_history": False},
                 "account_switch_details": {"target_role": None, "switch_type": None}
             },
-            "reasoning": f"Fallback classification due to error: {error}",
-            "suggested_clarification": "Could you please rephrase your request?",
+            "reasoning": f"Fallback classification due to technical issue: {error}",
+            "suggested_clarification": "There seems to be a technical issue at the moment. Our team is working on it. Please try again later.",
             "success": False
         }
         
     def _get_fallback_response(self, context: dict, results: list) -> str:
         """Fallback response when OpenAI is unavailable."""
-        return "I'm experiencing some technical difficulties right now. Could you please rephrase your request or try again in a moment?"
+        return "There seems to be a technical issue at the moment. Our team is working on it. Please try again later. For urgent requirements, contact support@procucev.com. We apologize for the inconvenience."
     
     def generate_contextual_response(self, context: dict, base_questions: list = None, conversation_stage: str = "collecting") -> str:
         """

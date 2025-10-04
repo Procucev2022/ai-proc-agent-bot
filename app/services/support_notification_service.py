@@ -3,12 +3,14 @@ Support Notification Service.
 
 Handles all support team notifications throughout the application.
 Integrates with EmailService to send template-based notifications.
+Now deprecated in favor of GlobalErrorHandler for technical errors.
 """
 
 import logging
 from typing import Dict, Any, Optional
 
 from app.services.email_service import EmailService
+from app.services.global_error_handler import get_global_error_handler, ErrorContext
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +90,19 @@ class SupportNotificationService:
         return await self.email_service.send_support_email("bid_submission_otp_failed", variables, "seller")
     
     async def notify_api_service_failure(self, error_message: str, user_role: str = "system") -> Dict[str, Any]:
-        """Notify support when API service fails."""
-        variables = {"error_message": error_message}
-        return await self.email_service.send_support_email("api_service_failure", variables, user_role)
+        """Notify support when API service fails. DEPRECATED - Use GlobalErrorHandler instead."""
+        logger.warning("notify_api_service_failure is deprecated. Use GlobalErrorHandler.handle_api_error instead.")
+        
+        # Use global error handler instead
+        error_context = ErrorContext(
+            error_type="API Service Failure",
+            error_message=error_message
+        )
+        
+        global_handler = get_global_error_handler()
+        success = await global_handler.handle_error(error_context)
+        
+        if success:
+            return {"statusCode": "200", "message": "Notification sent", "status": "Success"}
+        else:
+            return {"statusCode": "500", "message": "Failed to send notification", "status": "Failure"}

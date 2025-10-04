@@ -5,10 +5,12 @@ Database connection and session management for the AI Procurement Agent.
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy.exc import SQLAlchemyError, DisconnectionError, TimeoutError as SQLTimeoutError
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List
 import json
 import logging
+import asyncio
 
 from .config import get_settings
 from .models import Base, ProductCategory, Vendor, ConversationSession
@@ -108,7 +110,7 @@ def init_database():
 
 
 def get_db_session():
-    """Get database session."""
+    """Get database session with error handling."""
     global engine, SessionLocal
     if SessionLocal is None:
         # Initialize with SSL configuration based on database mode
@@ -117,19 +119,42 @@ def get_db_session():
         # SSL configuration handled in connection URL
         connect_args = {}
         
-        engine = create_engine(
-            settings.get_database_url(),
-            connect_args=connect_args,
-            pool_pre_ping=True,
-            pool_recycle=300
-        )
-        SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+        try:
+            engine = create_engine(
+                settings.get_database_url(),
+                connect_args=connect_args,
+                pool_pre_ping=True,
+                pool_recycle=300
+            )
+            SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+        except Exception as e:
+            logger.error(f"Database engine creation failed: {e}")
+            # Import here to avoid circular imports
+            from .services.global_error_handler import handle_database_error
+            asyncio.create_task(handle_database_error(f"Database engine creation failed: {str(e)}"))
+            raise
         
-    return SessionLocal()
+    try:
+        session = SessionLocal()
+        # Test connection
+        session.execute(text("SELECT 1"))
+        return session
+    except (SQLAlchemyError, DisconnectionError, SQLTimeoutError) as e:
+        logger.error(f"Database connection failed: {e}")
+        # Import here to avoid circular imports
+        from .services.global_error_handler import handle_database_error
+        asyncio.create_task(handle_database_error(f"Database connection failed: {str(e)}"))
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected database error: {e}")
+        # Import here to avoid circular imports
+        from .services.global_error_handler import handle_database_error
+        asyncio.create_task(handle_database_error(f"Unexpected database error: {str(e)}"))
+        raise
 
 
 def get_remote_db_session():
-    """Get remote database session for item categorization."""
+    """Get remote database session for item categorization with error handling."""
     global remote_engine, RemoteSessionLocal
     
     settings = get_settings()
@@ -144,21 +169,44 @@ def get_remote_db_session():
         if not remote_database_url:
             raise ValueError("Remote database URL not configured")
         
-        # Create remote engine with connection pooling
-        remote_engine = create_engine(
-            remote_database_url,
-            pool_pre_ping=True,
-            pool_recycle=300,
-            pool_size=5,
-            max_overflow=10,
-            echo=settings.sql_debug
-        )
+        try:
+            # Create remote engine with connection pooling
+            remote_engine = create_engine(
+                remote_database_url,
+                pool_pre_ping=True,
+                pool_recycle=300,
+                pool_size=5,
+                max_overflow=10,
+                echo=settings.sql_debug
+            )
+            
+            RemoteSessionLocal = sessionmaker(bind=remote_engine, autoflush=False, autocommit=False)
+            
+            logger.info("Remote database connection initialized for item categorization")
+        except Exception as e:
+            logger.error(f"Remote database engine creation failed: {e}")
+            # Import here to avoid circular imports
+            from .services.global_error_handler import handle_database_error
+            asyncio.create_task(handle_database_error(f"Remote database engine creation failed: {str(e)}"))
+            raise
         
-        RemoteSessionLocal = sessionmaker(bind=remote_engine, autoflush=False, autocommit=False)
-        
-        logger.info("Remote database connection initialized for item categorization")
-        
-    return RemoteSessionLocal()
+    try:
+        session = RemoteSessionLocal()
+        # Test connection
+        session.execute(text("SELECT 1"))
+        return session
+    except (SQLAlchemyError, DisconnectionError, SQLTimeoutError) as e:
+        logger.error(f"Remote database connection failed: {e}")
+        # Import here to avoid circular imports
+        from .services.global_error_handler import handle_database_error
+        asyncio.create_task(handle_database_error(f"Remote database connection failed: {str(e)}"))
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected remote database error: {e}")
+        # Import here to avoid circular imports
+        from .services.global_error_handler import handle_database_error
+        asyncio.create_task(handle_database_error(f"Unexpected remote database error: {str(e)}"))
+        raise
 
 
 def execute_remote_query(query: str, params: Optional[Dict] = None) -> List[Dict[str, Any]]:
@@ -172,17 +220,28 @@ def execute_remote_query(query: str, params: Optional[Dict] = None) -> List[Dict
     Returns:
         List of dictionaries with column names as keys
     """
-    db = get_remote_db_session()
+    db = None
     try:
+        db = get_remote_db_session()
         result = db.execute(text(query), params or {})
         # Convert result to list of dictionaries
         columns = result.keys()
         return [dict(zip(columns, row)) for row in result.fetchall()]
-    except Exception as e:
+    except (SQLAlchemyError, DisconnectionError, SQLTimeoutError) as e:
         logger.error(f"Remote query execution failed: {e}")
+        # Import here to avoid circular imports
+        from .services.global_error_handler import handle_database_error
+        asyncio.create_task(handle_database_error(f"Remote query execution failed: {str(e)}"))
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in remote query execution: {e}")
+        # Import here to avoid circular imports
+        from .services.global_error_handler import handle_database_error
+        asyncio.create_task(handle_database_error(f"Unexpected error in remote query execution: {str(e)}"))
         raise
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
 def get_remote_item_categories(limit: Optional[int] = None) -> List[Dict[str, Any]]:

@@ -158,8 +158,13 @@ class Settings:
         self.email_signature = os.getenv("EMAIL_SIGNATURE", "Regards\nQUA")
         self.email_templates_path = os.getenv("EMAIL_TEMPLATES_PATH", "app/email_templates")
         
+        # Error handling configuration
+        self.enable_error_notifications = os.getenv("ENABLE_ERROR_NOTIFICATIONS", "true").lower() == "true"
+        self.error_notification_cooldown_minutes = int(os.getenv("ERROR_NOTIFICATION_COOLDOWN_MINUTES", "5"))
+        
         # Support configuration
         self.support_contact_info = os.getenv("SUPPORT_CONTACT_INFO", "info@procucev.com")
+        self.support_team_numbers = os.getenv("SUPPORT_TEAM_NUMBERS", "919876543210,919876543211").split(",")
 
         # Seller Workflow Configuration
         self.seller_rfq_fetch_limit: int = 3
@@ -278,7 +283,6 @@ class Settings:
             raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
         
         # Validate numeric configurations        
-        # Validate numeric configurations        
         if self.session_timeout_minutes <= 0:
             raise ValueError("SESSION_TIMEOUT_MINUTES must be positive")
         
@@ -294,6 +298,10 @@ class Settings:
         
         if self.otp_max_attempts <= 0 or self.otp_max_attempts > 5:
             raise ValueError("OTP_MAX_ATTEMPTS must be between 1 and 5")
+        
+        # Validate support team numbers
+        if self.support_team_numbers:
+            self.support_team_numbers = [num.strip() for num in self.support_team_numbers if num.strip()]
     
     def get_rfq_status_config(self) -> Dict[str, Any]:
         """Get configuration for RFQ status logic."""
