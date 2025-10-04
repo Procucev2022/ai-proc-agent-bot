@@ -31,6 +31,7 @@ from app.api.webhook import router as webhook_router
 from app.database import init_database
 from app.services.chat_service import ChatService
 from app.services.global_error_handler import handle_server_error
+from app.context.middleware import ContextMiddleware
 import gc
 
 
@@ -147,6 +148,8 @@ async def global_exception_handler(request: Request, exc: Exception):
         }
     )
 
+# Add context middleware (must be first)
+app.add_middleware(ContextMiddleware)
 # Add IP restriction middleware
 if settings.allowed_ips:
     app.add_middleware(IPRestrictionMiddleware, allowed_ips=settings.allowed_ips)
