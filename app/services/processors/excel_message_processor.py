@@ -7,8 +7,9 @@ Extracted from ChatService to reduce complexity.
 
 import logging
 from typing import Dict, Any
-from app.models import User, ConversationSession
+from app.models import WorkflowType, User, ConversationSession
 from app.services.whatsapp_service import WhatsAppService
+from app.services.workflow_manager import WorkflowManager
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.excel_helpers import ExcelHelpers
 from app.services.excel_validation_service import ExcelValidationService
@@ -97,7 +98,7 @@ class ExcelMessageProcessor:
             excel_context = ExcelHelpers.prepare_excel_context(processing_result, user.phone_number)
             
             # Update session  
-            session.workflow_type = 'rfq_creation'
+            WorkflowManager.set_workflow_type(session, WorkflowType.rfq_creation, caller="handler")
             session.workflow_state = session.workflow_state or {}
             session.workflow_state.update(excel_context)
             
