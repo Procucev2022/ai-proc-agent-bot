@@ -115,11 +115,9 @@ class CancelService:
                     "message": "Workflow cancelled successfully"
                 }
             else:
-                # User declined - resume workflow
-                await self.whatsapp_service.send_message(
-                    user_phone,
-                    "Cancellation aborted. Let's continue where we left off."
-                )
+                # User declined - resume workflow silently
+                # Don't send any message, just let the normal flow continue
+                logger.info(f"User declined cancellation - resuming workflow")
 
                 # Save session
                 if self.session_manager:
@@ -127,7 +125,8 @@ class CancelService:
 
                 return {
                     "status": "cancelled_aborted",
-                    "message": "User declined cancellation"
+                    "resume_workflow": True,
+                    "message": "User declined cancellation - resuming normal flow"
                 }
 
         except Exception as e:
