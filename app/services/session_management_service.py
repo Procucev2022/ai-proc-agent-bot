@@ -113,7 +113,8 @@ class SessionManagementService:
         session_id = SessionHelpers.generate_session_id(phone_number, "daily")
         
         # 1. Try Redis first
-        session_dict = await self.redis.get(session_id, as_json=True)
+        redis_key = f"session:{session_id}"
+        session_dict = await self.redis.get(redis_key, as_json=True)
         session = self.dict_to_session(session_dict) if session_dict else None
 
         # 2. If not in Redis, check DB
@@ -122,7 +123,7 @@ class SessionManagementService:
 
             # 3. If found in DB, cache it into Redis
             if session:
-                await self.redis.set(session_id, self.session_to_dict(session))
+                await self.redis.set(redis_key, self.session_to_dict(session))
 
         if not session:
             # Create new session
@@ -139,7 +140,7 @@ class SessionManagementService:
             
             # Save in DB + Redis
             session = self.db_manager.save_conversation_session(session_data)
-            await self.redis.set(session_id, self.session_to_dict(session))
+            await self.redis.set(f"session:{session_id}", self.session_to_dict(session))
             
             logger.info(f"Created new session: {session_id}")
         else:
@@ -168,7 +169,7 @@ class SessionManagementService:
         
          # Save in DB + Redis
         session = self.db_manager.save_conversation_session(session_data)
-        await self.redis.set(session_id, self.session_to_dict(session))
+        await self.redis.set(f"session:{session_id}", self.session_to_dict(session))
 
         logger.info(f"Created new session: {session_id} with workflow: {workflow_type}, user_type: {user_type}")
         
@@ -229,7 +230,7 @@ class SessionManagementService:
     async def save_session_redis_only(self, session: ConversationSession) -> ConversationSession:
         """Save updated session to Redis only (for active conversations)."""
         try:
-            await self.redis.set(session.session_id, self.session_to_dict(session))  # Refresh TTL
+            await self.redis.set(f"session:{session.session_id}", self.session_to_dict(session))  # Refresh TTL
             return session
         except Exception as e:
             logger.error(f"Error saving session to Redis: {e}")
@@ -247,17 +248,17 @@ class SessionManagementService:
                 'workflow_type': session.workflow_type,
                 'outcome': session.outcome.value if hasattr(session.outcome, 'value') else session.outcome,
                 'workflow_state': clean_workflow_state,
-                'conversation_history': session.conversation_history,
-                'extracted_entities': session.extracted_entities,
-                'retention_date': session.retention_date,
-                'last_activity_at': session.last_activity_at
+                'conversation_history': self._clean_for_json_serialization(session.conversation_history),
+                'extracted_entities': self._clean_for_json_serialization(session.extracted_entities),
+                'retention_date': self._clean_for_json_serialization(session.retention_date),
+                'last_activity_at': self._clean_for_json_serialization(session.last_activity_at)
             }
             
             # Save to DB
             saved_session = self.db_manager.save_conversation_session(session_data)
             
             # Clear from Redis
-            await self.redis.delete(session.session_id)
+            await self.redis.delete(f"session:{session.session_id}")
             
             logger.info(f"Saved session {session.session_id} to DB and cleared from Redis")
             return saved_session

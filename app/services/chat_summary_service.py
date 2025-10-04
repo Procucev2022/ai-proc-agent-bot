@@ -83,8 +83,11 @@ class ChatSummaryService:
             logger.info(f"  - Combined entities keys: {list(combined_entities.keys())}")
             logger.info(f"  - Conversation history length: {len(openai_messages)}")
 
+            # Clean session data before passing to OpenAI
+            clean_session_data = self._clean_for_json_serialization(session_data)
+            
             # Call OpenAI service for summary generation
-            summary_text = self.openai_service.generate_session_summary(session_data)
+            summary_text = self.openai_service.generate_session_summary(clean_session_data)
 
             # Store summary
             with get_db_session() as db:
@@ -92,7 +95,7 @@ class ChatSummaryService:
                     session_id=session.session_id,
                     external_user_id=session.external_user_id,
                     ai_generated_summary=summary_text,
-                    extracted_entities=combined_entities,
+                    extracted_entities=self._clean_for_json_serialization(combined_entities),
                     rfq_ids=rfq_list,
                     session_outcome=session.outcome,
                     session_duration=self._calculate_duration(session)
@@ -144,3 +147,18 @@ class ChatSummaryService:
             return None
         except Exception:
             return None
+    
+    def _clean_for_json_serialization(self, obj):
+        """Clean object for JSON serialization."""
+        from datetime import datetime, date
+        
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        elif hasattr(obj, 'value'):  # Enum object
+            return obj.value
+        elif isinstance(obj, dict):
+            return {k: self._clean_for_json_serialization(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._clean_for_json_serialization(i) for i in obj]
+        else:
+            return obj
