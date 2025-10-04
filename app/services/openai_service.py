@@ -16,6 +16,7 @@ Key responsibilities:
 - Support different OpenAI models based on use case
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -30,7 +31,7 @@ from app.config import get_settings
 from app.tools.interaction_logger import get_interaction_logger
 from app.utils.logging_utils import log_service_method
 from app.utils.datetime_utils import format_date_display, format_date_for_validation_error, add_business_days, calculate_working_days_from_now
-from app.services.global_error_handler import handle_api_error
+# from app.services.global_error_handler import handle_api_error  # Removed to avoid circular import
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,9 @@ class OpenAIService:
         self.tools_dir = Path(__file__).parent.parent / "tools"
         self.prompts_dir = Path(__file__).parent.parent / "prompts"
         self.interaction_logger = get_interaction_logger()
+        
+        # Initialize error notification service (lazy loading to avoid circular imports)
+        self._error_notification_service = None
 
         # OpenAI call tracking for performance monitoring
         self.call_counts = {}
@@ -75,6 +79,31 @@ class OpenAIService:
         """Get summary of OpenAI calls for a request."""
         request_key = user_phone or "global"
         return self.call_counts.get(request_key, {})
+    
+    def _get_error_notification_service(self):
+        """Lazy load error notification service to avoid circular imports."""
+        if self._error_notification_service is None:
+            from app.services.error_notification_service import ErrorNotificationService
+            self._error_notification_service = ErrorNotificationService()
+        return self._error_notification_service
+    
+    async def _notify_openai_error(self, error_type: str, error_message: str, method_name: str):
+        """Send WhatsApp notification when OpenAI service has errors."""
+        try:
+            error_notification_service = self._get_error_notification_service()
+            
+            error_details = {
+                'error_type': f'OpenAI {error_type}',
+                'message': f'{method_name}: {error_message}',
+                'service': 'OpenAI Service',
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            await error_notification_service.notify_general_error(error_details)
+            logger.info(f"Sent WhatsApp notification for OpenAI error: {error_type}")
+            
+        except Exception as e:
+            logger.error(f"Failed to send WhatsApp notification for OpenAI error: {e}")
         
     def _load_prompt(self, category: str, prompt_name: str, **kwargs) -> str:
         """
@@ -299,16 +328,11 @@ class OpenAIService:
         except (APIError, APITimeoutError, RateLimitError, APIConnectionError) as e:
             error_msg = str(e)
             
-            # Handle OpenAI API errors with support notification
-            try:
-                await handle_api_error(
-                    api_name="OpenAI API",
-                    endpoint="/responses/create",
-                    error_message=f"Intent classification failed: {error_msg}",
-                    payload={"model": self.default_model, "operation": "intent_classification"}
-                )
-            except Exception as notify_error:
-                logger.error(f"Failed to notify support team: {notify_error}")
+            # Log API error
+            logger.error(f"OpenAI API error in intent classification: {error_msg}")
+            
+            # Send WhatsApp notification
+            asyncio.create_task(self._notify_openai_error("API Error", error_msg, "classify_intent"))
             
             # Log error
             self.interaction_logger.log_error(
@@ -322,6 +346,9 @@ class OpenAIService:
             return self._get_fallback_intent_response(error_msg)
         except Exception as e:
             error_msg = str(e)
+            
+            # Send WhatsApp notification for unexpected errors
+            asyncio.create_task(self._notify_openai_error("Unexpected Error", error_msg, "classify_intent"))
             
             # Log error
             self.interaction_logger.log_error(
@@ -514,16 +541,11 @@ class OpenAIService:
         except (APIError, APITimeoutError, RateLimitError, APIConnectionError) as e:
             error_msg = str(e)
             
-            # Handle OpenAI API errors with support notification
-            try:
-                await handle_api_error(
-                    api_name="OpenAI API",
-                    endpoint="/responses/create",
-                    error_message=f"Entity extraction failed: {error_msg}",
-                    payload={"model": self.default_model, "operation": "entity_extraction", "workflow_type": workflow_type}
-                )
-            except Exception as notify_error:
-                logger.error(f"Failed to notify support team: {notify_error}")
+            # Log API error
+            logger.error(f"OpenAI API error in entity extraction: {error_msg}")
+            
+            # Send WhatsApp notification
+            asyncio.create_task(self._notify_openai_error("API Error", error_msg, "extract_entities"))
             
             # Log error
             self.interaction_logger.log_error(
@@ -537,6 +559,9 @@ class OpenAIService:
             return {"products": [], "completeness": 0, "missing_fields": [], "confidence": 0, "next_questions": [], "success": False}
         except Exception as e:
             error_msg = str(e)
+            
+            # Send WhatsApp notification for unexpected errors
+            asyncio.create_task(self._notify_openai_error("Unexpected Error", error_msg, "extract_entities"))
             
             # Log error
             self.interaction_logger.log_error(
@@ -833,16 +858,11 @@ Analyze their response to determine their true choice.
         except (APIError, APITimeoutError, RateLimitError, APIConnectionError) as e:
             error_msg = str(e)
             
-            # Handle OpenAI API errors with support notification
-            try:
-                await handle_api_error(
-                    api_name="OpenAI API",
-                    endpoint="/responses/create",
-                    error_message=f"Intent switch analysis failed: {error_msg}",
-                    payload={"model": self.default_model, "operation": "intent_switch_analysis"}
-                )
-            except Exception as notify_error:
-                logger.error(f"Failed to notify support team: {notify_error}")
+            # Log API error
+            logger.error(f"OpenAI API error in intent switch analysis: {error_msg}")
+            
+            # Send WhatsApp notification
+            asyncio.create_task(self._notify_openai_error("API Error", error_msg, "analyze_intent_switch_response"))
             
             logger.error(f"Intent switch analysis failed: {error_msg}")
             return {
@@ -855,6 +875,10 @@ Analyze their response to determine their true choice.
             }
         except Exception as e:
             error_msg = str(e)
+            
+            # Send WhatsApp notification for unexpected errors
+            asyncio.create_task(self._notify_openai_error("Unexpected Error", error_msg, "analyze_intent_switch_response"))
+            
             logger.error(f"Intent switch analysis failed: {error_msg}")
             return {
                 "chosen_action": "continue_current",
@@ -999,16 +1023,11 @@ Analyze their response to determine their true choice.
         except (APIError, APITimeoutError, RateLimitError, APIConnectionError) as e:
             error_msg = str(e)
             
-            # Handle OpenAI API errors with support notification
-            try:
-                await handle_api_error(
-                    api_name="OpenAI API",
-                    endpoint="/responses/create",
-                    error_message=f"Response generation failed: {error_msg}",
-                    payload={"model": self.default_model, "operation": "response_generation"}
-                )
-            except Exception as notify_error:
-                logger.error(f"Failed to notify support team: {notify_error}")
+            # Log API error
+            logger.error(f"OpenAI API error in response generation: {error_msg}")
+            
+            # Send WhatsApp notification
+            asyncio.create_task(self._notify_openai_error("API Error", error_msg, "generate_response"))
             
             logger.error(f"Response generation failed: {error_msg}")
             return self._get_fallback_response(context, query_results or [])

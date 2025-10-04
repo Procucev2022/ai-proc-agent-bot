@@ -39,7 +39,10 @@ def init_database():
         settings.get_database_url(),
         connect_args=connect_args,
         pool_pre_ping=True,
-        pool_recycle=300
+        pool_recycle=300,
+        pool_size=10,
+        max_overflow=20,
+        pool_timeout=60
     )
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
@@ -124,7 +127,10 @@ def get_db_session():
                 settings.get_database_url(),
                 connect_args=connect_args,
                 pool_pre_ping=True,
-                pool_recycle=300
+                pool_recycle=300,
+                pool_size=10,
+                max_overflow=20,
+                pool_timeout=60
             )
             SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
         except Exception as e:

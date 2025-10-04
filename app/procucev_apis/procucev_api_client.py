@@ -15,7 +15,6 @@ from app.config import get_settings
 from app.schemas.user import normalize_phone_number
 from app.redis_db import get_redis_service
 from app.utils.procucev_api_logger import manual_log_api_call
-from app.services.global_error_handler import handle_api_error
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -246,6 +245,11 @@ class ProcucevAPIClient:
                         "data": error_payload,
                         "timestamp": datetime.now(UTC).isoformat() + "Z"
                     }
+                    
+                    # Send WhatsApp notification for 500 errors
+                    if status == 500:
+                        await self._handle_500_error(url_or_endpoint, error_payload.get("error", "Request failed"))
+                    
                     # Log error response
                     processing_time = time.time() - start_time
                     title = api_title or f"{method} {url_or_endpoint}"
@@ -266,16 +270,8 @@ class ProcucevAPIClient:
                 if attempt == self.max_retries - 1:
                     logger.error(f"Max retries exceeded for {method} {url}")
                     
-                    # Notify support team about API failure
-                    try:
-                        await handle_api_error(
-                            api_name=api_title or f"Procucev API {method}",
-                            endpoint=url_or_endpoint,
-                            error_message=f"{error_type}: {str(e)}",
-                            payload=json_data
-                        )
-                    except Exception as notify_error:
-                        logger.error(f"Failed to notify support team: {notify_error}")
+                    # Log API failure and send WhatsApp notification
+                    logger.error(f"Procucev API failure: {error_type} - {str(e)} for {method} {url_or_endpoint}")
                     
                     error_result = {
                         "success": False,
@@ -284,6 +280,10 @@ class ProcucevAPIClient:
                         "data": None,
                         "timestamp": datetime.now(UTC).isoformat() + "Z"
                     }
+                    
+                    # Send WhatsApp notification for timeout/network errors
+                    await self._handle_timeout_error(url_or_endpoint, f"{error_type}: {str(e)}")
+                    
                     # Log network error
                     processing_time = time.time() - start_time
                     title = api_title or f"{method} {url_or_endpoint}"
@@ -339,4 +339,20 @@ class ProcucevAPIClient:
 
     async def delete(self, endpoint: str, **kwargs) -> Dict[str, Any]:
         return await self.send_request("DELETE", endpoint, **kwargs)
+    
+    async def _handle_500_error(self, endpoint: str, error_message: str) -> None:
+        """Handle 500 errors by sending WhatsApp notifications."""
+        try:
+            from app.services.global_error_handler import handle_api_error
+            await handle_api_error("Procucev API", endpoint, error_message)
+        except Exception as e:
+            logger.error(f"Failed to handle 500 error notification: {e}")
+    
+    async def _handle_timeout_error(self, endpoint: str, error_message: str) -> None:
+        """Handle timeout errors by sending WhatsApp notifications."""
+        try:
+            from app.services.global_error_handler import handle_api_error
+            await handle_api_error("Procucev API", endpoint, error_message)
+        except Exception as e:
+            logger.error(f"Failed to handle timeout error notification: {e}")
 

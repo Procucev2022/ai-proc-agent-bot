@@ -124,6 +124,10 @@ class GlobalErrorHandler:
         message += f"Error Type: {error_context.error_type}\n"
         message += f"Error Message: {error_context.error_message}\n"
         
+        # Add database details for database errors
+        if error_context.error_type == "Database Error":
+            message += self._get_database_details()
+        
         if error_context.payload:
             message += f"Request Payload: {str(error_context.payload)[:500]}...\n"
         
@@ -188,6 +192,40 @@ class GlobalErrorHandler:
                 
         except Exception as e:
             logger.error(f"Email notification failed: {e}")
+    
+    def _get_database_details(self) -> str:
+        """Get database configuration details for error reporting."""
+        details = "\nDatabase Configuration:\n"
+        
+        # Database mode and URLs (mask sensitive parts)
+        details += f"Database Mode: {self.settings.database_mode}\n"
+        
+        if self.settings.database_mode == "local" and self.settings.local_database_url:
+            masked_url = self._mask_database_url(self.settings.local_database_url)
+            details += f"Local DB URL: {masked_url}\n"
+        
+        if self.settings.database_mode == "client" and self.settings.client_database_url:
+            masked_url = self._mask_database_url(self.settings.client_database_url)
+            details += f"Client DB URL: {masked_url}\n"
+        
+        if self.settings.enable_remote_categorization and self.settings.remote_database_url:
+            masked_url = self._mask_database_url(self.settings.remote_database_url)
+            details += f"Remote DB URL: {masked_url}\n"
+        
+        # SSL configuration
+        details += f"SSL Enabled: {self.settings.is_ssl_enabled()}\n"
+        details += f"SQL Debug: {self.settings.sql_debug}\n"
+        details += f"Remote Categorization: {self.settings.enable_remote_categorization}\n"
+        
+        return details
+    
+    def _mask_database_url(self, url: str) -> str:
+        """Mask sensitive information in database URL."""
+        import re
+        # Pattern to match database URLs and mask password
+        # mysql+pymysql://username:password@host:port/database
+        pattern = r'(mysql\+pymysql://[^:]+:)([^@]+)(@.+)'
+        return re.sub(pattern, r'\1****\3', url)
 
 # Global error handler instance
 _global_error_handler: Optional[GlobalErrorHandler] = None
@@ -233,7 +271,7 @@ async def handle_database_error(
     user_email: Optional[str] = None,
     current_flow: Optional[str] = None
 ) -> None:
-    """Handle database-related errors."""
+    """Handle database-related errors with detailed configuration info."""
     error_context = ErrorContext(
         error_type="Database Error",
         error_message=error_message,
