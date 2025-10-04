@@ -56,6 +56,8 @@ from app.services.seller_service import SellerService
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
 from app.services.exit_service import ExitService
+from app.tools.confirmation_tool import ConfirmationTool
+from app.services.confirmation_service import ConfirmationService
 from app.services.workflow_manager import WorkflowManager, WorkflowStage, PendingFlag
 
 from app.database import SessionLocal, DatabaseManager
@@ -94,12 +96,18 @@ class ChatService:
             self.chat_summary_service, self.daily_summary_service
         )
         
+        # Initialize confirmation service and tools
+
+        
+        confirmation_tool = ConfirmationTool(self.openai_service)
+        confirmation_service = ConfirmationService(confirmation_tool)
+        
         # Initialize authentication and registration services with session_manager
         self.authentication_service = AuthenticationService(
             self.whatsapp_service, self.openai_service, self.response_helpers, self.session_manager
         )
         self.registration_service = RegistrationService(
-            self.whatsapp_service, self.openai_service, self.entity_service, self.response_helpers, self.session_manager
+            self.whatsapp_service, self.openai_service, self.entity_service, self.response_helpers, confirmation_service, self.session_manager
         )
         self.exit_service = ExitService(
             self.whatsapp_service, self.authentication_service, self.session_manager, self.db_manager
