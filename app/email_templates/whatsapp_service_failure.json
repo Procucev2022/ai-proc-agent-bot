@@ -1,6 +1,6 @@
 {
   "scenario_id": "whatsapp_service_failure",
-  "subject": "🚨 WhatsApp Service Down - Immediate Action Required",
+  "subject": "WhatsApp Service Down - Immediate Action Required",
   "to": "{support_email}",
   "cc": "",
   "bcc": "",
