@@ -56,6 +56,7 @@ from app.services.seller_service import SellerService
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
 from app.services.exit_service import ExitService
+from app.services.cancel_service import CancelService
 from app.tools.confirmation_tool import ConfirmationTool
 from app.services.confirmation_service import ConfirmationService
 from app.services.workflow_manager import WorkflowManager, WorkflowStage, PendingFlag
