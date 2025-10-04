@@ -25,6 +25,7 @@ from app.services.registration_service import RegistrationService
 from app.services.welcome_message_service import get_welcome_service
 from app.utils.datetime_utils import utc_now
 from app.utils.logging_utils import log_service_method
+from app.context import session_context, user_context, get_request_id
 from app.services.intent_service import IntentService
 from app.services.entity_service import EntityService
 from app.services.vendor_service import VendorService
@@ -444,6 +445,15 @@ class ChatService:
                 return await self._handle_registration_workflow(user, message)
 
             logger.info(f"user  phone number {user.phone_number}")
+            
+            # Access user details from global context
+            from app.context import user_context
+            # Normalize phone number (remove + prefix for consistent Redis keys)
+            normalized_phone = user.phone_number.lstrip('+')
+            context_data = user_context.get(normalized_phone)
+            user_details = context_data.get("user_details") if context_data else None
+            if user_details:
+                logger.info(f"Processing with user details from global context: {user_details}")
 
 
 
