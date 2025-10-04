@@ -164,7 +164,8 @@ class Settings:
         
         # Support configuration
         self.support_contact_info = os.getenv("SUPPORT_CONTACT_INFO", "info@procucev.com")
-        self.support_team_numbers = os.getenv("SUPPORT_TEAM_NUMBERS", "919876543210,919876543211").split(",")
+        self.support_team_email = os.getenv("SUPPORT_TEAM_EMAILS", "priya.soni@mohap.ai")
+        self.support_team_numbers = os.getenv("SUPPORT_TEAM_NUMBERS", "8824242260").split(",")
 
         # Seller Workflow Configuration
         self.seller_rfq_fetch_limit: int = 3
