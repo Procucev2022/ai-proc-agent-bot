@@ -344,9 +344,21 @@ class RegistrationService:
             logger.error(f"Registration confirmation error: {e}")
             return await self._redirect_to_support(user_phone, "confirmation_error", str(e), session)
     
-    def _parse_button_response(self, message_content: str) -> Optional[str]:
+    def _parse_button_response(self, message_content) -> Optional[str]:
         """Parse button response from WhatsApp interactive message."""
-        message_lower = message_content.lower().strip()
+        # Handle both string and dictionary inputs
+        if isinstance(message_content, dict):
+            # Extract button ID from interactive message structure
+            button_reply = message_content.get("button_reply", {})
+            button_id = button_reply.get("id", "")
+            if button_id:
+                message_lower = button_id.lower().strip()
+            else:
+                return None
+        elif isinstance(message_content, str):
+            message_lower = message_content.lower().strip()
+        else:
+            return None
         
         # Check for button IDs or titles
         if message_lower in ["confirm_registration", "confirm"]:
