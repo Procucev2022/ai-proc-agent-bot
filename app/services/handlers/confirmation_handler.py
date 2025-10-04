@@ -408,6 +408,8 @@ class ConfirmationHandler:
 
     async def _send_completion_response(self, user: User, rfq_results: List[Dict], successful_count: int):
         """Send completion response to user."""
+        if successful_count == 0:
+            return
         rfq_ids = []
         for result in rfq_results:
             if result.get("success") and result.get("rfq_id"):
