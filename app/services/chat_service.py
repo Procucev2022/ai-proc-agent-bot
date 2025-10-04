@@ -434,12 +434,7 @@ class ChatService:
             logger.info(f"user  phone number {user.phone_number}")
 
 
-            # Handle seller RFQ selection workflow BEFORE intent classification
-            if session.workflow_type and hasattr(session.workflow_type, 'value') and session.workflow_type.value == "seller_rfq_view":
-                workflow_state = session.workflow_state or {}
-                current_seller_state = workflow_state.get("seller_workflow_state")
-                # Seller is responding to RFQ list - handle this immediately
-                return await self._handle_seller_flow(user, session, message)
+
             
             # Handle pending role switch confirmation FIRST
             if session.workflow_state.get("pending_role_switch"):
@@ -578,6 +573,20 @@ class ChatService:
                 await self.session_manager.save_session(session, WorkflowType.user_exit)
                 return exit_result
 
+            # Handle workflow rejection as exit intent
+            if intent == "workflow_rejection" and confidence > 60:
+                logger.info(f"Workflow rejection detected with {confidence}% confidence - exiting user")
+                user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+                exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                await self.session_manager.save_session(session, WorkflowType.user_exit)
+                return exit_result
+
+            # Handle support requests immediately - even during active workflows
+            if intent == "support" and confidence > 0.7:
+                logger.info(f"Support intent detected with {confidence}% confidence - handling immediately")
+                result = await self._handle_support_request(user, message)
+                return result
+
             # Handle contextual intents with direct response capability
             if intent in ['contextual_reference', 'session_inquiry', 'workflow_rejection', 'alternative_request'] and confidence > 60:
                 if intent_result.get('should_handle_directly'):
@@ -648,6 +657,14 @@ class ChatService:
                 logger.info("Continuing existing RFQ workflow")
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None,
                                                                                  self._should_use_summary_aware_extraction)
+
+            # Handle seller RFQ selection workflow BEFORE intent classification
+            if session.workflow_type and hasattr(session.workflow_type,
+                                                 'value') and session.workflow_type.value == "seller_rfq_view":
+                workflow_state = session.workflow_state or {}
+                current_seller_state = workflow_state.get("seller_workflow_state")
+                # Seller is responding to RFQ list - handle this immediately
+                return await self._handle_seller_flow(user, session, message)
 
             # Check if user recently completed registration and handle follow-up messages
             recently_registered = session.workflow_state.get("recently_completed_registration", False)
@@ -1099,6 +1116,22 @@ class ChatService:
         except Exception as e:
             return await self._handle_error_response(e, user.phone_number, "general_inquiry",
                                                      "How can I assist you today?")
+
+    async def _handle_support_request(self, user: User, message: str) -> Dict[str, Any]:
+        """Handle support requests by providing contact information."""
+        try:
+            settings = get_settings()
+            support_contact = settings.support_contact_info
+            
+            support_message = f"For support assistance, please contact us at: {support_contact}"
+            
+            await self.whatsapp_service.send_message(user.phone_number, support_message)
+            
+            return {"status": "support_handled"}
+
+        except Exception as e:
+            return await self._handle_error_response(e, user.phone_number, "support_request",
+                                                     "For support, please contact info.support.com")
 
     async def _handle_clarification_request(self, user: User, message: str) -> Dict[str, Any]:
         """Handle ambiguous messages requiring clarification."""

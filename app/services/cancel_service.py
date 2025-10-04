@@ -1,0 +1,245 @@
+"""
+Cancel Service for handling workflow cancellation logic.
+
+Provides workflow state reset while keeping workflow type intact.
+Handles confirmation prompt and state clearing after user confirms.
+"""
+
+import logging
+from typing import Dict, Any, Optional
+from app.models import WorkflowType, ConversationSession
+from app.services.whatsapp_service import WhatsAppService
+from app.services.session_management_service import SessionManagementService
+from app.database import DatabaseManager
+
+
+logger = logging.getLogger(__name__)
+
+
+class CancelService:
+    """Handles workflow cancellation with confirmation flow."""
+
+    def __init__(self, whatsapp_service: WhatsAppService = None,
+                 session_manager: SessionManagementService = None,
+                 db_manager: DatabaseManager = None):
+        self.whatsapp_service = whatsapp_service or WhatsAppService()
+        self.session_manager = session_manager
+        self.db_manager = db_manager or DatabaseManager()
+
+    async def handle_cancel_intent(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
+        """
+        Handle cancel intent - ask for confirmation before clearing workflow state.
+
+        Args:
+            user_phone: User's phone number
+            session: Current conversation session
+
+        Returns:
+            Dict with status and details
+        """
+        try:
+            logger.info(f"Handling cancel intent for user: {user_phone}")
+
+            # Check if user is in a workflow
+            if not session.workflow_type or session.workflow_type == WorkflowType.user_exit:
+                await self.whatsapp_service.send_message(
+                    user_phone,
+                    "There is no active workflow to cancel. What can I assist you with?"
+                )
+                return {
+                    "status": "no_workflow",
+                    "message": "No active workflow to cancel"
+                }
+
+            # Set cancel pending state
+            if not session.workflow_state:
+                session.workflow_state = {}
+
+            session.workflow_state["cancel_pending"] = True
+
+            # Save session with pending state
+            if self.session_manager:
+                await self.session_manager.save_session(session, session.workflow_type)
+
+            # Send confirmation message
+            confirmation_sent = await self._send_confirmation_message(user_phone)
+            logger.info(f"Confirmation message sent: {confirmation_sent}")
+
+            return {
+                "status": "confirmation_pending",
+                "confirmation_sent": confirmation_sent,
+                "message": "Awaiting user confirmation for cancellation"
+            }
+
+        except Exception as e:
+            logger.error(f"Error handling cancel intent for {user_phone}: {e}")
+            return {
+                "status": "cancel_error",
+                "error": str(e),
+                "message": "Error during cancel intent handling"
+            }
+
+    async def handle_cancel_confirmation(self, user_phone: str, session: ConversationSession,
+                                        confirmed: bool) -> Dict[str, Any]:
+        """
+        Handle user's response to cancel confirmation.
+
+        Args:
+            user_phone: User's phone number
+            session: Current conversation session
+            confirmed: Whether user confirmed cancellation
+
+        Returns:
+            Dict with status and completion details
+        """
+        try:
+            logger.info(f"Handling cancel confirmation for user: {user_phone}, confirmed: {confirmed}")
+
+            # Clear the cancel_pending flag
+            if session.workflow_state and "cancel_pending" in session.workflow_state:
+                del session.workflow_state["cancel_pending"]
+
+            if confirmed:
+                # Perform cancellation
+                cancellation_result = await self._clear_workflow_state(session)
+                logger.info(f"Workflow state cleared: {cancellation_result}")
+
+                # Send cancellation success message
+                message_sent = await self._send_cancellation_message(user_phone)
+                logger.info(f"Cancellation message sent: {message_sent}")
+
+                return {
+                    "status": "cancelled",
+                    "state_cleared": cancellation_result,
+                    "message_sent": message_sent,
+                    "message": "Workflow cancelled successfully"
+                }
+            else:
+                # User declined - resume workflow
+                await self.whatsapp_service.send_message(
+                    user_phone,
+                    "Cancellation aborted. Let's continue where we left off."
+                )
+
+                # Save session
+                if self.session_manager:
+                    await self.session_manager.save_session(session, session.workflow_type)
+
+                return {
+                    "status": "cancelled_aborted",
+                    "message": "User declined cancellation"
+                }
+
+        except Exception as e:
+            logger.error(f"Error handling cancel confirmation for {user_phone}: {e}")
+            return {
+                "status": "confirmation_error",
+                "error": str(e),
+                "message": "Error during cancel confirmation handling"
+            }
+
+    async def _clear_workflow_state(self, session: ConversationSession) -> bool:
+        """
+        Clear workflow state and entities while preserving workflow type.
+
+        Args:
+            session: Current conversation session
+
+        Returns:
+            True if state cleared successfully
+        """
+        try:
+            if not session:
+                return True
+
+            # Preserve workflow type
+            current_workflow_type = session.workflow_type
+
+            # Clear workflow state (except workflow type)
+            session.workflow_state = {}
+
+            # Clear extracted entities
+            session.extracted_entities = {}
+
+            # Keep workflow type intact
+            session.workflow_type = current_workflow_type
+
+            # Save the cleared session
+            if self.session_manager:
+                await self.session_manager.save_session(session, current_workflow_type)
+            else:
+                # Fallback to direct database save
+                self.db_manager.save_conversation_session({
+                    'session_id': session.session_id,
+                    'external_user_id': session.external_user_id,
+                    'workflow_type': current_workflow_type.value if current_workflow_type else None,
+                    'outcome': session.outcome,
+                    'workflow_state': session.workflow_state,
+                    'conversation_history': session.conversation_history,
+                    'extracted_entities': session.extracted_entities,
+                    'retention_date': session.retention_date,
+                    'completed_at': session.completed_at
+                })
+
+            logger.info(f"Session {session.session_id} state cleared, workflow type preserved: {current_workflow_type}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error clearing workflow state: {e}")
+            return False
+
+    async def _send_confirmation_message(self, user_phone: str) -> bool:
+        """
+        Send confirmation prompt to user with Yes/No buttons.
+
+        Args:
+            user_phone: User's phone number
+
+        Returns:
+            True if message sent successfully
+        """
+        try:
+            confirmation_message = (
+                "Are you sure you want to cancel? This will clear all the information you've provided so far."
+            )
+
+            buttons = [
+                {"id": "confirm_cancel", "title": "Yes, Cancel"},
+                {"id": "decline_cancel", "title": "No, Continue"}
+            ]
+
+            result = await self.whatsapp_service.send_configurable_buttons(
+                recipient_id=user_phone,
+                body=confirmation_message,
+                buttons_config=buttons
+            )
+
+            logger.info(f"Confirmation buttons sent to {user_phone}: {result.success}")
+            return result.success
+
+        except Exception as e:
+            logger.error(f"Error sending confirmation message to {user_phone}: {e}")
+            return False
+
+    async def _send_cancellation_message(self, user_phone: str) -> bool:
+        """
+        Send cancellation success message to user.
+
+        Args:
+            user_phone: User's phone number
+
+        Returns:
+            True if message sent successfully
+        """
+        try:
+            cancellation_message = (
+                "Your request has been cancelled. What can I assist you with next?"
+            )
+
+            await self.whatsapp_service.send_message(user_phone, cancellation_message)
+            logger.info(f"Cancellation message sent to {user_phone}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error sending cancellation message to {user_phone}: {e}")
+            return False

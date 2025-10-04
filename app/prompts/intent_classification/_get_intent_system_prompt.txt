@@ -86,7 +86,11 @@ INTENT CATEGORIES:
     Examples: "Do you have this in stock?", "Can I buy directly?", "Search your inventory"
     Context clues: Alternative service requests, direct purchase interest
 
-12. **ambiguous** (<60% confidence) - Unclear intent, mixed signals, or insufficient information
+12. **support** (80%+ confidence) - User needs help, wants to contact support, or has technical issues
+    Examples: "How to contact support?", "I need help", "Contact customer service", "Technical support", "Help me", "Support team"
+    Context clues: Support keywords (support, help, contact, customer service, technical, assistance)
+
+13. **ambiguous** (<60% confidence) - Unclear intent, mixed signals, or insufficient information
     Examples: "Hello", "Thanks", unclear mixed messages
 
 CONVERSATION CONTEXT ANALYSIS:
