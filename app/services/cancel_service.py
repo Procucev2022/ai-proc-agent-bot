@@ -10,6 +10,9 @@ from typing import Dict, Any, Optional
 from app.models import WorkflowType, ConversationSession
 from app.services.whatsapp_service import WhatsAppService
 from app.services.session_management_service import SessionManagementService
+from app.services.confirmation_service import ConfirmationService
+from app.tools.confirmation_tool import ConfirmationTool
+from app.services.openai_service import OpenAIService
 from app.database import DatabaseManager
 
 
@@ -21,10 +24,19 @@ class CancelService:
 
     def __init__(self, whatsapp_service: WhatsAppService = None,
                  session_manager: SessionManagementService = None,
-                 db_manager: DatabaseManager = None):
+                 db_manager: DatabaseManager = None,
+                 confirmation_service: ConfirmationService = None):
         self.whatsapp_service = whatsapp_service or WhatsAppService()
         self.session_manager = session_manager
         self.db_manager = db_manager or DatabaseManager()
+
+        # Initialize confirmation service for yes/no detection
+        if confirmation_service:
+            self.confirmation_service = confirmation_service
+        else:
+            openai_service = OpenAIService()
+            confirmation_tool = ConfirmationTool(openai_service)
+            self.confirmation_service = ConfirmationService(confirmation_tool)
 
     async def handle_cancel_intent(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
         """
@@ -115,9 +127,14 @@ class CancelService:
                     "message": "Workflow cancelled successfully"
                 }
             else:
-                # User declined - resume workflow silently
-                # Don't send any message, just let the normal flow continue
+                # User declined - resume workflow
+                # Send a brief acknowledgment
                 logger.info(f"User declined cancellation - resuming workflow")
+
+                await self.whatsapp_service.send_message(
+                    user_phone,
+                    "Continuing with your request..."
+                )
 
                 # Save session
                 if self.session_manager:

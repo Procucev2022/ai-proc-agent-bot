@@ -602,8 +602,9 @@ class ChatService:
                 logger.info(f"Cancel confirmation pending - processing user response: {message}")
                 user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
 
-                # Detect confirmation from the message
-                is_confirmed = await self._detect_cancel_confirmation(message)
+                # Detect confirmation from the message using confirmation service
+                confirmation_result = await self.cancel_service.confirmation_service.parse_confirmation(message)
+                is_confirmed = confirmation_result == "yes"
                 cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed)
 
                 if cancel_result.get("status") == "cancelled":
@@ -1364,18 +1365,25 @@ class ChatService:
 
         try:
             user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+
+            # Map button ID to confirmation result
+            # confirm_cancel -> Yes, decline_cancel -> No
             is_confirmed = button_id == "confirm_cancel"
 
             cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed)
 
             if cancel_result.get("status") == "cancelled":
-                # Workflow was cancelled, save session
+                # Workflow was cancelled, save session and return
                 await self.session_manager.save_session(session, session.workflow_type)
+                return cancel_result
             elif cancel_result.get("status") == "cancelled_aborted":
-                # User declined, continue with current workflow
+                # User declined, save session and continue with normal flow
                 await self.session_manager.save_session(session, session.workflow_type)
-
-            return cancel_result
+                # Don't return - let the message processing continue
+                logger.info("User declined cancel via button - would need to re-process as normal message")
+                # Since this is a button response, we can't continue the flow here
+                # We need to return a special status to trigger the workflow to continue
+                return cancel_result
 
         except Exception as e:
             logger.error(f"Error handling cancel confirmation button: {e}")
@@ -2163,35 +2171,6 @@ class ChatService:
 
         except Exception as e:
             logger.error(f"Error updating last user message with intent: {e}")
-
-    async def _detect_cancel_confirmation(self, message: str) -> bool:
-        """
-        Detect if user is confirming or declining the cancel action.
-
-        Args:
-            message: User's message
-
-        Returns:
-            True if user confirms cancellation, False otherwise
-        """
-        message_lower = message.lower().strip()
-
-        # Confirmation keywords
-        confirm_keywords = ["yes", "y", "yeah", "yep", "sure", "confirm", "ok", "okay", "proceed", "correct"]
-
-        # Decline keywords
-        decline_keywords = ["no", "n", "nope", "nah", "cancel", "abort", "stop", "don't", "do not", "keep", "continue"]
-
-        # Check for confirmation
-        if any(keyword == message_lower or message_lower.startswith(keyword) for keyword in confirm_keywords):
-            return True
-
-        # Check for decline
-        if any(keyword in message_lower for keyword in decline_keywords):
-            return False
-
-        # Default to False if ambiguous
-        return False
 
     def _track_meaningful_message_during_auth_flow(self, session: ConversationSession, message_content: str, intent_result: Dict[str, Any]) -> None:
         """Track the last meaningful message for processing after auth/registration completes."""
