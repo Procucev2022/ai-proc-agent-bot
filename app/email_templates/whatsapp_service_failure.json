@@ -1,0 +1,11 @@
+{
+  "scenario_id": "whatsapp_service_failure",
+  "subject": "WhatsApp Service Down - Immediate Action Required",
+  "to": "{support_email}",
+  "cc": "",
+  "bcc": "",
+  "body": "Dear Support Team,\n\nThe WhatsApp service is currently experiencing issues and is unavailable.\n\n**Error Details:**\n- Service: {service_name}\n- Error Type: {error_type}\n- Timestamp: {timestamp}\n- Error Message: {error_message}\n\n**Impact:**\n- Users cannot receive WhatsApp notifications\n- Chat functionality may be affected\n- Alternative communication channels should be activated\n\n**Immediate Actions Required:**\n1. Investigate WhatsApp service connectivity\n2. Check API credentials and configuration\n3. Verify network connectivity to WhatsApp servers\n4. Monitor service restoration\n\nPlease investigate and resolve this issue immediately to restore normal operations.",
+  "signature": "Best regards,\nAI Procurement Agent\nError Monitoring System",
+  "supports_buyer": true,
+  "supports_seller": true
+}
