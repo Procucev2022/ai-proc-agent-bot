@@ -7,7 +7,7 @@
         "properties": {
             "intent": {
                 "type": "string",
-                "enum": ["buy_something", "sell_something", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "ambiguous", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request", "support", "exit_system"],
+                "enum": ["buy_something", "sell_something", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "ambiguous", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request", "support", "exit_system", "cancel_workflow"],
                 "description": "The primary classified intent category based on user message analysis and conversation context"
             },
             "confidence": {
@@ -93,9 +93,14 @@
                         "type": "number",
                         "minimum": 0,
                         "maximum": 100
+                    },
+                    "cancel_workflow": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
                     }
                 },
-                "required": ["buy_something", "sell_something", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request", "support", "exit_system"],
+                "required": ["buy_something", "sell_something", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "reference_request", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request", "support", "exit_system", "cancel_workflow"],
                 "additionalProperties": false,
                 "description": "Confidence scores for all intent categories"
             },
@@ -217,9 +222,30 @@
                         "required": ["exit_type", "is_definitive", "wants_cleanup"],
                         "additionalProperties": false,
                         "description": "Details about exit if this is an exit_system intent"
+                    },
+                    "cancel_details": {
+                        "type": "object",
+                        "properties": {
+                            "cancel_scope": {
+                                "type": ["string", "null"],
+                                "enum": ["current_workflow", "last_entry", "everything", null],
+                                "description": "Scope of cancellation - current workflow restart vs complete exit"
+                            },
+                            "wants_restart": {
+                                "type": "boolean",
+                                "description": "Whether user wants to restart the current workflow from beginning"
+                            },
+                            "is_confirmed": {
+                                "type": "boolean",
+                                "description": "Whether this is a confirmation response to a cancel prompt"
+                            }
+                        },
+                        "required": ["cancel_scope", "wants_restart", "is_confirmed"],
+                        "additionalProperties": false,
+                        "description": "Details about cancellation if this is a cancel_workflow intent"
                     }
                 },
-                "required": ["references_existing_data", "conversation_stage", "modification_details", "confirmation_details", "reference_details", "account_switch_details", "registration_details", "exit_details"],
+                "required": ["references_existing_data", "conversation_stage", "modification_details", "confirmation_details", "reference_details", "account_switch_details", "registration_details", "exit_details", "cancel_details"],
                 "additionalProperties": false,
                 "description": "Analysis of conversation context and how it affects intent classification"
             },

@@ -57,6 +57,7 @@ from app.services.seller_service import SellerService
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
 from app.services.exit_service import ExitService
+from app.services.cancel_service import CancelService
 from app.tools.confirmation_tool import ConfirmationTool
 from app.services.confirmation_service import ConfirmationService
 from app.services.workflow_manager import WorkflowManager, WorkflowStage, PendingFlag
@@ -112,6 +113,9 @@ class ChatService:
         )
         self.exit_service = ExitService(
             self.whatsapp_service, self.authentication_service, self.session_manager, self.db_manager
+        )
+        self.cancel_service = CancelService(
+            self.whatsapp_service, self.session_manager, self.db_manager
         )
         self.confirmation_handler = ConfirmationHandler(
             self.whatsapp_service, self.response_helpers
@@ -591,12 +595,49 @@ class ChatService:
                 await self.session_manager.save_session(session, WorkflowType.user_exit)
                 return exit_result
 
-            # Handle workflow rejection as exit intent
-            if intent == "workflow_rejection" and confidence > 60:
+            # Handle cancel workflow intent
+            if intent == "cancel_workflow" and confidence > 50:
+                logger.info(f"Cancel workflow intent detected with {confidence}% confidence")
+                user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+
+                # Trigger cancel confirmation flow (will send buttons)
+                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session)
+                await self.session_manager.save_session(session, session.workflow_type)
+                return cancel_result
+
+            # Handle cancel confirmation response (when cancel_pending is true)
+            cancel_pending = session.workflow_state and session.workflow_state.get("cancel_pending", False)
+            cancel_was_declined = False
+            if cancel_pending:
+                logger.info(f"Cancel confirmation pending - processing user response: {message}")
+                user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+
+                # Detect confirmation from the message using confirmation service
+                confirmation_result = await self.cancel_service.confirmation_service.parse_confirmation(message)
+                is_confirmed = confirmation_result == "yes"
+                cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed)
+
+                if cancel_result.get("status") == "cancelled":
+                    # Workflow was cancelled, save session and return
+                    await self.session_manager.save_session(session, session.workflow_type)
+                    return cancel_result
+                elif cancel_result.get("status") == "cancelled_aborted":
+                    # User declined, save session and continue with normal flow
+                    await self.session_manager.save_session(session, session.workflow_type)
+                    # Set flag to prevent workflow_rejection from triggering exit
+                    cancel_was_declined = True
+                    # Don't return - let the flow continue below to re-ask pending questions
+                    logger.info("Cancellation declined - continuing with normal workflow processing")
+                else:
+                    # Any other status, return the result
+                    return cancel_result
+
+            # Handle workflow rejection as exit intent (but not if we just declined cancel)
+            if intent == "workflow_rejection" and confidence > 60 and not cancel_was_declined:
                 logger.info(f"Workflow rejection detected with {confidence}% confidence - exiting user")
                 user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
                 exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                await self.session_manager.save_session(session, "user_exit")
+                await self.session_manager.save_session(session, WorkflowType.user_exit)
                 return exit_result
 
             # Handle support requests immediately - even during active workflows
@@ -605,9 +646,12 @@ class ChatService:
                 result = await self._handle_support_request(user, message)
                 return result
 
-            # Handle contextual intents with direct response capability
+            # Handle contextual intents with direct response capability (but not if we just declined cancel)
             if intent in ['contextual_reference', 'session_inquiry', 'workflow_rejection', 'alternative_request'] and confidence > 60:
-                if intent_result.get('should_handle_directly'):
+                # Skip workflow_rejection if we just declined a cancel confirmation
+                if intent == 'workflow_rejection' and cancel_was_declined:
+                    logger.info(f"Skipping workflow_rejection handler - user just declined cancel confirmation")
+                elif intent_result.get('should_handle_directly'):
                     logger.info(f"Contextual intent detected: {intent} with {confidence}% confidence - handling directly")
                     return await self._handle_contextual_interaction(user, session, message, intent_result)
             
@@ -1281,21 +1325,25 @@ class ChatService:
         str, Any]:
         """Handle button interaction responses."""
         logger.info(f"Button response from {user.phone_number}: {button_id}")
-        
+
+        # Handle cancel workflow confirmation buttons
+        if button_id in ["confirm_cancel", "decline_cancel"]:
+            return await self._handle_cancel_confirmation_button(user, session, button_id)
+
         # Handle modify button by simulating "modify" message
         if button_id == "no_rfq":
             return await self._process_text_message(user, session, "modify")
-        
+
         # Check if this is a confirmation button response
         if button_id == "confirm_rfq":
             # Route to confirmation handler
             return await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
-        
+
         # Check if this is an email confirmation button response during authentication
         if button_id in ["confirm_email", "reject_email"]:
             # Route to authentication email confirmation handler
             return await self._handle_authentication_email_button(user, session, button_id)
-        
+
         # Default button handling
         return {"status": "button_handled", "button_id": button_id}
 
@@ -1319,6 +1367,36 @@ class ChatService:
                 
         except Exception as e:
             logger.error(f"Error handling authentication email button: {e}")
+            return {"status": "error", "error": str(e)}
+
+    async def _handle_cancel_confirmation_button(self, user: User, session: ConversationSession, button_id: str) -> Dict[str, Any]:
+        """Handle cancel workflow confirmation button responses."""
+        logger.info(f"Cancel confirmation button response from {user.phone_number}: {button_id}")
+
+        try:
+            user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+
+            # Map button ID to confirmation result
+            # confirm_cancel -> Yes, decline_cancel -> No
+            is_confirmed = button_id == "confirm_cancel"
+
+            cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed)
+
+            if cancel_result.get("status") == "cancelled":
+                # Workflow was cancelled, save session and return
+                await self.session_manager.save_session(session, session.workflow_type)
+                return cancel_result
+            elif cancel_result.get("status") == "cancelled_aborted":
+                # User declined, save session and continue with normal flow
+                await self.session_manager.save_session(session, session.workflow_type)
+                # Don't return - let the message processing continue
+                logger.info("User declined cancel via button - would need to re-process as normal message")
+                # Since this is a button response, we can't continue the flow here
+                # We need to return a special status to trigger the workflow to continue
+                return cancel_result
+
+        except Exception as e:
+            logger.error(f"Error handling cancel confirmation button: {e}")
             return {"status": "error", "error": str(e)}
 
     async def _handle_list_response(self, user: User, session: ConversationSession, list_id: str) -> Dict[
