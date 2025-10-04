@@ -108,7 +108,7 @@
                     },
                     "conversation_stage": {
                         "type": "string",
-                        "enum": ["collecting", "confirming", "modifying", "referencing", "completed", "unknown"],
+                        "enum": ["collecting", "confirming", "optional_fields", "modifying", "referencing", "completed", "unknown"],
                         "description": "Current stage of the conversation based on context"
                     },
                     "modification_details": {

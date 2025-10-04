@@ -8,7 +8,7 @@ Extracted from ChatService to reduce complexity.
 
 import logging
 from typing import Dict, Any
-from app.models import User, ConversationSession
+from app.models import WorkflowType, User, ConversationSession
 from app.services.whatsapp_service import WhatsAppService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.attachment_helpers import AttachmentHelpers
@@ -48,7 +48,7 @@ class AttachmentDecisionHandler:
         approval_result = AttachmentHelpers.approve_pending_attachment(session)
         
         if approval_result:
-            await self._save_session(session, "rfq_creation")
+            await self._save_session(session, WorkflowType.rfq_creation)
             
             # Use contextual response for approval confirmation
             context = {
@@ -86,7 +86,7 @@ class AttachmentDecisionHandler:
         """Handle attachment rejection."""
         # User wants to reject the attachment
         AttachmentHelpers.reject_pending_attachments(session)
-        await self._save_session(session, "rfq_creation")
+        await self._save_session(session, WorkflowType.rfq_creation)
         
         # Use contextual response for rejection confirmation
         context = {
@@ -114,7 +114,7 @@ class AttachmentDecisionHandler:
         
         # Remove the pending state and continue
         session.workflow_state["awaiting_attachment_decision"] = False
-        await self._save_session(session, "rfq_creation")
+        await self._save_session(session, WorkflowType.rfq_creation)
         
         # Use contextual response for error handling
         context = {

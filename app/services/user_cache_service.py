@@ -24,6 +24,7 @@ class UserCacheService:
     async def store_user_data(self, phone_number: str, user_data: List[Dict], expiry_seconds: int = 3600) -> bool:
         """
         Store user data in Redis cache.
+        Preserves meaningful message if it exists.
 
         Args:
             phone_number: User's phone number (cache key)
@@ -33,6 +34,9 @@ class UserCacheService:
         try:
             cache_key = self._get_cache_key(phone_number)
 
+            # Get existing cache to preserve meaningful message
+            existing_cache = await self.redis_service.get(cache_key, as_json=True)
+
             # Prepare cache data with metadata
             cache_data = {
                 "user_data": user_data,
@@ -40,6 +44,18 @@ class UserCacheService:
                 "phone_number": phone_number,
                 "count": len(user_data)
             }
+
+            # Preserve meaningful message from existing cache if present
+            if existing_cache and isinstance(existing_cache, dict):
+                if "meaningful_message" in existing_cache:
+                    cache_data["meaningful_message"] = existing_cache["meaningful_message"]
+                    logger.info(f"Preserving meaningful message in store_user_data: '{existing_cache['meaningful_message'][:50]}...'")
+                if "meaningful_intent_result" in existing_cache:
+                    cache_data["meaningful_intent_result"] = existing_cache["meaningful_intent_result"]
+                if "meaningful_message_cached_at" in existing_cache:
+                    cache_data["meaningful_message_cached_at"] = existing_cache["meaningful_message_cached_at"]
+            else:
+                logger.info(f"No existing cache found or no meaningful message to preserve in store_user_data")
 
             success = await self.redis_service.set(cache_key, cache_data, ex=expiry_seconds)
 
@@ -114,20 +130,43 @@ class UserCacheService:
     async def clear_user_data(self, phone_number: str) -> bool:
         """
         Clear cached user data for a phone number.
+        Preserves meaningful message if it exists.
 
         Args:
             phone_number: User's phone number
         """
         try:
             cache_key = self._get_cache_key(phone_number)
-            success = await self.redis_service.delete(cache_key)
 
-            if success:
+            # Get existing cache to preserve meaningful message
+            cache_data = await self.redis_service.get(cache_key, as_json=True)
+
+            if cache_data and isinstance(cache_data, dict):
+                # Preserve meaningful message fields
+                meaningful_msg = cache_data.get("meaningful_message")
+                meaningful_intent = cache_data.get("meaningful_intent_result")
+                meaningful_cached_at = cache_data.get("meaningful_message_cached_at")
+
+                # Delete the cache
+                await self.redis_service.delete(cache_key)
                 logger.info(f"Cleared cached user data for {phone_number}")
+
+                # Restore meaningful message if it existed
+                if meaningful_msg and meaningful_intent:
+                    new_cache = {
+                        "phone_number": phone_number,
+                        "meaningful_message": meaningful_msg,
+                        "meaningful_intent_result": meaningful_intent,
+                        "meaningful_message_cached_at": meaningful_cached_at,
+                        "cached_at": datetime.now().isoformat()
+                    }
+                    await self.redis_service.set(cache_key, new_cache, ex=3600)
+                    logger.info(f"Preserved meaningful message after clearing user data for {phone_number}")
+
+                return True
             else:
                 logger.warning(f"No cached user data found to clear for {phone_number}")
-
-            return success
+                return False
 
         except Exception as e:
             logger.error(f"Error clearing user data cache for {phone_number}: {e}")
@@ -173,6 +212,108 @@ class UserCacheService:
         # Normalize phone number for consistent key generation
         normalized_phone = phone_number.lstrip('+').replace(' ', '').replace('-', '')
         return f"user_cache:{normalized_phone}"
+
+    async def store_meaningful_message(self, phone_number: str, message: str, intent_result: Dict[str, Any]) -> bool:
+        """
+        Store meaningful message in cache for post-auth/registration processing.
+
+        Args:
+            phone_number: User's phone number
+            message: The meaningful message to preserve
+            intent_result: The intent classification result
+        """
+        try:
+            cache_key = self._get_cache_key(phone_number)
+
+            # Get existing cache data or create new
+            cache_data = await self.redis_service.get(cache_key, as_json=True)
+            if not cache_data:
+                cache_data = {
+                    "phone_number": phone_number,
+                    "cached_at": datetime.now().isoformat()
+                }
+
+            # Add meaningful message fields
+            cache_data["meaningful_message"] = message
+            cache_data["meaningful_intent_result"] = intent_result
+            cache_data["meaningful_message_cached_at"] = datetime.now().isoformat()
+
+            # Store with same expiry as user data (1 hour)
+            success = await self.redis_service.set(cache_key, cache_data, ex=3600)
+
+            if success:
+                logger.info(f"Cached meaningful message for {phone_number}: '{message[:50]}...'")
+            else:
+                logger.error(f"Failed to cache meaningful message for {phone_number}")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Error storing meaningful message for {phone_number}: {e}")
+            return False
+
+    async def get_meaningful_message(self, phone_number: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve cached meaningful message.
+
+        Args:
+            phone_number: User's phone number
+
+        Returns:
+            Dict with 'message' and 'intent_result' if found, None otherwise
+        """
+        try:
+            cache_key = self._get_cache_key(phone_number)
+            cache_data = await self.redis_service.get(cache_key, as_json=True)
+
+            if cache_data and isinstance(cache_data, dict):
+                message = cache_data.get("meaningful_message")
+                intent_result = cache_data.get("meaningful_intent_result")
+
+                if message and intent_result:
+                    logger.info(f"Retrieved cached meaningful message for {phone_number}: '{message[:50]}...'")
+                    return {
+                        "message": message,
+                        "intent_result": intent_result
+                    }
+
+            logger.info(f"No cached meaningful message found for {phone_number}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error retrieving meaningful message for {phone_number}: {e}")
+            return None
+
+    async def clear_meaningful_message(self, phone_number: str) -> bool:
+        """
+        Clear meaningful message from cache (keeps other cache data intact).
+
+        Args:
+            phone_number: User's phone number
+        """
+        try:
+            cache_key = self._get_cache_key(phone_number)
+            cache_data = await self.redis_service.get(cache_key, as_json=True)
+
+            if cache_data and isinstance(cache_data, dict):
+                # Remove meaningful message fields
+                cache_data.pop("meaningful_message", None)
+                cache_data.pop("meaningful_intent_result", None)
+                cache_data.pop("meaningful_message_cached_at", None)
+
+                # Update cache
+                success = await self.redis_service.set(cache_key, cache_data, ex=3600)
+
+                if success:
+                    logger.info(f"Cleared meaningful message from cache for {phone_number}")
+
+                return success
+
+            return True  # Nothing to clear
+
+        except Exception as e:
+            logger.error(f"Error clearing meaningful message for {phone_number}: {e}")
+            return False
 
     async def get_account_options_for_intent_switch(self, phone_number: str, target_intent: str,
                                                    current_user_email: str = None) -> Optional[Dict[str, Any]]:
