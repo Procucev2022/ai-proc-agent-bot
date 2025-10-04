@@ -103,6 +103,8 @@ class ResponseHelpers:
                 return await self._generate_email_processing_response(context)
             elif workflow_state == "rfq_email_status":
                 return await self._generate_email_status_response(context)
+            elif workflow_state == "rfq_email_status_with_errors":
+                return await self._generate_rfq_email_status_with_errors_response(context)
             elif workflow_state == "invalid_rfq_selection":
                 return await self._generate_invalid_rfq_response(context)
             elif workflow_state == "invalid_plan_selection":
@@ -135,6 +137,60 @@ class ResponseHelpers:
             logger.error(f"Error generating seller contextual response: {e}")
             return self._get_fallback_message(context.get("workflow_state"))
 
+    # Add these new workflow states to your response_helpers.py
+
+    async def _generate_rfq_email_status_with_errors_response(self, context: Dict[str, Any]) -> str:
+        """Generate response for RFQ email status with error code handling."""
+        return await self._generate_common_seller_response(
+            "rfq_email_status_with_errors", "general_assistance", context,
+            self._get_email_status_with_errors_openai_fallback(context)
+        )
+
+    def _get_email_status_with_errors_openai_fallback(self, context: Dict[str, Any]) -> str:
+        """Fallback for email status response with error code handling."""
+        successful = context.get("successful_emails", 0)
+        total = context.get("total_requested", 0)
+        error_analysis = context.get("error_analysis", {})
+
+        if successful == total:
+            return f"Successfully sent all {successful} RFQ details to your email!"
+
+        message = f"Email Status Summary:\n"
+        message += f"Successful: {successful}\n"
+        message += f"Failed: {error_analysis.get('total_failed', 0)}\n\n"
+
+        # Handle specific error codes
+        error_counts = error_analysis.get("error_counts", {})
+        error_categories = error_analysis.get("error_categories", {})
+
+        if error_counts.get("NO_CREDITS", 0) > 0:
+            no_credit_rfqs = error_categories.get("NO_CREDITS", [])
+            message += f"Insufficient Credits ({len(no_credit_rfqs)} RFQs):\n"
+            message += f"RFQ IDs: {', '.join(no_credit_rfqs)}\n"
+            message += "Please purchase more credits to access these RFQs.\n\n"
+
+        if error_counts.get("RFQ_NOT_FOUND", 0) > 0:
+            not_found_rfqs = error_categories.get("RFQ_NOT_FOUND", [])
+            message += f"RFQs Not Found ({len(not_found_rfqs)} RFQs):\n"
+            message += f"RFQ IDs: {', '.join(not_found_rfqs)}\n"
+            message += "These RFQs may have expired or been withdrawn.\n\n"
+
+        if error_counts.get("API_ERROR", 0) > 0:
+            api_error_rfqs = error_categories.get("API_ERROR", [])
+            message += f"Technical Issues ({len(api_error_rfqs)} RFQs):\n"
+            message += f"RFQ IDs: {', '.join(api_error_rfqs)}\n"
+            message += "Please try again later or contact support.\n\n"
+
+        if error_counts.get("UNKNOWN", 0) > 0:
+            unknown_error_rfqs = error_categories.get("UNKNOWN", [])
+            message += f"Unknown Errors ({len(unknown_error_rfqs)} RFQs):\n"
+            message += f"RFQ IDs: {', '.join(unknown_error_rfqs)}\n"
+            message += "Please contact support@procurev.com for assistance.\n\n"
+
+        if successful > 0:
+            message += f"{successful} RFQ details were sent successfully to your email."
+
+        return message.strip()
     async def _generate_end_of_flow_reminder_response(self, context: Dict[str, Any]) -> str:
         """Generate end-of-flow reminder response showing open RFQs."""
         return await self._generate_common_seller_response(
@@ -395,23 +451,30 @@ class ResponseHelpers:
             return "Excellent! Your RFQ is now complete. I'll process this request and get back to you soon."
     
     async def generate_clarification_response(self, questions: list, completeness: float, context: dict, chat_summaries: list = None) -> str:
-        """Generate clarification response using OpenAI with optional chat summary context."""
+        """Generate clarification response using predefined structure - no OpenAI needed."""
         try:
-            # Check for date validation errors in context
+            # Get date validation errors (already formatted)
             date_validation_errors = self._extract_date_validation_errors(context)
-            if date_validation_errors:
-                # Prepend date validation errors to questions
-                date_error_messages = [error for error in date_validation_errors]
-                questions = date_error_messages + questions
-            
-            # Enhance context with chat summaries if available
-            enhanced_context = context.copy()
-            if chat_summaries:
-                enhanced_context["chat_summaries"] = chat_summaries
-                enhanced_context["has_historical_context"] = True
-                print(f"ResponseHelpers: Enhanced clarification context with {len(chat_summaries)} chat summaries")
-            
-            return self.openai_service.generate_clarification_response(questions, completeness, enhanced_context)
+
+            # Combine only the actual questions
+            all_questions = date_validation_errors + questions
+
+            if not all_questions:
+                return "Thank you for the information! Let me process your RFQ."
+
+            # Debug: Log the questions being formatted
+            logger.info(f"Clarification questions being formatted: {all_questions}")
+
+            # Simple, clean formatting without duplication
+            questions_text = "\n".join(f"• {q}" for q in all_questions)
+            logger.info(f"Formatted questions text: {questions_text}")
+
+            # Only add progress acknowledgment if we have some progress
+            if completeness > 0:
+                return f"Thank you for that information!\n\nPlease provide the following:\n\n{questions_text}"
+            else:
+                return f"Please provide the following:\n\n{questions_text}"
+
         except Exception as e:
             logger.error(f"Error generating clarification response: {e}")
             questions_text = "\n".join(f"• {q}" for q in questions)
@@ -549,4 +612,5 @@ class ResponseHelpers:
                     if isinstance(product, dict) and product.get("date_validation_error"):
                         date_errors.append(product["date_validation_error"])
         
-        return date_errors
+        # Remove duplicate error messages while preserving order
+        return list(dict.fromkeys(date_errors))

@@ -11,12 +11,13 @@ Handles complete user registration flow including:
 import logging
 from typing import Dict, Any, List, Optional
 from app.schemas.user import User
-from app.models import ConversationSession, UserType
+from app.models import ConversationSession, UserType, WorkflowType
 from app.services.whatsapp_service import WhatsAppService
 from app.services.openai_service import OpenAIService
 from app.services.entity_service import EntityService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.confirmation_service import ConfirmationService
+from app.services.workflow_manager import WorkflowManager
 from app.procucev_apis.register_apis import RegisterAPIService
 from app.schemas.user import BuyerRegistrationSchema, SellerRegistrationSchema, normalize_phone_number
 from app.schemas.user import User
@@ -165,7 +166,7 @@ class RegistrationService:
                     await self.whatsapp_service.send_message(user_phone, questions)
                 
                 # Step 6: Session update - ensure workflow_type stays as registration
-                session.workflow_type = "registration"
+                WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="registration_service")
                 session.workflow_state["registration_stage"] = "data_collection"
                 session.workflow_state["last_activity_at"] = utc_now().isoformat()
                 
@@ -181,7 +182,7 @@ class RegistrationService:
                 await self._send_confirmation_with_buttons(user_phone, existing_entities, user_type, session)
                 
                 # Step 6: Session update - mark as awaiting confirmation
-                session.workflow_type = "registration"
+                WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="registration_service")
                 session.workflow_state["registration_entities"] = existing_entities
                 session.workflow_state["registration_stage"] = "confirmation"
                 session.workflow_state["last_activity_at"] = utc_now().isoformat()
@@ -199,13 +200,13 @@ class RegistrationService:
     async def _get_buyer_introduction_message(self) -> str:
         """Get buyer registration introduction message."""
         return (
-            "Hello Buyer \n To get started, please share\n\n  1. Full name,\n 2. Company name,\n 3. Business email,\n 4. Company pincode.\n\n We’ll have you registered right away."
+            "Hello Buyer \n To get started, please share\n\n 1. Full name,\n 2. Company name,\n 3. Business email,\n 4. Company pincode.\n\n We’ll have you registered right away."
         )
     
     async def _get_seller_introduction_message(self) -> str:
         """Get seller registration introduction message."""
         return (
-            "Hello Seller\n To get started, please share your\n 1.Full name,\n 2. Company name, \n 3. Business email, \n 4. Location with Pincode,\n 5. GSTIN number,\n 6. The products or services you offer. \n\nWe’ll have you registered right away."
+            "Hello Seller\n To get started, please share your\n 1. Full name,\n 2. Company name, \n 3. Business email, \n 4. Location with Pincode,\n 5. GSTIN number,\n 6. The products or services you offer. \n\nWe’ll have you registered right away."
         )
     
     def _build_registration_context(self, session: ConversationSession, current_message: str) -> str:
@@ -303,7 +304,7 @@ class RegistrationService:
                     session.workflow_state["otp_email"] = email
                     session.workflow_state["otp_retry_count"] = 0
                     
-                    session.workflow_type = "registration"
+                    WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="registration_service")
                     
                     # Send OTP for email verification
                     return await self._send_registration_otp(user_phone, session, email)
@@ -496,7 +497,7 @@ class RegistrationService:
             if otp_response.get("statusCode") in ["1001", "200"] or otp_response.get("status") == "Success":
                 session.workflow_state["otp_retry_count"] = session.workflow_state.get("otp_retry_count", 0) + 1
                 
-                session.workflow_type = "registration"
+                WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="registration_service")
                 
                 message = f"An OTP has been sent to your email: {email}.\nPlease enter this OTP to complete your registration."
                 if self.session_manager:
@@ -532,7 +533,7 @@ class RegistrationService:
                                                session: ConversationSession) -> Dict[str, Any]:
         """Handle OTP validation for registration."""
         try:
-            session.workflow_type = "registration"
+            WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="registration_service")
             
             otp_email = session.workflow_state.get("otp_email")
             retry_count = session.workflow_state.get("otp_retry_count", 0)
@@ -573,8 +574,7 @@ class RegistrationService:
                         
                         if domain_result.get("approved"):
                             success_message = (
-                                "Registration successful—thank you! How can I help you today? "
-                                "Want to raise an RFQ or any other support?"
+                                "Registration successful—thank you!"
                             )
                         else:
                             success_message = (

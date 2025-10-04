@@ -15,17 +15,19 @@ import logging
 from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime
 from app.schemas.user import User
-from app.models import ConversationSession, UserType
+from app.models import ConversationSession, UserType, WorkflowType
 from app.services.whatsapp_service import WhatsAppService
 from app.services.openai_service import OpenAIService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.authentication_helpers import AuthenticationHelpers
+from app.services.workflow_manager import WorkflowManager
 from app.utils.datetime_utils import utc_now
 from app.redis_db import get_auth_redis_service
 from app.schemas.user import User
 from app.procucev_apis.auth_apis import AuthAPIService
 from app.procucev_apis.register_apis import RegisterAPIService
 from app.services.support_notification_service import SupportNotificationService
+from app.services.user_cache_service import get_user_cache_service
 
 logger = logging.getLogger(__name__)
 
@@ -44,20 +46,23 @@ class AuthenticationService:
         self.auth_api_service = AuthAPIService()
         self.register_api_service = RegisterAPIService()
         self.support_notification_service = SupportNotificationService()
+        self.user_cache_service = get_user_cache_service()
         self.session_manager = session_manager  # Will be injected from ChatService
     
     async def validate_token(self, user_phone: str) -> Optional[User]:
         """Validate user token from Redis auth storage and refresh on activity."""
         try:
-            logger.info("user token validation called")
-            user_data = await self.auth_redis_service.retrieve(user_phone)
+            # Normalize phone number (remove + prefix for consistent Redis keys)
+            normalized_phone = user_phone.lstrip('+')
+            logger.info(f"user token validation called for {normalized_phone}")
+            user_data = await self.auth_redis_service.retrieve(normalized_phone)
             if user_data:
                 # Token automatically refreshed in retrieve method
-                logger.info(f"Token validated and refreshed for user {user_phone}")
+                logger.info(f"Token validated and refreshed for user {normalized_phone}")
                 return user_data
-            
+
             # Token expired or not found - send welcome message
-            logger.info(f"Token expired for user {user_phone}, sending welcome message")
+            logger.info(f"Token expired for user {normalized_phone}, sending welcome message")
 
             return False
         except Exception as e:
@@ -67,48 +72,83 @@ class AuthenticationService:
     async def store_user_session(self, user_phone: str, user_details: User) -> bool:
         """Store user session data in Redis."""
         try:
+            # Normalize phone number (remove + prefix for consistent Redis keys)
+            normalized_phone = user_phone.lstrip('+')
             session_data = user_details.dict()
             session_data["authenticated_at"] = datetime.now().isoformat()
+
             # Token expires after 1 hour of inactivity
-            success = await self.auth_redis_service.store(user_phone, session_data, expiry_seconds=3600)  # 1 hour
-            
+            success = await self.auth_redis_service.store(normalized_phone, session_data, expiry_seconds=3600)  # 1 hour
+
             if success:
-                logger.info(f"Session stored successfully for user {user_phone} (ID: {user_details.id})")
+                logger.info(f"Session stored successfully for user {normalized_phone} (ID: {user_details.id})")
+                # Refresh cache expiry to match session expiry
+                await self.user_cache_service.refresh_cache_expiry(normalized_phone, 3600)
             else:
-                logger.error(f"Failed to store session in Redis for user {user_phone}")
-            
+                logger.error(f"Failed to store session in Redis for user {normalized_phone}")
+
             return success
         except Exception as e:
             logger.error(f"Session storage error for {user_phone}: {e}")
             return False
     
     async def clear_user_token(self, user_phone: str) -> bool:
-        """Clear user token/session from Redis."""
+        """Clear user token/session and cached user data from Redis."""
         try:
-            success = await self.auth_redis_service.delete_auth(user_phone)
-            if success:
-                logger.info(f"User token cleared successfully for {user_phone}")
+            # Normalize phone number (remove + prefix for consistent Redis keys)
+            normalized_phone = user_phone.lstrip('+')
+
+            # Clear auth token
+            auth_success = await self.auth_redis_service.delete_auth(normalized_phone)
+
+            # Clear cached user data (user_cache_service normalizes internally)
+            cache_success = await self.user_cache_service.clear_user_data(user_phone)
+
+            if auth_success:
+                logger.info(f"User token cleared successfully for {normalized_phone}")
             else:
-                logger.warning(f"Failed to clear token for {user_phone} or token not found")
-            return success
+                logger.warning(f"Failed to clear token for {normalized_phone} or token not found")
+
+            if cache_success:
+                logger.info(f"User cache cleared successfully for {normalized_phone}")
+
+            return auth_success  # Return auth token success as primary indicator
+
         except Exception as e:
             logger.error(f"Token clearing error for {user_phone}: {e}")
             return False
     
-    async def user_authenticate(self, user_phone: str, message: str, 
+    async def user_authenticate(self, user_phone: str, message: str,
                               session: ConversationSession, intent: str = None) -> Dict[str, Any]:
         """Handles token validation failure and routes to user authentication flow."""
         try:
             logger.info(f"Authenticating user {user_phone} with intent: {intent}")
+
+            # First check if we have cached user data
+            cached_data = await self.user_cache_service.get_user_data(user_phone)
+            if cached_data:
+                logger.info(f"Using cached user data for {user_phone}")
+                return {
+                    "success": True,
+                    "response": cached_data,
+                    "is_registered": True,
+                    "detected_intent": intent,
+                    "from_cache": True
+                }
+
+            # If no cache, make API call
             auth_response = await self.auth_api_service.authenticate_user(user_phone)
             logger.info(f"Auth API service response: {auth_response}")
 
             if auth_response.get("success"):
-                raw_response = auth_response.get("data", [])                
+                raw_response = auth_response.get("data", [])
                 if raw_response:
+                    # Cache the raw API response for future use
+                    await self.user_cache_service.store_user_data(user_phone, raw_response)
+
                     return {
-                        "success": True, 
-                        "response": raw_response, 
+                        "success": True,
+                        "response": raw_response,
                         "is_registered": auth_response.get("is_registered", True),
                         "detected_intent": intent
                     }
@@ -529,32 +569,43 @@ Return only the selected email address or "none" if no clear selection.
             # Find user details for selected email
             selected_user = None
             for user in filtered_users:
-                if user.get("email") == selected_email:
+                # Check both 'email' and 'username' fields as API uses 'username' for email
+                user_email = user.get("email") or user.get("username")
+                if user_email == selected_email:
                     selected_user = user
                     break
-            
+
             if not selected_user:
+                logger.error(f"User not found for email {selected_email} in filtered_users: {[u.get('email') or u.get('username') for u in filtered_users]}")
                 return {"status": "redirect_to_support", "reason": "user_not_found"}
             
-            user_type = "buyer" if selected_user.get("self_client") else "seller"
-            logger.info(f"Processing email {selected_email} for user_type: {user_type}")
+            # Check both 'self_client' and 'selfClient' field names for compatibility
+            is_self_client = selected_user.get("self_client") or selected_user.get("selfClient")
+            user_type = "buyer" if is_self_client else "seller"
+            logger.info(f"Processing email {selected_email} for user_type: {user_type} (selfClient={is_self_client})")
             
             if user_type == "buyer":
                 # Buyers: Store token session and redirect to main flow
                 session_stored = await self.store_user_session_with_email(user_phone, filtered_users, selected_email)
-                
+
                 if session_stored:
                     logger.info(f"User session stored successfully for buyer {user_phone}")
                 else:
                     logger.error(f"Failed to store user session for buyer {user_phone}")
-                
-                username = selected_user.get("name", "User")
+
+                # Get username from fullName or fallback to firstName or generic "there"
+                username = selected_user.get("fullName") or selected_user.get("name") or selected_user.get("firstName") or "there"
                 message = f"Hi {username}!"
                 await self.whatsapp_service.send_message(user_phone, message)
-                
+
                 # Preserve original message from workflow state for processing after authentication
                 original_message = session.workflow_state.get("original_message") if session.workflow_state else None
-                
+
+                # Clear authentication workflow state after successful authentication
+                session.workflow_type = None
+                session.workflow_state = {}
+                logger.info(f"Cleared authentication workflow state for buyer {user_phone}")
+
                 return {
                     "status": "authentication_completed",
                     "user_type": "buyer",
@@ -563,11 +614,13 @@ Return only the selected email address or "none" if no clear selection.
                 }
             elif user_type == "seller":
                 # Sellers: Redirect to email OTP validation
+                WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="authentication_service")
                 session.workflow_state["authentication_stage"] = "email_otp"
                 session.workflow_state["otp_email"] = selected_email
                 session.workflow_state["otp_retry_count"] = 0
                 session.workflow_state["selected_user"] = selected_user
-                
+                session.workflow_state["filtered_users"] = filtered_users
+
                 # Send OTP immediately
                 return await self._send_otp(user_phone, session, selected_email)
             else:
@@ -592,20 +645,20 @@ Return only the selected email address or "none" if no clear selection.
         """Store user session with selected email using filtered user data."""
         try:
             user_details = self.create_user_details_from_email(filtered_users, selected_email)
-            
+
             if not user_details:
                 logger.error(f"Could not create user details for email {selected_email}")
                 return False
-            
+
             success = await self.store_user_session(user_phone, user_details)
-            
+
             if success:
                 logger.info(f"Successfully stored session for {user_phone} with email {selected_email}")
             else:
                 logger.error(f"Failed to store session for {user_phone} with email {selected_email}")
-            
+
             return success
-            
+
         except Exception as e:
             logger.error(f"Session storage error: {e}")
             return False
@@ -710,15 +763,20 @@ Return only the selected email address or "none" if no clear selection.
             if validation_response.get("statusCode") == "1001" or validation_response.get("status") == "Success":
                 # OTP valid - store session and complete authentication
                 session_stored = await self.store_user_session_with_email(user_phone, filtered_users, email)
-                
+
                 if session_stored:
                     logger.info(f"User session stored successfully for seller {user_phone} after OTP validation")
                 else:
                     logger.error(f"Failed to store user session for seller {user_phone} after OTP validation")
-                
+
                 message = "Email verified successfully! You can now proceed with your requests."
                 await self.whatsapp_service.send_message(user_phone, message)
-                
+
+                # Clear authentication workflow state after successful authentication
+                session.workflow_type = None
+                session.workflow_state = {}
+                logger.info(f"Cleared authentication workflow state for seller {user_phone}")
+
                 return {
                     "status": "authentication_completed",
                     "user_type": "seller",

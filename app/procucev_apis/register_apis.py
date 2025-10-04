@@ -10,7 +10,6 @@ from typing import Dict, Any
 from datetime import datetime
 
 from app.procucev_apis.procucev_api_client import ProcucevAPIClient
-from app.utils.procucev_api_logger import log_procucev_api_call
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,6 @@ class RegisterAPIService:
     def __init__(self):
         self.api_client = ProcucevAPIClient()
         
-    @log_procucev_api_call("register_seller")
     async def register_seller(self, seller_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Register a new seller with the GMT Procucev system.
@@ -48,7 +46,8 @@ class RegisterAPIService:
             
             response = await self.api_client.post(
                 endpoint=seller_url,
-                json_data=payload
+                json_data=payload,
+                api_title="register_seller"
             )
 
             if response["status"] == "Success" and response['statusCode'] == 200:
@@ -81,7 +80,6 @@ class RegisterAPIService:
                 "type": None
             }
             
-    @log_procucev_api_call("register_buyer")
     async def register_buyer(self, buyer_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Register a new buyer with the GMT Procucev system.
@@ -102,7 +100,8 @@ class RegisterAPIService:
             
             response = await self.api_client.post(
                 endpoint=buyer_url,
-                json_data=payload
+                json_data=payload,
+                api_title="register_buyer"
             )
 
             if response["status"] == "Success" and response['statusCode'] == 200:
@@ -135,7 +134,6 @@ class RegisterAPIService:
                 "type": None
             }
      
-    @log_procucev_api_call("send_otp")
     async def send_otp(self, username: str, phone_number: str = None) -> Dict[str, Any]:
         """
         Send OTP to the provided username for verification.
@@ -150,8 +148,9 @@ class RegisterAPIService:
             
             response = await self.api_client.post(
                 endpoint=sendOTP_url,
-                json_data=payload ,
-                require_auth=True
+                json_data=payload,
+                require_auth=True,
+                api_title="send_otp"
             )
             
             # Check success based on status field
@@ -185,7 +184,6 @@ class RegisterAPIService:
                 "type": None
             }
     
-    @log_procucev_api_call("validate_otp")
     async def validate_otp(self, username: str, otp: str, phone_number: str = None) -> Dict[str, Any]:
         """
         Validate OTP for the provided username.
@@ -202,7 +200,8 @@ class RegisterAPIService:
             response = await self.api_client.post(
                 endpoint=validateOTP_url,
                 json_data=payload,
-                require_auth=True
+                require_auth=True,
+                api_title="validate_otp"
             )
             
             # Check success based on status field
@@ -236,7 +235,6 @@ class RegisterAPIService:
                 "type": None
             }
 
-    @log_procucev_api_call("user_approval")
     async def user_approval(self, user_id: str) -> Dict[str, Any]:
         try:
             user_approval_url = "/rest/gmt/acceptSelfRegisterClient"
@@ -247,7 +245,8 @@ class RegisterAPIService:
             response = await self.api_client.post(
                 endpoint=user_approval_url,
                 json_data=payload,
-                require_auth=True
+                require_auth=True,
+                api_title="user_approval"
             )
             
             if response["status"] == "Success" and response['statusCode'] == 200:

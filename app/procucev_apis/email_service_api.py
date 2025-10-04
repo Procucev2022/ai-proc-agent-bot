@@ -10,7 +10,6 @@ from typing import Dict, Any, List
 from datetime import datetime
 
 from app.procucev_apis.procucev_api_client import ProcucevAPIClient
-from app.utils.procucev_api_logger import log_procucev_api_call
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,6 @@ class EmailServiceAPI:
     def __init__(self):
         self.api_client = ProcucevAPIClient()
         
-    @log_procucev_api_call("send_email")
     async def send_email(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Send email notification through GMT Procucev email service.
@@ -57,7 +55,8 @@ class EmailServiceAPI:
             response = await self.api_client.post(
                 endpoint=email_url,
                 json_data=payload,
-                require_auth=True
+                require_auth=True,
+                api_title="send_email"
             )
             logger.info(f"GMT API response: {response.get('success')}")
             
