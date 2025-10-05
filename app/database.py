@@ -413,8 +413,9 @@ class DatabaseManager:
         ).all()
         
         # Update expired sessions to timeout outcome
+        from app.models import ConversationOutcome
         for session in expired_sessions:
-            session.outcome = 'timeout'
+            session.outcome = ConversationOutcome.timeout
             session.completed_at = utc_now().replace(tzinfo=None)
             # Clear workflow state to free up space
             session.workflow_state = {"extracted_entities": {}}

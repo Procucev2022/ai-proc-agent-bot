@@ -66,6 +66,7 @@ class SessionManagementService:
     def dict_to_session(self, session_dict: dict) -> ConversationSession:
         """Convert dict from Redis back to ConversationSession object."""
         from datetime import datetime
+        from app.models import ConversationOutcome, UserType, SessionState
 
         def parse_datetime(value):
             if isinstance(value, str):
@@ -80,6 +81,23 @@ class SessionManagementService:
             return value
 
         session_dict_parsed = {k: parse_datetime(v) for k, v in session_dict.items()}
+
+        # Convert enum fields from string back to enum objects
+        enum_fields = {
+            'workflow_type': WorkflowType,
+            'outcome': ConversationOutcome,
+            'user_type': UserType,
+            'session_state': SessionState
+        }
+
+        for field_name, enum_class in enum_fields.items():
+            if field_name in session_dict_parsed and session_dict_parsed[field_name] is not None:
+                if isinstance(session_dict_parsed[field_name], str):
+                    try:
+                        session_dict_parsed[field_name] = enum_class(session_dict_parsed[field_name])
+                    except ValueError:
+                        logger.warning(f"Invalid {field_name} value: {session_dict_parsed[field_name]}, setting to None")
+                        session_dict_parsed[field_name] = None
 
         try:
             return ConversationSession(**session_dict_parsed)

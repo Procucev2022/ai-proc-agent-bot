@@ -1054,8 +1054,8 @@ class ChatService:
 
                 completion_response = self.openai_service.generate_completion_response(rfq_data, context)
                 await self.session_manager.send_and_track_message(user.phone_number, completion_response, session)
-                
-                session.outcome = 'completed'
+
+                session.outcome = ConversationOutcome.completed
                 session.completed_at = utc_now().replace(tzinfo=None)
 
                 # Generate enhanced session summary (non-blocking)

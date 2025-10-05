@@ -89,8 +89,9 @@ class ExitService:
                 return True
 
             # Clear all session state
+            from app.models import ConversationOutcome
             session.workflow_type = None
-            session.outcome = "abandoned"
+            session.outcome = ConversationOutcome.abandoned
             exit_timestamp = session.workflow_state.get("last_activity_at") if session.workflow_state else None
             session.workflow_state = {
                 "exit_completed": True,
