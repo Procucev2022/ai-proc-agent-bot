@@ -230,7 +230,18 @@ class OpenAIService:
                 input_messages = [{"role": "user", "content": "User sent an image attachment"}]
                 logger.info("Converted image content to text description for intent classification")
             else:
-                input_messages = [{"role": "user", "content": message}]
+                # Ensure message is a string, not an object
+                if isinstance(message, dict):
+                    # Extract text from content object
+                    message_text = message.get('text', str(message))
+                elif isinstance(message, list):
+                    # Extract text from array of content objects
+                    text_parts = [m.get('text', '') for m in message if isinstance(m, dict)]
+                    message_text = ' '.join(text_parts) if text_parts else str(message)
+                else:
+                    message_text = str(message)
+
+                input_messages = [{"role": "user", "content": message_text}]
             
             # Build comprehensive context information for the prompt
             context_info = ""
@@ -238,7 +249,20 @@ class OpenAIService:
                 # Add conversation history
                 if context.get('conversation_history', {}).get('openai_messages'):
                     recent_messages = context['conversation_history']['openai_messages'][-5:]  # Last 5 messages for context
-                    history_text = "\n".join([f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" for msg in recent_messages])
+                    # Safely extract text content from messages (handle both string and object content)
+                    history_parts = []
+                    for msg in recent_messages:
+                        role = msg.get('role', 'unknown')
+                        content = msg.get('content', '')
+                        # If content is an object or array, extract text
+                        if isinstance(content, dict):
+                            content = content.get('text', '[non-text content]')
+                        elif isinstance(content, list):
+                            # Extract text from array of content objects
+                            text_parts = [c.get('text', '') for c in content if isinstance(c, dict) and c.get('type') == 'text']
+                            content = ' '.join(text_parts) if text_parts else '[multimodal content]'
+                        history_parts.append(f"{role}: {content}")
+                    history_text = "\n".join(history_parts)
                     context_info += f"\n\nRECENT CONVERSATION HISTORY:\n{history_text}"
                 
                 # Add current session state
