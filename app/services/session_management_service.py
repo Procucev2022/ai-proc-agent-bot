@@ -135,7 +135,7 @@ class SessionManagementService:
                 'workflow_state': {"extracted_entities": [], "last_activity_at": utc_now().isoformat()},
                 'conversation_history': {"messages": []},
                 'extracted_entities': {},
-                'retention_date': date.today() + timedelta(days=30)
+                'retention_date': (date.today() + timedelta(days=30)).isoformat()
             }
             
             # Save in DB + Redis
@@ -164,7 +164,7 @@ class SessionManagementService:
             },
             'conversation_history': {"messages": []},
             'extracted_entities': {},
-            'retention_date': date.today() + timedelta(days=30)
+            'retention_date': (date.today() + timedelta(days=30)).isoformat()
         }
         
          # Save in DB + Redis
