@@ -7,7 +7,8 @@ and session lifecycle operations. Extracted from ChatService to reduce complexit
 
 import logging
 import asyncio
-from typing import Dict, Any, Optional
+import inspect
+from typing import Dict, Any, Optional, Union
 from datetime import date, timedelta
 from app.models import User, ConversationSession, WorkflowType
 from app.database import DatabaseManager
@@ -16,7 +17,7 @@ from app.services.helpers.summarization_helpers import SummarizationHelpers
 from app.services.chat_summary_service import ChatSummaryService
 from app.services.daily_summary_service import DailySummaryService
 from app.services.whatsapp_service import WhatsAppService
-from app.services.workflow_manager import WorkflowManager, WorkflowStage, PendingFlag
+from app.services.workflow_manager import WorkflowManager
 from app.redis_db import get_redis_service
 from app.utils.datetime_utils import utc_now
 
@@ -34,6 +35,64 @@ class SessionManagementService:
         self.daily_summary_service = daily_summary_service
         self.redis = get_redis_service()
         self.workflow_manager = WorkflowManager()
+    
+    def session_to_dict(self, session_obj) -> dict:
+        """Convert session object to clean JSON-serializable dict for Redis."""
+        from datetime import datetime, date
+
+        def convert_value(v):
+            if isinstance(v, (datetime, date)):
+                return v.isoformat()
+            elif hasattr(v, 'value'):  # Enum object
+                return v.value
+            elif isinstance(v, dict):
+                return {k: convert_value(val) for k, val in v.items()}
+            elif isinstance(v, list):
+                return [convert_value(i) for i in v]
+            else:
+                return v
+
+        if hasattr(session_obj, '__dict__'):
+            # SQLAlchemy object
+            return {k: convert_value(v) for k, v in session_obj.__dict__.items() if not k.startswith('_sa_')}
+        elif hasattr(session_obj, 'dict'):
+            # Pydantic object
+            return {k: convert_value(v) for k, v in session_obj.dict().items()}
+        elif isinstance(session_obj, dict):
+            return {k: convert_value(v) for k, v in session_obj.items()}
+        else:
+            return convert_value(session_obj)
+    
+    def dict_to_session(self, session_dict: dict) -> ConversationSession:
+        """Convert dict from Redis back to ConversationSession object."""
+        from datetime import datetime
+
+        def parse_datetime(value):
+            if isinstance(value, str):
+                try:
+                    return datetime.fromisoformat(value)
+                except ValueError:
+                    return value
+            elif isinstance(value, dict):
+                return {k: parse_datetime(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [parse_datetime(i) for i in value]
+            return value
+
+        session_dict_parsed = {k: parse_datetime(v) for k, v in session_dict.items()}
+
+        try:
+            return ConversationSession(**session_dict_parsed)
+        except Exception as e:
+            logger.warning(f"Failed to convert dict to ConversationSession: {e}")
+            # Fallback minimal schema
+            return ConversationSession(
+                session_id=session_dict.get('session_id', ''),
+                external_user_id=session_dict.get('external_user_id', ''),
+                workflow_state=session_dict.get('workflow_state', {}),
+                conversation_history=session_dict.get('conversation_history', {})
+            )
+
     
     async def get_or_create_user(self, phone_number: str) -> User:
         """Get existing user or create new one."""
@@ -54,18 +113,18 @@ class SessionManagementService:
         session_id = SessionHelpers.generate_session_id(phone_number, "daily")
         
         # 1. Try Redis first
-        session = await self.redis.get(session_id, as_json=True)
+        redis_key = f"session:{session_id}"
+        session_dict = await self.redis.get(redis_key, as_json=True)
+        session = self.dict_to_session(session_dict) if session_dict else None
 
         # 2. If not in Redis, check DB
         if not session:
             session = self.db_manager.get_conversation_session(session_id)
 
-            # 3. If found in DB, cache it into Redis with TTL
+            # 3. If found in DB, cache it into Redis
             if session:
-                # Ensure workflow state is initialized for existing sessions
-                self.workflow_manager.initialize_workflow_state(session)
-                await self.redis.set(session_id, session )  # 1 hour TTL
-        
+                await self.redis.set(redis_key, self.session_to_dict(session))
+
         if not session:
             # Create new session
             session_data = {
@@ -81,19 +140,10 @@ class SessionManagementService:
             
             # Save in DB + Redis
             session = self.db_manager.save_conversation_session(session_data)
-            
-            # Initialize workflow state using WorkflowManager
-            self.workflow_manager.initialize_workflow_state(session)
-            
-            await self.redis.set(session_id, session)  # 1 hour TTL
+            await self.redis.set(f"session:{session_id}", self.session_to_dict(session))
             
             logger.info(f"Created new session: {session_id}")
         else:
-            # Ensure workflow state is initialized for Redis sessions
-            self.workflow_manager.initialize_workflow_state(session)
-            
-            # Refresh TTL on access
-            await self.redis.expire(session_id)
             logger.info(f"Found existing session: {session_id}")
         
         return session
@@ -102,24 +152,15 @@ class SessionManagementService:
         """Create a new session with specified workflow type and user type."""
         session_id = SessionHelpers.generate_session_id(phone_number, "daily")
         
-        # Convert workflow_type to enum if provided
-        workflow_enum = None
-        if workflow_type:
-            try:
-                workflow_enum = WorkflowType(workflow_type) if isinstance(workflow_type, str) else workflow_type
-            except (ValueError, KeyError):
-                logger.warning(f"Invalid workflow_type: {workflow_type}")
-        
         session_data = {
             'session_id': session_id,
             'external_user_id': phone_number,
-            'workflow_type': workflow_enum,
+            'workflow_type': workflow_type,
             'outcome': None,
             'workflow_state': {
                 "extracted_entities": [], 
                 "last_activity_at": utc_now().isoformat(),
-                "user_type": user_type,
-                "stage": WorkflowStage.COLLECTING.value
+                "user_type": user_type
             },
             'conversation_history': {"messages": []},
             'extracted_entities': {},
@@ -128,13 +169,8 @@ class SessionManagementService:
         
          # Save in DB + Redis
         session = self.db_manager.save_conversation_session(session_data)
-        
-        # Initialize workflow state using WorkflowManager
-        self.workflow_manager.initialize_workflow_state(session)
-        if workflow_enum:
-            self.workflow_manager.set_workflow_type(session, workflow_enum, caller="create_session")
-        
-        await self.redis.set(session_id, session)  # 1 hour TTL
+        await self.redis.set(f"session:{session_id}", self.session_to_dict(session))
+
         logger.info(f"Created new session: {session_id} with workflow: {workflow_type}, user_type: {user_type}")
         
         return session
@@ -149,21 +185,20 @@ class SessionManagementService:
                     user_phone,
                     "Welcome Back!"
                 )
-
                 
                 # Generate enhanced session summary for timeout (non-blocking)
                 await self._handle_session_completion_enhanced(session)
             
             # Handle session expiry properly
             session = await SessionHelpers.handle_session_expiry(session, self.db_manager)
+
             # Save final state to DB and clear from Redis
             await self.save_session_to_db_and_clear_redis(session)
+            
         else:
-            # Session is active, renew its activity timestamp and refresh TTL
+            # Session is active, renew its activity timestamp
             session = await SessionHelpers.renew_session_activity(session)
             await self.save_session_redis_only(session)
-            # Refresh TTL on user activity
-            await self.redis.expire(session.session_id)
         
         return session
     
@@ -195,7 +230,7 @@ class SessionManagementService:
     async def save_session_redis_only(self, session: ConversationSession) -> ConversationSession:
         """Save updated session to Redis only (for active conversations)."""
         try:
-            await self.redis.set(session.session_id, session)  # Refresh TTL
+            await self.redis.set(f"session:{session.session_id}", self.session_to_dict(session))  # Refresh TTL
             return session
         except Exception as e:
             logger.error(f"Error saving session to Redis: {e}")
@@ -213,17 +248,17 @@ class SessionManagementService:
                 'workflow_type': session.workflow_type,
                 'outcome': session.outcome.value if hasattr(session.outcome, 'value') else session.outcome,
                 'workflow_state': clean_workflow_state,
-                'conversation_history': session.conversation_history,
-                'extracted_entities': session.extracted_entities,
-                'retention_date': session.retention_date,
-                'last_activity_at': session.last_activity_at
+                'conversation_history': self._clean_for_json_serialization(session.conversation_history),
+                'extracted_entities': self._clean_for_json_serialization(session.extracted_entities),
+                'retention_date': self._clean_for_json_serialization(session.retention_date),
+                'last_activity_at': self._clean_for_json_serialization(session.last_activity_at)
             }
             
             # Save to DB
             saved_session = self.db_manager.save_conversation_session(session_data)
             
             # Clear from Redis
-            await self.redis.delete(session.session_id)
+            await self.redis.delete(f"session:{session.session_id}")
             
             logger.info(f"Saved session {session.session_id} to DB and cleared from Redis")
             return saved_session
@@ -231,82 +266,68 @@ class SessionManagementService:
             logger.error(f"Error saving session to DB: {e}")
             return session
     
-    async def save_session(self, session: ConversationSession, workflow_type: str) -> ConversationSession:
-        """Save updated session to database (legacy method for compatibility)."""
-        # Update workflow_type using WorkflowManager if provided
-        if workflow_type:
-            try:
-                # Convert string to enum if needed
-                if isinstance(workflow_type, str):
-                    workflow_enum = WorkflowType(workflow_type)
-                else:
-                    workflow_enum = workflow_type
-                
-                # Use WorkflowManager for safe transition
-                self.workflow_manager.set_workflow_type(session, workflow_enum, caller="save_session")
-            except (ValueError, KeyError):
-                logger.warning(f"Invalid workflow_type: {workflow_type}")
-        
-        return await self.save_session_redis_only(session)
-    
-    async def complete_session(self, session: ConversationSession, outcome: str = 'completed') -> ConversationSession:
-        """Complete session and save final state to DB, clear from Redis."""
-        try:
-            # Set completion details
-            session.outcome = outcome
-            session.completed_at = utc_now().replace(tzinfo=None)
-            
-            # Save final state to DB and clear from Redis
-            saved_session = await self.save_session_to_db_and_clear_redis(session)
-            
-            logger.info(f"Completed session {session.session_id} with outcome: {outcome}")
-            return saved_session
-        except Exception as e:
-            logger.error(f"Error completing session {session.session_id}: {e}")
-            return session
+    async def save_session(self, session: ConversationSession,
+                          workflow_type: Optional[Union[WorkflowType, str]] = None) -> ConversationSession:
+        """
+        Save updated session to database.
 
-    # ===== WORKFLOW MANAGEMENT METHODS =====
-    
-    def set_workflow_type(self, session: ConversationSession, workflow_type: WorkflowType) -> bool:
-        """Set workflow type using WorkflowManager."""
-        return self.workflow_manager.set_workflow_type(session, workflow_type, caller="session_management")
-    
-    def get_workflow_type(self, session: ConversationSession) -> Optional[WorkflowType]:
-        """Get workflow type using WorkflowManager."""
-        return self.workflow_manager.get_workflow_type(session)
-    
-    def transition_workflow(self, session: ConversationSession, new_type: WorkflowType, 
-                          new_stage: Optional[WorkflowStage] = None, validate: bool = True) -> bool:
-        """Transition workflow using WorkflowManager."""
-        return self.workflow_manager.transition_workflow(session, new_type, new_stage, validate, caller="session_management")
-    
-    def set_workflow_stage(self, session: ConversationSession, stage: WorkflowStage) -> None:
-        """Set workflow stage using WorkflowManager."""
-        self.workflow_manager.set_stage(session, stage, caller="session_management")
-    
-    def get_workflow_stage(self, session: ConversationSession) -> Optional[WorkflowStage]:
-        """Get workflow stage using WorkflowManager."""
-        return self.workflow_manager.get_stage(session)
-    
-    def set_pending_flag(self, session: ConversationSession, flag: PendingFlag, value: Any = True) -> None:
-        """Set pending flag using WorkflowManager."""
-        self.workflow_manager.set_pending(session, flag, value, caller="session_management")
-    
-    def clear_pending_flags(self, session: ConversationSession, *flags: PendingFlag) -> None:
-        """Clear pending flags using WorkflowManager."""
-        self.workflow_manager.clear_pending(session, *flags, caller="session_management")
-    
-    def has_pending_flag(self, session: ConversationSession, flag: PendingFlag) -> bool:
-        """Check if pending flag is set using WorkflowManager."""
-        return self.workflow_manager.has_pending(session, flag)
-    
-    def has_any_pending_confirmation(self, session: ConversationSession) -> bool:
-        """Check if any RFQ confirmation is pending using WorkflowManager."""
-        return self.workflow_manager.has_any_pending_confirmation(session)
-    
-    def clear_all_rfq_pending(self, session: ConversationSession) -> None:
-        """Clear all RFQ-related pending flags using WorkflowManager."""
-        self.workflow_manager.clear_all_rfq_pending(session, caller="session_management")
+        Args:
+            session: Conversation session to save
+            workflow_type: Workflow type (MUST be WorkflowType enum, strings deprecated)
+
+        Returns:
+            Updated conversation session
+        """
+        try:
+            # Initialize workflow_state if needed
+            WorkflowManager.initialize_workflow_state(session)
+
+            # Handle workflow_type - prefer enum, but support string during migration
+            if workflow_type:
+                if isinstance(workflow_type, WorkflowType):
+                    # Preferred: Enum passed
+                    workflow_value = workflow_type.value
+                elif isinstance(workflow_type, str):
+                    # Deprecated: String passed - convert to enum and warn
+                    logger.warning(f"[DEPRECATED] save_session called with string workflow_type: '{workflow_type}'. "
+                                 f"Use WorkflowType enum instead. Caller: {inspect.stack()[1].function}")
+                    try:
+                        workflow_enum = WorkflowType(workflow_type)
+                        workflow_value = workflow_enum.value
+                    except (ValueError, KeyError):
+                        logger.error(f"[SESSION_SAVE_ERROR] Invalid workflow_type string: '{workflow_type}'. "
+                                   f"Defaulting to general_inquiry.")
+                        workflow_value = WorkflowType.general_inquiry.value
+                else:
+                    logger.error(f"[SESSION_SAVE_ERROR] workflow_type is neither enum nor string: {type(workflow_type)}")
+                    workflow_value = WorkflowType.general_inquiry.value
+            else:
+                # No workflow_type passed - use current from session
+                current_workflow = WorkflowManager.get_workflow_type(session)
+                workflow_value = (
+                    current_workflow.value
+                    if current_workflow
+                    else WorkflowType.general_inquiry.value
+                )
+
+            # Clean workflow_state to ensure JSON serialization
+            clean_workflow_state = self._clean_for_json_serialization(session.workflow_state) if session.workflow_state else {}
+
+            session_data = {
+                'session_id': session.session_id,
+                'external_user_id': session.external_user_id,
+                'workflow_type': workflow_value,
+                'outcome': session.outcome.value if session.outcome and hasattr(session.outcome, 'value') else session.outcome,
+                'workflow_state': clean_workflow_state,
+                'conversation_history': session.conversation_history,
+                'extracted_entities': session.extracted_entities,
+                'retention_date': session.retention_date,
+                'last_activity_at': session.last_activity_at
+            }
+            return  await self.save_session_redis_only(session)
+        except Exception as e:
+            logger.error(f"Error saving session: {e}")
+            return session
 
     async def handle_session_completion_enhanced(self, session: ConversationSession) -> None:
         """
@@ -393,5 +414,3 @@ class SessionManagementService:
                 return obj
             except (TypeError, ValueError):
                 return str(obj)
-    
-   
