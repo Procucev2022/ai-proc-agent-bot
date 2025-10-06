@@ -102,7 +102,7 @@ class ProcucevAPIClient:
         try:
             payload = {
                 "username": self.username,
-                "phone": normalize_phone_number(self.phone)
+                "phone": f"+{normalize_phone_number(self.phone)}"
             }
             resp = await self.send_request("POST", auth_url, json_data=payload, require_auth=False)
             token = resp.get("access_token") or resp.get("token")
