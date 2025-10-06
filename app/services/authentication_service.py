@@ -304,10 +304,16 @@ class AuthenticationService:
                 if not intent_result:
                     intent_result = session.workflow_state.get("current_intent_result", {})
 
-                # If still no intent result, use a safe default instead of re-classifying
+                # If still no intent result, preserve the original intent from session if available
                 if not intent_result:
-                    logger.warning("No intent result available during email confirmation - using default")
-                    intent_result = {"intent": "general_inquiry", "confidence": 50}
+                    # Check if we have a stored intent result from the original message
+                    stored_intent = session.workflow_state.get("intent_result", {})
+                    if stored_intent and stored_intent.get("intent"):
+                        intent_result = stored_intent
+                        logger.info(f"Using stored intent result from session: {intent_result}")
+                    else:
+                        logger.warning("No intent result available during email confirmation - using default")
+                        intent_result = {"intent": "general_inquiry", "confidence": 50}
 
 
                 intent = intent_result.get('intent')
