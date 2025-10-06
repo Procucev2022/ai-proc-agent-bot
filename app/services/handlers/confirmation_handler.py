@@ -421,16 +421,13 @@ class ConfirmationHandler:
         if rfq_ids:
             # Single RFQ case (matches your example format)
             if successful_count == 1:
-                response = f"Your RFQ has been created successfully.\n\nRFQ ID: {rfq_ids[0]}\nUse this ID to track your request. Let me know if you need further assistance"
+                response = f"✅ RFQ created successfully!\n\nID: {rfq_ids[0]}\n(You can use this ID anytime to track your request.)\n\nWhat would you like to do next?\n• 📄 Raise a new RFQ\n• 🔍 Check previous RFQs\n• 💬 Get other support"
             # Multiple RFQs case
             else:
-                rfq_ids_text = "\n".join([f"RFQ ID: {rfq_id}" for rfq_id in rfq_ids])
-                response = f"Thank you! All {successful_count} RFQs have been created successfully.\n\n{rfq_ids_text}\n\nUse these reference numbers to track your requests."
+                rfq_ids_text = "\n".join([f"ID: {rfq_id}" for rfq_id in rfq_ids])
+                response = f"✅ All {successful_count} RFQs created successfully!\n\n{rfq_ids_text}\n(You can use these IDs anytime to track your requests.)\n\nWhat would you like to do next?\n• 📄 Raise a new RFQ\n• 🔍 Check previous RFQs\n• 💬 Get other support"
         else:
-            response = f"Thank you! All {successful_count} RFQs have been created successfully."
-
-        # Add closing message (optional)
-        response += "\n\nIf there is anything else I can assist you with, please let me know."
+            response = f"✅ All {successful_count} RFQs created successfully!\n\nWhat would you like to do next?\n• 📄 Raise a new RFQ\n• 🔍 Check previous RFQs\n• 💬 Get other support"
 
         await self.whatsapp_service.send_message(user.phone_number, response)
 

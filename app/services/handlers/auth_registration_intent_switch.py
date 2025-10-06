@@ -100,12 +100,16 @@ class AuthRegistrationIntentSwitch:
             "timestamp": utc_now().isoformat()
         }
         
+        # Generate dynamic message based on intent
+        intent_action = "sell items" if new_intent == "sell_something" else "buy items"
+        current_user_type = session.workflow_state.get("user_type", "buyer")
+        
         choice_message = (
-            f"I see you want to {new_combo}. "
-            f"This will stop your current {current_combo}.\n\n"
-            "1. Continue current process\n"
-            f"2. Switch to {new_combo}\n\n"
-            "Please choose 1 or 2:"
+            f"I see you want to {intent_action}, but you're currently logged in as a {current_user_type.title()}. To {intent_action.split()[0]}, you'll need to switch to a {user_type.title()} profile.\n"
+            f"1️⃣ Switch to existing {user_type.title()} account\n"
+            f"2️⃣ Register a new {user_type.title()} account\n"
+            f"3️⃣ Stay as {current_user_type.title()}\n"
+            "Reply with 1, 2, or 3 to proceed."
         )
         
         await self.whatsapp_service.send_message(user_phone, choice_message)
