@@ -24,6 +24,7 @@ from app.schemas.user import User
 from app.utils.datetime_utils import utc_now
 from app.redis_db import get_auth_redis_service
 from app.services.support_notification_service import SupportNotificationService
+from app.services.auth_reg_service import AuthRegService
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class RegistrationService:
         self.register_api_service = RegisterAPIService()
         self.auth_redis_service = get_auth_redis_service()
         self.support_notification_service = SupportNotificationService()
+        self.auth_reg_service = AuthRegService()
         self.session_manager = session_manager  # Will be injected from ChatService
     
     async def initiate_registration(self, user_phone: str, session: ConversationSession,
@@ -580,15 +582,24 @@ class RegistrationService:
                         logger.error(f"Failed to store user session for {user_type} {user_phone} after registration")
                     
                     if user_type == "buyer":
-                        # Buyers: Domain matching
-                        email = entities.get("email")
-                        domain_result = await self._check_domain_approval(email, entities)
-                        
-                        if domain_result.get("approved"):
-                            success_message = (
-                                "Registration successful—thank you!"
-                            )
+                        # Buyers: Domain check using API
+                        user_id = entities.get("user_id")  # Assuming user_id is available from registration response
+                        if user_id:
+                            domain_result = await self.auth_reg_service.user_domain_check(user_id)
+                            
+                            if domain_result.get("approved"):
+                                success_message = (
+                                    "Registration successful—thank you!"
+                                )
+                            else:
+                                success_message = (
+                                    "Registration successful—thank you! Our team will get in touch with you "
+                                    "shortly to complete your onboarding so that you can raise RFQs. "
+                                    "In the meantime please let us know if you want us to support you with anything else?"
+                                )
                         else:
+                            # Fallback if no user_id available
+                            domain_result = {"approved": False}
                             success_message = (
                                 "Registration successful—thank you! Our team will get in touch with you "
                                 "shortly to complete your onboarding so that you can raise RFQs. "
@@ -717,33 +728,7 @@ class RegistrationService:
             logger.error(f"Error storing user session after registration: {e}")
             return False
     
-    async def _check_domain_approval(self, email: str, entities: Dict) -> Dict[str, Any]:
-        """Check if email domain matches company for approval."""
-        try:
-            domain = email.split('@')[1] if '@' in email else ""
-            company_name = entities.get("company_name", "").lower()
-            
-            domain_parts = domain.lower().split('.')
-            company_parts = company_name.replace(" ", "").replace("-", "").replace("_", "")
-            
-            approved = any(part in company_parts for part in domain_parts if len(part) > 2)
-            
-            return {
-                "approved": approved,
-                "domain": domain,
-                "company_name": company_name,
-                "reason": "Domain match" if approved else "Domain mismatch"
-            }
-            
-        except Exception as e:
-            logger.error(f"Domain approval check error: {e}")
-            
-            # Send email notification to support team for domain approval check failure
-            await self.support_notification_service.notify_api_service_failure(
-                f"Domain approval check error for {email}: {str(e)}"
-            )
-            
-            return {"approved": False, "error": str(e)}
+
 
     async def _redirect_to_support(self, user_phone: str, issue_type: str, error_details: str, session: ConversationSession = None) -> Dict[str, Any]:
         """Redirect user to support team."""
