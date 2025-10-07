@@ -509,7 +509,16 @@ Analyze their response and return only:
                 # Clear pending switch state
                 del session.workflow_state["pending_role_switch"]
 
-                continue_message = f"Continuing with your current {current_role} account. How can I help you today?"
+                if current_role.lower() == "buyer":
+                    continue_message = (
+                        f"Alright, you're staying with your {current_role.title()} account.\n"
+                        f"What can I assist you with today?\n"
+                        f"• Raise a new RFQ\n"
+                        f"• Check your previous RFQs\n"
+                        f"• Any other support you need"
+                    )
+                else:
+                    continue_message = f"Continuing with your current {current_role} account. How can I help you today?"
                 await self.whatsapp_service.send_message(user.phone_number, continue_message)
 
                 return {
@@ -568,7 +577,16 @@ Analyze their response and return only:
                 # Clear pending switch state
                 del session.workflow_state["pending_role_switch"]
 
-                continue_message = f"Continuing with your current {current_role} account. How can I help you today?"
+                if current_role.lower() == "buyer":
+                    continue_message = (
+                        f"Alright, you're staying with your {current_role.title()} account.\n"
+                        f"What can I assist you with today?\n"
+                        f"• Raise a new RFQ\n"
+                        f"• Check your previous RFQs\n"
+                        f"• Any other support you need"
+                    )
+                else:
+                    continue_message = f"Continuing with your current {current_role} account. How can I help you today?"
                 await self.whatsapp_service.send_message(user.phone_number, continue_message)
 
                 return {
@@ -633,7 +651,16 @@ Analyze their response and return only:
                 # Clear pending switch state
                 del session.workflow_state["pending_account_switch"]
 
-                continue_message = f"Continuing with your current {current_role} account. How can I help you today?"
+                if current_role.lower() == "buyer":
+                    continue_message = (
+                        f"Alright, you're staying with your {current_role.title()} account.\n"
+                        f"What can I assist you with today?\n"
+                        f"• Raise a new RFQ\n"
+                        f"• Check your previous RFQs\n"
+                        f"• Any other support you need"
+                    )
+                else:
+                    continue_message = f"Continuing with your current {current_role} account. How can I help you today?"
                 await self.whatsapp_service.send_message(user.phone_number, continue_message)
 
                 return {
