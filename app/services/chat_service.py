@@ -2294,7 +2294,12 @@ class ChatService:
                 if self._is_auth_flow_response(current_message, current_intent):
                     logger.info(f"No meaningful message tracked and current message is auth flow response. Creating default general inquiry.")
                     # Return a default general inquiry since user completed auth/registration without meaningful business request
-                    default_message = "Hello, how can I help you today?"
+                    default_message = (
+                        "What can I assist you with today?\n"
+                        "• Raise a new RFQ\n"
+                        "• Check your previous RFQs\n"
+                        "• Any other support you need"
+                    )
                     default_intent_result = {
                         "intent": "general_inquiry",
                         "confidence": 75,
