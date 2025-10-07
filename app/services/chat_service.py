@@ -317,11 +317,30 @@ class ChatService:
                     user_type = auth_result.get("user_type")
 
                     if user_type == "seller":
-                        # For sellers, just complete authentication without processing further messages
-                        # Sellers will interact with RFQs on their own initiative
-                        logger.info(f"Seller authentication completed - skipping message processing")
-                        await self.session_manager.save_session(session, None)
-                        return {"status": "authentication_completed", "user_type": "seller"}
+                        # For sellers, process the meaningful message after authentication
+                        logger.info(f"Seller authentication completed - processing seller flow")
+                        
+                        # Restore meaningful message from cache if workflow_state was cleared
+                        cached_meaningful = await user_cache_service.get_meaningful_message(user_phone)
+
+                        if cached_meaningful and not session.workflow_state.get("last_meaningful_message"):
+                            session.workflow_state["last_meaningful_message"] = cached_meaningful["message"]
+                            session.workflow_state["last_meaningful_intent_result"] = cached_meaningful["intent_result"]
+                            logger.info(f"Restored meaningful message from cache after seller authentication: {cached_meaningful['message'][:50]}...")
+
+                            # Clear from cache since we've restored it
+                            await user_cache_service.clear_meaningful_message(user_phone)
+
+                        message_to_process, intent_to_process = self._get_meaningful_message_after_auth(
+                            session, message_content, message_intent_result
+                        )
+
+                        logger.info(f"Seller authentication completed - processing message: {message_to_process[:50]}...")
+                        user = await self.authentication_service.validate_token(user_phone)
+                        if user:
+                            return await self._process_text_message(user, session, message_to_process, intent_to_process)
+                        else:
+                            return {"status": "error", "error": "Session not found after seller authentication"}
 
                     # For buyers, process the meaningful message after authentication
                     # Restore meaningful message from cache if workflow_state was cleared
@@ -330,7 +349,7 @@ class ChatService:
                     if cached_meaningful and not session.workflow_state.get("last_meaningful_message"):
                         session.workflow_state["last_meaningful_message"] = cached_meaningful["message"]
                         session.workflow_state["last_meaningful_intent_result"] = cached_meaningful["intent_result"]
-                        logger.info(f"Restored meaningful message from cache after authentication: {cached_meaningful['message'][:50]}...")
+                        logger.info(f"Restored meaningful message from cache after buyer authentication: {cached_meaningful['message'][:50]}...")
 
                         # Clear from cache since we've restored it
                         await user_cache_service.clear_meaningful_message(user_phone)
@@ -339,7 +358,7 @@ class ChatService:
                         session, message_content, message_intent_result
                     )
 
-                    logger.info(f"Authentication completed - processing message: {message_to_process[:50]}...")
+                    logger.info(f"Buyer authentication completed - processing message: {message_to_process[:50]}...")
                     user = await self.authentication_service.validate_token(user_phone)
                     if user:
                         # Ensure user cache is populated after authentication
