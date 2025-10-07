@@ -107,21 +107,10 @@ class SellerAPIService:
                 require_auth=True,
                 api_title="send_rfq_email"
             )
-            
+
             # Mock successful response for now
-            if response.get('status_code') != 200:
-                result = {
-                    "success": True,
-                    "email_sent": True,
-                    "data": {
-                        "message": "RFQ email sent successfully",
-                        "rfqId": rfq_ids[0] if rfq_ids else "RFQ240502211103",
-                        "sellerEmail": seller_email,
-                        "sellerId": seller_id,
-                        "timestamp": "2025-08-24T12:30:45Z"
-                    }
-                }
-                return {"success": True, "email_sent": True, "data": result}
+            if response.get('status_code') == 200:
+                return {"success": True, "email_sent": True, "data": response}
             else:
                 return {"success": False, "error": response.get('message', 'Failed to send RFQ email')}
 
@@ -209,24 +198,11 @@ class SellerAPIService:
             )
             
             # Mock successful response for now
-            if response.get('status_code') != 200:
-                result = {
-                    "success": True,
-                    "payment_link": "https://rzp.io/i/subscription12345",
-                    "data": {
-                        "paymentLink": "https://rzp.io/i/subscription12345",
-                        "planId": plan_id,
-                        "sellerId": seller_id,
-                        "amount": 4999,
-                        "currency": "INR",
-                        "status": "created",
-                        "createdAt": "2025-08-24T13:20:15Z"
-                    }
-                }
+            if response.get('status_code') == 200:
                 return {
                     "success": True,
-                    "payment_link": result.get("paymentLink"),
-                    "data": result
+                    "payment_link": response.get("paymentLink"),
+                    "data": response
                 }
             else:
                 return {"success": False, "error": response.get('message', 'Failed to generate payment link')}
@@ -238,11 +214,10 @@ class SellerAPIService:
     async def fetch_seller_open_rfqs_for_reminder(self, seller_id: str) -> Dict[str, Any]:
         """Fetch open RFQs where seller has not submitted bids yet for end-of-flow reminder."""
         try:
-            endpoint = "/seller/open-rfqs-reminder"
+            endpoint = "rest/gmt/getOpenRfqs"
             
             payload = {
-                "seller_id": seller_id,
-                "limit": 10
+                "seller_id": seller_id
             }
 
             response = await self.api_client.post(
@@ -253,37 +228,11 @@ class SellerAPIService:
             )
             
             # Mock successful response for now
-            if response.get('status_code') != 200:
-                data = {
-                    "success": True,
-                    "open_rfqs": [
-                        {
-                            "rfq_id": "RFQ240801156789",
-                            "project_desc": "Industrial Pumps for Manufacturing Plant",
-                            "category": "industrial_equipment",
-                            "location": "Chennai, Tamil Nadu",
-                            "submission_deadline": "2025-09-05T18:30:00Z",
-                            "email_sent_date": "2025-08-28T10:15:30Z",
-                            "days_remaining": 5,
-                            "estimated_value": "₹2,50,000",
-                            "status": "open_for_bidding"
-                        }
-                    ],
-                    "total_count": 7,
-                    "metadata": {
-                        "seller_id": seller_id,
-                        "query_timestamp": "2025-08-31T12:00:00Z",
-                        "filter_criteria": {
-                            "status": "open_for_bidding",
-                            "email_sent": True,
-                            "bid_submitted": False
-                        }
-                    }
-                }
+            if response.get('status_code') == 200:
                 return {
                     "success": True,
-                    "open_rfqs": data.get("open_rfqs", []),
-                    "total_count": data.get("total_count", 0)
+                    "open_rfqs": response.get("open_rfqs", []),
+                    "total_count": response.get("total_count", 0)
                 }
             else:
                 return {"success": False, "error": response.get('message', 'Failed to fetch seller open RFQs')}

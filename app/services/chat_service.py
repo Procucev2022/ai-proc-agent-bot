@@ -490,7 +490,42 @@ class ChatService:
                 await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                 return result
             
-            # Handle pending intent switch choices FIRST (user responding to "1. Continue or 2. Switch")
+            # Use already-classified intent from message tracking or fallback to classification
+            intent_result = message_intent_result
+            if not intent_result:
+                # Fallback: classify intent if not provided (shouldn't happen with our optimization)
+                conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
+                intent_result = self.intent_service.classify_intent(message, conversation_context)
+                logger.warning(f"Had to fallback to intent classification - this shouldn't happen")
+
+            logger.info(f"Intent classification result: {intent_result}")
+
+            intent = intent_result.get('intent')
+            confidence = intent_result.get('confidence', 0)
+
+            # Update the last user message in conversation history with intent data
+            self._update_last_user_message_with_intent(session, intent, confidence)
+
+            # Handle cancel workflow intent FIRST - highest priority after exit
+            if intent == "cancel_workflow" and confidence > 50:
+                logger.info(f"Cancel workflow intent detected with {confidence}% confidence")
+                user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+
+                # Trigger cancel confirmation flow (will send buttons)
+                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session)
+                await self.session_manager.save_session(session, session.workflow_type)
+                return cancel_result
+
+            # Handle exit intent immediately - highest priority
+            if intent == "exit_system" and confidence > 50:
+                logger.info(f"Exit intent detected with {confidence}% confidence - handling system exit")
+                # Use the same phone format as used in authentication flow
+                user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+                exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                await self.session_manager.save_session(session, WorkflowType.user_exit)
+                return exit_result
+
+            # Handle pending intent switch choices (user responding to "1. Continue or 2. Switch")
             if session.workflow_state.get("pending_intent_switch"):
                 result = await self.intent_switch_handler.handle_intent_switch_response(user, session, message)
 
@@ -570,40 +605,9 @@ class ChatService:
             print(
                 f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}")
 
-            # Use already-classified intent from message tracking or fallback to classification
-            intent_result = message_intent_result
-            if not intent_result:
-                # Fallback: classify intent if not provided (shouldn't happen with our optimization)
-                conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
-                intent_result = self.intent_service.classify_intent(message, conversation_context)
-                logger.warning(f"Had to fallback to intent classification - this shouldn't happen")
+           
 
-            logger.info(f"Intent classification result: {intent_result}")
 
-            intent = intent_result.get('intent')
-            confidence = intent_result.get('confidence', 0)
-
-            # Update the last user message in conversation history with intent data
-            self._update_last_user_message_with_intent(session, intent, confidence)
-
-            # Handle exit intent immediately - highest priority
-            if intent == "exit_system" and confidence > 50:
-                logger.info(f"Exit intent detected with {confidence}% confidence - handling system exit")
-                # Use the same phone format as used in authentication flow
-                user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
-                exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                await self.session_manager.save_session(session, WorkflowType.user_exit)
-                return exit_result
-
-            # Handle cancel workflow intent
-            if intent == "cancel_workflow" and confidence > 50:
-                logger.info(f"Cancel workflow intent detected with {confidence}% confidence")
-                user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
-
-                # Trigger cancel confirmation flow (will send buttons)
-                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session)
-                await self.session_manager.save_session(session, session.workflow_type)
-                return cancel_result
 
             # Handle cancel confirmation response (when cancel_pending is true)
             cancel_pending = session.workflow_state and session.workflow_state.get("cancel_pending", False)
