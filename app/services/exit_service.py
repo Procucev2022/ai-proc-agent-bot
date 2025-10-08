@@ -91,9 +91,10 @@ class ExitService:
             # Clear all session state
             session.workflow_type = None
             session.outcome = "abandoned"
+            last_activity = session.workflow_state.get("last_activity_at") if session.workflow_state else None
             session.workflow_state = {
                 "exit_completed": True,
-                "exit_timestamp": session.workflow_state.get("last_activity_at") if session.workflow_state else None
+                "exit_timestamp": last_activity
             }
             session.conversation_history = {"messages": [], "metadata": []}
             session.extracted_entities = {}
