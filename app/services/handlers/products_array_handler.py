@@ -129,6 +129,22 @@ class ProductsArrayHandler:
                                         date_validation_error: bool = False) -> Dict[str, Any]:
         """Handle incomplete products by generating clarification questions."""
         print(f"ProductsArrayHandler: Found {len(incomplete_products)} incomplete products")
+
+        # Check if no products are mentioned (all fields are None)
+        if self._no_products_mentioned(products):
+            no_products_message = (
+                "To proceed with your request, we will create a Request for Quotation (RFQ).\n\n"
+                "To create your RFQ, please provide:\n"
+                "• Items with quantities, brand & specifications (type here or attach an Excel)\n"
+                "• Delivery date\n"
+                "• Delivery location (State, City, Pincode)\n\n"
+                "Once I have these details, I can help raise the RFQ and ensure timely processing."
+            )
+            await self.whatsapp_service.send_message(user.phone_number, no_products_message)
+            return {
+                "status": "no_products_mentioned",
+                "total_products": 0
+            }
         
         all_questions, all_missing_fields = await self._generate_clarification_questions(incomplete_products)
         
@@ -458,6 +474,32 @@ class ProductsArrayHandler:
         for field in fields_to_clear:
             if field in session.workflow_state:
                 del session.workflow_state[field]
+
+    def _no_products_mentioned(self, products: list) -> bool:
+        """Check if no products are mentioned using OpenAI's special indicator."""
+        if not products:
+            return True
+
+        for product in products:
+            # Check for OpenAI's special indicator
+            description = product.get('description')
+            if description == "NO_PRODUCTS_MENTIONED":
+                return True
+
+            # Fallback: check for generic descriptions (backward compatibility)
+            generic_descriptions = {'general product', 'general purchase', 'product', 'item', 'items', 'something',
+                                    'purchase'}
+            if description and str(description).strip().lower() not in generic_descriptions:
+                return False
+
+            # Check other meaningful fields
+            meaningful_fields = ['projectDesc', 'quantity', 'brand']
+            for field in meaningful_fields:
+                value = product.get(field)
+                if value is not None and str(value).strip():
+                    return False
+
+        return True
 
     async def _merge_with_existing_incomplete_products(self, existing_incomplete: list, new_products: list) -> list:
         """
