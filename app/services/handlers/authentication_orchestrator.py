@@ -321,7 +321,11 @@ class AuthenticationOrchestrator:
 
             # Store user data for email confirmation
             WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="authentication_orchestrator")
+            
+            # CRITICAL FIX: Preserve existing workflow_state data to prevent context loss
+            existing_state = session.workflow_state or {}
             session.workflow_state = {
+                **existing_state,  # Preserve all existing data
                 "authentication_stage": "email_confirmation",
                 "filtered_users": filtered_users,
                 "available_emails": unique_emails,
