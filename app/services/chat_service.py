@@ -216,7 +216,7 @@ class ChatService:
                 if last_meaningful and last_meaningful_intent:
                     # Store in cache (survives workflow_state clears)
                     await user_cache_service.store_meaningful_message(user_phone, last_meaningful, last_meaningful_intent)
-                    logger.info(f"Preserved meaningful message in cache: '{last_meaningful[:50]}...'")
+                    logger.info(f"Preserved meaningful message in cache: '{str(last_meaningful)[:50]}...'")
 
             auth_result = await self.authentication_orchestrator_flow(user_phone, message_content, session, message_intent_result)
 
@@ -292,7 +292,7 @@ class ChatService:
                                 if cached_meaningful and not session.workflow_state.get("last_meaningful_message"):
                                     session.workflow_state["last_meaningful_message"] = cached_meaningful["message"]
                                     session.workflow_state["last_meaningful_intent_result"] = cached_meaningful["intent_result"]
-                                    logger.info(f"Restored meaningful message from cache after registration: {cached_meaningful['message'][:50]}...")
+                                    logger.info(f"Restored meaningful message from cache after registration: {str(cached_meaningful['message'])[:50]}...")
 
                                     # Clear from cache since we've restored it
                                     await user_cache_service.clear_meaningful_message(user_phone)
@@ -304,7 +304,7 @@ class ChatService:
                                 message_to_process, intent_to_process = self._get_meaningful_message_after_auth(
                                     session, message_content, message_intent_result
                                 )
-                                logger.info(f"Approved buyer registration completed - processing message: {message_to_process[:50]}...")
+                                logger.info(f"Approved buyer registration completed - processing message: {str(message_to_process)[:50]}...")
                                 return await self._process_text_message(user, session, message_to_process, intent_to_process)
                             else:
                                 # Domain NOT approved buyers: Registration complete, no further processing
@@ -326,7 +326,7 @@ class ChatService:
                         if cached_meaningful and not session.workflow_state.get("last_meaningful_message"):
                             session.workflow_state["last_meaningful_message"] = cached_meaningful["message"]
                             session.workflow_state["last_meaningful_intent_result"] = cached_meaningful["intent_result"]
-                            logger.info(f"Restored meaningful message from cache after seller authentication: {cached_meaningful['message'][:50]}...")
+                            logger.info(f"Restored meaningful message from cache after seller authentication: {str(cached_meaningful['message'])[:50]}...")
 
                             # Clear from cache since we've restored it
                             await user_cache_service.clear_meaningful_message(user_phone)
@@ -335,7 +335,7 @@ class ChatService:
                             session, message_content, message_intent_result
                         )
 
-                        logger.info(f"Seller authentication completed - processing message: {message_to_process[:50]}...")
+                        logger.info(f"Seller authentication completed - processing message: {str(message_to_process)[:50]}...")
                         user = await self.authentication_service.validate_token(user_phone)
                         if user:
                             return await self._process_text_message(user, session, message_to_process, intent_to_process)
@@ -349,7 +349,7 @@ class ChatService:
                     if cached_meaningful and not session.workflow_state.get("last_meaningful_message"):
                         session.workflow_state["last_meaningful_message"] = cached_meaningful["message"]
                         session.workflow_state["last_meaningful_intent_result"] = cached_meaningful["intent_result"]
-                        logger.info(f"Restored meaningful message from cache after buyer authentication: {cached_meaningful['message'][:50]}...")
+                        logger.info(f"Restored meaningful message from cache after buyer authentication: {str(cached_meaningful['message'])[:50]}...")
 
                         # Clear from cache since we've restored it
                         await user_cache_service.clear_meaningful_message(user_phone)
@@ -358,7 +358,7 @@ class ChatService:
                         session, message_content, message_intent_result
                     )
 
-                    logger.info(f"Buyer authentication completed - processing message: {message_to_process[:50]}...")
+                    logger.info(f"Buyer authentication completed - processing message: {str(message_to_process)[:50]}...")
                     user = await self.authentication_service.validate_token(user_phone)
                     if user:
                         # Ensure user cache is populated after authentication
@@ -490,7 +490,7 @@ class ChatService:
                 if result.get("status") == "authentication_completed" and result.get("original_message"):
                     original_msg = result["original_message"]
                     original_intent = result.get("original_intent_result")
-                    logger.info(f"Processing original message after role switch: '{original_msg[:50]}...'")
+                    logger.info(f"Processing original message after role switch: '{str(original_msg)[:50]}...'")
 
                     # Get fresh user object after switch
                     user = await self.authentication_service.validate_token(user.phone_number)
@@ -2267,12 +2267,12 @@ class ChatService:
 
             # Skip OTP-like messages and auth/registration flow responses
             if self._is_auth_flow_response(message_content, intent):
-                logger.info(f"Skipping auth/registration flow response: '{message_content[:50]}...' with intent: {intent}")
+                logger.info(f"Skipping auth/registration flow response: '{str(message_content)[:50]}...' with intent: {intent}")
                 return
 
             # Skip account selection responses during role switch
             if session.workflow_state and session.workflow_state.get("pending_role_switch"):
-                logger.info(f"Skipping account selection response during role switch: '{message_content[:50]}...'")
+                logger.info(f"Skipping account selection response during role switch: '{str(message_content)[:50]}...'")
                 return
 
             # Always replace with the most recent meaningful message
@@ -2280,7 +2280,7 @@ class ChatService:
                 session.workflow_state = session.workflow_state or {}
                 session.workflow_state["last_meaningful_message"] = message_content
                 session.workflow_state["last_meaningful_intent_result"] = intent_result
-                logger.info(f"Tracked meaningful message: '{message_content[:50]}...' with intent: {intent} (confidence: {confidence}%)")
+                logger.info(f"Tracked meaningful message: '{str(message_content)[:50]}...' with intent: {intent} (confidence: {confidence}%)")
 
         except Exception as e:
             logger.error(f"Error tracking meaningful message: {e}")
@@ -2288,6 +2288,10 @@ class ChatService:
     def _is_auth_flow_response(self, message_content: str, intent: str) -> bool:
         """Check if this message is an auth/registration flow response that shouldn't be processed as business intent."""
         try:
+            # Handle non-string message content (like interactive button responses)
+            if not isinstance(message_content, str):
+                return False
+                
             message_lower = message_content.lower().strip()
 
             # OTP patterns (4-6 digits, possibly with spaces)
@@ -2326,7 +2330,7 @@ class ChatService:
             tracked_intent_result = workflow_state.get("last_meaningful_intent_result")
 
             if tracked_message and tracked_intent_result:
-                logger.info(f"Using tracked meaningful message: '{tracked_message[:50]}...' with intent: {tracked_intent_result.get('intent')}")
+                logger.info(f"Using tracked meaningful message: '{str(tracked_message)[:50]}...' with intent: {tracked_intent_result.get('intent')}")
 
                 # Clean up the tracked message since we're using it now
                 workflow_state.pop("last_meaningful_message", None)
@@ -2348,7 +2352,7 @@ class ChatService:
                     return default_message, default_intent_result
                 else:
                     # Current message is meaningful, use it
-                    logger.info(f"No tracked meaningful message found, using current message: '{current_message[:50]}...'")
+                    logger.info(f"No tracked meaningful message found, using current message: '{str(current_message)[:50]}...'")
                     return current_message, current_intent_result
 
         except Exception as e:

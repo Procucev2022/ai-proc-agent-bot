@@ -242,7 +242,7 @@ class UserCacheService:
             success = await self.redis_service.set(cache_key, cache_data, ex=3600)
 
             if success:
-                logger.info(f"Cached meaningful message for {phone_number}: '{message[:50]}...'")
+                logger.info(f"Cached meaningful message for {phone_number}: '{str(message)[:50]}...'")
             else:
                 logger.error(f"Failed to cache meaningful message for {phone_number}")
 
@@ -271,7 +271,7 @@ class UserCacheService:
                 intent_result = cache_data.get("meaningful_intent_result")
 
                 if message and intent_result:
-                    logger.info(f"Retrieved cached meaningful message for {phone_number}: '{message[:50]}...'")
+                    logger.info(f"Retrieved cached meaningful message for {phone_number}: '{str(message)[:50]}...'")
                     return {
                         "message": message,
                         "intent_result": intent_result
