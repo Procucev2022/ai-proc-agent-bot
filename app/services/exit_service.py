@@ -89,12 +89,13 @@ class ExitService:
                 return True
 
             # Clear all session state
+            from app.models import ConversationOutcome
             session.workflow_type = None
-            session.outcome = "abandoned"
-            last_activity = session.workflow_state.get("last_activity_at") if session.workflow_state else None
+            session.outcome = ConversationOutcome.abandoned
+            exit_timestamp = session.workflow_state.get("last_activity_at") if session.workflow_state else None
             session.workflow_state = {
                 "exit_completed": True,
-                "exit_timestamp": last_activity
+                "exit_timestamp": exit_timestamp.isoformat() if exit_timestamp else None
             }
             session.conversation_history = {"messages": [], "metadata": []}
             session.extracted_entities = {}

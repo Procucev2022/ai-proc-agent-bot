@@ -17,6 +17,7 @@ Key responsibilities:
 """
 
 from sqlalchemy import Column, String, Text, TIMESTAMP, Date, ForeignKey, Enum, Boolean, Integer, DECIMAL, JSON, UniqueConstraint
+from sqlalchemy.orm import validates
 from sqlalchemy.types import CHAR
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -209,6 +210,63 @@ class ConversationSession(Base):
     
     # Relationships
     rfq = relationship("RFQ", back_populates="conversation_outcome")
+
+    # Validators to automatically convert strings to enums
+    @validates('workflow_type')
+    def validate_workflow_type(self, key, value):
+        """Auto-convert string to WorkflowType enum."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            try:
+                return WorkflowType(value)
+            except ValueError:
+                import logging
+                logging.getLogger(__name__).warning(f"Invalid workflow_type string: {value}, setting to None")
+                return None
+        return value
+
+    @validates('outcome')
+    def validate_outcome(self, key, value):
+        """Auto-convert string to ConversationOutcome enum."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            try:
+                return ConversationOutcome(value)
+            except ValueError:
+                import logging
+                logging.getLogger(__name__).warning(f"Invalid outcome string: {value}, setting to None")
+                return None
+        return value
+
+    @validates('user_type')
+    def validate_user_type(self, key, value):
+        """Auto-convert string to UserType enum."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            try:
+                return UserType(value)
+            except ValueError:
+                import logging
+                logging.getLogger(__name__).warning(f"Invalid user_type string: {value}, setting to UserType.unknown")
+                return UserType.unknown
+        return value
+
+    @validates('session_state')
+    def validate_session_state(self, key, value):
+        """Auto-convert string to SessionState enum."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            try:
+                return SessionState(value)
+            except ValueError:
+                import logging
+                logging.getLogger(__name__).warning(f"Invalid session_state string: {value}, setting to SessionState.active")
+                return SessionState.active
+        return value
 
 class SessionEvent(Base):
     """

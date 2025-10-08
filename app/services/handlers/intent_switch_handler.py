@@ -294,7 +294,8 @@ class IntentSwitchHandler:
         logger.info(f"Abandoning current workflow: {session.workflow_type}")
         
         # Mark session as abandoned
-        session.outcome = 'abandoned'
+        from app.models import ConversationOutcome
+        session.outcome = ConversationOutcome.abandoned
         
         # Clear workflow state but keep conversation history
         session.workflow_state = {"extracted_entities": []}

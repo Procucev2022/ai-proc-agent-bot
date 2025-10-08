@@ -181,7 +181,8 @@ class ConfirmationHandler:
         # await self._check_bfs_availability(user.phone_number)
         
         # Mark session as completed
-        session.outcome = 'completed'
+        from app.models import ConversationOutcome
+        session.outcome = ConversationOutcome.completed
         session.completed_at = utc_now().replace(tzinfo=None)
         
         # Update core tracking fields (user type, categories, RFQ IDs)
@@ -193,7 +194,8 @@ class ConfirmationHandler:
         if rfq_ids:
             session.rfq_ids = rfq_ids
             # Set user type as buyer (since they're creating RFQs)
-            session.user_type = 'buyer'
+            from app.models import UserType
+            session.user_type = UserType.buyer
             # Calculate averages based on session data
             from app.services.helpers.session_helpers import SessionHelpers
             session = SessionHelpers.calculate_session_averages(session)
@@ -201,6 +203,8 @@ class ConfirmationHandler:
         # Clear session AFTER summarization data is captured
         # Only clear workflow if RFQ creation was successful
         if successful_count > 0:
+            from app.models import ConversationOutcome
+            session.outcome = ConversationOutcome.completed
             session.workflow_type = None
             session.workflow_state = {}
             logger.info(f"Cleared workflow_type and workflow_state after successful RFQ creation")
@@ -408,6 +412,8 @@ class ConfirmationHandler:
 
     async def _send_completion_response(self, user: User, rfq_results: List[Dict], successful_count: int):
         """Send completion response to user."""
+        if successful_count == 0:
+            return
         rfq_ids = []
         for result in rfq_results:
             if result.get("success") and result.get("rfq_id"):

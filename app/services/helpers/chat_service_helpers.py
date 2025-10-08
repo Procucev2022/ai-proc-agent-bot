@@ -45,10 +45,16 @@ class ChatServiceHelpers:
             schema_data["project_desc"] = entities.get("projectDesc") or entities.get("description")
         
         if entities.get("deliveryDate"):
-            # Parse natural language dates using dateutil
+            # Handle both string and datetime objects
             try:
-                parsed_date = date_parser.parse(entities["deliveryDate"])
-                schema_data["delivery_date"] = parsed_date
+                delivery_date = entities["deliveryDate"]
+                if isinstance(delivery_date, datetime):
+                    # Already a datetime object, use as-is
+                    schema_data["delivery_date"] = delivery_date
+                else:
+                    # Parse natural language dates using dateutil
+                    parsed_date = date_parser.parse(str(delivery_date))
+                    schema_data["delivery_date"] = parsed_date
             except Exception as e:
                 # If parsing fails, log and leave as None
                 logger.warning(f"Failed to parse delivery date '{entities['deliveryDate']}': {e}")

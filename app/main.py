@@ -30,6 +30,8 @@ from app.config import get_settings
 from app.api.webhook import router as webhook_router
 from app.database import init_database
 from app.services.chat_service import ChatService
+from app.services.global_error_handler import handle_server_error
+from app.context.middleware import ContextMiddleware
 import gc
 
 
@@ -113,6 +115,41 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Add global exception handler for unhandled server errors
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle unhandled exceptions globally."""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    
+    # Extract user info from request if available
+    user_phone = None
+    try:
+        if hasattr(request, 'json'):
+            body = await request.json()
+            user_phone = body.get('phone') or body.get('from')
+    except:
+        pass
+    
+    # Notify support team about server error
+    try:
+        await handle_server_error(
+            error_message=f"Unhandled exception: {str(exc)}",
+            user_phone=user_phone,
+            current_flow=f"{request.method} {request.url.path}"
+        )
+    except Exception as notify_error:
+        logger.error(f"Failed to notify support team about server error: {notify_error}")
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal server error. Our team has been notified.",
+            "error_id": str(id(exc))
+        }
+    )
+
+# Add context middleware (must be first)
+app.add_middleware(ContextMiddleware)
 # Add IP restriction middleware
 if settings.allowed_ips:
     app.add_middleware(IPRestrictionMiddleware, allowed_ips=settings.allowed_ips)
@@ -213,6 +250,17 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
         
     except Exception as e:
         logger.error(f"Error processing chat message: {e}")
+        
+        # Notify support team about chat processing error
+        try:
+            await handle_server_error(
+                error_message=f"Chat processing error: {str(e)}",
+                user_phone=chat_message.phone,
+                current_flow="Chat Processing"
+            )
+        except Exception as notify_error:
+            logger.error(f"Failed to notify support team: {notify_error}")
+        
         return {
             "success": False,
             "error": str(e),
@@ -277,6 +325,17 @@ async def upload_excel_file(
         
     except Exception as e:
         logger.error(f"Error processing Excel upload: {e}")
+        
+        # Notify support team about Excel processing error
+        try:
+            await handle_server_error(
+                error_message=f"Excel processing error: {str(e)}",
+                user_phone=phone,
+                current_flow="Excel Upload Processing"
+            )
+        except Exception as notify_error:
+            logger.error(f"Failed to notify support team: {notify_error}")
+        
         return {
             "success": False,
             "error": str(e),
