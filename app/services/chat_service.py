@@ -738,9 +738,15 @@ class ChatService:
                     await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                     return result
 
-                # Already in RFQ workflow, continue collecting
-                logger.info("Continuing existing RFQ workflow")
-                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None,
+                # Already in RFQ workflow, continue collecting - force modification_request workflow type
+                logger.info("Continuing existing RFQ workflow with incomplete products")
+                # Override intent result to ensure proper handling of incomplete products
+                modified_intent_result = intent_result.copy() if intent_result else {}
+                if has_incomplete_products:
+                    modified_intent_result["intent"] = "modification_request"
+                    modified_intent_result["confidence"] = 85
+                    logger.info(f"Forced modification_request intent for incomplete products")
+                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, modified_intent_result,
                                                                                  self._should_use_summary_aware_extraction)
 
             # Handle seller RFQ selection workflow BEFORE intent classification
