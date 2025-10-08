@@ -433,7 +433,7 @@ class ConfirmationHandler:
         buttons_config = [
             {"id": "new_rfq", "title": "📄 New RFQ"},
             {"id": "rfq_status", "title": "🔍 RFQs Status Check"},
-            {"id": "exit", "title": "❌ Exit"}
+            {"id": "contact_support", "title": "💬 Contact Support"}
         ]
         
         await self.whatsapp_service.send_configurable_buttons(
