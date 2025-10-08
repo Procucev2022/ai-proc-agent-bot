@@ -587,7 +587,7 @@ class ChatService:
                     elif new_intent == "sell_something":
                         return await self._handle_seller_flow(user, session, message)
                     elif new_intent == "general_inquiry":
-                        return await self._handle_general_inquiry(user, new_message)
+                        return await self._handle_general_inquiry(user, new_message, intent_result)
                     else:
                         return await self._handle_fallback(user, new_message)
                 elif result.get("status") == "error":
@@ -875,7 +875,7 @@ class ChatService:
             elif intent == "account_switch" and confidence > 0.7:
                 return await self._handle_account_switch_intent(user, session, message, intent_result)
             elif intent == "general_inquiry":
-                return await self._handle_general_inquiry(user, message)
+                return await self._handle_general_inquiry(user, message, intent_result)
             elif confidence < 0.5:
                 return await self._handle_clarification_request(user, message)
             else:
@@ -1187,14 +1187,35 @@ class ChatService:
             return await self._handle_error_response(e, user.phone_number, "registration_workflow",
                                                      "Please tell me your name to get started")
 
-    async def _handle_general_inquiry(self, user: User, message: str) -> Dict[str, Any]:
+    async def _handle_general_inquiry(self, user: User, message: str, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """Handle general inquiries using OpenAI."""
         try:
             context = ChatServiceHelpers.build_context("general_inquiry", message)
-
-            await self._send_contextual_response(user.phone_number, context,
-                                                 ["How can I help you with your procurement needs today?"],
-                                                 "general_inquiry")
+            
+            # Check if we should show buttons
+            show_buttons = False
+            if intent_result and intent_result.get('context_analysis', {}).get('show_buttons'):
+                show_buttons = True
+            
+            if show_buttons:
+                # Send message with interactive buttons
+                buttons_config = [
+                    {"id": "new_rfq", "title": "📄 New RFQ"},
+                    {"id": "rfq_status", "title": "🔍 RFQs Status Check"},
+                    {"id": "contact_support", "title": "💬 Contact Support"},
+                    {"id": "exit", "title": "❌ Exit"}
+                ]
+                
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    message,
+                    buttons_config,
+                    "Choose an option"
+                )
+            else:
+                await self._send_contextual_response(user.phone_number, context,
+                                                     ["How can I help you with your procurement needs today?"],
+                                                     "general_inquiry")
 
             return {"status": "general_inquiry_handled"}
 
@@ -1349,21 +1370,45 @@ class ChatService:
         """Handle button interaction responses."""
         logger.info(f"Button response from {user.phone_number}: {button_id}")
 
+        # Handle new menu buttons
+        if button_id == "new_rfq":
+            # Trigger RFQ creation flow
+            intent_result = {"intent": "buy_something", "confidence": 95}
+            return await self.purchase_intent_handler.handle_purchase_intent(
+                user, session, "I want to create a new RFQ", intent_result, 
+                self._should_use_summary_aware_extraction
+            )
+        
+        elif button_id == "rfq_status":
+            # Trigger RFQ status check flow
+            return await self._handle_rfq_status_inquiry(user, "Check my RFQ status", session)
+        
+        elif button_id == "contact_support":
+            # Trigger support flow
+            return await self._handle_support_request(user, "I need support")
+        
+        elif button_id == "exit":
+            # Trigger exit flow
+            user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+            exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+            await self.session_manager.save_session(session, WorkflowType.user_exit)
+            return exit_result
+
         # Handle cancel workflow confirmation buttons
-        if button_id in ["confirm_cancel", "decline_cancel"]:
+        elif button_id in ["confirm_cancel", "decline_cancel"]:
             return await self._handle_cancel_confirmation_button(user, session, button_id)
 
         # Handle modify button by simulating "modify" message
-        if button_id == "no_rfq":
+        elif button_id == "no_rfq":
             return await self._process_text_message(user, session, "modify")
 
         # Check if this is a confirmation button response
-        if button_id == "confirm_rfq":
+        elif button_id == "confirm_rfq":
             # Route to confirmation handler
             return await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
 
         # Check if this is an email confirmation button response during authentication
-        if button_id in ["confirm_email", "reject_email"]:
+        elif button_id in ["confirm_email", "reject_email"]:
             # Route to authentication email confirmation handler
             return await self._handle_authentication_email_button(user, session, button_id)
 
@@ -2294,16 +2339,11 @@ class ChatService:
                 if self._is_auth_flow_response(current_message, current_intent):
                     logger.info(f"No meaningful message tracked and current message is auth flow response. Creating default general inquiry.")
                     # Return a default general inquiry since user completed auth/registration without meaningful business request
-                    default_message = (
-                        "What can I assist you with today?\n"
-                        "• Raise a new RFQ\n"
-                        "• Check your previous RFQs\n"
-                        "• Any other support you need"
-                    )
+                    default_message = "What can I assist you with today?"
                     default_intent_result = {
                         "intent": "general_inquiry",
                         "confidence": 75,
-                        "context_analysis": {"conversation_stage": "post_auth_default"}
+                        "context_analysis": {"conversation_stage": "post_auth_default", "show_buttons": True}
                     }
                     return default_message, default_intent_result
                 else:

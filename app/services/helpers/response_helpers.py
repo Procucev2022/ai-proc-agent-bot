@@ -368,9 +368,10 @@ class ResponseHelpers:
         if user_role and user_role.lower() == "buyer":
             return (
                 "What can I assist you with today?\n"
-                "• Raise a new RFQ\n"
-                "• Check your previous RFQs\n"
-                "• Any other support you need"
+                "• 📄 New RFQ\n"
+                "• 🔍 RFQs Status Check\n"
+                "• 💬 Contact Support\n"
+                "• ❌ Exit"
             )
         else:
             return "How can I help you with your RFQ needs today?"

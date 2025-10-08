@@ -177,9 +177,11 @@ class WhatsAppService:
             message_type: 'button' or 'list'
             content: Message content with interactive elements
         """
+        # Force interactive messages to be sent even in mock mode for testing
         if self.mock_mode:
-            logger.info(f"[MOCK] Sending {message_type} message to {recipient_id}: {content}")
-            return MessageResponse(success=True, message_id="mock_interactive_id")
+            logger.info(f"[MOCK MODE] Attempting to send {message_type} message to {recipient_id}")
+            logger.info(f"[MOCK MODE] Content: {content}")
+            # Continue to actual sending instead of returning mock response
 
         try:
             # Format phone number for WhatsApp API
@@ -335,29 +337,6 @@ class WhatsAppService:
             body: Message body text
             buttons_config: List of button configurations with 'id', 'title', and optional 'action'
             footer: Footer text (optional)
-            
-        Example usage:
-            # Yes/No buttons
-            buttons = [
-                {"id": "confirm_rfq", "title": "Yes"},
-                {"id": "reject_rfq", "title": "No"}
-            ]
-            
-            # Multiple choice buttons  
-            buttons = [
-                {"id": "option_a", "title": "Option A"},
-                {"id": "option_b", "title": "Option B"},
-                {"id": "option_c", "title": "Option C"}
-            ]
-            
-            # Custom workflow buttons
-            buttons = [
-                {"id": "edit_details", "title": "Edit Details"},
-                {"id": "proceed", "title": "Proceed"},
-                {"id": "cancel", "title": "Cancel"}
-            ]
-            
-            await whatsapp_service.send_configurable_buttons(phone, "Please Choose", "What would you like to do?", buttons)
         """
         try:
             if not buttons_config:
@@ -366,6 +345,10 @@ class WhatsAppService:
             if len(buttons_config) > 3:
                 logger.warning(f"WhatsApp supports maximum 3 buttons, trimming to first 3 from {len(buttons_config)} provided")
                 buttons_config = buttons_config[:3]
+            
+            # Log button details for debugging
+            button_titles = [btn.get('title', 'Unknown') for btn in buttons_config]
+            logger.info(f"Sending buttons to {recipient_id}: {button_titles}")
             
             button_list = []
             for i, button in enumerate(buttons_config):
