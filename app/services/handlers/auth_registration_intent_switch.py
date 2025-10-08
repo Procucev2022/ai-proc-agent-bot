@@ -517,9 +517,9 @@ Analyze their response and return only:
                     
                     # Send message with interactive buttons
                     buttons_config = [
-                        {"id": "new_rfq", "title": "📄 New RFQ"},
-                        {"id": "rfq_status", "title": "🔍 RFQs Status Check"},
-                        {"id": "contact_support", "title": "💬 Contact Support"}
+                        {"id": "new_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQs Status"},
+                        {"id": "contact_support", "title": "Contact Support"}
                     ]
                     
                     await self.whatsapp_service.send_configurable_buttons(
@@ -596,9 +596,9 @@ Analyze their response and return only:
                     
                     # Send message with interactive buttons
                     buttons_config = [
-                        {"id": "new_rfq", "title": "📄 New RFQ"},
-                        {"id": "rfq_status", "title": "🔍 RFQs Status Check"},
-                        {"id": "contact_support", "title": "💬 Contact Support"}
+                        {"id": "new_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQs Status"},
+                        {"id": "contact_support", "title": "Contact Support"}
                     ]
                     
                     await self.whatsapp_service.send_configurable_buttons(
@@ -681,9 +681,9 @@ Analyze their response and return only:
                     
                     # Send message with interactive buttons
                     buttons_config = [
-                        {"id": "new_rfq", "title": "📄 New RFQ"},
-                        {"id": "rfq_status", "title": "🔍 RFQs Status Check"},
-                        {"id": "contact_support", "title": "💬 Contact Support"}
+                        {"id": "new_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQs Status"},
+                        {"id": "contact_support", "title": "Contact Support"}
                     ]
                     
                     await self.whatsapp_service.send_configurable_buttons(
