@@ -405,41 +405,75 @@ class DatabaseManager:
 
     def save_conversation_session(self, session_data: dict) -> ConversationSession:
         """Save or update a conversation session."""
+        from sqlalchemy.exc import SQLAlchemyError
         
-        session = self.session.query(ConversationSession).filter_by(
-            session_id=session_data['session_id']
-        ).first()
-        
-        if session:
-            # Update existing session
-            for key, value in session_data.items():
-                setattr(session, key, value)
-                # For JSONB fields, explicitly mark as modified
-                if key in ['workflow_state', 'conversation_history', 'extracted_entities', 'whatsapp_context', 'error_details', 'performance_metrics', 'bfs_products_searched', 'bfs_price_accepted', 'bfs_counter_offers', 'products_bid_for', 'bids_received', 'bids_accepted', 'counter_offers_made', 'counter_offers_accepted', 'rfqs_with_response']:
-                    flag_modified(session, key)
-        else:
-            # Create new session
-            session = ConversationSession(**session_data)
-            self.session.add(session)
-        
-        self.session.commit()
-        return session
+        try:
+            session = self.session.query(ConversationSession).filter_by(
+                session_id=session_data['session_id']
+            ).first()
+            
+            if session:
+                # Update existing session
+                for key, value in session_data.items():
+                    setattr(session, key, value)
+                    # For JSONB fields, explicitly mark as modified
+                    if key in ['workflow_state', 'conversation_history', 'extracted_entities', 'whatsapp_context', 'error_details', 'performance_metrics', 'bfs_products_searched', 'bfs_price_accepted', 'bfs_counter_offers', 'products_bid_for', 'bids_received', 'bids_accepted', 'counter_offers_made', 'counter_offers_accepted', 'rfqs_with_response']:
+                        flag_modified(session, key)
+            else:
+                # Create new session
+                session = ConversationSession(**session_data)
+                self.session.add(session)
+            
+            self.session.commit()
+            return session
+            
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in save_conversation_session: {e}")
+            self.session.rollback()
+            
+            # Try to fetch existing session after rollback
+            try:
+                existing_session = self.session.query(ConversationSession).filter_by(
+                    session_id=session_data['session_id']
+                ).first()
+                
+                if existing_session:
+                    # Update existing session
+                    for key, value in session_data.items():
+                        setattr(existing_session, key, value)
+                        if key in ['workflow_state', 'conversation_history', 'extracted_entities', 'whatsapp_context', 'error_details', 'performance_metrics', 'bfs_products_searched', 'bfs_price_accepted', 'bfs_counter_offers', 'products_bid_for', 'bids_received', 'bids_accepted', 'counter_offers_made', 'counter_offers_accepted', 'rfqs_with_response']:
+                            flag_modified(existing_session, key)
+                    self.session.commit()
+                    return existing_session
+                else:
+                    # Return original session object to prevent data loss
+                    return ConversationSession(**session_data)
+                    
+            except Exception as retry_error:
+                logger.error(f"Retry failed in save_conversation_session: {retry_error}")
+                return ConversationSession(**session_data)
 
     def get_conversation_session(self, session_id: str) -> Optional[ConversationSession]:
         """Get a conversation session by ID."""
-        session = self.session.query(ConversationSession).filter_by(session_id=session_id).first()
+        from sqlalchemy.exc import SQLAlchemyError
         
-        # Fix potential JSON deserialization issues
-        if session and session.workflow_state:
-            try:
-                # Ensure workflow_state is properly deserialized as dict
-                if isinstance(session.workflow_state, str):
-                    session.workflow_state = json.loads(session.workflow_state)
-            except (json.JSONDecodeError, TypeError) as e:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"Failed to deserialize workflow_state for session {session_id}: {e}")
-                # Reset to empty dict to prevent further errors
-                session.workflow_state = {"extracted_entities": []}
-        
-        return session
+        try:
+            session = self.session.query(ConversationSession).filter_by(session_id=session_id).first()
+            
+            # Fix potential JSON deserialization issues
+            if session and session.workflow_state:
+                try:
+                    # Ensure workflow_state is properly deserialized as dict
+                    if isinstance(session.workflow_state, str):
+                        session.workflow_state = json.loads(session.workflow_state)
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.error(f"Failed to deserialize workflow_state for session {session_id}: {e}")
+                    # Reset to empty dict to prevent further errors
+                    session.workflow_state = {"extracted_entities": []}
+            
+            return session
+            
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in get_conversation_session: {e}")
+            self.session.rollback()
+            return None

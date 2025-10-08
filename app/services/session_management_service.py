@@ -210,6 +210,9 @@ class SessionManagementService:
             return self.db_manager.save_conversation_session(session_data)
         except Exception as e:
             logger.error(f"Error saving session: {e}")
+            # Ensure session state is preserved even if save fails
+            if hasattr(session, 'workflow_state') and session.workflow_state:
+                session.workflow_state = clean_workflow_state
             return session
 
     async def handle_session_completion_enhanced(self, session: ConversationSession) -> None:
