@@ -48,13 +48,9 @@ class EntityService:
                         "detected_phrases": []  # Not available from intent service
                     })
             
-            # Check if we have existing incomplete products that need completion
-            workflow_state = context.get("workflow_state", {}) if context else {}
-            has_incomplete_products = bool(workflow_state.get("incomplete_products"))
-            
             # Check if this is a modification request based on workflow_type (set by intent classification)
-            if workflow_type == "modification_request" or has_incomplete_products:
-                print(f"EntityService: Workflow type is modification_request or has incomplete products - handling as modification")
+            if workflow_type == "modification_request":
+                print(f"EntityService: Workflow type is modification_request - handling as modification")
                 return self._handle_modification_extraction(message, context, workflow_type)
             else:
                 # Standard entity extraction for other workflow types
@@ -346,29 +342,22 @@ class EntityService:
                         updated_products[target_product_index][key] = value
                         print(f"  Updated {key}: {value}")
             else:
-                print(f"EntityService: No matching product found for modification, applying to first product")
-                # If no match found, apply to first product (common case for single product RFQs)
-                if updated_products:
-                    for key, value in modification.items():
-                        if value is not None:  # Only update non-null values
-                            updated_products[0][key] = value
-                            print(f"  Applied {key}: {value} to first product")
-                else:
-                    # No existing products, add as new product
-                    updated_products.append(modification)
+                print(f"EntityService: No matching product found for modification, treating as new product")
+                # If no match found, add as new product (shouldn't happen in modification context)
+                updated_products.append(modification)
         
         return updated_products
     
     def _find_matching_product(self, existing_products: list, modification: dict, original_message: str) -> int:
         """Find which existing product the modification applies to."""
-        modification_description = (modification.get("description") or "").lower()
+        modification_description = modification.get("description", "").lower()
         message_lower = original_message.lower()
         
         print(f"EntityService: Looking for product matching '{modification_description}' in message '{original_message}'")
         
         # Try to match by description
         for i, product in enumerate(existing_products):
-            product_description = (product.get("description") or "").lower()
+            product_description = product.get("description", "").lower()
             
             # Direct description match
             if modification_description and product_description and modification_description in product_description:
@@ -387,7 +376,7 @@ class EntityService:
         
         # If no description match, try by category or other fields
         for i, product in enumerate(existing_products):
-            category = (product.get("category") or "").lower()
+            category = product.get("category", "").lower()
             if modification_description and category and (modification_description in category or category in modification_description):
                 print(f"  Found match by category: {category}")
                 return i

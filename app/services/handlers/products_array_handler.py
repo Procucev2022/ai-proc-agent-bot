@@ -566,14 +566,6 @@ class ProductsArrayHandler:
                         merged_entity[field] = value
                         print(f"ProductsArrayHandler: Applied supplementary {field}={value} to existing product")
                 
-                # If no specific product match found but we have supplementary data, apply to first incomplete product
-                if not reextracted_products_map and supplementary_data and existing_entities:
-                    for field, value in supplementary_data.items():
-                        if merged_entity.get(field) is None or merged_entity.get(field) == "":
-                            merged_entity[field] = value
-                            print(f"ProductsArrayHandler: Applied fallback supplementary {field}={value} to product")
-                            break  # Only apply to first product to avoid duplicates
-                
 
 
                 # Final cleanup: Clear date validation error if delivery date exists and is valid
@@ -585,14 +577,6 @@ class ProductsArrayHandler:
 
             # Add any new products with descriptions
             merged_products.extend(new_products_with_descriptions)
-            
-            # If we only have supplementary data and no new products, ensure it's applied to existing products
-            if not new_products_with_descriptions and supplementary_data and merged_products:
-                for merged_entity in merged_products:
-                    for field, value in supplementary_data.items():
-                        if merged_entity.get(field) is None or merged_entity.get(field) == "":
-                            merged_entity[field] = value
-                            print(f"ProductsArrayHandler: Final pass - applied {field}={value} to product")
 
             print(f"ProductsArrayHandler: Final merged result: {len(merged_products)} total products")
             return merged_products
