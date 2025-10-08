@@ -48,9 +48,13 @@ class EntityService:
                         "detected_phrases": []  # Not available from intent service
                     })
             
+            # Check if we have existing incomplete products that need completion
+            workflow_state = context.get("workflow_state", {}) if context else {}
+            has_incomplete_products = bool(workflow_state.get("incomplete_products"))
+            
             # Check if this is a modification request based on workflow_type (set by intent classification)
-            if workflow_type == "modification_request":
-                print(f"EntityService: Workflow type is modification_request - handling as modification")
+            if workflow_type == "modification_request" or has_incomplete_products:
+                print(f"EntityService: Workflow type is modification_request or has incomplete products - handling as modification")
                 return self._handle_modification_extraction(message, context, workflow_type)
             else:
                 # Standard entity extraction for other workflow types
