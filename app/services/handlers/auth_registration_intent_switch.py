@@ -519,7 +519,7 @@ Analyze their response and return only:
                     buttons_config = [
                         {"id": "new_rfq", "title": "📄 New RFQ"},
                         {"id": "rfq_status", "title": "🔍 RFQs Status Check"},
-                        {"id": "contact_support", "title": "💬 Contact Support"}
+                        {"id": "exit", "title": "❌ Exit"}
                     ]
                     
                     await self.whatsapp_service.send_configurable_buttons(
@@ -598,7 +598,7 @@ Analyze their response and return only:
                     buttons_config = [
                         {"id": "new_rfq", "title": "📄 New RFQ"},
                         {"id": "rfq_status", "title": "🔍 RFQs Status Check"},
-                        {"id": "contact_support", "title": "💬 Contact Support"}
+                        {"id": "exit", "title": "❌ Exit"}
                     ]
                     
                     await self.whatsapp_service.send_configurable_buttons(
@@ -683,7 +683,7 @@ Analyze their response and return only:
                     buttons_config = [
                         {"id": "new_rfq", "title": "📄 New RFQ"},
                         {"id": "rfq_status", "title": "🔍 RFQs Status Check"},
-                        {"id": "contact_support", "title": "💬 Contact Support"}
+                        {"id": "exit", "title": "❌ Exit"}
                     ]
                     
                     await self.whatsapp_service.send_configurable_buttons(

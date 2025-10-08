@@ -429,11 +429,11 @@ class ConfirmationHandler:
         else:
             response = f"✅ All {successful_count} RFQs created successfully!\n\nWhat would you like to do next?"
 
-        # Send message with interactive buttons
+        # Send message with interactive buttons (WhatsApp limit: 3 buttons max)
         buttons_config = [
             {"id": "new_rfq", "title": "📄 New RFQ"},
             {"id": "rfq_status", "title": "🔍 RFQs Status Check"},
-            {"id": "contact_support", "title": "💬 Contact Support"}
+            {"id": "exit", "title": "❌ Exit"}
         ]
         
         await self.whatsapp_service.send_configurable_buttons(
