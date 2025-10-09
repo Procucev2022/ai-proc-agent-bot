@@ -364,17 +364,22 @@ class ResponseHelpers:
         if default_message:
             return default_message
             
-        # For default fallback, show buyer menu for buyers, seller message for sellers
+        # For default fallback, show appropriate menu based on user role
         if user_role and user_role.lower() == "buyer":
             return (
                 "What can I assist you with today?\n"
-                "• 📄 New RFQ\n"
-                "• 🔍 RFQs Status Check\n"
-                "• 💬 Contact Support\n"
-                "• ❌ Exit"
+                "• Raise a new RFQ\n"
+                "• Check your previous RFQs\n"
+                "• Any other support you need"
+            )
+        elif user_role and user_role.lower() == "seller":
+            return (
+                "What would you like to do today?\n"
+                "• Check RFQ status\n"
+                "• Get other support"
             )
         else:
-            return "How can I help you with your RFQ needs today?"
+            return "How can I help you with your procurement needs today?"
 
     def _get_rfq_display_fallback(self, context: Dict[str, Any]) -> str:
         """Fallback for RFQ display."""

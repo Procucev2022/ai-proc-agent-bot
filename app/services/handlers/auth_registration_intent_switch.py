@@ -512,14 +512,13 @@ Analyze their response and return only:
                 if current_role.lower() == "buyer":
                     continue_message = (
                         f"Alright, you're staying with your {current_role.title()} account.\n"
-                        f"What can I assist you with today?"
+                        "What can I assist you with today?"
                     )
                     
-                    # Send message with interactive buttons
                     buttons_config = [
-                        {"id": "new_rfq", "title": "Create new RFQ"},
-                        {"id": "rfq_status", "title": "Check RFQs Status"},
-                        {"id": "contact_support", "title": "Contact Support"}
+                        {"id": "new_rfq", "title": "Raise a new RFQ"},
+                        {"id": "rfq_status", "title": "Check your previous RFQs"},
+                        {"id": "contact_support", "title": "Any other support you need"}
                     ]
                     
                     await self.whatsapp_service.send_configurable_buttons(
@@ -529,8 +528,22 @@ Analyze their response and return only:
                         "Choose an option"
                     )
                 else:
-                    continue_message = f"Continuing with your current {current_role} account. How can I help you today?"
-                    await self.whatsapp_service.send_message(user.phone_number, continue_message)
+                    continue_message = (
+                        f"Alright, you're staying with your {current_role.title()} account.\n"
+                        "What would you like to do today?"
+                    )
+                    
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQ status"},
+                        {"id": "contact_support", "title": "Get other support"}
+                    ]
+                    
+                    await self.whatsapp_service.send_configurable_buttons(
+                        user.phone_number,
+                        continue_message,
+                        buttons_config,
+                        "Choose an option"
+                    )
 
                 return {
                     "status": "role_switch_declined",
@@ -591,14 +604,13 @@ Analyze their response and return only:
                 if current_role.lower() == "buyer":
                     continue_message = (
                         f"Alright, you're staying with your {current_role.title()} account.\n"
-                        f"What can I assist you with today?"
+                        "What can I assist you with today?"
                     )
                     
-                    # Send message with interactive buttons
                     buttons_config = [
-                        {"id": "new_rfq", "title": "Create new RFQ"},
-                        {"id": "rfq_status", "title": "Check RFQs Status"},
-                        {"id": "contact_support", "title": "Contact Support"}
+                        {"id": "new_rfq", "title": "Raise a new RFQ"},
+                        {"id": "rfq_status", "title": "Check your previous RFQs"},
+                        {"id": "contact_support", "title": "Any other support you need"}
                     ]
                     
                     await self.whatsapp_service.send_configurable_buttons(
@@ -608,8 +620,22 @@ Analyze their response and return only:
                         "Choose an option"
                     )
                 else:
-                    continue_message = f"Continuing with your current {current_role} account. How can I help you today?"
-                    await self.whatsapp_service.send_message(user.phone_number, continue_message)
+                    continue_message = (
+                        f"Alright, you're staying with your {current_role.title()} account.\n"
+                        "What would you like to do today?"
+                    )
+                    
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQ status"},
+                        {"id": "contact_support", "title": "Get other support"}
+                    ]
+                    
+                    await self.whatsapp_service.send_configurable_buttons(
+                        user.phone_number,
+                        continue_message,
+                        buttons_config,
+                        "Choose an option"
+                    )
 
                 return {
                     "status": "role_switch_declined",
@@ -676,14 +702,13 @@ Analyze their response and return only:
                 if current_role.lower() == "buyer":
                     continue_message = (
                         f"Alright, you're staying with your {current_role.title()} account.\n"
-                        f"What can I assist you with today?"
+                        "What can I assist you with today?"
                     )
                     
-                    # Send message with interactive buttons
                     buttons_config = [
-                        {"id": "new_rfq", "title": "Create new RFQ"},
-                        {"id": "rfq_status", "title": "Check RFQs Status"},
-                        {"id": "contact_support", "title": "Contact Support"}
+                        {"id": "new_rfq", "title": "Raise a new RFQ"},
+                        {"id": "rfq_status", "title": "Check your previous RFQs"},
+                        {"id": "contact_support", "title": "Any other support you need"}
                     ]
                     
                     await self.whatsapp_service.send_configurable_buttons(
@@ -693,8 +718,22 @@ Analyze their response and return only:
                         "Choose an option"
                     )
                 else:
-                    continue_message = f"Continuing with your current {current_role} account. How can I help you today?"
-                    await self.whatsapp_service.send_message(user.phone_number, continue_message)
+                    continue_message = (
+                        f"Alright, you're staying with your {current_role.title()} account.\n"
+                        "What would you like to do today?"
+                    )
+                    
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQ status"},
+                        {"id": "contact_support", "title": "Get other support"}
+                    ]
+                    
+                    await self.whatsapp_service.send_configurable_buttons(
+                        user.phone_number,
+                        continue_message,
+                        buttons_config,
+                        "Choose an option"
+                    )
 
                 return {
                     "status": "account_switch_declined",
