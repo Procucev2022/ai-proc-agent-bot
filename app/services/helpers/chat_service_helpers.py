@@ -110,7 +110,7 @@ class ChatServiceHelpers:
         schema = RFQValidationSchema(**schema_data)
         
         # Debug logging for optional questions
-        logger.info(f"Schema data: preferred_brand={schema.preferred_brand}, remarks={schema.remarks}, items={bool(schema.items)}")
+        logger.info(f"Schema data: preferred_brand={schema.preferred_brand}, remarks={schema.remarks}, items={bool(schema.items)}, entire_schena_data={schema_data}")
         optional_questions = schema.get_optional_questions()
         logger.info(f"Optional questions generated: {optional_questions}")
         
