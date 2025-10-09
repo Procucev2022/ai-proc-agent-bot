@@ -428,7 +428,17 @@ class ChatService:
             return result
 
         except Exception as e:
-            return await self._handle_error_response(e, user_phone, "processing_message", "Please try again")
+            logger.error(f"Critical error in process_message for {user_phone}: {e}")
+            
+            # Use technical failure handler for critical errors
+            from app.utils.technical_failure_handler import handle_technical_failure
+            await handle_technical_failure(
+                user_phone=user_phone,
+                error_message=f"Critical processing error: {str(e)}",
+                error_type="Critical System Error"
+            )
+            
+            return {"status": "technical_failure", "error": str(e)}
 
     async def authentication_orchestrator_flow(self, user_phone: str, message_content: str,
                                                session: ConversationSession, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -1501,8 +1511,15 @@ class ChatService:
     Dict[str, Any]:
         """Handle common error response pattern."""
         logger.error(f"Error in {error_type}: {error}")
-        # Use the fallback message directly instead of generating with OpenAI to avoid unnecessary API calls
-        await self.whatsapp_service.send_message(user_phone, fallback_message)
+        
+        # Use technical failure handler for clean exit
+        from app.utils.technical_failure_handler import handle_technical_failure
+        await handle_technical_failure(
+            user_phone=user_phone,
+            error_message=f"{error_type}: {str(error)}",
+            error_type=error_type
+        )
+        
         return {"status": "error", "error": str(error)}
 
     async def _save_session(self, session: ConversationSession, workflow_type: str) -> ConversationSession:
