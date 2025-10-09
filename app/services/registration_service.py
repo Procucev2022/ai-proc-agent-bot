@@ -96,6 +96,13 @@ class RegistrationService:
                                                 session: ConversationSession) -> Dict[str, Any]:
         """Handle registration data collection using entity extraction with context awareness."""
         try:
+            # Check for exit keywords first before processing registration data
+            if message_content.lower().strip() in ["exit", "quit", "stop", "cancel"]:
+                logger.info(f"Exit keyword detected during registration data collection: '{message_content}'")
+                from app.services.exit_service import ExitService
+                exit_service = ExitService(self.whatsapp_service, self.authentication_service, self.session_manager)
+                return await exit_service.handle_exit_intent(user_phone, session)
+            
             user_type = session.workflow_state.get("user_type", "buyer")
             logger.info(f"Starting registration data collection for {user_phone}, user_type: {user_type}")
             logger.info(f"Current workflow_state: {session.workflow_state}")
@@ -277,6 +284,13 @@ class RegistrationService:
                                              session: ConversationSession) -> Dict[str, Any]:
         """Handle user confirmation response from buttons or keywords."""
         try:
+            # Check for exit keywords first before processing confirmation
+            if message_content.lower().strip() in ["exit", "quit", "stop", "cancel"]:
+                logger.info(f"Exit keyword detected during registration confirmation: '{message_content}'")
+                from app.services.exit_service import ExitService
+                exit_service = ExitService(self.whatsapp_service, self.authentication_service, self.session_manager)
+                return await exit_service.handle_exit_intent(user_phone, session)
+            
             user_type = session.workflow_state.get("user_type", "buyer")
             entities = session.workflow_state.get("registration_entities", {})
             
