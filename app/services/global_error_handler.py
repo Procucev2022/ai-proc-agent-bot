@@ -51,9 +51,9 @@ class GlobalErrorHandler:
         
         # User-facing error message
         self.user_error_message = (
-            "There seems to be a technical issue at the moment. Our team is working on it. "
-            "Please try again later. For urgent requirements, contact support@procucev.com. "
-            "We apologize for the inconvenience."
+            "Currently, we are facing some technical issues. The team is actively working to get QUA up and running.\n"
+            "We apologise for the inconvenience caused and request you to please try again after a while.\n"
+            "In case of anything urgent, feel free to reach us at info@procucev.com."
         )
     
     async def handle_error(self, error_context: ErrorContext) -> bool:
