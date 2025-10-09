@@ -289,6 +289,9 @@ class AuthenticationOrchestrator:
                 return await self._redirect_to_registration_flow(user_phone, session, user_type)
 
             # Step 3: User selection and email confirmation
+            # Store the intent result in session for use during email confirmation
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state["current_intent_result"] = intent_result
             return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content, raw_response)
                 
         except Exception as e:
@@ -309,6 +312,8 @@ class AuthenticationOrchestrator:
             filtered_users = filter_result.get("filtered_users", [])
             unique_emails = filter_result.get("unique_emails", [])
 
+            logger.info(f"intent passed in handle user selection is {intent_result}")
+
             if not unique_emails:
                 # Default to buyer unless explicitly sell_something intent
                 user_type = "seller" if intent_result.get("intent") == "sell_something" else "buyer"
@@ -316,12 +321,17 @@ class AuthenticationOrchestrator:
 
             # Store user data for email confirmation
             WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="authentication_orchestrator")
+            
+            # CRITICAL FIX: Preserve existing workflow_state data to prevent context loss
+            existing_state = session.workflow_state or {}
             session.workflow_state = {
+                **existing_state,  # Preserve all existing data
                 "authentication_stage": "email_confirmation",
                 "filtered_users": filtered_users,
                 "available_emails": unique_emails,
                 "original_auth_users": original_auth_users or filtered_users,  # Store original unfiltered users
                 "intent_result": intent_result,
+                "current_intent_result": intent_result,  # Store for email confirmation handler
                 "original_message": message_content
             }
             
@@ -363,8 +373,10 @@ class AuthenticationOrchestrator:
             
             if auth_stage == "email_confirmation":
                 logger.info(f"Processing email confirmation with message: {message_content}")
-                # Get stored intent result from session
-                stored_intent_result = session.workflow_state.get("current_intent_result", {})
+                # Always use the current intent result
+                session.workflow_state["current_intent_result"] = intent_result
+                stored_intent_result = intent_result
+                
                 return await self.authentication_service.handle_email_confirmation(
                     user_phone, message_content, session, stored_intent_result
                 )

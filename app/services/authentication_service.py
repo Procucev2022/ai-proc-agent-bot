@@ -29,6 +29,7 @@ from app.procucev_apis.register_apis import RegisterAPIService
 from app.services.support_notification_service import SupportNotificationService
 from app.services.user_cache_service import get_user_cache_service
 from app.context import user_context
+from app.services.auth_reg_service import AuthRegService
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class AuthenticationService:
         self.register_api_service = RegisterAPIService()
         self.support_notification_service = SupportNotificationService()
         self.user_cache_service = get_user_cache_service()
+        self.auth_reg_service = AuthRegService()
         self.session_manager = session_manager  # Will be injected from ChatService
     
     async def validate_token(self, user_phone: str) -> Optional[User]:
@@ -304,10 +306,16 @@ class AuthenticationService:
                 if not intent_result:
                     intent_result = session.workflow_state.get("current_intent_result", {})
 
-                # If still no intent result, use a safe default instead of re-classifying
+                # If still no intent result, preserve the original intent from session if available
                 if not intent_result:
-                    logger.warning("No intent result available during email confirmation - using default")
-                    intent_result = {"intent": "general_inquiry", "confidence": 50}
+                    # Check if we have a stored intent result from the original message
+                    stored_intent = session.workflow_state.get("intent_result", {})
+                    if stored_intent and stored_intent.get("intent"):
+                        intent_result = stored_intent
+                        logger.info(f"Using stored intent result from session: {intent_result}")
+                    else:
+                        logger.warning("No intent result available during email confirmation - using default")
+                        intent_result = {"intent": "general_inquiry", "confidence": 50}
 
 
                 intent = intent_result.get('intent')
@@ -315,8 +323,11 @@ class AuthenticationService:
 
                 logger.info(f"Intent refinement check: {intent} ({confidence}%)")
 
-                # If clear buy/sell intent with high confidence
-                if intent in ["buy_something", "sell_something"] and confidence > 75:
+                # Skip intent refinement for rfq_status_check and other non-transactional intents
+                original_intent = session.workflow_state.get("intent_result", {}).get("intent")
+                if original_intent in ["rfq_status_check", "general_inquiry", "reference_request", "session_inquiry"]:
+                    logger.info(f"Skipping intent refinement for original intent: {original_intent}")
+                elif intent in ["buy_something", "sell_something"] and confidence > 75:
                     # Get original users and re-filter
                     original_users = session.workflow_state.get("original_auth_users", filtered_users)
                     filter_result = self.filter_users_by_intent(original_users, intent)
@@ -877,65 +888,34 @@ Return only the selected email address or "none" if no clear selection.
             if not user_details or not selected_email:
                 return {"status": "restart_authentication"}
             
-            domain_result = await self._check_domain_approval(selected_email, user_details)
+            user_id = user_details.get("id")
+            if not user_id:
+                logger.error("No user ID found for domain approval")
+                return {"status": "error", "error": "User ID not found"}
+            
+            domain_result = await self._check_domain_approval(user_id)
             
             if domain_result.get("approved"):
-                await self._update_approval_status(user_details.get("id"), True)
                 return await self._complete_buyer_authentication(user_phone, user_details, selected_email)
             else:
-                await self._update_approval_status(user_details.get("id"), False)
                 return await self._handle_domain_mismatch(user_phone, user_details)
                 
         except Exception as e:
             logger.error(f"Domain matching error: {e}")
             return {"status": "error", "error": str(e)}
     
-    async def _check_domain_approval(self, email: str, user_details: Dict) -> Dict[str, Any]:
-        """Check if email domain matches company for approval."""
+    async def _check_domain_approval(self, user_id: str) -> Dict[str, Any]:
+        """Check user domain approval using shared service."""
         try:
-            domain = email.split('@')[1] if '@' in email else ""
-            company_name = user_details.get("companyName", "").lower()
-            
-            domain_parts = domain.lower().split('.')
-            company_parts = company_name.replace(" ", "").replace("-", "").replace("_", "")
-            
-            approved = any(part in company_parts for part in domain_parts if len(part) > 2)
-            
-            return {
-                "approved": approved,
-                "domain": domain,
-                "company_name": company_name,
-                "reason": "Domain match" if approved else "Domain mismatch"
-            }
-            
+            return await self.auth_reg_service.user_domain_check(user_id)
         except Exception as e:
             logger.error(f"Domain approval check error: {e}")
-            
-            # Send email notification to support team for domain matching failure
             await self.support_notification_service.notify_api_service_failure(
-                f"Domain approval check error for {email}: {str(e)}"
+                f"Domain approval check error for user {user_id}: {str(e)}"
             )
-            
             return {"approved": False, "error": str(e)}
     
-    async def _update_approval_status(self, user_id: str, approved: bool) -> Dict[str, Any]:
-        """Update user approval status via API."""
-        try:
-            if approved:
-                approval_response = await self.register_api_service.user_approval(user_id)
-                return approval_response
-            else:
-                return {"success": True, "approved": False}
-                
-        except Exception as e:
-            logger.error(f"Approval status update error: {e}")
-            
-            # Send email notification to support team for approval status update failure
-            await self.support_notification_service.notify_api_service_failure(
-                f"Approval status update error for user {user_id}: {str(e)}"
-            )
-            
-            return {"success": False, "error": str(e)}
+
     
     async def _complete_buyer_authentication(self, user_phone: str, user_details: Dict,
                                            selected_email: str) -> Dict[str, Any]:
@@ -1096,16 +1076,37 @@ Respond only with: "yes" or "no"
             # Check if we have mixed user types for better messaging
             buyer_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Buyer"]
             seller_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Seller"]
-            
+
+            # Get the current intent from session to determine message type
+            current_intent_result = session.workflow_state.get("current_intent_result", {})
+            intent = current_intent_result.get("intent", "general_inquiry")
+
             if buyer_emails and seller_emails:
-                message = f"Welcome! Are you looking to buy or sell today ?\n\nPlease select your profile by choosing the associated email address:\n"
+                # Mixed user types - check intent to customize message
+                if intent == "ambiguous":
+                    # Ambiguous intent - ask for clarification first
+                    message = "I noticed you mentioned both buying and selling. Would you like to start with buying or selling?\n\nPlease select your profile by choosing the associated email address:\n"
+                elif intent == "rfq_status_check":
+                    # RFQ status check - don't ask about buy/sell
+                    message = "Please select your profile by choosing the associated email address:\n"
+                else:
+                    # Default mixed message
+                    message = "Welcome! Are you looking to buy or sell today?\n\nPlease select your profile by choosing the associated email address:\n"
+
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
                     type_label = f" — {user_type}" if user_type else ""
                     message += f"  {i}. {email}{type_label}\n"
                 message += "\nReply with the number corresponding to your email address to continue."
             else:
-                message = f"Welcome! Please select your profile by choosing the associated email address:\n"
+                # Single user type or no mixed types
+                if intent == "rfq_status_check":
+                    # RFQ status check - don't ask about buy/sell
+                    message = "Please select your profile by choosing the associated email address:\n"
+                else:
+                    # Default message
+                    message = "Welcome! Please select your profile by choosing the associated email address:\n"
+
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
                     type_label = f" — {user_type}" if user_type else ""

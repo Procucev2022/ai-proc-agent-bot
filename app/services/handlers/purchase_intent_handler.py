@@ -76,6 +76,7 @@ class PurchaseIntentHandler:
                 "intent_result": intent_result,  # Pass intent result to avoid duplicate OpenAI calls
                 "chat_summaries": chat_summaries,  # Add summaries for smart entity extraction
             }
+            logger.info(f"entity extraction results in handle purchase intent:{entity_context}")
             print(f"PurchaseIntentHandler: Passing context to EntityService - has pending confirmations: {bool(session.workflow_state.get('pending_combined_rfq'))}")
             print(f"PurchaseIntentHandler: Debug session.workflow_state keys: {list(session.workflow_state.keys()) if session.workflow_state else 'None'}")
             print(f"PurchaseIntentHandler: Debug pending_combined_rfq: {session.workflow_state.get('pending_combined_rfq') if session.workflow_state else 'No workflow_state'}")
@@ -92,9 +93,12 @@ class PurchaseIntentHandler:
             # Use summary-aware entity extraction if we have summaries, otherwise use standard extraction
             if chat_summaries and should_use_summary_aware_extraction_func and should_use_summary_aware_extraction_func(message):
                 print(f"PurchaseIntentHandler: Using summary-aware entity extraction")
+                logger.info(f"PurchaseIntentHandler: Using summary aware entity extraction data to be passed for entity extraction message={message}, context={entity_context}, workflow_type={workflow_type} ")
+
                 entity_result = self.entity_service.extract_entities_with_summary_context(message, context=entity_context, workflow_type=workflow_type)
             else:
                 print(f"PurchaseIntentHandler: Using standard entity extraction")
+                logger.info(f"PurchaseIntentHandler: Using standard entity extraction data to be passed for entity extraction message={message}, context={context_entities}, workflow_type={workflow_type} ")
                 entity_result = self.entity_service.extract_entities(message, context=entity_context, workflow_type=workflow_type)
             logger.info(f"EntityService result: {entity_result}")
             

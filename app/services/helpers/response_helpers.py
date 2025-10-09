@@ -135,7 +135,7 @@ class ResponseHelpers:
 
         except Exception as e:
             logger.error(f"Error generating seller contextual response: {e}")
-            return self._get_fallback_message(context.get("workflow_state"))
+            return self._get_fallback_message(context.get("workflow_state"), context.get("user_role"))
 
     # Add these new workflow states to your response_helpers.py
 
@@ -343,12 +343,12 @@ class ResponseHelpers:
         """Generate fallback response for unknown states."""
         return await self._generate_common_seller_response(
             context.get("workflow_state", "unknown"), "general_assistance", context,
-            "I'm here to help with your RFQ needs. You can request RFQ details, view subscription plans, or contact support@procurev.com."
+            self._get_fallback_message(context.get("workflow_state"), context.get("user_role"))
         )
 
     # Fallback methods for when AI generation fails
-    def _get_fallback_message(self, workflow_state: str) -> str:
-        """Get appropriate fallback message based on workflow state."""
+    def _get_fallback_message(self, workflow_state: str, user_role: str = None) -> str:
+        """Get appropriate fallback message based on workflow state and user role."""
         fallbacks = {
             "display_rfqs_to_seller": "Here are the available RFQs in your category. Please let me know which ones interest you.",
             "display_rfqs_no_credits": "You have 0 credits available. Please choose a subscription plan to access RFQ details.",
@@ -359,7 +359,27 @@ class ResponseHelpers:
             "rfq_email_status": "Your RFQ details have been processed. Please check your email.",
             "error": "I apologize for the technical issue. Please contact support@procurev.com."
         }
-        return fallbacks.get(workflow_state, "How can I help you with your RFQ needs today?")
+        
+        default_message = fallbacks.get(workflow_state)
+        if default_message:
+            return default_message
+            
+        # For default fallback, show appropriate menu based on user role
+        if user_role and user_role.lower() == "buyer":
+            return (
+                "What can I assist you with today?\n"
+                "• Raise a new RFQ\n"
+                "• Check your previous RFQs\n"
+                "• Any other support you need"
+            )
+        elif user_role and user_role.lower() == "seller":
+            return (
+                "What would you like to do today?\n"
+                "• Check RFQ status\n"
+                "• Get other support"
+            )
+        else:
+            return "How can I help you with your procurement needs today?"
 
     def _get_rfq_display_fallback(self, context: Dict[str, Any]) -> str:
         """Fallback for RFQ display."""

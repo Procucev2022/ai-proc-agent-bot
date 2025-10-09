@@ -158,6 +158,7 @@ class APIUserSchema(BaseModel):
     uniqueId: Optional[str] = None
     orgId: Optional[str] = None
     verificationStatus: Optional[str] = None
+    approved: Optional[bool] = None
     
 
 class User(BaseModel):
@@ -172,6 +173,7 @@ class User(BaseModel):
     unique_id: Optional[str] = None
     org_id: Optional[str] = None
     verification_status: Optional[str] = None
+    approved: Optional[bool] = None
 
     @classmethod
     def from_api_response(cls, api_data: dict) -> "User":
@@ -214,7 +216,8 @@ class User(BaseModel):
             company_name=api_data.get("companyName"),
             unique_id=api_data.get("uniqueId"),
             org_id=api_data.get("orgId"),
-            verification_status=verification_status
+            verification_status=verification_status,
+            approved=api_data.get("approved")
         )
 
     @classmethod

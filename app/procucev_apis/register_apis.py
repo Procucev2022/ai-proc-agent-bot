@@ -207,7 +207,7 @@ class RegisterAPIService:
             # Check success based on status field
             if response.get("status") == "Success" and response['statusCode'] == 200:
                 return {
-                    "statusCode": response,
+                    "statusCode": response.get("statusCode", "200"),
                     "message": response.get("message", "OTP validated successfully"),
                     "errorMsg": response.get("errorMsg"),
                     "timestamp": response.get("timestamp"),
