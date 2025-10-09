@@ -1192,35 +1192,62 @@ class ChatService:
             return await self._handle_error_response(e, user.phone_number, "registration_workflow",
                                                      "Please tell me your name to get started")
 
-    async def _handle_general_inquiry(self, user: User, message: str, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def _handle_general_inquiry(
+        self, user: User, message: str, intent_result: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
         """Handle general inquiries using OpenAI."""
         try:
             context = ChatServiceHelpers.build_context("general_inquiry", message)
-            
-            # Check if we should show buttons
-            show_buttons = False
-            if intent_result and intent_result.get('context_analysis', {}).get('show_buttons'):
-                show_buttons = True
-            
+
+            # Detect if we should show buttons
+            show_buttons = intent_result and intent_result.get('context_analysis', {}).get('show_buttons', False)
+
+            # Determine user role
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+
             if show_buttons:
-                # Send message with interactive buttons
-                buttons_config = [
-                    {"id": "new_rfq", "title": "📄 New RFQ"},
-                    {"id": "rfq_status", "title": "🔍 RFQs Status Check"},
-                    {"id": "contact_support", "title": "💬 Contact Support"},
-                    {"id": "exit", "title": "❌ Exit"}
-                ]
+                # ✅ Role-based button configuration
+                if user_role == "buyer":
+                    buttons_config = [
+                        {"id": "new_rfq", "title": "📄 Raise New RFQ"},
+                        {"id": "previous_rfq", "title": "📁 Previous RFQs"},
+                        {"id": "other_support", "title": "💬 Other Support"},
+                        {"id": "exit", "title": "❌ Exit"}
+                    ]
+                    header = "What can I assist you with today?"
                 
+                elif user_role == "seller":
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "🔍 Check RFQ Status"},
+                        {"id": "other_support", "title": "💬 Other Support"},
+                        {"id": "exit", "title": "❌ Exit"}
+                    ]
+                    header = "What would you like to do today?"
+                
+                else:
+                    # Unknown role → generic buttons
+                    buttons_config = [
+                        {"id": "contact_support", "title": "💬 Contact Support"},
+                        {"id": "exit", "title": "❌ Exit"}
+                    ]
+                    header = "How can I help you with your procurement needs today?"
+
+                # ✅ Send interactive buttons
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
                     message,
                     buttons_config,
-                    "Choose an option"
+                    header
                 )
+
             else:
-                await self._send_contextual_response(user.phone_number, context,
-                                                     ["How can I help you with your procurement needs today?"],
-                                                     "general_inquiry")
+                # ✅ Regular contextual reply (no buttons)
+                await self._send_contextual_response(
+                    user.phone_number,
+                    context,
+                    ["How can I help you with your procurement needs today?"],
+                    "general_inquiry"
+                )
 
             return {"status": "general_inquiry_handled"}
 
@@ -1247,15 +1274,29 @@ class ChatService:
     async def _handle_clarification_request(self, user: User, message: str) -> Dict[str, Any]:
         """Handle ambiguous messages requiring clarification."""
         try:
-            context = ChatServiceHelpers.build_context("clarification", message)
-
-            clarification_questions = [
-                "Could you be more specific about what you're looking for?",
-                "Are you looking to create an RFQ or check product availability?"
-            ]
-
-            response = await self.response_helpers.generate_clarification_response(clarification_questions, 0, context)
-            await self.whatsapp_service.send_message(user.phone_number, response)
+            # Check user role to provide appropriate menu
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+            
+            if user_role == "buyer":
+                # Buyer clarification menu
+                clarification_message = (
+                    "What can I assist you with today?\n"
+                    "• Raise a new RFQ\n"
+                    "• Check your previous RFQs\n"
+                    "• Any other support you need"
+                )
+            elif user_role == "seller":
+                # Seller clarification menu
+                clarification_message = (
+                    "What would you like to do today?\n"
+                    "• Check RFQ status\n"
+                    "• Get other support"
+                )
+            else:
+                # Fallback for unknown role
+                clarification_message = "Could you be more specific about your procurement needs?"
+            
+            await self.whatsapp_service.send_message(user.phone_number, clarification_message)
             return {"status": "clarification_sent"}
 
         except Exception as e:
@@ -1265,11 +1306,29 @@ class ChatService:
     async def _handle_fallback(self, user: User, message: str) -> Dict[str, Any]:
         """Handle messages that don't fit other categories."""
         try:
-            context = ChatServiceHelpers.build_context("fallback", message)
-
-            fallback_questions = ["How can I help you with your procurement needs?"]
-
-            await self._send_contextual_response(user.phone_number, context, fallback_questions, "fallback")
+            # Check user role to provide appropriate menu
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+            
+            if user_role == "buyer":
+                # Buyer fallback menu
+                fallback_message = (
+                    "What can I assist you with today?\n"
+                    "• Raise a new RFQ\n"
+                    "• Check your previous RFQs\n"
+                    "• Any other support you need"
+                )
+            elif user_role == "seller":
+                # Seller fallback menu
+                fallback_message = (
+                    "What would you like to do today?\n"
+                    "• Check RFQ status\n"
+                    "• Get other support"
+                )
+            else:
+                # Fallback for unknown role
+                fallback_message = "How can I help you with your procurement needs?"
+            
+            await self.whatsapp_service.send_message(user.phone_number, fallback_message)
             return {"status": "fallback_handled"}
 
         except Exception as e:
