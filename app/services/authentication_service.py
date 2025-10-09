@@ -323,8 +323,11 @@ class AuthenticationService:
 
                 logger.info(f"Intent refinement check: {intent} ({confidence}%)")
 
-                # If clear buy/sell intent with high confidence
-                if intent in ["buy_something", "sell_something"] and confidence > 75:
+                # Skip intent refinement for rfq_status_check and other non-transactional intents
+                original_intent = session.workflow_state.get("intent_result", {}).get("intent")
+                if original_intent in ["rfq_status_check", "general_inquiry", "reference_request", "session_inquiry"]:
+                    logger.info(f"Skipping intent refinement for original intent: {original_intent}")
+                elif intent in ["buy_something", "sell_something"] and confidence > 75:
                     # Get original users and re-filter
                     original_users = session.workflow_state.get("original_auth_users", filtered_users)
                     filter_result = self.filter_users_by_intent(original_users, intent)
@@ -1073,16 +1076,37 @@ Respond only with: "yes" or "no"
             # Check if we have mixed user types for better messaging
             buyer_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Buyer"]
             seller_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Seller"]
-            
+
+            # Get the current intent from session to determine message type
+            current_intent_result = session.workflow_state.get("current_intent_result", {})
+            intent = current_intent_result.get("intent", "general_inquiry")
+
             if buyer_emails and seller_emails:
-                message = f"Welcome! Are you looking to buy or sell today ?\n\nPlease select your profile by choosing the associated email address:\n"
+                # Mixed user types - check intent to customize message
+                if intent == "ambiguous":
+                    # Ambiguous intent - ask for clarification first
+                    message = "I noticed you mentioned both buying and selling. Would you like to start with buying or selling?\n\nPlease select your profile by choosing the associated email address:\n"
+                elif intent == "rfq_status_check":
+                    # RFQ status check - don't ask about buy/sell
+                    message = "Please select your profile by choosing the associated email address:\n"
+                else:
+                    # Default mixed message
+                    message = "Welcome! Are you looking to buy or sell today?\n\nPlease select your profile by choosing the associated email address:\n"
+
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
                     type_label = f" — {user_type}" if user_type else ""
                     message += f"  {i}. {email}{type_label}\n"
                 message += "\nReply with the number corresponding to your email address to continue."
             else:
-                message = f"Welcome! Please select your profile by choosing the associated email address:\n"
+                # Single user type or no mixed types
+                if intent == "rfq_status_check":
+                    # RFQ status check - don't ask about buy/sell
+                    message = "Please select your profile by choosing the associated email address:\n"
+                else:
+                    # Default message
+                    message = "Welcome! Please select your profile by choosing the associated email address:\n"
+
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
                     type_label = f" — {user_type}" if user_type else ""

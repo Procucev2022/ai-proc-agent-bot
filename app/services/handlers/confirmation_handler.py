@@ -421,15 +421,28 @@ class ConfirmationHandler:
         if rfq_ids:
             # Single RFQ case (matches your example format)
             if successful_count == 1:
-                response = f"✅ RFQ created successfully!\n\nID: {rfq_ids[0]}\n(You can use this ID anytime to track your request.)\n\nWhat would you like to do next?\n• 📄 Raise a new RFQ\n• 🔍 Check previous RFQs\n• 💬 Get other support"
+                response = f"✅ RFQ created successfully!\n\nID: {rfq_ids[0]}\n(You can use this ID anytime to track your request.)\n\nWhat would you like to do next?"
             # Multiple RFQs case
             else:
                 rfq_ids_text = "\n".join([f"ID: {rfq_id}" for rfq_id in rfq_ids])
-                response = f"✅ All {successful_count} RFQs created successfully!\n\n{rfq_ids_text}\n(You can use these IDs anytime to track your requests.)\n\nWhat would you like to do next?\n• 📄 Raise a new RFQ\n• 🔍 Check previous RFQs\n• 💬 Get other support"
+                response = f"✅ All {successful_count} RFQs created successfully!\n\n{rfq_ids_text}\n(You can use these IDs anytime to track your requests.)\n\nWhat would you like to do next?"
         else:
-            response = f"✅ All {successful_count} RFQs created successfully!\n\nWhat would you like to do next?\n• 📄 Raise a new RFQ\n• 🔍 Check previous RFQs\n• 💬 Get other support"
+            response = f"✅ All {successful_count} RFQs created successfully!\n\nWhat would you like to do next?"
 
-        await self.whatsapp_service.send_message(user.phone_number, response)
+        # Send message with interactive buttons (WhatsApp limit: 3 buttons max)
+
+        buttons_config = [
+            {"id": "new_rfq", "title": "Create new RFQ"},
+            {"id": "rfq_status", "title": "Check RFQs Status"},
+            {"id": "contact_support", "title": "Contact Support"}
+        ]
+        
+        await self.whatsapp_service.send_configurable_buttons(
+            user.phone_number,
+            response,
+            buttons_config,
+            "Choose an option"
+        )
 
     async def _merge_optional_fields_and_confirm(self, user: User, session: ConversationSession,
                                                message: str) -> Dict[str, Any]:
