@@ -544,6 +544,11 @@ class ChatService:
                 await self.session_manager.save_session(session, WorkflowType.user_exit)
                 return exit_result
 
+            if intent == "support" and confidence > 0.7:
+                logger.info(f"Support intent detected with {confidence}% confidence - handling immediately")
+                result = await self._handle_support_request(user, message)
+                return result
+
             # Handle pending intent switch choices (user responding to "1. Continue or 2. Switch")
             if session.workflow_state.get("pending_intent_switch"):
                 result = await self.intent_switch_handler.handle_intent_switch_response(user, session, message)
