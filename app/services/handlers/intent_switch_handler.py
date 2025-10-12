@@ -74,19 +74,30 @@ class IntentSwitchHandler:
             if context_analysis:
                 conversation_stage = context_analysis.get('conversation_stage', 'unknown')
                 references_existing_data = context_analysis.get('references_existing_data', False)
-                
+
                 # If user is in collecting stage and referencing existing data, they're responding to our questions
                 if conversation_stage == 'collecting' and references_existing_data:
                     logger.info(f"User providing details during collection stage - continuing current RFQ")
                     return False
-                
+
+                # If user is in optional_fields stage, they're responding to optional field prompts
+                if conversation_stage == 'optional_fields':
+                    logger.info(f"User in optional_fields stage - responding to optional field prompts")
+                    return False
+
                 # Additional check: if conversation stage is 'collecting' and we have incomplete products,
                 # the user is likely responding to system prompts even if AI doesn't detect references
-                if (conversation_stage == 'collecting' and 
+                if (conversation_stage == 'collecting' and
                     bool(session.workflow_state.get("incomplete_products"))):
                     logger.info(f"User in collecting stage with incomplete products - likely responding to prompts")
                     return False
-                
+
+                # Check for pending optional fields - user is responding to optional questions
+                if (bool(session.workflow_state.get("pending_optional_rfq")) or
+                    bool(session.workflow_state.get("pending_optional_combined_rfq"))):
+                    logger.info(f"User has pending optional fields - responding to optional field prompts")
+                    return False
+
                 # Otherwise, it's likely a new product request
                 logger.info(f"New product request detected (stage: {conversation_stage}, references_existing: {references_existing_data})")
                 return True
