@@ -474,11 +474,15 @@ class OpenAIService:
                             "is_modification_extraction": True
                         }
                     elif "products" in args:
-                        # New multi-product format
+                        # New multi-product format with global fields
                         products = args.get("products", [])
                         print(f"OpenAI: Using NEW multi-product format with {len(products)} products")
                         result = {
                             "products": products,
+                            "deliveryDate": args.get("deliveryDate"),
+                            "state": args.get("state"),
+                            "city": args.get("city"),
+                            "pincode": args.get("pincode"),
                             "confidence": args.get("confidence", 0),
                             "success": True
                         }

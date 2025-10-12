@@ -126,8 +126,7 @@ class EntityService:
                 "deliveryDate": response.get("deliveryDate"),
                 "state": response.get("state"),
                 "city": response.get("city"),
-                "pincode": response.get("pincode"),
-                "division": response.get("division")
+                "pincode": response.get("pincode")
             }
 
             # Merge global fields into each product for backward compatibility
@@ -759,8 +758,8 @@ class EntityService:
         Merge global fields into each product for backward compatibility.
 
         TEMPORARY SOLUTION: This method merges global fields (deliveryDate, state, city,
-        pincode, division) into each product entity to maintain backward compatibility
-        with existing downstream code.
+        pincode) into each product entity to maintain backward compatibility with existing
+        downstream code.
 
         TODO: Refactor downstream code (chat_service_helpers.py, products_array_handler.py,
         confirmation_handler.py) to understand and handle the two-level structure natively.

@@ -663,7 +663,6 @@ class ChatService:
 
             # Handle cancel confirmation response (when cancel_pending is true)
             cancel_pending = session.workflow_state and session.workflow_state.get("cancel_pending", False)
-            cancel_was_declined = False
             if cancel_pending:
                 logger.info(f"Cancel confirmation pending - processing user response: {message}")
                 user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
@@ -680,21 +679,11 @@ class ChatService:
                 elif cancel_result.get("status") == "cancelled_aborted":
                     # User declined, save session and continue with normal flow
                     await self.session_manager.save_session(session, session.workflow_type)
-                    # Set flag to prevent workflow_rejection from triggering exit
-                    cancel_was_declined = True
                     # Don't return - let the flow continue below to re-ask pending questions
                     logger.info("Cancellation declined - continuing with normal workflow processing")
                 else:
                     # Any other status, return the result
                     return cancel_result
-
-            # Handle workflow rejection as exit intent (but not if we just declined cancel)
-            if intent == "workflow_rejection" and confidence > 60 and not cancel_was_declined:
-                logger.info(f"Workflow rejection detected with {confidence}% confidence - exiting user")
-                user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
-                exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                await self.session_manager.save_session(session, WorkflowType.user_exit)
-                return exit_result
 
             # Handle support requests immediately - even during active workflows
             if intent == "support" and confidence > 0.7:
@@ -702,12 +691,9 @@ class ChatService:
                 result = await self._handle_support_request(user, message)
                 return result
 
-            # Handle contextual intents with direct response capability (but not if we just declined cancel)
-            if intent in ['contextual_reference', 'session_inquiry', 'workflow_rejection', 'alternative_request'] and confidence > 60:
-                # Skip workflow_rejection if we just declined a cancel confirmation
-                if intent == 'workflow_rejection' and cancel_was_declined:
-                    logger.info(f"Skipping workflow_rejection handler - user just declined cancel confirmation")
-                elif intent_result.get('should_handle_directly'):
+            # Handle contextual intents with direct response capability
+            if intent in ['contextual_reference', 'session_inquiry', 'alternative_request'] and confidence > 60:
+                if intent_result.get('should_handle_directly'):
                     logger.info(f"Contextual intent detected: {intent} with {confidence}% confidence - handling directly")
                     return await self._handle_contextual_interaction(user, session, message, intent_result)
             
@@ -2094,7 +2080,7 @@ class ChatService:
         Handle contextual interactions with SAFE session management.
 
         This method processes contextual intents like session_inquiry, contextual_reference,
-        workflow_rejection, and alternative_request. CRITICAL: Uses WorkflowManager to prevent
+        and alternative_request. CRITICAL: Uses WorkflowManager to prevent
         accidental data loss.
 
         Args:

@@ -44,7 +44,7 @@ class IntentService:
             
         Returns:
             Dict containing:
-            - intent: classified intent (buy_something, general_inquiry, modification_request, confirmation_response, reference_request, ambiguous, contextual_reference, session_inquiry, workflow_rejection, alternative_request)
+            - intent: classified intent (buy_something, general_inquiry, modification_request, confirmation_response, reference_request, ambiguous, contextual_reference, session_inquiry, exit_system, cancel_workflow, account_switch, register_account, alternative_request, support)
             - confidence: confidence score (0-100)
             - reasoning: explanation of classification including context analysis
             - all_intent_scores: scores for all possible intents
@@ -71,7 +71,7 @@ class IntentService:
             logger.info(f"Intent classified: {intent} (confidence: {confidence}%, stage: {context_stage})")
             
             # Handle contextual intents with intelligent responses
-            if intent in ['contextual_reference', 'session_inquiry', 'workflow_rejection', 'alternative_request'] and confidence > 60:
+            if intent in ['contextual_reference', 'session_inquiry', 'alternative_request'] and confidence > 60:
                 return self._handle_contextual_intent(intent, message, context, classification_result)
 
             # Handle exit intent - return immediately without contextual processing
@@ -170,10 +170,18 @@ class IntentService:
         all_scores = {
             "buy_something": 20,
             "sell_something": 10,
+            "account_switch": 5,
+            "register_account": 5,
             "general_inquiry": 20,
             "modification_request": 10,
             "confirmation_response": 10,
             "rfq_status_check": 10,
+            "reference_request": 5,
+            "contextual_reference": 5,
+            "session_inquiry": 5,
+            "exit_system": 5,
+            "cancel_workflow": 5,
+            "alternative_request": 5,
             "support": 10,
             "ambiguous": 20
         }
@@ -191,9 +199,12 @@ class IntentService:
     
     def _get_general_fallback_intent(self, message_lower: str) -> tuple:
         """Get general intent classification without context."""
-        # Check for exit keywords first
-        if any(keyword in message_lower for keyword in ["exit", "quit", "stop", "cancel", "bye", "goodbye", "end"]):
+        # Check for exit keywords first (definitive exit)
+        if any(keyword in message_lower for keyword in ["exit", "quit", "bye", "goodbye", "logout", "log out"]):
             return "exit_system", 90
+        # Check for cancel keywords (workflow cancellation)
+        elif any(keyword in message_lower for keyword in ["cancel", "start over", "restart", "clear", "forget"]):
+            return "cancel_workflow", 85
         # Check for greeting messages
         elif any(keyword in message_lower for keyword in ["hello", "hi", "hey", "good morning", "good afternoon", "good evening", "greetings", "hola", "namaste"]):
             return "general_inquiry", 80
@@ -208,7 +219,7 @@ class IntentService:
         elif any(keyword in message_lower for keyword in ["help", "how", "what can", "explain"]):
             return "general_inquiry", 60
         # Check for mixed intent (both buy and sell keywords)
-        elif (any(buy_word in message_lower for buy_word in ["buy", "purchase", "need", "looking for"]) and 
+        elif (any(buy_word in message_lower for buy_word in ["buy", "purchase", "need", "looking for"]) and
               any(sell_word in message_lower for sell_word in ["sell", "selling", "offer", "provide", "supply"])):
             return "ambiguous", 70
         else:

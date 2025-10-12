@@ -228,8 +228,14 @@ class ChatServiceHelpers:
                     session.workflow_state.get("extracted_entities") or
                     session.extracted_entities
                 ),
-                'has_incomplete_products': bool(session.workflow_state.get("incomplete_products")),
-                'has_pending_optional': bool(session.workflow_state.get("pending_optional_rfq")),
+                'has_incomplete_products': bool(
+                    session.workflow_state.get("incomplete_products") and
+                    len(session.workflow_state.get("incomplete_products", [])) > 0
+                ),
+                'has_pending_optional': bool(
+                    session.workflow_state.get("pending_optional_rfq") or
+                    session.workflow_state.get("pending_optional_combined_rfq")
+                ),
                 'has_pending_attachment_decision': bool(session.workflow_state.get("pending_attachment_decision")),
                 'current_stage': ChatServiceHelpers.determine_conversation_stage(session)
             }
@@ -237,14 +243,24 @@ class ChatServiceHelpers:
     
     @staticmethod
     def determine_conversation_stage(session: ConversationSession) -> str:
-        """Determine current conversation stage based on session state."""
+        """Determine current conversation stage based on session state.
+
+        Note: Order matters! Check more specific/advanced stages first.
+        """
         workflow_state = session.workflow_state or {}
 
+        # Confirmation stage - highest priority (final stage before submission)
         if workflow_state.get("pending_combined_rfq") or workflow_state.get("pending_rfq"):
             return "confirming"
-        elif workflow_state.get("pending_optional_rfq") or workflow_state.get("pending_attachment_decision"):
+        # Optional fields stage - check before incomplete_products because incomplete_products
+        # may still exist when asking for optional fields (it gets cleared after optional fields)
+        elif (workflow_state.get("pending_optional_rfq") or
+              workflow_state.get("pending_optional_combined_rfq") or
+              workflow_state.get("pending_attachment_decision")):
             return "optional_fields"
-        elif workflow_state.get("incomplete_products"):
+        # Incomplete products - check after optional fields
+        # Note: incomplete_products can be [] (empty list), so check if it has items
+        elif workflow_state.get("incomplete_products") and len(workflow_state.get("incomplete_products", [])) > 0:
             return "collecting_details"
         elif workflow_state.get("extracted_entities"):
             entities = workflow_state["extracted_entities"]

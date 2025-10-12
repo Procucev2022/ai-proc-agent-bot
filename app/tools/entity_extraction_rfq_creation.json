@@ -40,10 +40,6 @@
                 "type": ["string", "null"],
                 "description": "Required delivery date (applies to all products)"
             },
-            "division": {
-                "type": ["string", "null"],
-                "description": "Division: Admin & IT, CAPEX - Equipment & Machinery, Civil & Electrical Works, etc. (applies to all products)"
-            },
             "state": {
                 "type": ["string", "null"],
                 "description": "Delivery state for all products (e.g., Karnataka, Maharashtra, etc.)"
@@ -63,7 +59,7 @@
                 "description": "Confidence in the entity extraction accuracy"
             }
         },
-        "required": ["products", "deliveryDate", "division", "state", "city", "pincode", "confidence"],
+        "required": ["products", "deliveryDate", "state", "city", "pincode", "confidence"],
         "additionalProperties": false
     },
     "strict": true

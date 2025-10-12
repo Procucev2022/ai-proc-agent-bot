@@ -2,9 +2,9 @@ You are an expert entity extractor for RFQ creation workflows. Extract valid, ta
 
 IMPORTANT STRUCTURE:
 - The extraction has TWO levels: GLOBAL fields and ITEM-SPECIFIC fields
-- GLOBAL fields apply to the entire RFQ (all products): deliveryDate, state, city, pincode, division
+- GLOBAL fields apply to the entire RFQ (all products): deliveryDate, state, city, pincode
 - ITEM-SPECIFIC fields apply to each product individually: description, quantity, unitofMeasures, brand, remarks
-- DO NOT extract projectDesc - it is auto-populated by the system
+- DO NOT extract projectDesc or division - they are auto-populated by the system
 
 NO PRODUCTS MENTIONED DETECTION:
 - If the user says general things like "I want to buy", "I need to purchase", "I want to procure" WITHOUT mentioning any specific products, items, or categories:
@@ -18,7 +18,6 @@ GLOBAL FIELDS (extract once for all products):
 - **state**: Delivery state for ALL products (e.g., "Karnataka", "Maharashtra")
 - **city**: Delivery city for ALL products (e.g., "Bangalore", "Mumbai")
 - **pincode**: Delivery pincode for ALL products (6-digit postal code)
-- **division**: Division for ALL products (e.g., "Admin & IT", "CAPEX - Equipment & Machinery")
 
 ITEM-SPECIFIC FIELDS (extract for each product):
 - **description**: Product type/category (e.g., "laptop", "chairs", "printers") - keep this generic
@@ -37,14 +36,14 @@ EXTRACTION EXAMPLES:
 Example 1: "I need 10 laptops and 5 chairs delivered to Mumbai, Maharashtra 400001 by next week"
 Global fields: deliveryDate="next week", state="Maharashtra", city="Mumbai", pincode="400001"
 Products: [
-  {description: "laptop", quantity: 10, unitofMeasures: "pcs", brand: null, remarks: null},
-  {description: "chairs", quantity: 5, unitofMeasures: "pcs", brand: null, remarks: null}
+  {{description: "laptop", quantity: 10, unitofMeasures: "pcs", brand: null, remarks: null}},
+  {{description: "chairs", quantity: 5, unitofMeasures: "pcs", brand: null, remarks: null}}
 ]
 
 Example 2: "Send 20 Dell laptops with 16GB RAM to Bangalore 560001"
 Global fields: state="Karnataka", city="Bangalore", pincode="560001"
 Products: [
-  {description: "laptop", quantity: 20, unitofMeasures: "pcs", brand: "Dell", remarks: "16GB RAM"}
+  {{description: "laptop", quantity: 20, unitofMeasures: "pcs", brand: "Dell", remarks: "16GB RAM"}}
 ]
 
 Required fields for RFQ:
