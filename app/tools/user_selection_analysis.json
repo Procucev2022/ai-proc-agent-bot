@@ -1,7 +1,7 @@
 {
   "type": "function",
   "name": "analyze_user_selection",
-  "description": "Analyze user input to determine which profile option they are selecting from a list of numbered options",
+  "description": "Analyze user input to determine which profile option they are selecting from a list of numbered options, or detect registration intent",
   "parameters": {
     "type": "object",
     "properties": {
@@ -27,8 +27,20 @@
       "requires_clarification": {
         "type": "boolean",
         "description": "Whether the input is too ambiguous and requires user clarification"
+      },
+      "register": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": ["string", "null"],
+            "enum": ["buyer", "seller", null],
+            "description": "Registration type detected: 'buyer' if user wants to register as buyer, 'seller' if user wants to register as seller, null if no registration intent detected"
+          }
+        },
+        "required": ["type"],
+        "description": "Registration intent detection. Return {\"type\": \"buyer\"} if user mentions 'register me as buyer', {\"type\": \"seller\"} if user mentions 'register me as seller', {\"type\": null} if no registration intent"
       }
     },
-    "required": ["selected_option", "confidence", "reasoning", "alternative_matches", "requires_clarification"]
+    "required": ["selected_option", "confidence", "reasoning", "alternative_matches", "requires_clarification", "register"]
   }
 }

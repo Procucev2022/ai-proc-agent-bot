@@ -3010,3 +3010,46 @@ If multiple emails and user selected a number, include selection."""
         except Exception as e:
             logger.error(f"Error parsing confirmation response: {e}")
             return "unclear"
+    
+    @log_service_method("openai_service")
+    def detect_registration_type(self, message: str) -> Dict[str, Any]:
+        """
+        Detect registration type from user message using OpenAI function calling.
+        
+        Args:
+            message: User message to analyze for registration type
+            
+        Returns:
+            Dict with registration type detection result
+        """
+        try:
+            # Load prompt and tool
+            with open(self.prompts_dir / "profile_selection" / "registration_type_detection.txt", 'r') as f:
+                system_prompt = f.read()
+            
+            with open(self.tools_dir / "registration_type_detection.json", 'r') as f:
+                tool_def = json.load(f)
+            
+            user_prompt = f"User message: '{message}'"
+            
+            response = self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": user_prompt}],
+                instructions=system_prompt,
+                tools=[tool_def],
+                tool_choice={"type": "function", "name": "registration_type_detection"}
+            )
+            
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    result = json.loads(function_call.arguments)
+                    logger.info(f"Registration type detection result: {result}")
+                    return result
+            
+            logger.warning("Registration type detection: No function call in response")
+            return {"success": False, "error": "No function call in response"}
+            
+        except Exception as e:
+            logger.error(f"Registration type detection failed: {str(e)}")
+            return {"success": False, "error": str(e)}

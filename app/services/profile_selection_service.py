@@ -54,6 +54,14 @@ class ProfileSelectionService:
             
             logger.info(f"Profile selection for {user_phone}: intent={intent}, confidence={confidence}")
             
+            # Check for explicit registration intent first
+            registration_intent = await self._detect_registration_intent(message)
+            if registration_intent:
+                if registration_intent == 'buyer':
+                    return await self._redirect_to_buyer_registration(user_phone, session, message)
+                elif registration_intent == 'seller':
+                    return await self._redirect_to_seller_registration(user_phone, session, message)
+            
             # Get user profiles from cache or API
             profiles_result = await self._get_user_profiles(user_phone, message, session)
             
@@ -94,6 +102,10 @@ class ProfileSelectionService:
                                               session: ConversationSession) -> Dict[str, Any]:
         """Handle user response to profile selection."""
         try:
+            # Check if awaiting registration type choice
+            if session.workflow_state.get('awaiting_registration_type'):
+                return await self._handle_registration_type_response(user_phone, message, session)
+            
             # Get stored profile options from session
             profile_options = session.workflow_state.get('profile_options', [])
 
@@ -528,6 +540,19 @@ class ProfileSelectionService:
 
                 logger.info(f"Selection analysis: {analysis_result}")
 
+                # Check for registration intent first
+                register_info = analysis_result.get('register', {})
+                register_type = register_info.get('type')
+                
+                if register_type in ['buyer', 'seller']:
+                    logger.info(f"Registration intent detected in profile selection: {register_type}")
+                    # Create a special option for registration
+                    return {
+                        "action": f"register_{register_type}",
+                        "display": f"Register as {register_type.title()}",
+                        "registration_type": register_type
+                    }
+
                 # If analysis found a clear selection
                 if analysis_result.get('selected_option') and not analysis_result.get('requires_clarification'):
                     selected_num = analysis_result['selected_option']
@@ -618,6 +643,17 @@ class ProfileSelectionService:
         """Simple fallback parsing for profile selection."""
         try:
             message = message.strip()
+            message_lower = message.lower()
+            
+            # Check for registration intent first
+            registration_type = await self._detect_registration_intent(message)
+            if registration_type:
+                logger.info(f"Simple parsing detected registration intent: {registration_type}")
+                return {
+                    "action": f"register_{registration_type}",
+                    "display": f"Register as {registration_type.title()}",
+                    "registration_type": registration_type
+                }
 
             # Try to parse as number
             try:
@@ -627,9 +663,6 @@ class ProfileSelectionService:
                         return option
             except ValueError:
                 pass
-
-            # Try to match email or role keywords with fuzzy matching
-            message_lower = message.lower()
 
             # First try exact matches
             for option in profile_options:
@@ -681,9 +714,19 @@ class ProfileSelectionService:
                     return await self._redirect_to_seller_registration(user_phone, session, "")
                 elif action == 'exit':
                     return await self._handle_exit_action(user_phone, session)
+            
+            # Handle direct registration intent detected in parsing
+            if 'registration_type' in selected_option:
+                registration_type = selected_option['registration_type']
+                logger.info(f"Processing direct registration intent: {registration_type}")
+                
+                if registration_type == 'buyer':
+                    return await self._redirect_to_buyer_registration(user_phone, session, "")
+                elif registration_type == 'seller':
+                    return await self._redirect_to_seller_registration(user_phone, session, "")
 
             # Handle profile selection
-            elif 'profile' in selected_option:
+            if 'profile' in selected_option:
                 profile = selected_option['profile']
 
                 # Get original context
@@ -843,29 +886,46 @@ class ProfileSelectionService:
     
     async def _redirect_to_buyer_registration(self, user_phone: str, session: ConversationSession, 
                                             message: str) -> Dict[str, Any]:
-        """Redirect to buyer registration flow."""
+        """Redirect to buyer registration flow and create new buyer profile."""
         try:
+            logger.info(f"Redirecting {user_phone} to buyer registration with message: '{message}'")
+            
+            # Import registration service
+            from app.services.registration_service import RegistrationService
+            
+            # Initialize registration service
+            registration_service = RegistrationService(
+                whatsapp_service=self.whatsapp_service,
+                openai_service=OpenAIService() if not hasattr(self, 'openai_service') else self.openai_service
+            )
+            
             # Set workflow type to registration
             WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="profile_selection")
             
+            # Initialize session state for registration
             session.workflow_state = session.workflow_state or {}
             session.workflow_state.update({
                 "registration_stage": "data_collection",
                 "user_type": "buyer",
-                "original_message": message
+                "original_message": message,
+                "registration_entities": {}  # Will be filled during data collection
             })
             
-            welcome_message = (
-                "I'll help you register as a Buyer so you can create RFQs and purchase items.\n\n"
-                "Let's start with some basic information..."
+            # Start the registration process
+            result = await registration_service.initiate_registration(
+                user_phone=user_phone,
+                session=session,
+                user_type="buyer",
+                message=message
             )
             
-            await self.whatsapp_service.send_message(user_phone, welcome_message)
+            logger.info(f"Buyer registration initiated: {result}")
             
             return {
                 "status": "redirected_to_buyer_registration",
                 "workflow_type": "registration",
-                "user_type": "buyer"
+                "user_type": "buyer",
+                "registration_result": result
             }
             
         except Exception as e:
@@ -874,29 +934,46 @@ class ProfileSelectionService:
     
     async def _redirect_to_seller_registration(self, user_phone: str, session: ConversationSession, 
                                              message: str) -> Dict[str, Any]:
-        """Redirect to seller registration flow."""
+        """Redirect to seller registration flow and create new seller profile."""
         try:
+            logger.info(f"Redirecting {user_phone} to seller registration with message: '{message}'")
+            
+            # Import registration service
+            from app.services.registration_service import RegistrationService
+            
+            # Initialize registration service
+            registration_service = RegistrationService(
+                whatsapp_service=self.whatsapp_service,
+                openai_service=OpenAIService() if not hasattr(self, 'openai_service') else self.openai_service
+            )
+            
             # Set workflow type to registration
             WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="profile_selection")
             
+            # Initialize session state for registration
             session.workflow_state = session.workflow_state or {}
             session.workflow_state.update({
                 "registration_stage": "data_collection",
                 "user_type": "seller",
-                "original_message": message
+                "original_message": message,
+                "registration_entities": {}  # Will be filled during data collection
             })
             
-            welcome_message = (
-                "I'll help you register as a Seller so you can respond to RFQs and sell items.\n\n"
-                "Let's start with some basic information..."
+            # Start the registration process
+            result = await registration_service.initiate_registration(
+                user_phone=user_phone,
+                session=session,
+                user_type="seller",
+                message=message
             )
             
-            await self.whatsapp_service.send_message(user_phone, welcome_message)
+            logger.info(f"Seller registration initiated: {result}")
             
             return {
                 "status": "redirected_to_seller_registration",
                 "workflow_type": "registration",
-                "user_type": "seller"
+                "user_type": "seller",
+                "registration_result": result
             }
             
         except Exception as e:
@@ -931,6 +1008,112 @@ class ProfileSelectionService:
         except Exception as e:
             logger.error(f"Error showing profile selection retry for {user_phone}: {e}")
             return {"status": "error", "error": str(e)}
+    
+    async def _handle_registration_type_response(self, user_phone: str, message: str,
+                                               session: ConversationSession) -> Dict[str, Any]:
+        """Handle user response to registration type choice (buyer/seller)."""
+        try:
+            message_lower = message.strip().lower()
+            
+            # First try to detect registration intent using the user selection tool
+            detected_type = await self._detect_registration_intent(message)
+            
+            if detected_type == 'buyer':
+                session.workflow_state.pop('awaiting_registration_type', None)
+                return await self._redirect_to_buyer_registration(user_phone, session, message)
+            elif detected_type == 'seller':
+                session.workflow_state.pop('awaiting_registration_type', None)
+                return await self._redirect_to_seller_registration(user_phone, session, message)
+            
+            # Fallback to simple keyword matching
+            elif any(keyword in message_lower for keyword in ['buyer', 'buy', '1', 'one', 'first']):
+                session.workflow_state.pop('awaiting_registration_type', None)
+                return await self._redirect_to_buyer_registration(user_phone, session, message)
+            
+            # Check for seller keywords
+            elif any(keyword in message_lower for keyword in ['seller', 'sell', '2', 'two', 'second']):
+                session.workflow_state.pop('awaiting_registration_type', None)
+                return await self._redirect_to_seller_registration(user_phone, session, message)
+            
+            else:
+                # Use the user selection tool to detect registration intent
+                detected_type = await self._detect_registration_intent(message)
+                
+                if detected_type == 'buyer':
+                    session.workflow_state.pop('awaiting_registration_type', None)
+                    return await self._redirect_to_buyer_registration(user_phone, session, message)
+                elif detected_type == 'seller':
+                    session.workflow_state.pop('awaiting_registration_type', None)
+                    return await self._redirect_to_seller_registration(user_phone, session, message)
+                else:
+                    # Still unclear - ask for clarification
+                    clarification_message = (
+                        "Please specify whether you'd like to register as:\n"
+                        "• Type 'buyer' or '1' for Buyer registration\n"
+                        "• Type 'seller' or '2' for Seller registration"
+                    )
+                    await self.whatsapp_service.send_message(user_phone, clarification_message)
+                    
+                    return {
+                        "status": "registration_type_clarification_sent"
+                    }
+                
+        except Exception as e:
+            logger.error(f"Error handling registration type response for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+    
+
+    
+    async def _detect_registration_intent(self, message: str) -> Optional[str]:
+        """Detect explicit registration intent from user message using user selection tool."""
+        try:
+            # Use the user selection tool to detect registration intent
+            if self.user_selection_tool:
+                # Create a dummy profile options list for the analysis
+                dummy_options = []
+                analysis_result = await self.user_selection_tool.analyze_user_selection(message, dummy_options)
+                
+                # Extract registration intent from the analysis
+                register_info = analysis_result.get('register', {})
+                register_type = register_info.get('type')
+                
+                if register_type in ['buyer', 'seller']:
+                    logger.info(f"User selection tool detected registration intent: {register_type}")
+                    return register_type
+            
+            # Fallback to simple phrase matching
+            message_lower = message.lower().strip()
+            
+            buyer_phrases = [
+                'register me as buyer', 'register as buyer', 'register me as a buyer',
+                'sign me up as buyer', 'sign up as buyer', 'create buyer account',
+                'i want to register as buyer', 'register buyer account', 'add me as buyer'
+            ]
+            
+            seller_phrases = [
+                'register me as seller', 'register as seller', 'register me as a seller',
+                'sign me up as seller', 'sign up as seller', 'create seller account',
+                'i want to register as seller', 'register seller account', 'add me as seller'
+            ]
+            
+            for phrase in buyer_phrases:
+                if phrase in message_lower:
+                    logger.info(f"Fallback: Matched buyer phrase '{phrase}' in message '{message}'")
+                    return 'buyer'
+            
+            for phrase in seller_phrases:
+                if phrase in message_lower:
+                    logger.info(f"Fallback: Matched seller phrase '{phrase}' in message '{message}'")
+                    return 'seller'
+            
+            logger.info(f"No registration intent detected for message: '{message}'")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error detecting registration intent: {e}")
+            return None
+    
+
     
     async def _handle_exit_action(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
         """Handle user selecting exit option."""
