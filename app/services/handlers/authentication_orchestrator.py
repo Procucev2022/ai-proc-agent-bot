@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 from app.services.helpers.support_helpers import SupportHelpers
 from app.services.chat_service import ChatService
 from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
+from app.services.profile_selection_service import ProfileSelectionService
 
 # UserDetailsSchema replaced with User model
 
@@ -46,6 +47,9 @@ class AuthenticationOrchestrator:
         self.support_service = support_service
         self.chat_service = chat_service
         self.auth_reg_switch = AuthRegistrationIntentSwitch(whatsapp_service)
+        # Get OpenAI service from chat_service if available
+        openai_service = chat_service.openai_service if chat_service else None
+        self.profile_selection_service = ProfileSelectionService(whatsapp_service, authentication_service, openai_service)
 
     async def authentication_orchestrator_flow(self, user_phone: str, message_content: str,
                                              session: ConversationSession, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -123,75 +127,35 @@ class AuthenticationOrchestrator:
                 exit_result = await exit_service.handle_exit_intent(user_phone, session)
                 return exit_result
 
-            # Step 5: For ambiguous or low confidence intents, ask for clarification first
+            # Step 5: For ambiguous or low confidence intents, use profile selection service
             if intent == "ambiguous" or confidence < 50:
-                # Try to authenticate first - if user exists, they can choose email type
-                auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
-                
-                if auth_response.get("success"):
-                    # User found - show all emails with buyer/seller labels (no intent filtering)
-                    raw_response = auth_response.get("response", [])
-                    filter_result = self.authentication_service.filter_users_by_intent(raw_response, "general_inquiry")  # This shows all emails
-
-                    if filter_result.get("success"):
-                        # Store the ambiguous message as original message
-                        return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content, raw_response)
-                    else:
-                        # Issue TODO: Ask user if they want to buy or sell and redirect to registratin based on user's response 
-                        # No emails found - redirect to registration
-                        return await self._redirect_to_registration_flow(user_phone, session, "buyer")
-                else:
-                    # Ask for clarification
-                    return await self._handle_auth_clarification_request(user_phone, session)
+                logger.info(f"Using profile selection service for ambiguous/low confidence intent: {intent} ({confidence}%)")
+                return await self.profile_selection_service.handle_profile_selection(
+                    user_phone, message_content, session, intent_result
+                )
             
-            # Step 6: Always attempt authentication first when token validation fails
-            # For role switches, use the target user type from session
+            # Step 6: Use profile selection service for clear intents
+            if intent in ["buy_something", "sell_something", "rfq_status_check", "general_inquiry"]:
+                logger.info(f"Using profile selection service for intent: {intent} ({confidence}%)")
+                return await self.profile_selection_service.handle_profile_selection(
+                    user_phone, message_content, session, intent_result
+                )
+            
+            # Handle role switches with profile selection
             if role_switch_in_progress and target_user_type:
-                # Force authentication for the new role
-                auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
-                
-                if auth_response.get("success"):
-                    # User found - filter by target role
-                    raw_response = auth_response.get("response", [])
-                    target_intent = "sell_something" if target_user_type == "seller" else "buy_something"
-                    filter_result = self.authentication_service.filter_users_by_intent(raw_response, target_intent)
-
-                    if filter_result.get("success"):
-                        # Store the original message for processing after authentication
-                        return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content, raw_response)
-                    else:
-                        # No emails found for target role - redirect to registration
-                        return await self._redirect_to_registration_flow(user_phone, session, target_user_type)
-                else:
-                    # User not found for target role - redirect to registration
-                    return await self._redirect_to_registration_flow(user_phone, session, target_user_type)
-            else:
-                # Normal authentication flow
-                # Try to authenticate - if user exists, filter by the detected intent
-                auth_response = await self.authentication_service.user_authenticate(user_phone, message_content, session)
-
-                if auth_response.get("success"):
-                    # User found - filter by the detected intent for better UX
-                    raw_response = auth_response.get("response", [])
-                    filter_result = self.authentication_service.filter_users_by_intent(raw_response, intent)
-
-                    if filter_result.get("success"):
-                        # Store the original message for processing after authentication
-                        return await self._handle_user_selection(user_phone, session, filter_result, intent_result, message_content, raw_response)
-                    else:
-                        # No emails found - redirect to registration based on intent
-                        user_type = "seller" if intent == "sell_something" else "buyer"
-                        return await self._redirect_to_registration_flow(user_phone, session, user_type)
-                else:
-                    # User not found - handle based on intent
-                    if intent in ["buy_something", "sell_something"]:
-                        # Specific intent - redirect to registration
-                        user_type = "seller" if intent == "sell_something" else "buyer"
-                        return await self._redirect_to_registration_flow(user_phone, session, user_type)
-                    elif intent == "general_inquiry":
-                        return await self._handle_auth_general_inquiry(user_phone, message_content)
-                    else:
-                        return await self._handle_auth_fallback(user_phone, message_content)
+                # Create modified intent result for role switch
+                target_intent = "sell_something" if target_user_type == "seller" else "buy_something"
+                modified_intent_result = {
+                    "intent": target_intent,
+                    "confidence": 90,
+                    "role_switch": True
+                }
+                return await self.profile_selection_service.handle_profile_selection(
+                    user_phone, message_content, session, modified_intent_result
+                )
+            
+            # Fallback for other intents
+            return await self._handle_auth_fallback(user_phone, message_content)
                 
         except Exception as e:
             logger.error(f"Authentication orchestrator error for {user_phone}: {e}")
@@ -350,7 +314,14 @@ class AuthenticationOrchestrator:
                                             session: ConversationSession, intent_result: Dict) -> Dict[str, Any]:
         """Handle ongoing authentication workflow."""
         try:
-            # Check for switch response first
+            # Check for profile selection response first
+            if session.workflow_state.get("profile_selection_stage"):
+                logger.info(f"Handling profile selection response")
+                return await self.profile_selection_service.handle_profile_selection_response(
+                    user_phone, message_content, session
+                )
+            
+            # Check for switch response
             switch_result = await self._check_switch_response(user_phone, session, message_content, intent_result)
             if switch_result:
                 return switch_result
@@ -432,6 +403,15 @@ class AuthenticationOrchestrator:
             # Handle exit intent immediately before processing registration stages
             if new_intent == "exit_system" and confidence > 50:
                 logger.info(f"Exit intent detected in registration workflow with {confidence}% confidence")
+                exit_service = ExitService(self.whatsapp_service, self.authentication_service,
+                                         self.chat_service.session_manager if self.chat_service else None,
+                                         self.chat_service.db_manager if self.chat_service else None)
+                exit_result = await exit_service.handle_exit_intent(user_phone, session)
+                return exit_result
+            
+            # Also check for simple "exit" keyword with lower confidence threshold during registration
+            if message_content.lower().strip() in ["exit", "quit", "stop", "cancel"] and registration_stage in ["data_collection", "confirmation"]:
+                logger.info(f"Exit keyword detected during registration: '{message_content}'")
                 exit_service = ExitService(self.whatsapp_service, self.authentication_service,
                                          self.chat_service.session_manager if self.chat_service else None,
                                          self.chat_service.db_manager if self.chat_service else None)

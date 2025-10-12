@@ -159,7 +159,8 @@ class AuthenticationService:
                         "is_registered": auth_response.get("is_registered", True),
                         "detected_intent": intent
                     }
-                return {"success": False, "message": "User details not found"}
+                else:
+                    return {"success": False, "message": "User details not found"}
 
             return auth_response
 
@@ -611,8 +612,8 @@ Return only the selected email address or "none" if no clear selection.
 
                 # Get username from fullName or fallback to firstName or generic "there"
                 username = selected_user.get("fullName") or selected_user.get("name") or selected_user.get("firstName") or "there"
-                message = f"Hi {username}!"
-                await self.whatsapp_service.send_message(user_phone, message)
+
+
 
                 # Preserve original message from workflow state for processing after authentication
                 original_message = session.workflow_state.get("original_message") if session.workflow_state else None
@@ -1082,16 +1083,8 @@ Respond only with: "yes" or "no"
             intent = current_intent_result.get("intent", "general_inquiry")
 
             if buyer_emails and seller_emails:
-                # Mixed user types - check intent to customize message
-                if intent == "ambiguous":
-                    # Ambiguous intent - ask for clarification first
-                    message = "I noticed you mentioned both buying and selling. Would you like to start with buying or selling?\n\nPlease select your profile by choosing the associated email address:\n"
-                elif intent == "rfq_status_check":
-                    # RFQ status check - don't ask about buy/sell
-                    message = "Please select your profile by choosing the associated email address:\n"
-                else:
-                    # Default mixed message
-                    message = "Welcome! Are you looking to buy or sell today?\n\nPlease select your profile by choosing the associated email address:\n"
+                # Default mixed message
+                message = "Welcome! Are you looking to buy or sell today?\n\nPlease select your profile by choosing the associated email address:\n"
 
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)
@@ -1099,13 +1092,8 @@ Respond only with: "yes" or "no"
                     message += f"  {i}. {email}{type_label}\n"
                 message += "\nReply with the number corresponding to your email address to continue."
             else:
-                # Single user type or no mixed types
-                if intent == "rfq_status_check":
-                    # RFQ status check - don't ask about buy/sell
-                    message = "Please select your profile by choosing the associated email address:\n"
-                else:
-                    # Default message
-                    message = "Welcome! Please select your profile by choosing the associated email address:\n"
+                # Default message
+                message = "Welcome! Please select your profile by choosing the associated email address:\n"
 
                 for i, email in enumerate(emails, 1):
                     user_type = self._get_user_type_for_email(email, filtered_users)

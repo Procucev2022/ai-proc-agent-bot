@@ -6,7 +6,7 @@ extracted from the main ChatService class for better organization.
 """
 
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,8 @@ class ResponseHelpers:
 
         except Exception as e:
             logger.error(f"Error generating seller contextual response: {e}")
-            return self._get_fallback_message(context.get("workflow_state"), context.get("user_role"))
+            fallback_result = self._get_fallback_message(context.get("workflow_state"), context.get("user_role"))
+            return fallback_result["message"] if isinstance(fallback_result, dict) else fallback_result
 
     # Add these new workflow states to your response_helpers.py
 
@@ -347,7 +348,7 @@ class ResponseHelpers:
         )
 
     # Fallback methods for when AI generation fails
-    def _get_fallback_message(self, workflow_state: str, user_role: str = None) -> str:
+    def _get_fallback_message(self, workflow_state: str, user_role: str = None) -> Dict[str, Any]:
         """Get appropriate fallback message based on workflow state and user role."""
         fallbacks = {
             "display_rfqs_to_seller": "Here are the available RFQs in your category. Please let me know which ones interest you.",
@@ -362,24 +363,31 @@ class ResponseHelpers:
         
         default_message = fallbacks.get(workflow_state)
         if default_message:
-            return default_message
+            return {"message": default_message, "buttons": None}
             
         # For default fallback, show appropriate menu based on user role
         if user_role and user_role.lower() == "buyer":
-            return (
-                "What can I assist you with today?\n"
-                "• Raise a new RFQ\n"
-                "• Check your previous RFQs\n"
-                "• Any other support you need"
+
+            buttons_config = [
+                {"id": "new_rfq", "title": "Raise a new RFQ"},
+                {"id": "rfq_status", "title": "Check your previous RFQs"},
+                {"id": "contact_support", "title": "Any other support you need"}
+            ]
+            message = (
+                "What can I assist you with today?"
             )
+            return {"message": message, "buttons": buttons_config}
         elif user_role and user_role.lower() == "seller":
-            return (
-                "What would you like to do today?\n"
-                "• Check RFQ status\n"
-                "• Get other support"
+            buttons_config = [
+                {"id": "check_rfq_status", "title": "Check RFQ status"},
+                {"id": "get_support", "title": "Get other support"}
+            ]
+            message = (
+                "What would you like to do today?"
             )
+            return {"message": message, "buttons": buttons_config}
         else:
-            return "How can I help you with your procurement needs today?"
+            return {"message": "How can I help you with your procurement needs today?", "buttons": None}
 
     def _get_rfq_display_fallback(self, context: Dict[str, Any]) -> str:
         """Fallback for RFQ display."""

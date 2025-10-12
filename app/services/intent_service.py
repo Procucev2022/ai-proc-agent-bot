@@ -174,7 +174,8 @@ class IntentService:
             "modification_request": 10,
             "confirmation_response": 10,
             "rfq_status_check": 10,
-            "support": 10
+            "support": 10,
+            "ambiguous": 20
         }
         all_scores[intent] = confidence
         
@@ -190,7 +191,13 @@ class IntentService:
     
     def _get_general_fallback_intent(self, message_lower: str) -> tuple:
         """Get general intent classification without context."""
-        if any(keyword in message_lower for keyword in ["support", "contact support", "customer service", "technical support", "help me", "need help", "assistance", "contact customer"]):
+        # Check for exit keywords first
+        if any(keyword in message_lower for keyword in ["exit", "quit", "stop", "cancel", "bye", "goodbye", "end"]):
+            return "exit_system", 90
+        # Check for greeting messages
+        elif any(keyword in message_lower for keyword in ["hello", "hi", "hey", "good morning", "good afternoon", "good evening", "greetings", "hola", "namaste"]):
+            return "general_inquiry", 80
+        elif any(keyword in message_lower for keyword in ["support", "contact support", "customer service", "technical support", "help me", "need help", "assistance", "contact customer"]):
             return "support", 80
         elif any(keyword in message_lower for keyword in ["status", "track", "progress", "update", "rfq id", "reference", "submitted", "pending", "completed", "check my order", "my request", "my rfq", "order status", "quote status", "vendor responses", "response received", "when will i receive"]):
             return "rfq_status_check", 70
@@ -200,6 +207,10 @@ class IntentService:
             return "sell_something", 60
         elif any(keyword in message_lower for keyword in ["help", "how", "what can", "explain"]):
             return "general_inquiry", 60
+        # Check for mixed intent (both buy and sell keywords)
+        elif (any(buy_word in message_lower for buy_word in ["buy", "purchase", "need", "looking for"]) and 
+              any(sell_word in message_lower for sell_word in ["sell", "selling", "offer", "provide", "supply"])):
+            return "ambiguous", 70
         else:
             return "ambiguous", 30
     

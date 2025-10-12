@@ -233,7 +233,11 @@ class ChatService:
                     "awaiting_confirmation", "registration_restarted", "otp_validated", "otp_invalid",
                     "domain_approved", "domain_approval_required", "email_confirmation_requested",
                     "auth_reg_switch_choice_presented", "exit_completed", "switch_authentication_started",
-                    "role_switch_clarification_requested"
+                    "role_switch_clarification_requested", "profile_selection_presented",
+                    "buyer_profile_selection_presented", "seller_profile_selection_presented",
+                    "rfq_status_profile_selection_presented", "ambiguous_profile_selection_presented",
+                    "registration_choice_presented", "registration_type_choice_presented",
+                    "profile_selection_retry_presented", "role_menu_presented"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
@@ -312,13 +316,19 @@ class ChatService:
                                 return {"status": "registration_completed", "message": "Buyer registration successful - awaiting approval"}
                     else:
                         return {"status": "error", "error": "Session not found after registration"}
-                elif auth_status == "authentication_completed":
+                elif auth_status in ["authentication_completed", "profile_selected_and_authenticated"]:
                     # Authentication completed - check user type before processing
                     user_type = auth_result.get("user_type")
+                    original_message = auth_result.get("original_message", message_content)
+                    original_intent = auth_result.get("original_intent", "general_inquiry")
 
                     if user_type == "seller":
                         # For sellers, process the meaningful message after authentication
                         logger.info(f"Seller authentication completed - processing seller flow")
+                        
+                        # Use original message from profile selection if available
+                        message_to_process = original_message if original_message else message_content
+                        intent_to_process = {"intent": original_intent, "confidence": 90} if isinstance(original_intent, str) else original_intent
                         
                         # Restore meaningful message from cache if workflow_state was cleared
                         cached_meaningful = await user_cache_service.get_meaningful_message(user_phone)
@@ -330,10 +340,12 @@ class ChatService:
 
                             # Clear from cache since we've restored it
                             await user_cache_service.clear_meaningful_message(user_phone)
-
-                        message_to_process, intent_to_process = self._get_meaningful_message_after_auth(
-                            session, message_content, message_intent_result
-                        )
+                            
+                            # Use cached message if no original message from profile selection
+                            if not original_message:
+                                message_to_process, intent_to_process = self._get_meaningful_message_after_auth(
+                                    session, message_content, message_intent_result
+                                )
 
                         logger.info(f"Seller authentication completed - processing message: {str(message_to_process)[:50]}...")
                         user = await self.authentication_service.validate_token(user_phone)
@@ -343,6 +355,10 @@ class ChatService:
                             return {"status": "error", "error": "Session not found after seller authentication"}
 
                     # For buyers, process the meaningful message after authentication
+                    # Use original message from profile selection if available
+                    message_to_process = original_message if original_message else message_content
+                    intent_to_process = {"intent": original_intent, "confidence": 90} if isinstance(original_intent, str) else original_intent
+                    
                     # Restore meaningful message from cache if workflow_state was cleared
                     cached_meaningful = await user_cache_service.get_meaningful_message(user_phone)
 
@@ -353,10 +369,12 @@ class ChatService:
 
                         # Clear from cache since we've restored it
                         await user_cache_service.clear_meaningful_message(user_phone)
-
-                    message_to_process, intent_to_process = self._get_meaningful_message_after_auth(
-                        session, message_content, message_intent_result
-                    )
+                        
+                        # Use cached message if no original message from profile selection
+                        if not original_message:
+                            message_to_process, intent_to_process = self._get_meaningful_message_after_auth(
+                                session, message_content, message_intent_result
+                            )
 
                     logger.info(f"Buyer authentication completed - processing message: {str(message_to_process)[:50]}...")
                     user = await self.authentication_service.validate_token(user_phone)
@@ -428,7 +446,17 @@ class ChatService:
             return result
 
         except Exception as e:
-            return await self._handle_error_response(e, user_phone, "processing_message", "Please try again")
+            logger.error(f"Critical error in process_message for {user_phone}: {e}")
+            
+            # Use technical failure handler for critical errors
+            from app.utils.technical_failure_handler import handle_technical_failure
+            await handle_technical_failure(
+                user_phone=user_phone,
+                error_message=f"Critical processing error: {str(e)}",
+                error_type="Critical System Error"
+            )
+            
+            return {"status": "technical_failure", "error": str(e)}
 
     async def authentication_orchestrator_flow(self, user_phone: str, message_content: str,
                                                session: ConversationSession, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -1209,21 +1237,22 @@ class ChatService:
                 # ✅ Role-based button configuration
                 if user_role == "buyer":
                     buttons_config = [
-                        {"id": "new_rfq", "title": "📄 Raise New RFQ"},
-                        {"id": "previous_rfq", "title": "📁 Previous RFQs"},
-                        {"id": "other_support", "title": "💬 Other Support"},
-                        {"id": "exit", "title": "❌ Exit"}
+
+                        {"id": "raise_rfq", "title": "📄 Raise a new RFQ"},
+                        {"id": "check_rfqs", "title": "🔍 Check your previous RFQs"},
+                        {"id": "other_support", "title": "💬 Any other support you need"}
                     ]
                     header = "What can I assist you with today?"
                 
                 elif user_role == "seller":
                     buttons_config = [
-                        {"id": "rfq_status", "title": "🔍 Check RFQ Status"},
-                        {"id": "other_support", "title": "💬 Other Support"},
-                        {"id": "exit", "title": "❌ Exit"}
+                        {"id": "view_rfqs", "title": "📤 View available RFQs to quote"},
+                        {"id": "check_submissions", "title": "📈 Check your previous submissions"},
+                        {"id": "other_support", "title": "💬 Get other support"}
                     ]
                     header = "What would you like to do today?"
                 
+
                 else:
                     # Unknown role → generic buttons
                     buttons_config = [
@@ -1278,25 +1307,27 @@ class ChatService:
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
             
             if user_role == "buyer":
-                # Buyer clarification menu
-                clarification_message = (
+
+                # Buyer fallback menu
+                fallback_message = (
                     "What can I assist you with today?\n"
-                    "• Raise a new RFQ\n"
-                    "• Check your previous RFQs\n"
-                    "• Any other support you need"
+                    "• 📄 Raise a new RFQ\n"
+                    "• 🔍 Check your previous RFQs\n"
+                    "• 💬 Any other support you need"
                 )
             elif user_role == "seller":
-                # Seller clarification menu
-                clarification_message = (
+                # Seller fallback menu
+                fallback_message = (
                     "What would you like to do today?\n"
-                    "• Check RFQ status\n"
-                    "• Get other support"
+                    "• 📤 View available RFQs to quote\n"
+                    "• 📈 Check your previous submissions\n"
+                    "• 💬 Get other support"
                 )
             else:
                 # Fallback for unknown role
-                clarification_message = "Could you be more specific about your procurement needs?"
+                fallback_message = "How can I help you with your procurement needs?"
             
-            await self.whatsapp_service.send_message(user.phone_number, clarification_message)
+            await self.whatsapp_service.send_message(user.phone_number, fallback_message)
             return {"status": "clarification_sent"}
 
         except Exception as e:
@@ -1313,16 +1344,19 @@ class ChatService:
                 # Buyer fallback menu
                 fallback_message = (
                     "What can I assist you with today?\n"
-                    "• Raise a new RFQ\n"
-                    "• Check your previous RFQs\n"
-                    "• Any other support you need"
+
+                    "• 📄 Raise a new RFQ\n"
+                    "• 🔍 Check your previous RFQs\n"
+                    "• 💬 Any other support you need"
                 )
             elif user_role == "seller":
                 # Seller fallback menu
                 fallback_message = (
                     "What would you like to do today?\n"
-                    "• Check RFQ status\n"
-                    "• Get other support"
+
+                    "• 📤 View available RFQs to quote\n"
+                    "• 📈 Check your previous submissions\n"
+                    "• 💬 Get other support"
                 )
             else:
                 # Fallback for unknown role
@@ -1435,7 +1469,7 @@ class ChatService:
         logger.info(f"Button response from {user.phone_number}: {button_id}")
 
         # Handle new menu buttons
-        if button_id == "new_rfq":
+        if button_id == "new_rfq" or button_id == "raise_rfq":
             # Trigger RFQ creation flow
             intent_result = {"intent": "buy_something", "confidence": 95}
             return await self.purchase_intent_handler.handle_purchase_intent(
@@ -1443,11 +1477,19 @@ class ChatService:
                 self._should_use_summary_aware_extraction
             )
         
-        elif button_id == "rfq_status":
+        elif button_id == "rfq_status" or button_id == "check_rfqs":
             # Trigger RFQ status check flow
             return await self._handle_rfq_status_inquiry(user, "Check my RFQ status", session)
         
-        elif button_id == "contact_support":
+        elif button_id == "view_rfqs":
+            # Trigger seller RFQ view flow
+            return await self._handle_seller_flow(user, session, "View available RFQs")
+        
+        elif button_id == "check_submissions":
+            # Trigger seller submission check flow
+            return await self._handle_seller_flow(user, session, "Check my previous submissions")
+        
+        elif button_id == "contact_support" or button_id == "other_support":
             # Trigger support flow
             return await self._handle_support_request(user, "I need support")
         
@@ -1560,8 +1602,15 @@ class ChatService:
     Dict[str, Any]:
         """Handle common error response pattern."""
         logger.error(f"Error in {error_type}: {error}")
-        # Use the fallback message directly instead of generating with OpenAI to avoid unnecessary API calls
-        await self.whatsapp_service.send_message(user_phone, fallback_message)
+        
+        # Use technical failure handler for clean exit
+        from app.utils.technical_failure_handler import handle_technical_failure
+        await handle_technical_failure(
+            user_phone=user_phone,
+            error_message=f"{error_type}: {str(error)}",
+            error_type=error_type
+        )
+        
         return {"status": "error", "error": str(error)}
 
     async def _save_session(self, session: ConversationSession, workflow_type: str) -> ConversationSession:

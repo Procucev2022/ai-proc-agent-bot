@@ -51,11 +51,11 @@ class SessionManagementService:
         # Generate session ID using helper method (configurable strategy)
         session_id = SessionHelpers.generate_session_id(phone_number, "daily")
     
-        # Try to get existing session
+        # Try to get existing session first
         session = self.db_manager.get_conversation_session(session_id)
         
         if not session:
-            # Create new session
+            # Create new session - the save method now handles duplicates gracefully
             session_data = {
                 'session_id': session_id,
                 'external_user_id': phone_number,
@@ -69,8 +69,6 @@ class SessionManagementService:
             session = self.db_manager.save_conversation_session(session_data)
             
             logger.info(f"Created new session: {session_id}")
-            # Show authentication placeholder for new session
-            # await self._show_auth_placeholder(phone_number)
         else:
             logger.info(f"Found existing session: {session_id}")
         
@@ -79,6 +77,12 @@ class SessionManagementService:
     async def create_session(self, phone_number: str, workflow_type: str = None, user_type: str = None) -> ConversationSession:
         """Create a new session with specified workflow type and user type."""
         session_id = SessionHelpers.generate_session_id(phone_number, "daily")
+        
+        # Check if session already exists first
+        existing_session = self.db_manager.get_conversation_session(session_id)
+        if existing_session:
+            logger.info(f"Session {session_id} already exists, returning existing session")
+            return existing_session
         
         session_data = {
             'session_id': session_id,
@@ -120,7 +124,8 @@ class SessionManagementService:
         else:
             # Session is active, renew its activity timestamp
             session = await SessionHelpers.renew_session_activity(session)
-            await self.save_session(session, session.workflow_type or 'general_inquiry')
+            current_workflow = session.workflow_type or WorkflowType.general_inquiry
+            await self.save_session(session, current_workflow)
         
         return session
     

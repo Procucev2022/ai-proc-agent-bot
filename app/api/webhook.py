@@ -86,7 +86,30 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
         return JSONResponse(content={"status": "ok"})
         
     except Exception as e:
-        logger.error(f"Error processing webhook: {e}")
+        logger.error(f"Critical error processing webhook: {e}")
+        
+        # Try to extract user phone for technical failure notification
+        user_phone = None
+        try:
+            body = await request.body()
+            webhook_data = await parse_webhook_data(request)
+            if webhook_data:
+                user_phone = webhook_data.get("from")
+        except:
+            pass
+        
+        # Send technical failure message if we have user phone
+        if user_phone:
+            from app.utils.technical_failure_handler import handle_technical_failure
+            try:
+                await handle_technical_failure(
+                    user_phone=user_phone,
+                    error_message=f"Webhook processing error: {str(e)}",
+                    error_type="Webhook Error"
+                )
+            except:
+                pass  # Don't let notification failure break webhook response
+        
         return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
 
 
