@@ -35,13 +35,13 @@ class IntentSwitchHandler:
         4. Not already in intent switch choice state
         """
         # Check if user has active workflow
+        # Note: pending_optional states are NOT considered active workflows
+        # because they're part of the same RFQ collection process
         has_active_workflow = (
             len(session.workflow_state.get("extracted_entities", [])) > 0 or
             bool(session.workflow_state.get("incomplete_products")) or
             bool(session.workflow_state.get("pending_combined_rfq")) or
-            bool(session.workflow_state.get("pending_rfq")) or
-            bool(session.workflow_state.get("pending_optional_rfq")) or
-            bool(session.workflow_state.get("pending_optional_combined_rfq"))
+            bool(session.workflow_state.get("pending_rfq"))
         )
         print("has active workflow", has_active_workflow)
         
@@ -59,9 +59,9 @@ class IntentSwitchHandler:
             logger.info("Intent switch: Already in pending_intent_switch - returning False")
             return False
             
-        # Don't handle if confidence is too low
-        if confidence < 0.9:
-            logger.info(f"Intent switch: Confidence too low ({confidence}) - returning False")
+        # Don't handle if confidence is too low (confidence is 0-100 percentage)
+        if confidence < 90:
+            logger.info(f"Intent switch: Confidence too low ({confidence}%) - returning False")
             return False
         
         # Handle intent switches for different intents
