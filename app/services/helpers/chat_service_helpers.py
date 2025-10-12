@@ -256,7 +256,7 @@ class ChatServiceHelpers:
         # may still exist when asking for optional fields (it gets cleared after optional fields)
         elif (workflow_state.get("pending_optional_rfq") or
               workflow_state.get("pending_optional_combined_rfq") or
-              workflow_state.get("pending_attachment_decision")):
+              workflow_state.get("awaiting_attachment_decision")):
             return "optional_fields"
         # Incomplete products - check after optional fields
         # Note: incomplete_products can be [] (empty list), so check if it has items
@@ -264,11 +264,23 @@ class ChatServiceHelpers:
             return "collecting_details"
         elif workflow_state.get("extracted_entities"):
             entities = workflow_state["extracted_entities"]
-            if isinstance(entities, list) and entities:
-                return "processing_multiple"
-            elif isinstance(entities, dict) and entities:
-                return "processing_single"
+            if isinstance(entities, list):
+                if entities:  # Non-empty list
+                    logger.debug(f"Conversation stage: processing_multiple with {len(entities)} entities")
+                    return "processing_multiple"
+                else:  # Empty list
+                    logger.warning("extracted_entities is an empty list, returning collecting stage")
+                    return "collecting"
+            elif isinstance(entities, dict):
+                if entities:  # Non-empty dict
+                    logger.debug("Conversation stage: processing_single with entity dict")
+                    return "processing_single"
+                else:  # Empty dict
+                    logger.warning("extracted_entities is an empty dict, returning collecting stage")
+                    return "collecting"
             else:
+                # Unexpected type for extracted_entities
+                logger.error(f"extracted_entities has unexpected type: {type(entities).__name__}, value: {entities}")
                 return "collecting"
         elif session.outcome:
             return "completed"
