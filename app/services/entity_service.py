@@ -109,8 +109,34 @@ class EntityService:
         """Handle standard entity extraction for new requests."""
         # Build prompt for entity extraction
         prompt = f"Extract entities from: '{message}'"
-        if context and context.get("extracted_entities"):
-            prompt += f"\nExisting entities: {context['extracted_entities']}"
+
+        # Check for existing context to merge with
+        existing_context = []
+
+        # First priority: incomplete_products (ongoing data collection)
+        if context and context.get("workflow_state"):
+            incomplete_products = context["workflow_state"].get("incomplete_products", [])
+            if incomplete_products:
+                print(f"EntityService: Found {len(incomplete_products)} incomplete products in context")
+                # Extract entities from incomplete products for context
+                for prod in incomplete_products:
+                    if isinstance(prod, dict) and "entities" in prod:
+                        existing_context.append(prod["entities"])
+                    elif isinstance(prod, dict):
+                        existing_context.append(prod)
+
+        # Second priority: extracted_entities (fallback)
+        if not existing_context and context and context.get("extracted_entities"):
+            extracted_entities = context["extracted_entities"]
+            if isinstance(extracted_entities, list):
+                existing_context = extracted_entities
+            elif isinstance(extracted_entities, dict):
+                existing_context = [extracted_entities]
+
+        # Add existing context to prompt if found
+        if existing_context:
+            prompt += f"\n\nExisting products context (merge new information with these):\n{existing_context}"
+            print(f"EntityService: Added {len(existing_context)} existing products to extraction context")
 
         # Call OpenAI extract_entities method
         response = self.openai_service.extract_entities(
@@ -131,9 +157,20 @@ class EntityService:
 
             # Merge global fields into each product for backward compatibility
             merged_products = self._merge_global_fields_into_products(products, global_fields)
+
+            # If we have existing context and the new extraction returned data, merge them intelligently
+            if existing_context and merged_products:
+                print(f"EntityService: Merging {len(merged_products)} newly extracted products with {len(existing_context)} existing products")
+                merged_products = self._merge_new_extraction_with_existing_products(existing_context, merged_products, message)
+            elif existing_context and not merged_products:
+                # User only provided supplementary data (no product descriptions)
+                # Apply the global fields to existing products
+                print(f"EntityService: No new products extracted, applying supplementary data to {len(existing_context)} existing products")
+                merged_products = self._apply_supplementary_data_to_existing_products(existing_context, global_fields)
+
             validated_products, has_date_validation_error = self._validate_dates_in_products(merged_products, message)
 
-            print(f"EntityService: Found products array with {len(validated_products)} products")
+            print(f"EntityService: Final products array with {len(validated_products)} products")
             print(f"EntityService: Global fields: {global_fields}")
             for i, product in enumerate(validated_products):
                 print(f"  Product {i+1}: {product}")
@@ -788,6 +825,104 @@ class EntityService:
 
         print(f"EntityService: Merged global fields into {len(merged_products)} products")
         return merged_products
+
+    def _merge_new_extraction_with_existing_products(self, existing_products: list, new_products: list, message: str) -> list:
+        """
+        Merge newly extracted products with existing incomplete products.
+
+        Logic:
+        - If new products have descriptions that match existing ones, merge the data
+        - If new products are genuinely new, add them to the list
+        - Preserve all existing products
+        - If new product has no description (None), it's supplementary data for all existing products
+
+        Args:
+            existing_products: List of existing product entities from incomplete_products
+            new_products: List of newly extracted product entities
+            message: Original user message for context
+
+        Returns:
+            Merged list of products
+        """
+        # Get descriptions from existing products for matching
+        existing_descriptions = {}
+        for i, existing_prod in enumerate(existing_products):
+            desc = existing_prod.get("description")
+            if desc and isinstance(desc, str):
+                desc_lower = desc.lower().strip()
+                if desc_lower:
+                    existing_descriptions[desc_lower] = i
+
+        # Start with copies of existing products
+        merged_products = [prod.copy() for prod in existing_products]
+
+        # Process each new product
+        for new_prod in new_products:
+            new_desc = new_prod.get("description")
+
+            # Handle None or non-string descriptions
+            if new_desc is None or not isinstance(new_desc, str):
+                # This product has no description - it's supplementary data for ALL existing products
+                print(f"EntityService: Product has no description - treating as supplementary data for all existing products")
+                for i in range(len(merged_products)):
+                    for key, value in new_prod.items():
+                        if value is not None and key != "description":  # Don't copy None description
+                            # Only update if field is missing or None
+                            if key not in merged_products[i] or merged_products[i].get(key) is None:
+                                merged_products[i][key] = value
+                                print(f"  Applied {key}={value} to product: {merged_products[i].get('description', 'unnamed')}")
+                continue
+
+            new_desc_lower = new_desc.lower().strip()
+
+            if new_desc_lower and new_desc_lower in existing_descriptions:
+                # This is a re-extraction of an existing product - merge the data
+                existing_index = existing_descriptions[new_desc_lower]
+                print(f"EntityService: Merging data for existing product: {new_desc_lower}")
+
+                # Merge non-None fields from new product into existing
+                for key, value in new_prod.items():
+                    if value is not None:
+                        merged_products[existing_index][key] = value
+                        print(f"  Updated {key}={value}")
+            elif new_desc_lower:
+                # This is a genuinely new product with a description - add it
+                print(f"EntityService: Adding new product: {new_desc_lower}")
+                merged_products.append(new_prod)
+            # else: empty string description, skip
+
+        return merged_products
+
+    def _apply_supplementary_data_to_existing_products(self, existing_products: list, global_fields: dict) -> list:
+        """
+        Apply supplementary data (global fields) to all existing products.
+
+        Used when user provides only supplementary information (like delivery date, location)
+        without mentioning specific products.
+
+        Args:
+            existing_products: List of existing product entities
+            global_fields: Dict of global fields to apply (deliveryDate, state, city, pincode)
+
+        Returns:
+            Updated list of products with supplementary data applied
+        """
+        updated_products = []
+
+        for product in existing_products:
+            updated_product = product.copy()
+
+            # Apply each global field if it has a value
+            for field_name, field_value in global_fields.items():
+                if field_value is not None:
+                    # Only update if the field is missing or None in the product
+                    if field_name not in updated_product or updated_product.get(field_name) is None:
+                        updated_product[field_name] = field_value
+                        print(f"EntityService: Applied {field_name}={field_value} to product: {product.get('description', 'unnamed')}")
+
+            updated_products.append(updated_product)
+
+        return updated_products
 
     def _get_schema(self, workflow_type: str) -> dict:
         """Load schema from JSON file for reference."""
