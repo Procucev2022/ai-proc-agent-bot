@@ -367,6 +367,7 @@ class ResponseHelpers:
             
         # For default fallback, show appropriate menu based on user role
         if user_role and user_role.lower() == "buyer":
+
             buttons_config = [
                 {"id": "new_rfq", "title": "Raise a new RFQ"},
                 {"id": "rfq_status", "title": "Check your previous RFQs"},

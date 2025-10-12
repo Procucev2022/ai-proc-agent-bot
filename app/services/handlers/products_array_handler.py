@@ -415,14 +415,18 @@ class ProductsArrayHandler:
             optional_message = f"{optional_intro}\n\n{optional_text}\n\n You may send the details now or reply 'No' to continue."
             
             await self.whatsapp_service.send_message(user.phone_number, optional_message)
-            
+
             # Mark that we've asked about optional fields
             session.workflow_state["optional_fields_asked"] = True
             session.workflow_state["pending_optional_combined_rfq"] = {
                 "combined_schema": combined_schema.model_dump() if hasattr(combined_schema, 'model_dump') else combined_schema.dict(),
                 "products": ChatServiceHelpers.serialize_products_for_session(complete_products)
             }
-            
+
+            # Clear incomplete products now that all products are complete and we're asking for optional fields
+            if "incomplete_products" in session.workflow_state:
+                del session.workflow_state["incomplete_products"]
+
             await self.session_manager.save_session(session, WorkflowType.rfq_creation)
             
             return {

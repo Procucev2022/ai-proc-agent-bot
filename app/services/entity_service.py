@@ -120,11 +120,21 @@ class EntityService:
 
         # Handle both old single entity format and new multi-product format
         if "products" in response:
-            # New multi-product format - validate dates
+            # New multi-product format with global + item structure
             products = response.get("products", [])
-            validated_products, has_date_validation_error = self._validate_dates_in_products(products, message)
-            
+            global_fields = {
+                "deliveryDate": response.get("deliveryDate"),
+                "state": response.get("state"),
+                "city": response.get("city"),
+                "pincode": response.get("pincode")
+            }
+
+            # Merge global fields into each product for backward compatibility
+            merged_products = self._merge_global_fields_into_products(products, global_fields)
+            validated_products, has_date_validation_error = self._validate_dates_in_products(merged_products, message)
+
             print(f"EntityService: Found products array with {len(validated_products)} products")
+            print(f"EntityService: Global fields: {global_fields}")
             for i, product in enumerate(validated_products):
                 print(f"  Product {i+1}: {product}")
             return {
@@ -742,8 +752,42 @@ class EntityService:
             return date_obj >= current_date
         except:
             return False
-    
 
+    def _merge_global_fields_into_products(self, products: list, global_fields: dict) -> list:
+        """
+        Merge global fields into each product for backward compatibility.
+
+        TEMPORARY SOLUTION: This method merges global fields (deliveryDate, state, city,
+        pincode) into each product entity to maintain backward compatibility with existing
+        downstream code.
+
+        TODO: Refactor downstream code (chat_service_helpers.py, products_array_handler.py,
+        confirmation_handler.py) to understand and handle the two-level structure natively.
+        This will eliminate the need for this transformation layer.
+
+        Args:
+            products: List of product entities with item-specific fields only
+            global_fields: Dict of global fields that apply to all products
+
+        Returns:
+            List of products with global fields merged in
+        """
+        merged_products = []
+
+        for product in products:
+            merged_product = product.copy()
+
+            # Merge each global field into the product if it has a value
+            for field_name, field_value in global_fields.items():
+                if field_value is not None:
+                    # Only add if product doesn't already have this field
+                    if field_name not in merged_product or merged_product.get(field_name) is None:
+                        merged_product[field_name] = field_value
+
+            merged_products.append(merged_product)
+
+        print(f"EntityService: Merged global fields into {len(merged_products)} products")
+        return merged_products
 
     def _get_schema(self, workflow_type: str) -> dict:
         """Load schema from JSON file for reference."""
