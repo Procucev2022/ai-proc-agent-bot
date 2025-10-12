@@ -100,7 +100,6 @@ class IntentSwitchHandler:
 
                 # Otherwise, it's likely a new product request
                 logger.info(f"New product request detected (stage: {conversation_stage}, references_existing: {references_existing_data})")
-                return True
             else:
                 # Fallback: if we have incomplete products during collecting, likely continuation
                 if bool(session.workflow_state.get("incomplete_products")):
@@ -165,6 +164,8 @@ class IntentSwitchHandler:
             ],
             "intent_switch_choice"
         )
+
+
 
         await self.whatsapp_service.send_message(user.phone_number, choice_response)
         

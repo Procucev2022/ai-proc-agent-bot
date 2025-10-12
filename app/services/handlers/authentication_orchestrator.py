@@ -177,7 +177,7 @@ class AuthenticationOrchestrator:
             
             # Ensure we have a valid intent before proceeding
             valid_intents = ["buy_something", "sell_something", "general_inquiry", "modification_request", 
-                           "confirmation_response", "rfq_status_check", "reference_request", "ambiguous"]
+                           "confirmation_response", "rfq_status_check", "ambiguous"]
             
             # For user-initiated switches (from auth/reg switch choices), accept even low confidence
             user_switch_in_progress = session.workflow_state.get("pending_auth_reg_switch") is not None

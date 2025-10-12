@@ -95,9 +95,6 @@ class TextMessageProcessor:
             elif intent == "confirmation_response" and confidence > 0.7:
                 logger.info(f"Handling confirmation response with context: {intent_result.get('context_analysis', {})}")
                 return await self._handle_purchase_intent(user, session, message, intent_result)
-            elif intent == "reference_request" and confidence > 0.7:
-                logger.info(f"Handling reference request with context: {intent_result.get('context_analysis', {})}")
-                return await self._handle_purchase_intent(user, session, message, intent_result)
             elif intent == "rfq_status_check" and confidence > 0.7:
                 return await self._handle_rfq_status_inquiry(user, message)
             elif intent == "general_inquiry":
