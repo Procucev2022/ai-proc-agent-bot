@@ -125,13 +125,16 @@ class ProductsArrayHandler:
     
     async def _handle_incomplete_products(self, user: User, session: ConversationSession,
                                         message: str, products: list, incomplete_products: list,
-                                        complete_products: list, chat_summaries: list, 
+                                        complete_products: list, chat_summaries: list,
                                         date_validation_error: bool = False) -> Dict[str, Any]:
         """Handle incomplete products by generating clarification questions."""
         print(f"ProductsArrayHandler: Found {len(incomplete_products)} incomplete products")
 
         # Check if no products are mentioned (all fields are None)
-        if self._no_products_mentioned(products):
+        # Only show intro message if there are truly no products AND no existing incomplete products
+        # This prevents the check from blocking supplementary data (like delivery info) from being applied
+        existing_incomplete = session.workflow_state.get("incomplete_products", [])
+        if self._no_products_mentioned(products) and not existing_incomplete:
             no_products_message = (
                 "To proceed with your request, we will create a Request for Quotation (RFQ).\n\n"
                 "To create your RFQ, please provide:\n"
