@@ -417,12 +417,23 @@ class ProfileSelectionService:
 
     async def _handle_rfq_status_check(self, user_phone: str, profiles: List[Dict],
                                      session: ConversationSession) -> Dict[str, Any]:
-        """Handle Case 4: RFQ Status Check."""
+        """Handle Case 4: RFQ Status Check - Common Intent (Buyer & Seller Applicable)."""
         try:
-            # Both buyers and sellers can check RFQ status
+            # Handle single profile case - proceed directly
+            if len(profiles) == 1:
+                profile = profiles[0]
+                role_display = "Buyer" if profile['role'] == 'buyer' else "Seller"
+                
+                # Auto-select single profile and proceed to RFQ status check
+                logger.info(f"Single profile found for RFQ status check: {profile['email']} ({role_display})")
+                return await self._set_active_profile_and_proceed(
+                    user_phone, profile, session, "check RFQ status", "rfq_status_check"
+                )
+            
+            # Multiple profiles case - ask user to choose
             message_parts = [
-                "I understand you'd like to check the RFQ status.",
-                "Please choose the profile you want to use for this request:"
+                "I understand you'd like to check an RFQ status.",
+                "Please choose which profile you'd like to use:"
             ]
 
             profile_options = []
@@ -438,7 +449,8 @@ class ProfileSelectionService:
                 })
                 option_num += 1
 
-            # Support multiple profiles, not just 1 or 2
+            message_parts.append("")
+            message_parts.append("Reply with the number to continue.")
 
             # Store context in session
             session.workflow_state = session.workflow_state or {}
