@@ -471,9 +471,10 @@ class DatabaseManager:
 
     def save_conversation_session(self, session_data: dict) -> ConversationSession:
         """Save or update a conversation session."""
-        from sqlalchemy.exc import SQLAlchemyError
+        from sqlalchemy.exc import SQLAlchemyError, IntegrityError
         
         try:
+            # First, try to get existing session
             session = self.session.query(ConversationSession).filter_by(
                 session_id=session_data['session_id']
             ).first()
@@ -481,7 +482,8 @@ class DatabaseManager:
             if session:
                 # Update existing session
                 for key, value in session_data.items():
-                    setattr(session, key, value)
+                    if key != 'session_id':  # Don't update primary key
+                        setattr(session, key, value)
                     # For JSONB fields, explicitly mark as modified
                     if key in ['workflow_state', 'conversation_history', 'extracted_entities', 'whatsapp_context', 'error_details', 'performance_metrics', 'bfs_products_searched', 'bfs_price_accepted', 'bfs_counter_offers', 'products_bid_for', 'bids_received', 'bids_accepted', 'counter_offers_made', 'counter_offers_accepted', 'rfqs_with_response']:
                         flag_modified(session, key)
@@ -493,6 +495,29 @@ class DatabaseManager:
             self.session.commit()
             return session
             
+        except IntegrityError as e:
+            # Handle duplicate key error specifically
+            logger.error(f"Duplicate session detected, updating existing: {e}")
+            self.session.rollback()
+            
+            # Fetch and update existing session
+            existing_session = self.session.query(ConversationSession).filter_by(
+                session_id=session_data['session_id']
+            ).first()
+            
+            if existing_session:
+                # Update existing session
+                for key, value in session_data.items():
+                    if key != 'session_id':  # Don't update primary key
+                        setattr(existing_session, key, value)
+                    if key in ['workflow_state', 'conversation_history', 'extracted_entities', 'whatsapp_context', 'error_details', 'performance_metrics', 'bfs_products_searched', 'bfs_price_accepted', 'bfs_counter_offers', 'products_bid_for', 'bids_received', 'bids_accepted', 'counter_offers_made', 'counter_offers_accepted', 'rfqs_with_response']:
+                        flag_modified(existing_session, key)
+                self.session.commit()
+                return existing_session
+            else:
+                # Fallback: return session object without saving
+                return ConversationSession(**session_data)
+                
         except SQLAlchemyError as e:
             logger.error(f"Database error in save_conversation_session: {e}")
             self.session.rollback()
@@ -506,7 +531,8 @@ class DatabaseManager:
                 if existing_session:
                     # Update existing session
                     for key, value in session_data.items():
-                        setattr(existing_session, key, value)
+                        if key != 'session_id':  # Don't update primary key
+                            setattr(existing_session, key, value)
                         if key in ['workflow_state', 'conversation_history', 'extracted_entities', 'whatsapp_context', 'error_details', 'performance_metrics', 'bfs_products_searched', 'bfs_price_accepted', 'bfs_counter_offers', 'products_bid_for', 'bids_received', 'bids_accepted', 'counter_offers_made', 'counter_offers_accepted', 'rfqs_with_response']:
                             flag_modified(existing_session, key)
                     self.session.commit()

@@ -93,9 +93,18 @@ class ExitService:
             session.workflow_type = None
             session.outcome = ConversationOutcome.abandoned
             exit_timestamp = session.workflow_state.get("last_activity_at") if session.workflow_state else None
+            # Handle exit_timestamp - it might already be a string or datetime
+            if exit_timestamp:
+                if hasattr(exit_timestamp, 'isoformat'):
+                    exit_timestamp_str = exit_timestamp.isoformat()
+                else:
+                    exit_timestamp_str = str(exit_timestamp)
+            else:
+                exit_timestamp_str = None
+            
             session.workflow_state = {
                 "exit_completed": True,
-                "exit_timestamp": exit_timestamp.isoformat() if exit_timestamp else None
+                "exit_timestamp": exit_timestamp_str
             }
             session.conversation_history = {"messages": [], "metadata": []}
             session.extracted_entities = {}
