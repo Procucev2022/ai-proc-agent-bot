@@ -238,7 +238,8 @@ class ChatService:
                     "rfq_status_profile_selection_presented", "ambiguous_profile_selection_presented",
                     "registration_choice_presented", "registration_type_choice_presented",
                     "profile_selection_retry_presented", "role_menu_presented",
-                    "redirected_to_buyer_registration", "redirected_to_seller_registration"
+                    "redirected_to_buyer_registration", "redirected_to_seller_registration",
+                    "intent_mismatch_handled", "intent_mismatch_retry_sent"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:

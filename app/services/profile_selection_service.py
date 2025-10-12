@@ -106,6 +106,10 @@ class ProfileSelectionService:
             if session.workflow_state.get('awaiting_registration_type'):
                 return await self._handle_registration_type_response(user_phone, message, session)
             
+            # Check if handling intent mismatch response
+            if session.workflow_state.get('profile_selection_stage') == 'intent_mismatch':
+                return await self._handle_intent_mismatch_response(user_phone, message, session)
+            
             # Get stored profile options from session
             profile_options = session.workflow_state.get('profile_options', [])
 
@@ -275,8 +279,8 @@ class ProfileSelectionService:
             buyer_profiles = [p for p in profiles if p['role'] == 'buyer']
 
             if not buyer_profiles:
-                # No buyer profiles - redirect to registration
-                return await self._redirect_to_buyer_registration(user_phone, session, message)
+                # Case 7: Intent Mismatch - User wants to buy but only has Seller account(s)
+                return await self._handle_intent_mismatch(user_phone, session, "buyer", profiles)
 
             if len(buyer_profiles) == 1:
                 # Single buyer profile - auto-select and proceed
@@ -347,8 +351,8 @@ class ProfileSelectionService:
             seller_profiles = [p for p in profiles if p['role'] == 'seller']
 
             if not seller_profiles:
-                # No seller profiles - redirect to registration
-                return await self._redirect_to_seller_registration(user_phone, session, message)
+                # Case 7: Intent Mismatch - User wants to sell but only has Buyer account(s)
+                return await self._handle_intent_mismatch(user_phone, session, "seller", profiles)
 
             if len(seller_profiles) == 1:
                 # Single seller profile - auto-select and proceed
@@ -1114,6 +1118,114 @@ class ProfileSelectionService:
             return None
     
 
+    
+    async def _handle_intent_mismatch(self, user_phone: str, session: ConversationSession, 
+                                     target_role: str, existing_profiles: List[Dict]) -> Dict[str, Any]:
+        """Handle Case 7: Intent Mismatch - User wants one role but only has the other."""
+        try:
+            # Determine the existing role
+            existing_role = "seller" if target_role == "buyer" else "buyer"
+            
+            # Create appropriate message based on target role
+            if target_role == "buyer":
+                message_parts = [
+                    "It looks like you don't have a Buyer profile linked to your account.",
+                    "Would you like to register as a Buyer to continue?",
+                    "",
+                    "1️⃣ Register as Buyer",
+                    "2️⃣ Exit"
+                ]
+            else:  # target_role == "seller"
+                message_parts = [
+                    "It looks like you don't have a Seller profile linked to your account.",
+                    "Would you like to register as a Seller to continue?",
+                    "",
+                    "1️⃣ Register as Seller", 
+                    "2️⃣ Exit"
+                ]
+            
+            # Store intent mismatch options in session
+            profile_options = [
+                {"number": 1, "action": f"register_{target_role}", "display": f"Register as {target_role.title()}"},
+                {"number": 2, "action": "exit", "display": "Exit"}
+            ]
+            
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state['profile_selection_stage'] = 'intent_mismatch'
+            session.workflow_state['profile_options'] = profile_options
+            session.workflow_state['target_role'] = target_role
+            session.workflow_state['existing_profiles'] = existing_profiles
+            
+            full_message = "\n".join(message_parts)
+            await self.whatsapp_service.send_message(user_phone, full_message)
+            
+            return {
+                "status": "intent_mismatch_handled",
+                "target_role": target_role,
+                "existing_role": existing_role,
+                "options_count": len(profile_options)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling intent mismatch for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def _handle_intent_mismatch_response(self, user_phone: str, message: str,
+                                             session: ConversationSession) -> Dict[str, Any]:
+        """Handle user response to intent mismatch options."""
+        try:
+            target_role = session.workflow_state.get('target_role')
+            profile_options = session.workflow_state.get('profile_options', [])
+            
+            if not target_role or not profile_options:
+                logger.error(f"Missing intent mismatch data for {user_phone}")
+                return {"status": "restart_profile_selection"}
+            
+            # Parse user selection
+            selected_option = await self._parse_profile_selection(message, profile_options)
+            
+            if selected_option:
+                action = selected_option.get('action')
+                
+                if action == f"register_{target_role}":
+                    # User chose to register for the target role
+                    logger.info(f"User chose to register as {target_role} to resolve intent mismatch")
+                    
+                    # Clear intent mismatch state
+                    session.workflow_state.pop('profile_selection_stage', None)
+                    session.workflow_state.pop('profile_options', None)
+                    session.workflow_state.pop('target_role', None)
+                    session.workflow_state.pop('existing_profiles', None)
+                    
+                    # Redirect to appropriate registration
+                    if target_role == "buyer":
+                        return await self._redirect_to_buyer_registration(user_phone, session, message)
+                    else:
+                        return await self._redirect_to_seller_registration(user_phone, session, message)
+                        
+                elif action == "exit":
+                    # User chose to exit
+                    return await self._handle_exit_action(user_phone, session)
+                    
+            # Invalid selection - show options again
+            message_parts = [
+                "Please select a valid option:",
+                "",
+                f"1️⃣ Register as {target_role.title()}",
+                "2️⃣ Exit"
+            ]
+            
+            retry_message = "\n".join(message_parts)
+            await self.whatsapp_service.send_message(user_phone, retry_message)
+            
+            return {
+                "status": "intent_mismatch_retry_sent",
+                "target_role": target_role
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling intent mismatch response for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
     
     async def _handle_exit_action(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
         """Handle user selecting exit option."""
