@@ -159,6 +159,18 @@ class ProductsArrayHandler:
         # Store incomplete products for follow-up (serialize datetime objects)
         session.workflow_state["incomplete_products"] = ChatServiceHelpers.serialize_products_for_session(incomplete_products)
         session.workflow_state["complete_products"] = ChatServiceHelpers.serialize_products_for_session(complete_products)
+
+        # Store ALL products (both complete and incomplete) in extracted_entities for full context
+        # This ensures that entity extraction and modification requests have access to all products
+        all_products_entities = []
+        for prod in complete_products:
+            all_products_entities.append(prod["entities"])
+        for prod in incomplete_products:
+            all_products_entities.append(prod["entities"])
+
+        session.workflow_state["extracted_entities"] = ChatServiceHelpers.serialize_products_for_session(all_products_entities)
+        print(f"ProductsArrayHandler: Stored {len(all_products_entities)} total products in extracted_entities ({len(complete_products)} complete, {len(incomplete_products)} incomplete)")
+
         await self.session_manager.save_session(session, WorkflowType.rfq_creation)
         
         # Keep questions as a list for proper bullet formatting
@@ -355,7 +367,11 @@ class ProductsArrayHandler:
                 "entities": product_info["entities"],
                 "schema_data": rfq_schema.model_dump() if hasattr(rfq_schema, 'model_dump') else {}
             })
-            
+
+            # Store complete product in extracted_entities for full context
+            session.workflow_state["extracted_entities"] = ChatServiceHelpers.serialize_products_for_session([product_info["entities"]])
+            print(f"ProductsArrayHandler: Stored 1 complete product in extracted_entities (optional fields stage)")
+
             await self.session_manager.save_session(session, WorkflowType.rfq_creation)
             
             return {
@@ -388,7 +404,11 @@ class ProductsArrayHandler:
             "schema_data": rfq_schema.model_dump() if hasattr(rfq_schema, 'model_dump') else {}
         }
         session.workflow_state["pending_rfq"] = ChatServiceHelpers.serialize_products_for_session(product_info_serializable)
-        
+
+        # Store complete product in extracted_entities for full context
+        session.workflow_state["extracted_entities"] = ChatServiceHelpers.serialize_products_for_session([product_info["entities"]])
+        print(f"ProductsArrayHandler: Stored 1 complete product in extracted_entities")
+
         # Clear incomplete products since we're now in confirmation phase
         self._clear_workflow_state(session)
         await self.session_manager.save_session(session, WorkflowType.rfq_creation)
@@ -425,6 +445,11 @@ class ProductsArrayHandler:
                 "combined_schema": combined_schema.model_dump() if hasattr(combined_schema, 'model_dump') else combined_schema.dict(),
                 "products": ChatServiceHelpers.serialize_products_for_session(complete_products)
             }
+
+            # Store all complete products in extracted_entities for full context
+            all_products_entities = [prod["entities"] for prod in complete_products]
+            session.workflow_state["extracted_entities"] = ChatServiceHelpers.serialize_products_for_session(all_products_entities)
+            print(f"ProductsArrayHandler: Stored {len(all_products_entities)} complete products in extracted_entities (optional fields stage)")
 
             # Clear incomplete products now that all products are complete and we're asking for optional fields
             if "incomplete_products" in session.workflow_state:
@@ -465,7 +490,12 @@ class ProductsArrayHandler:
             "combined_schema": combined_schema.model_dump() if hasattr(combined_schema, 'model_dump') else combined_schema.dict(),
             "products": ChatServiceHelpers.serialize_products_for_session(complete_products)
         }
-        
+
+        # Store all complete products in extracted_entities for full context
+        all_products_entities = [prod["entities"] for prod in complete_products]
+        session.workflow_state["extracted_entities"] = ChatServiceHelpers.serialize_products_for_session(all_products_entities)
+        print(f"ProductsArrayHandler: Stored {len(all_products_entities)} complete products in extracted_entities")
+
         # Clear incomplete products since we're now in confirmation phase
         self._clear_workflow_state(session)
         await self.session_manager.save_session(session, WorkflowType.rfq_creation)
