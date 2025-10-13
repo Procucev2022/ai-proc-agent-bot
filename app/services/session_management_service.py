@@ -201,6 +201,12 @@ class SessionManagementService:
             # Clean workflow_state to ensure JSON serialization
             clean_workflow_state = self._clean_for_json_serialization(session.workflow_state) if session.workflow_state else {}
 
+            # Debug logging to track pending_optional fields
+            if 'pending_optional_rfq' in session.workflow_state or 'pending_optional_combined_rfq' in session.workflow_state:
+                logger.info(f"[SESSION_SAVE_DEBUG] Saving session with optional fields: {list(clean_workflow_state.keys())}")
+                if 'pending_optional_combined_rfq' in clean_workflow_state:
+                    logger.info(f"[SESSION_SAVE_DEBUG] pending_optional_combined_rfq keys: {list(clean_workflow_state['pending_optional_combined_rfq'].keys())}")
+
             session_data = {
                 'session_id': session.session_id,
                 'external_user_id': session.external_user_id,
@@ -212,7 +218,13 @@ class SessionManagementService:
                 'retention_date': session.retention_date,
                 'last_activity_at': session.last_activity_at
             }
-            return self.db_manager.save_conversation_session(session_data)
+            saved_session = self.db_manager.save_conversation_session(session_data)
+
+            # Debug logging to verify save
+            if 'pending_optional_rfq' in session.workflow_state or 'pending_optional_combined_rfq' in session.workflow_state:
+                logger.info(f"[SESSION_SAVE_DEBUG] Session saved, verifying workflow_state keys: {list(saved_session.workflow_state.keys()) if saved_session.workflow_state else 'None'}")
+
+            return saved_session
         except Exception as e:
             logger.error(f"Error saving session: {e}")
             # Ensure session state is preserved even if save fails

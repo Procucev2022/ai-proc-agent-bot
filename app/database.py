@@ -558,11 +558,16 @@ class DatabaseManager:
                     # Ensure workflow_state is properly deserialized as dict
                     if isinstance(session.workflow_state, str):
                         session.workflow_state = json.loads(session.workflow_state)
+
+                    # Debug logging for optional fields
+                    if 'pending_optional_rfq' in session.workflow_state or 'pending_optional_combined_rfq' in session.workflow_state:
+                        logger.info(f"[SESSION_LOAD_DEBUG] Loaded session {session_id} with optional fields: {list(session.workflow_state.keys())}")
+
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.error(f"Failed to deserialize workflow_state for session {session_id}: {e}")
                     # Reset to empty dict to prevent further errors
                     session.workflow_state = {"extracted_entities": []}
-            
+
             return session
             
         except SQLAlchemyError as e:

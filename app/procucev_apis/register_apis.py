@@ -160,7 +160,7 @@ class RegisterAPIService:
                     "message": response.get("message", "OTP sent successfully"),
                     "errorMsg": response.get("errorMsg"),
                     "timestamp": response.get("timestamp"),
-                    "status": response,
+                    "status": response.get("status", "Success"),
                     "type": response.get("type")
                 }
             else:
@@ -194,7 +194,7 @@ class RegisterAPIService:
             payload = {
                 "email": username,
                 "emailOtp": otp,
-                "organizationPhonenumber": phone_number or ""
+                "organizationPhonenumber": f"+{phone_number}" or ""
             }
             
             response = await self.api_client.post(
@@ -270,4 +270,11 @@ class RegisterAPIService:
         
         except Exception as e:
             logger.error(f"Error getting User Approval: {e}")
-            return {"success": False, "error": str(e)}
+            return {
+                "statusCode": "500",
+                "message": "Internal server error",
+                "errorMsg": str(e),
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "status": "Failure",
+                "type": None
+            }
