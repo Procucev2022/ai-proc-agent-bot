@@ -46,6 +46,26 @@ Products: [
   {{description: "laptop", quantity: 20, unitofMeasures: "pcs", brand: "Dell", remarks: "16GB RAM"}}
 ]
 
+Example 3: "Exide Batteries and JCB motors" (when user has pending products: 200 pcs batteries, 200 pcs motors)
+IMPORTANT: When user provides brands for multiple products in format "Brand1 ProductType1 and Brand2 ProductType2":
+- Parse EACH brand-product pair separately
+- Match brands to their corresponding products by description
+Global fields: (no changes)
+Products: [
+  {{description: "batteries", quantity: 200, unitofMeasures: "pcs", brand: "Exide", remarks: null}},
+  {{description: "motors", quantity: 200, unitofMeasures: "pcs", brand: "JCB", remarks: null}}
+]
+
+Example 4: "Dell for laptops and Acer for mouse and keyboard" (when user has pending products)
+IMPORTANT: Parse product-specific brands carefully:
+- "Dell for laptops" → laptop gets brand "Dell"
+- "Acer for mouse and keyboard" → mouse gets brand "Acer", keyboard gets brand "Acer"
+Products: [
+  {{description: "laptop", quantity: <existing>, unitofMeasures: "pcs", brand: "Dell", remarks: null}},
+  {{description: "mouse", quantity: <existing>, unitofMeasures: "pcs", brand: "Acer", remarks: null}},
+  {{description: "keyboard", quantity: <existing>, unitofMeasures: "pcs", brand: "Acer", remarks: null}}
+]
+
 Required fields for RFQ:
 GLOBAL (mandatory): deliveryDate, state, city, pincode
 ITEM-SPECIFIC (mandatory per item): description, quantity, unitofMeasures

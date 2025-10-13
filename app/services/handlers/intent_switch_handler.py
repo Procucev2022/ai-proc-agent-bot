@@ -98,9 +98,19 @@ class IntentSwitchHandler:
                     logger.info(f"User has pending optional fields - responding to optional field prompts")
                     return False
 
-                # Otherwise, it's likely a new product request
-                logger.info(f"New product request detected (stage: {conversation_stage}, references_existing: {references_existing_data})")
-                return True
+                # If conversation stage is NOT 'unknown' or 'new_request', the user is likely continuing current workflow
+                if conversation_stage not in ['unknown', 'new_request']:
+                    logger.info(f"User in {conversation_stage} stage - continuing current workflow")
+                    return False
+
+                # Only trigger intent switch if explicitly a new request
+                if conversation_stage == 'new_request':
+                    logger.info(f"New product request detected (stage: {conversation_stage}, references_existing: {references_existing_data})")
+                    return True
+
+                # Default: continue current workflow (don't switch)
+                logger.info(f"Defaulting to continue current workflow (stage: {conversation_stage})")
+                return False
             else:
                 # Fallback: if we have incomplete products during collecting, likely continuation
                 if bool(session.workflow_state.get("incomplete_products")):
