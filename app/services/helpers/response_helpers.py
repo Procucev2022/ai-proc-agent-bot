@@ -7,6 +7,7 @@ extracted from the main ChatService class for better organization.
 
 import logging
 from typing import Dict, Any, List, Union
+from app.utils.rfq_message_formatter import format_rfq_entities_message, format_simple_missing_fields_message
 
 logger = logging.getLogger(__name__)
 
@@ -479,7 +480,7 @@ class ResponseHelpers:
             return "Excellent! Your RFQ is now complete. I'll process this request and get back to you soon."
     
     async def generate_clarification_response(self, questions: list, completeness: float, context: dict, chat_summaries: list = None) -> str:
-        """Generate clarification response using predefined structure - no OpenAI needed."""
+        """Generate clarification response using enhanced entity display format."""
         try:
             # Get date validation errors (already formatted)
             date_validation_errors = self._extract_date_validation_errors(context)
@@ -490,14 +491,27 @@ class ResponseHelpers:
             if not all_questions:
                 return "Thank you for the information! Let me process your RFQ."
 
-            # Debug: Log the questions being formatted
-            logger.info(f"Clarification questions being formatted: {all_questions}")
+            # Check if we have extracted entities to show
+            extracted_entities = context.get("extracted_entities", [])
+            if not isinstance(extracted_entities, list):
+                extracted_entities = [extracted_entities] if extracted_entities else []
 
-            # Simple, clean formatting without duplication
+            # Debug logging
+            logger.info(f"Clarification response - extracted_entities: {extracted_entities}")
+            logger.info(f"Clarification response - all_questions: {all_questions}")
+            
+            # Use enhanced formatting if we have entities
+            has_entities_with_descriptions = extracted_entities and any(entity.get('description') for entity in extracted_entities if isinstance(entity, dict))
+            logger.info(f"Clarification response - has_entities_with_descriptions: {has_entities_with_descriptions}")
+            
+            if has_entities_with_descriptions:
+                logger.info("Using enhanced RFQ entities formatting")
+                return self.format_rfq_entities_message(extracted_entities, all_questions)
+            
+            # Fallback to simple format
+            logger.info("Using simple format for clarification response")
             questions_text = "\n".join(f"• {q}" for q in all_questions)
-            logger.info(f"Formatted questions text: {questions_text}")
-
-            # Only add progress acknowledgment if we have some progress
+            
             if completeness > 0:
                 return f"Thank you for that information!\n\nPlease provide the following:\n\n{questions_text}"
             else:
@@ -619,6 +633,54 @@ class ResponseHelpers:
             else:
                 return "Please provide the remaining registration details."
     
+    def format_rfq_entities_message(self, extracted_entities: List[Dict[str, Any]], missing_fields: List[str]) -> str:
+        """Format RFQ message showing extracted entities and asking for missing details.
+        
+        Args:
+            extracted_entities: List of extracted product entities
+            missing_fields: List of missing field descriptions
+            
+        Returns:
+            Formatted message string
+        """
+        try:
+            logger.info(f"Formatting RFQ entities message with {len(extracted_entities)} entities and {len(missing_fields)} missing fields")
+            
+            # Extract global fields from entities if they exist
+            global_fields = {}
+            if extracted_entities:
+                first_entity = extracted_entities[0] if isinstance(extracted_entities[0], dict) else {}
+                delivery_date = first_entity.get('deliveryDate')
+                # Format date for display if it exists
+                if delivery_date:
+                    try:
+                        from datetime import datetime
+                        if isinstance(delivery_date, str) and len(delivery_date) == 10:  # YYYY-MM-DD format
+                            date_obj = datetime.strptime(delivery_date, '%Y-%m-%d')
+                            delivery_date = date_obj.strftime('%d %b %Y')  # Format as "28 Oct 2025"
+                    except:
+                        pass  # Keep original format if parsing fails
+                
+                global_fields = {
+                    'deliveryDate': delivery_date,
+                    'state': first_entity.get('state'),
+                    'city': first_entity.get('city'),
+                    'pincode': first_entity.get('pincode')
+                }
+            
+            # Use the enhanced formatter with global fields if any exist
+            if any(global_fields.values()):
+                from app.utils.rfq_message_formatter import format_rfq_entities_with_global_fields
+                result = format_rfq_entities_with_global_fields(extracted_entities, global_fields, missing_fields)
+            else:
+                result = format_rfq_entities_message(extracted_entities, missing_fields)
+            
+            logger.info(f"Formatted message result: {result[:100]}...")
+            return result
+        except Exception as e:
+            logger.error(f"Error formatting RFQ entities message: {e}")
+            return format_simple_missing_fields_message(missing_fields)
+
     def _extract_date_validation_errors(self, context: dict) -> list:
         """Extract date validation error messages from context."""
         date_errors = []
