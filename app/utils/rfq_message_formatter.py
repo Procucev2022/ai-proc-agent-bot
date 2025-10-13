@@ -25,6 +25,16 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
     if extracted_entities:
         message_parts.append("✅ **Correctly Identified**")
         
+        # Check if we have common fields across all entities
+        common_fields = {}
+        if len(extracted_entities) > 1:
+            # Find fields that are the same across all entities
+            first_entity = extracted_entities[0] if isinstance(extracted_entities[0], dict) else {}
+            for field in ['deliveryDate', 'state', 'city', 'pincode']:
+                value = first_entity.get(field)
+                if value and all(entity.get(field) == value for entity in extracted_entities if isinstance(entity, dict)):
+                    common_fields[field] = value
+        
         for i, entity in enumerate(extracted_entities, 1):
             if not isinstance(entity, dict):
                 continue
@@ -44,8 +54,47 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
             if entity.get('remarks'):
                 message_parts.append(f"• **Specifications:** {entity.get('remarks')}")
             
+            # Only show delivery date for individual items if it's not common across all
+            if entity.get('deliveryDate') and 'deliveryDate' not in common_fields:
+                # Format date for display if it exists
+                delivery_date = entity.get('deliveryDate')
+                try:
+                    from datetime import datetime
+                    if isinstance(delivery_date, str) and len(delivery_date) == 10:  # YYYY-MM-DD format
+                        date_obj = datetime.strptime(delivery_date, '%Y-%m-%d')
+                        delivery_date = date_obj.strftime('%d %b %Y')  # Format as "14 Oct 2025"
+                except:
+                    pass  # Keep original format if parsing fails
+                message_parts.append(f"• **Delivery Date:** {delivery_date}")
+            
             if len(extracted_entities) > 1 and i < len(extracted_entities):
                 message_parts.append("")
+        
+        # Show common fields if any exist
+        if common_fields:
+            if len(extracted_entities) > 1:
+                message_parts.append("")
+                message_parts.append("**For all items:**")
+            
+            if common_fields.get('deliveryDate'):
+                delivery_date = common_fields['deliveryDate']
+                try:
+                    from datetime import datetime
+                    if isinstance(delivery_date, str) and len(delivery_date) == 10:  # YYYY-MM-DD format
+                        date_obj = datetime.strptime(delivery_date, '%Y-%m-%d')
+                        delivery_date = date_obj.strftime('%d %b %Y')  # Format as "14 Oct 2025"
+                except:
+                    pass  # Keep original format if parsing fails
+                message_parts.append(f"• **Delivery Date:** {delivery_date}")
+            
+            if common_fields.get('city'):
+                message_parts.append(f"• **Delivery City:** {common_fields['city']}")
+            
+            if common_fields.get('state'):
+                message_parts.append(f"• **Delivery State:** {common_fields['state']}")
+            
+            if common_fields.get('pincode'):
+                message_parts.append(f"• **Pin Code:** {common_fields['pincode']}")
         
         message_parts.append("")  # Empty line
     
@@ -173,8 +222,12 @@ def format_rfq_entities_with_global_fields(extracted_entities: List[Dict[str, An
             if len(extracted_entities) > 1 and i < len(extracted_entities):
                 message_parts.append("")
         
-        # Show global fields if available
-        if global_fields:
+        # Show global fields if available - these apply to ALL items
+        if global_fields and any(global_fields.values()):
+            if len(extracted_entities) > 1:
+                message_parts.append("")
+                message_parts.append("**For all items:**")
+            
             if global_fields.get('deliveryDate'):
                 message_parts.append(f"• **Delivery Date:** {global_fields['deliveryDate']}")
             
