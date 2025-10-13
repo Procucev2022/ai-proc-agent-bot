@@ -1271,6 +1271,7 @@ Analyze their response to determine their true choice.
             "all_intent_scores": {
                 "buy_something": 20,
                 "sell_something": 10,
+                "bfs_search": 10,
                 "account_switch": 5,
                 "general_inquiry": 30,
                 "modification_request": 10,

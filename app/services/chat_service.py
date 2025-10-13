@@ -888,6 +888,33 @@ class ChatService:
                 logger.info(f"Handling reference request with context: {intent_result.get('context_analysis', {})}")
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result,
                                                                                  self._should_use_summary_aware_extraction)
+            elif intent == "bfs_search" and confidence > 0.7:
+                # Handle BFS search intent with profile selection message
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                user_email = getattr(user, 'email', 'your profile')
+                
+                # Create the profile selection message
+                profile_message = f"Got it, you're looking to check if items are available in stock.\nLet's continue with your {user_role.title()} profile ({user_email}).\n\nBFS Search coming soon!\nPlease confirm what you'd like to do next:"
+                
+                if user_role == "buyer":
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "get_support", "title": "Get Support Info"}
+                    ]
+                else:  # seller or other roles
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "get_support", "title": "Get Support Info"}
+                    ]
+                
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    profile_message,
+                    buttons_config
+                )
+                
+                return {"status": "bfs_search_handled"}
             elif intent == "rfq_status_check" and confidence > 0.7:
                 return await self._handle_rfq_status_inquiry(user, message, session)
             elif intent == "sell_something" and confidence > 0.7:
@@ -1508,24 +1535,28 @@ class ChatService:
             )
         
         elif button_id == "search_bfs":
-            # Handle BFS search coming soon with menu options in one message
+            # Handle BFS search coming soon with profile selection message
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
+            user_email = getattr(user, 'email', 'your profile')
+            
+            # Create the profile selection message
+            profile_message = f"Got it, you're looking to check if items are available in stock.\nLet's continue with your {user_role.title()} profile ({user_email}).\n\nBFS Search coming soon!\nPlease confirm what you'd like to do next:"
             
             if user_role == "buyer":
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "contact_support", "title": "Get Support Info"}
+                    {"id": "get_support", "title": "Get Support Info"}
                 ]
             else:  # seller or other roles
                 buttons_config = [
                     {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "contact_support", "title": "Get Support Info"}
+                    {"id": "get_support", "title": "Get Support Info"}
                 ]
             
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
-                "BFS search is coming soon!\n\nWhat would you like to do?",
+                profile_message,
                 buttons_config
             )
             
