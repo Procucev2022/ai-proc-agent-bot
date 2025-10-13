@@ -1225,18 +1225,16 @@ class ChatService:
                 # ✅ Role-based button configuration
                 if user_role == "buyer":
                     buttons_config = [
-
-                        {"id": "raise_rfq", "title": "📄 Raise a new RFQ"},
-                        {"id": "check_rfqs", "title": "🔍 Check your previous RFQs"},
-                        {"id": "other_support", "title": "💬 Any other support you need"}
+                        {"id": "create_rfq", "title": "Create RFQ"},
+                        {"id": "rfq_status", "title": "Show RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks (Coming soon)"}
                     ]
                     header = "What can I assist you with today?"
                 
                 elif user_role == "seller":
                     buttons_config = [
-                        {"id": "view_rfqs", "title": "📤 View available RFQs to quote"},
-                        {"id": "check_submissions", "title": "📈 Check your previous submissions"},
-                        {"id": "other_support", "title": "💬 Get other support"}
+                        {"id": "rfq_status", "title": "Show RFQ status"},
+                        {"id": "get_support", "title": "Get Support Info"}
                     ]
                     header = "What would you like to do today?"
                 
@@ -1273,14 +1271,45 @@ class ChatService:
                                                      "How can I assist you today?")
 
     async def _handle_support_request(self, user: User, message: str) -> Dict[str, Any]:
-        """Handle support requests by providing contact information."""
+        """Handle support requests by providing contact information and menu options."""
         try:
             settings = get_settings()
             support_contact = settings.support_contact_info
             
+            # Get user role for appropriate menu
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+            
+            # Create support message with contact info
             support_message = f"For support assistance, please contact us at: {support_contact}"
             
-            await self.whatsapp_service.send_message(user.phone_number, support_message)
+            # Role-based button configuration
+            if user_role == "buyer":
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create RFQ"},
+                    {"id": "rfq_status", "title": "Show RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks (Coming soon)"}
+                ]
+                header = "What else can I help you with?"
+            elif user_role == "seller":
+                buttons_config = [
+                    {"id": "rfq_status", "title": "Show RFQ status"},
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+                header = "What else would you like to do?"
+            else:
+                buttons_config = [
+                    {"id": "contact_support", "title": "Contact Support"},
+                    {"id": "exit", "title": "Exit"}
+                ]
+                header = "How can I help you?"
+            
+            # Send interactive buttons
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                support_message,
+                buttons_config,
+                header
+            )
             
             return {"status": "support_handled"}
 
@@ -1295,27 +1324,34 @@ class ChatService:
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
             
             if user_role == "buyer":
-
-                # Buyer fallback menu
-                fallback_message = (
-                    "What can I assist you with today?\n"
-                    "• 📄 Raise a new RFQ\n"
-                    "• 🔍 Check your previous RFQs\n"
-                    "• 💬 Any other support you need"
+                # Buyer fallback with buttons
+                buttons_config = [
+                    {"id": "create_rfq", "title": "📄 Create RFQ"},
+                    {"id": "rfq_status", "title": "🔍 Show RFQ Status"},
+                    {"id": "search_bfs", "title": "📦 Search Stocks"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "What can I assist you with today?",
+                    buttons_config,
+                    "Please choose an option:"
                 )
             elif user_role == "seller":
-                # Seller fallback menu
-                fallback_message = (
-                    "What would you like to do today?\n"
-                    "• 📤 View available RFQs to quote\n"
-                    "• 📈 Check your previous submissions\n"
-                    "• 💬 Get other support"
+                # Seller fallback with buttons
+                buttons_config = [
+                    {"id": "rfq_status", "title": "🔍 Show RFQ status"},
+                    {"id": "get_support", "title": "💬 Get Support Info"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "What would you like to do today?",
+                    buttons_config,
+                    "Please choose an option:"
                 )
             else:
                 # Fallback for unknown role
-                fallback_message = "How can I help you with your procurement needs?"
+                await self.whatsapp_service.send_message(user.phone_number, "How can I help you with your procurement needs?")
             
-            await self.whatsapp_service.send_message(user.phone_number, fallback_message)
             return {"status": "clarification_sent"}
 
         except Exception as e:
@@ -1329,28 +1365,34 @@ class ChatService:
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
             
             if user_role == "buyer":
-                # Buyer fallback menu
-                fallback_message = (
-                    "What can I assist you with today?\n"
-
-                    "• 📄 Raise a new RFQ\n"
-                    "• 🔍 Check your previous RFQs\n"
-                    "• 💬 Any other support you need"
+                # Buyer fallback with buttons
+                buttons_config = [
+                    {"id": "create_rfq", "title": "📄 Create RFQ"},
+                    {"id": "rfq_status", "title": "🔍 Show RFQ Status"},
+                    {"id": "search_bfs", "title": "📦 Search Stocks"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "What can I assist you with today?",
+                    buttons_config,
+                    "Please choose an option:"
                 )
             elif user_role == "seller":
-                # Seller fallback menu
-                fallback_message = (
-                    "What would you like to do today?\n"
-
-                    "• 📤 View available RFQs to quote\n"
-                    "• 📈 Check your previous submissions\n"
-                    "• 💬 Get other support"
+                # Seller fallback with buttons
+                buttons_config = [
+                    {"id": "rfq_status", "title": "🔍 Show RFQ status"},
+                    {"id": "get_support", "title": "💬 Get Support Info"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "What would you like to do today?",
+                    buttons_config,
+                    "Please choose an option:"
                 )
             else:
                 # Fallback for unknown role
-                fallback_message = "How can I help you with your procurement needs?"
+                await self.whatsapp_service.send_message(user.phone_number, "How can I help you with your procurement needs?")
             
-            await self.whatsapp_service.send_message(user.phone_number, fallback_message)
             return {"status": "fallback_handled"}
 
         except Exception as e:
@@ -1457,13 +1499,33 @@ class ChatService:
         logger.info(f"Button response from {user.phone_number}: {button_id}")
 
         # Handle new menu buttons
-        if button_id == "new_rfq" or button_id == "raise_rfq":
+        if button_id == "new_rfq" or button_id == "raise_rfq" or button_id == "create_rfq":
             # Trigger RFQ creation flow
             intent_result = {"intent": "buy_something", "confidence": 95}
             return await self.purchase_intent_handler.handle_purchase_intent(
                 user, session, "I want to create a new RFQ", intent_result, 
                 self._should_use_summary_aware_extraction
             )
+        
+        elif button_id == "search_bfs":
+            # Handle BFS search coming soon
+            from app.services.profile_selection_service import ProfileSelectionService
+            from app.services.authentication_service import AuthenticationService
+            from app.services.openai_service import OpenAIService
+            
+            profile_service = ProfileSelectionService(
+                self.whatsapp_service, 
+                AuthenticationService(self.whatsapp_service, OpenAIService(), None, None),
+                OpenAIService()
+            )
+            
+            # Get user profile info
+            profile = {
+                'role': user.role.value if hasattr(user.role, 'value') else user.role,
+                'email': user.email
+            }
+            
+            return await profile_service.handle_bfs_coming_soon_response(user.phone_number, profile)
         
         elif button_id == "rfq_status" or button_id == "check_rfqs":
             # Trigger RFQ status check flow
@@ -1477,7 +1539,7 @@ class ChatService:
             # Trigger seller submission check flow
             return await self._handle_seller_flow(user, session, "Check my previous submissions")
         
-        elif button_id == "contact_support" or button_id == "other_support":
+        elif button_id == "contact_support" or button_id == "other_support" or button_id == "get_support":
             # Trigger support flow
             return await self._handle_support_request(user, "I need support")
         

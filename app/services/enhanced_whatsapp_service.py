@@ -45,7 +45,7 @@ class EnhancedWhatsAppService(WhatsAppService):
     async def send_configurable_buttons(self, recipient_id: str, body: str, 
                                       buttons_config: List[Dict[str, str]], 
                                       header: Optional[str] = None,
-                                      footer: str = "Please choose an option") -> MessageResponse:
+                                      footer: str = "Type ‘Exit’ anytime to end the chat, or type ‘Support’ to reach our support team for further assistance") -> MessageResponse:
         """Send configurable buttons with automatic error monitoring."""
         async with self.service_monitor.monitor_whatsapp_operation("send_configurable_buttons"):
             return await super().send_configurable_buttons(

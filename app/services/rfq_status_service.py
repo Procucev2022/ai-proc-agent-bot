@@ -4,8 +4,9 @@ This service can be used by both chat_service and seller_service.
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 from app.models import WorkflowType, User, ConversationSession
+from app.schemas.user import UserRole
 from app.services.rfq_service import RFQService
 from app.services.workflow_manager import WorkflowManager
 from app.services.whatsapp_service import WhatsAppService
@@ -33,21 +34,51 @@ class RFQStatusService:
             self.chat_summary_service, self.daily_summary_service
         )
 
+    def _get_role_based_menu_options(self, user: User) -> List[Dict[str, str]]:
+        """Get menu options based on user role."""
+        try:
+            if user.role == UserRole.BUYER:
+                return [
+                    {"id": "create_rfq", "title": "Create RFQ"},
+                    {"id": "search_bfs", "title": "Search Stocks (Coming soon)"},
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+            elif user.role == UserRole.SELLER:
+                return [
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+            else:
+                return [
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+        except Exception as e:
+            logger.error(f"Error getting role-based menu options: {e}")
+            return []
+
     async def handle_rfq_status_inquiry(self, user: User,  message: str,session: ConversationSession) -> Dict[str, Any]:
         """Handle RFQ status inquiry requests."""
         try:
             result = await self.rfq_service.process_rfq_status_request(user=user, message=message)
 
-            # Step: Send WhatsApp message with button for status details
+            # Step: Send WhatsApp message with role-based menu options
             response_message = result["response_message"]
             
-            # Send CTA button message with link to procurement dashboard
-            await self.whatsapp_service.send_cta_button_message(
-                recipient_id=user.phone_number,
-                body_text=response_message,
-                button_text="View More",
-                url="https://p2pdevuiindia.azurewebsites.net/login"
-            )
+            # Get role-based menu options
+            menu_buttons = self._get_role_based_menu_options(user)
+            
+            if menu_buttons:
+                # Send message with role-based buttons
+                await self.whatsapp_service.send_configurable_buttons(
+                    recipient_id=user.phone_number,
+                    body=response_message,
+                    buttons_config=menu_buttons
+                )
+            else:
+                # Send simple message if no buttons available
+                await self.whatsapp_service.send_message(
+                    recipient_id=user.phone_number,
+                    message=response_message
+                )
 
             # Update session workflow type for tracking
             WorkflowManager.set_workflow_type(session, WorkflowType.rfq_status_check, caller="rfq_status_service")

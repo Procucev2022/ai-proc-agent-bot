@@ -283,21 +283,39 @@ class ProfileSelectionService:
                 return await self._handle_intent_mismatch(user_phone, session, "buyer", profiles)
 
             if len(buyer_profiles) == 1:
-                # Single buyer profile - auto-select and proceed
+                # Single buyer profile - auto-select and show buying options
                 profile = buyer_profiles[0]
 
-                message_parts = [
-                    f"Got it! You want to create an RFQ to buy items.",
-                    "",
-                    f"Let's continue with your Buyer profile ({profile['email']})."
-                ]
-
-                await self.whatsapp_service.send_message(user_phone, "\n".join(message_parts))
-
-                # Set active profile and proceed to RFQ creation
-                return await self._set_active_profile_and_proceed(
+                # Set active profile first
+                result = await self._set_active_profile_and_proceed(
                     user_phone, profile, session, message, "buy_something"
                 )
+
+                if result.get('status') != 'profile_selected_and_authenticated':
+                    return result
+
+                # Show buying options with buttons
+                buying_message = (
+                    f"Got it, you'd like to buy items!\n"
+                    f"Let's continue with your Buyer profile ({profile['email']}).\n"
+                    f"What would you like to do?"
+                )
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create RFQ"},
+                    {"id": "search_bfs", "title": "Search Stocks (Coming soon)"}
+                ]
+                
+                await self.whatsapp_service.send_configurable_buttons(
+                    user_phone,
+                    buying_message,
+                    buttons_config
+                )
+
+                return {
+                    "status": "buyer_options_presented",
+                    "user_type": profile['role'],
+                    "email": profile['email']
+                }
 
             else:
                 # Multiple buyer profiles - show selection
@@ -838,9 +856,9 @@ class ProfileSelectionService:
                 menu_message = f"👋 Hi {name}! Let's continue with your Buyer profile ({email})."
                 header = "What would you like to do today?"
                 buttons_config = [
-                    {"id": "new_rfq", "title": "Create new RFQ"},
-                    {"id": "rfq_status", "title": "Check RFQs Status"},
-                    {"id": "contact_support", "title": "Contact Support"}
+                    {"id": "create_rfq", "title": "Create RFQ"},
+                    {"id": "rfq_status", "title": "Show RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks (Coming soon)"}
                 ]
             else:  # seller
                 # Get name from user_data fullName field
@@ -1256,4 +1274,34 @@ class ProfileSelectionService:
             
         except Exception as e:
             logger.error(f"Error handling exit action for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def handle_bfs_coming_soon_response(self, user_phone: str, profile: Dict) -> Dict[str, Any]:
+        """Handle BFS search coming soon response with follow-up buttons."""
+        try:
+            # Send coming soon message
+            coming_soon_message = "BFS search is coming soon!"
+            await self.whatsapp_service.send_message(user_phone, coming_soon_message)
+            
+            # Show the three buttons as requested
+            buttons_config = [
+                {"id": "create_rfq", "title": "Create RFQ"},
+                {"id": "rfq_status", "title": "Show RFQ Status"},
+                {"id": "contact_support", "title": "Get Support Info"}
+            ]
+            
+            await self.whatsapp_service.send_configurable_buttons(
+                user_phone,
+                "What would you like to do?",
+                buttons_config
+            )
+            
+            return {
+                "status": "bfs_coming_soon_handled",
+                "user_type": profile['role'],
+                "email": profile['email']
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling BFS coming soon response for {user_phone}: {e}")
             return {"status": "error", "error": str(e)}
