@@ -56,7 +56,9 @@ class VerificationCheckService:
             
             # Extract verification data
             verification_status = user_dict.get("verificationStatus") or user_dict.get("verification_status") or "PENDING_EMAIL_VERIFICATION"
-            self_client = user_dict.get("selfClient") or user_dict.get("self_client", True)
+            self_client = user_dict.get("selfClient")
+            if self_client is None:
+                self_client = user_dict.get("self_client", True)
             user_type = "buyer" if self_client else "seller"
             approved = user_dict.get("approved")
             email = user_dict.get("username") or user_dict.get("email")
@@ -137,71 +139,67 @@ class VerificationCheckService:
             # Step 2: If EMAIL_VERIFIED, apply user type specific rules
             if verification_status == "EMAIL_VERIFIED":
                 if user_type == "buyer":
-                    # Buyers need EMAIL_VERIFIED AND domain check
-                    user_id = user_dict.get("id")
-                    if user_id:
-                        # Always check domain approval for buyers
-                        domain_result = await self._check_domain_approval(user_id)
-                        if domain_result.get("approved"):
-                            # Domain approved - refresh user data to get updated approved flag
-                            logger.info(f"Domain approved for buyer {user_id}, refreshing user data")
-                            refresh_result = await self.refresh_user_verification_status(user_phone)
+                    # Buyers need EMAIL_VERIFIED AND approved=True (which gets set after domain check)
+                    approved = user_dict.get("approved")
+                    
+                    if approved is True:
+                        logger.info(f"Access granted - buyer with email verified and approved=True")
+                        return {"access_granted": True, "user_data": user_dict}
+                    else:
+                        # Check if domain check is needed (approved=False could mean domain check not done yet)
+                        user_id = user_dict.get("id")
+                        if user_id:
+                            logger.info(f"Buyer approved=False, checking domain approval for user {user_id}")
+                            domain_result = await self._check_domain_approval(user_id)
                             
-                            if refresh_result.get("success"):
-                                fresh_data = refresh_result.get("data", [])
-                                if fresh_data:
-                                    fresh_user_data = fresh_data[0] if isinstance(fresh_data, list) else fresh_data
-                                    fresh_approved = fresh_user_data.get("approved")
-                                    logger.info(f"Fresh user data - approved: {fresh_approved}")
-                                    
-                                    if fresh_approved is True:
-                                        logger.info(f"Access granted - buyer with domain approved and fresh approved=True")
-                                        return {"access_granted": True, "user_data": fresh_user_data}
-                                    else:
-                                        logger.info(f"Domain approved but approved flag still False, allowing access anyway")
-                                        return {"access_granted": True, "user_data": fresh_user_data}
-                            
-                            # If refresh fails but domain is approved, allow access with current data
-                            logger.info(f"Access granted - buyer with domain approved (refresh failed)")
-                            return {"access_granted": True, "user_data": user_dict}
+                            if domain_result.get("approved"):
+                                # Domain approved - refresh user data to get updated approved flag
+                                logger.info(f"Domain approved for buyer {user_id}, refreshing user data")
+                                refresh_result = await self.refresh_user_verification_status(user_phone)
+                                
+                                if refresh_result.get("success"):
+                                    fresh_data = refresh_result.get("data", [])
+                                    if fresh_data:
+                                        fresh_user_data = fresh_data[0] if isinstance(fresh_data, list) else fresh_data
+                                        fresh_approved = fresh_user_data.get("approved")
+                                        logger.info(f"Fresh user data after domain check - approved: {fresh_approved}")
+                                        
+                                        if fresh_approved is True:
+                                            logger.info(f"Access granted - buyer with domain approved and fresh approved=True")
+                                            return {"access_granted": True, "user_data": fresh_user_data}
+                                        else:
+                                            logger.info(f"Domain approved but approved flag still False, allowing access anyway")
+                                            return {"access_granted": True, "user_data": fresh_user_data}
+                                
+                                # If refresh fails but domain is approved, allow access with current data
+                                logger.info(f"Access granted - buyer with domain approved (refresh failed)")
+                                return {"access_granted": True, "user_data": user_dict}
+                            else:
+                                logger.info(f"Blocking access - buyer domain check failed: {domain_result}")
+                                return {
+                                    "verification_required": True,
+                                    "redirect_to_support": True,
+                                    "redirect_info": {
+                                        "flow": "pending_approval",
+                                        "reason": "domain_not_approved",
+                                        "message": "Domain verification pending - our team will contact you shortly"
+                                    }
+                                }
                         else:
-                            logger.info(f"Blocking access - buyer domain check failed: {domain_result}")
+                            logger.warning(f"No user ID found for domain check")
                             return {
                                 "verification_required": True,
                                 "redirect_to_support": True,
                                 "redirect_info": {
                                     "flow": "pending_approval",
-                                    "reason": "domain_not_approved",
-                                    "message": "Domain verification pending - our team will contact you shortly"
+                                    "reason": "missing_user_id",
+                                    "message": "Account verification required - please contact support"
                                 }
                             }
-                    else:
-                        logger.warning(f"No user ID found for domain check")
-                        return {
-                            "verification_required": True,
-                            "redirect_to_support": True,
-                            "redirect_info": {
-                                "flow": "pending_approval",
-                                "reason": "missing_user_id",
-                                "message": "Account verification required - please contact support"
-                            }
-                        }
                 else:
-                    # Sellers need EMAIL_VERIFIED AND approved=False (sellers should have approved=False)
-                    if approved is False:
-                        logger.info(f"Access granted - seller with email verified and approved=False")
-                        return {"access_granted": True, "user_data": user_dict}
-                    else:
-                        logger.info(f"Blocking access - seller has incorrect approved flag: approved={approved}")
-                        return {
-                            "verification_required": True,
-                            "redirect_to_support": True,
-                            "redirect_info": {
-                                "flow": "support_required",
-                                "reason": "incorrect_seller_status",
-                                "message": "Account verification required - please contact support"
-                            }
-                        }
+                    # Sellers need EMAIL_VERIFIED (approved flag doesn't matter for sellers)
+                    logger.info(f"Access granted - seller with email verified (approved={approved})")
+                    return {"access_granted": True, "user_data": user_dict}
             
             # Step 3: Unknown/invalid verification status - require verification
             logger.warning(f"Unknown verification status: {verification_status} - requiring verification")
@@ -253,6 +251,11 @@ class VerificationCheckService:
         try:
             retry_count = 0
             while retry_count < max_retries:
+                # Add a small delay before API call to allow backend to process domain check
+                if retry_count > 0:
+                    import asyncio
+                    await asyncio.sleep(2 ** retry_count)
+                
                 auth_response = await self.auth_api_service.authenticate_user(user_phone)
                 if auth_response.get("success"):
                     logger.info(f"Successfully refreshed user data for {user_phone} on attempt {retry_count + 1}")
@@ -260,11 +263,6 @@ class VerificationCheckService:
                 
                 retry_count += 1
                 logger.warning(f"Failed to refresh user data for {user_phone}, attempt {retry_count}/{max_retries}")
-                
-                if retry_count < max_retries:
-                    # Wait before retry (exponential backoff)
-                    import asyncio
-                    await asyncio.sleep(2 ** retry_count)
             
             # Max retries exceeded - redirect to support
             logger.error(f"Max retries ({max_retries}) exceeded for user {user_phone} - redirecting to support")
