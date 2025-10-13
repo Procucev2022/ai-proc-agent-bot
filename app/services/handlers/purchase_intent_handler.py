@@ -98,7 +98,7 @@ class PurchaseIntentHandler:
                 entity_result = self.entity_service.extract_entities_with_summary_context(message, context=entity_context, workflow_type=workflow_type)
             else:
                 print(f"PurchaseIntentHandler: Using standard entity extraction")
-                logger.info(f"PurchaseIntentHandler: Using standard entity extraction data to be passed for entity extraction message={message}, context={context_entities}, workflow_type={workflow_type} ")
+                logger.info(f"PurchaseIntentHandler: Using standard entity extraction data to be passed for entity extraction message={message}, context={entity_context}, workflow_type={workflow_type} ")
                 entity_result = self.entity_service.extract_entities(message, context=entity_context, workflow_type=workflow_type)
             logger.info(f"EntityService result: {entity_result}")
             
