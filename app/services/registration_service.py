@@ -115,7 +115,7 @@ class RegistrationService:
             # Extract entities from user message with full context
             workflow_type = f"registration_{user_type}"  # Fix naming: registration_buyer, registration_seller
             logger.info(f"Calling entity extraction with workflow_type: {workflow_type}")
-            entity_result = self.entity_service.extract_entities(
+            entity_result = await self.entity_service.extract_entities(
                 message_content, 
                 context={
                     "workflow_type": workflow_type,

@@ -71,6 +71,7 @@ class LocationService:
             
             # Rajasthan
             "302001": {"lat": 26.9124, "lng": 75.7873, "city": "Jaipur", "state": "Rajasthan"},
+            "302012": {"lat": 26.9124, "lng": 75.7873, "city": "Jaipur", "state": "Rajasthan"},
             
             # Kerala
             "695001": {"lat": 8.5241, "lng": 76.9366, "city": "Thiruvananthapuram", "state": "Kerala"},

@@ -95,11 +95,11 @@ class PurchaseIntentHandler:
                 print(f"PurchaseIntentHandler: Using summary-aware entity extraction")
                 logger.info(f"PurchaseIntentHandler: Using summary aware entity extraction data to be passed for entity extraction message={message}, context={entity_context}, workflow_type={workflow_type} ")
 
-                entity_result = self.entity_service.extract_entities_with_summary_context(message, context=entity_context, workflow_type=workflow_type)
+                entity_result = await self.entity_service.extract_entities_with_summary_context(message, context=entity_context, workflow_type=workflow_type)
             else:
                 print(f"PurchaseIntentHandler: Using standard entity extraction")
                 logger.info(f"PurchaseIntentHandler: Using standard entity extraction data to be passed for entity extraction message={message}, context={entity_context}, workflow_type={workflow_type} ")
-                entity_result = self.entity_service.extract_entities(message, context=entity_context, workflow_type=workflow_type)
+                entity_result = await self.entity_service.extract_entities(message, context=entity_context, workflow_type=workflow_type)
             logger.info(f"EntityService result: {entity_result}")
             
             # Debug: Check which path we're taking

@@ -453,7 +453,7 @@ class ConfirmationHandler:
             openai_service = OpenAIService()
 
             # Extract only specifications from the message
-            extraction_result = openai_service.extract_entities(message, "buy_something")
+            extraction_result = await openai_service.extract_entities(message, "buy_something")
             extracted_product = extraction_result.get("products", [{}])[0] if extraction_result.get("products") else {}
 
             # Get the existing complete product from session

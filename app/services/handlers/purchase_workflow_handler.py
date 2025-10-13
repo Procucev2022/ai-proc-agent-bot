@@ -75,7 +75,7 @@ class PurchaseWorkflowHandler:
                 workflow_type = "rfq_status_check"
             
             # Extract entities
-            entity_result = self.entity_service.extract_entities(message, context=entity_context, workflow_type=workflow_type)
+            entity_result = await self.entity_service.extract_entities(message, context=entity_context, workflow_type=workflow_type)
             logger.info(f"EntityService result: {entity_result}")
             
             # Check for modification clarification needed

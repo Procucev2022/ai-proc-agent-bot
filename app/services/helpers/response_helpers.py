@@ -484,9 +484,12 @@ class ResponseHelpers:
         try:
             # Get date validation errors (already formatted)
             date_validation_errors = self._extract_date_validation_errors(context)
+            
+            # Get pincode validation errors (already formatted)
+            pincode_validation_errors = self._extract_pincode_validation_errors(context)
 
             # Combine only the actual questions
-            all_questions = date_validation_errors + questions
+            all_questions = date_validation_errors + pincode_validation_errors + questions
 
             if not all_questions:
                 return "Thank you for the information! Let me process your RFQ."
@@ -704,3 +707,27 @@ class ResponseHelpers:
         
         # Remove duplicate error messages while preserving order
         return list(dict.fromkeys(date_errors))
+
+    def _extract_pincode_validation_errors(self, context: dict) -> list:
+        """Extract pincode validation error messages from context."""
+        pincode_errors = []
+        
+        # Check extracted entities for pincode validation errors
+        extracted_entities = context.get("extracted_entities", [])
+        if isinstance(extracted_entities, list):
+            for entity in extracted_entities:
+                if isinstance(entity, dict) and entity.get("pincode_validation_error"):
+                    pincode_errors.append(entity["pincode_validation_error"])
+        elif isinstance(extracted_entities, dict) and extracted_entities.get("pincode_validation_error"):
+            pincode_errors.append(extracted_entities["pincode_validation_error"])
+        
+        # Check products in context
+        if context.get("products"):
+            products = context["products"]
+            if isinstance(products, list):
+                for product in products:
+                    if isinstance(product, dict) and product.get("pincode_validation_error"):
+                        pincode_errors.append(product["pincode_validation_error"])
+        
+        # Remove duplicate error messages while preserving order
+        return list(dict.fromkeys(pincode_errors))
