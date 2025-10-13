@@ -1508,11 +1508,7 @@ class ChatService:
             )
         
         elif button_id == "search_bfs":
-            # Handle BFS search coming soon with menu options
-            coming_soon_message = "BFS search is coming soon!"
-            await self.whatsapp_service.send_message(user.phone_number, coming_soon_message)
-            
-            # Show menu options based on user role
+            # Handle BFS search coming soon with menu options in one message
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
             
             if user_role == "buyer":
@@ -1529,7 +1525,7 @@ class ChatService:
             
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
-                "What would you like to do?",
+                "BFS search is coming soon!\n\nWhat would you like to do?",
                 buttons_config
             )
             
