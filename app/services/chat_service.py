@@ -1508,24 +1508,32 @@ class ChatService:
             )
         
         elif button_id == "search_bfs":
-            # Handle BFS search coming soon
-            from app.services.profile_selection_service import ProfileSelectionService
-            from app.services.authentication_service import AuthenticationService
-            from app.services.openai_service import OpenAIService
+            # Handle BFS search coming soon with menu options
+            coming_soon_message = "BFS search is coming soon!"
+            await self.whatsapp_service.send_message(user.phone_number, coming_soon_message)
             
-            profile_service = ProfileSelectionService(
-                self.whatsapp_service, 
-                AuthenticationService(self.whatsapp_service, OpenAIService(), None, None),
-                OpenAIService()
+            # Show menu options based on user role
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+            
+            if user_role == "buyer":
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "contact_support", "title": "Get Support Info"}
+                ]
+            else:  # seller or other roles
+                buttons_config = [
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "contact_support", "title": "Get Support Info"}
+                ]
+            
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                "What would you like to do?",
+                buttons_config
             )
             
-            # Get user profile info
-            profile = {
-                'role': user.role.value if hasattr(user.role, 'value') else user.role,
-                'email': user.email
-            }
-            
-            return await profile_service.handle_bfs_coming_soon_response(user.phone_number, profile)
+            return {"status": "bfs_coming_soon_handled"}
         
         elif button_id == "rfq_status" or button_id == "check_rfqs":
             # Trigger RFQ status check flow

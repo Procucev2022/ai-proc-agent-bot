@@ -29,6 +29,7 @@ For each RFQ found, use this exact format with bold RFQ IDs:
 Always end the response with a button for better user experience:
 ```
 👉 Are you looking for a specific RFQ? Please provide the RFQ number.
+👉 View more RFQs visit this link https://p2pdevuiindia.azurewebsites.net/login
 ```
 
 
