@@ -1296,11 +1296,32 @@ class ChatService:
                 
 
                 else:
-                    # Unknown role → generic buttons
-                    buttons_config = [
-                        {"id": "contact_support", "title": "💬 Contact Support"},
-                        {"id": "exit", "title": "❌ Exit"}
-                    ]
+                    # Unknown role → check if we can determine role from user object
+                    if hasattr(user, 'role') and user.role:
+                        actual_role = user.role.value if hasattr(user.role, 'value') else user.role
+                        if actual_role == "buyer":
+                            buttons_config = [
+                                {"id": "create_rfq", "title": "Create new RFQ"},
+                                {"id": "rfq_status", "title": "Check RFQ Status"},
+                                {"id": "search_bfs", "title": "Search Stocks"}
+                            ]
+                        elif actual_role == "seller":
+                            buttons_config = [
+                                {"id": "rfq_status", "title": "Check RFQs Status"},
+                                {"id": "contact_support", "title": "Contact Support"}
+                            ]
+                        else:
+                            buttons_config = [
+                                {"id": "create_rfq", "title": "Create new RFQ"},
+                                {"id": "rfq_status", "title": "Check RFQ Status"},
+                                {"id": "search_bfs", "title": "Search Stocks"}
+                            ]
+                    else:
+                        buttons_config = [
+                            {"id": "create_rfq", "title": "Create new RFQ"},
+                            {"id": "rfq_status", "title": "Check RFQ Status"},
+                            {"id": "search_bfs", "title": "Search Stocks"}
+                        ]
                     header = "How can I help you with your procurement needs today?"
 
                 # ✅ Send interactive buttons
@@ -1405,8 +1426,31 @@ class ChatService:
                     "Please choose an option:"
                 )
             else:
-                # Fallback for unknown role
-                await self.whatsapp_service.send_message(user.phone_number, "How can I help you with your procurement needs?")
+                # Fallback based on user role
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                if user_role == "buyer":
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                elif user_role == "seller":
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQs Status"},
+                        {"id": "contact_support", "title": "Contact Support"}
+                    ]
+                else:
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "How can I help you with your procurement needs today?",
+                    buttons_config,
+                    "Please choose an option:"
+                )
             
             return {"status": "clarification_sent"}
 
@@ -1446,8 +1490,31 @@ class ChatService:
                     "Please choose an option:"
                 )
             else:
-                # Fallback for unknown role
-                await self.whatsapp_service.send_message(user.phone_number, "How can I help you with your procurement needs?")
+                # Fallback based on user role
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                if user_role == "buyer":
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                elif user_role == "seller":
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQs Status"},
+                        {"id": "contact_support", "title": "Contact Support"}
+                    ]
+                else:
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "How can I help you with your procurement needs today?",
+                    buttons_config,
+                    "Please choose an option:"
+                )
             
             return {"status": "fallback_handled"}
 
