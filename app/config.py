@@ -156,7 +156,7 @@ class Settings:
         # Email configuration
         self.support_email = os.getenv("SUPPORT_EMAIL", "support@procucev.com")
         self.email_signature = os.getenv("EMAIL_SIGNATURE", "Regards\nQUA")
-        self.email_templates_path = os.getenv("EMAIL_TEMPLATES_PATH", "app/email_templates")
+        self.email_templates_path = os.getenv("EMAIL_TEMPLATES_PATH", os.path.join("app", "email_templates"))
         
         # Error handling configuration
         self.enable_error_notifications = os.getenv("ENABLE_ERROR_NOTIFICATIONS", "true").lower() == "true"

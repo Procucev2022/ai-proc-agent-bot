@@ -254,8 +254,26 @@ class ChatService:
                     await self.session_manager.save_session(session, workflow_type)
                     logger.info(f"Authentication flow handled - returning without main flow processing")
                     return auth_result
+                elif auth_status == "redirect_to_support":
+                    # Max OTP retries exceeded or other support-requiring scenario
+                    logger.info(f"Redirect to support requested - calling exit service for {user_phone}")
+                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                    await self.session_manager.save_session(session, WorkflowType.user_exit)
+                    return exit_result
                 elif auth_status == "registration_completed":
-                    # Registration completed - check user type and handle appropriately
+                    # Registration completed - check if this is truly complete or needs further processing
+                    registration_flow_complete = auth_result.get("registration_flow_complete", False)
+                    
+                    if registration_flow_complete:
+                        # Registration is completely done - no further processing needed
+                        logger.info(f"Registration flow completely finished for {user_phone}")
+                        # Clear workflow completely to prevent any further processing
+                        session.workflow_type = None
+                        session.workflow_state = {}
+                        await self.session_manager.save_session(session, None)
+                        return {"status": "registration_completed", "message": "Registration successful", "flow_terminated": True}
+                    
+                    # Legacy handling for cases where registration_flow_complete is not set
                     user = await self.authentication_service.validate_token(user_phone)
                     if user:
                         # Refresh user cache after successful registration to include the new account
@@ -412,6 +430,17 @@ class ChatService:
                 else:
                     # Invalid user but not registered, handle as general inquiry
                     return await self._process_text_message(auth_result, session, message_content, message_intent_result)
+            elif isinstance(auth_result, dict):
+                # Handle dict responses that weren't caught above
+                auth_status = auth_result.get("status")
+                if auth_status == "redirect_to_support":
+                    logger.info(f"Final redirect to support - calling exit service for {user_phone}")
+                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                    await self.session_manager.save_session(session, WorkflowType.user_exit)
+                    return exit_result
+                else:
+                    logger.error(f"Unexpected auth_result dict with status: {auth_status}")
+                    return {"status": "error", "error": "Authentication failed"}
             else:
                 logger.error(f"Unexpected auth_result type: {type(auth_result)}")
                 return {"status": "error", "error": "Authentication failed"}
@@ -2365,8 +2394,9 @@ class ChatService:
             ]
 
             # Skip OTP-like messages and auth/registration flow responses
+            # BUT ONLY FOR TRACKING - these messages still need to be processed by auth orchestrator
             if self._is_auth_flow_response(message_content, intent):
-                logger.info(f"Skipping auth/registration flow response: '{str(message_content)[:50]}...' with intent: {intent}")
+                logger.info(f"Not tracking auth/registration flow response (but will still process): '{str(message_content)[:50]}...' with intent: {intent}")
                 return
 
             # Skip account selection responses during role switch
