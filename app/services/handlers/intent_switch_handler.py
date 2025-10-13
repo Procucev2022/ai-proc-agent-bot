@@ -166,6 +166,8 @@ class IntentSwitchHandler:
             "intent_switch_choice"
         )
 
+
+
         await self.whatsapp_service.send_message(user.phone_number, choice_response)
         
         return {"status": "intent_switch_choice_presented"}
