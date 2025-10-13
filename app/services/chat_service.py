@@ -1225,15 +1225,15 @@ class ChatService:
                 # ✅ Role-based button configuration
                 if user_role == "buyer":
                     buttons_config = [
-                        {"id": "create_rfq", "title": "Create RFQ"},
-                        {"id": "rfq_status", "title": "Show RFQ Status"},
-                        {"id": "search_bfs", "title": "Search Stocks (Coming soon)"}
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
                     ]
                     header = "What can I assist you with today?"
                 
                 elif user_role == "seller":
                     buttons_config = [
-                        {"id": "rfq_status", "title": "Show RFQ status"},
+                        {"id": "rfq_status", "title": "Check RFQ status"},
                         {"id": "get_support", "title": "Get Support Info"}
                     ]
                     header = "What would you like to do today?"
@@ -1285,9 +1285,9 @@ class ChatService:
             # Role-based button configuration
             if user_role == "buyer":
                 buttons_config = [
-                    {"id": "create_rfq", "title": "Create RFQ"},
-                    {"id": "rfq_status", "title": "Show RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Stocks (Coming soon)"}
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
                 ]
                 header = "What else can I help you with?"
             elif user_role == "seller":
@@ -1326,9 +1326,9 @@ class ChatService:
             if user_role == "buyer":
                 # Buyer fallback with buttons
                 buttons_config = [
-                    {"id": "create_rfq", "title": "📄 Create RFQ"},
-                    {"id": "rfq_status", "title": "🔍 Show RFQ Status"},
-                    {"id": "search_bfs", "title": "📦 Search Stocks"}
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
                 ]
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
@@ -1367,9 +1367,9 @@ class ChatService:
             if user_role == "buyer":
                 # Buyer fallback with buttons
                 buttons_config = [
-                    {"id": "create_rfq", "title": "📄 Create RFQ"},
-                    {"id": "rfq_status", "title": "🔍 Show RFQ Status"},
-                    {"id": "search_bfs", "title": "📦 Search Stocks"}
+                    {"id": "create_rfq", "title": "Create new  RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
                 ]
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
@@ -1380,7 +1380,7 @@ class ChatService:
             elif user_role == "seller":
                 # Seller fallback with buttons
                 buttons_config = [
-                    {"id": "rfq_status", "title": "🔍 Show RFQ status"},
+                    {"id": "rfq_status", "title": "🔍 Check RFQ status"},
                     {"id": "get_support", "title": "💬 Get Support Info"}
                 ]
                 await self.whatsapp_service.send_configurable_buttons(

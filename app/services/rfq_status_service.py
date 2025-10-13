@@ -39,8 +39,8 @@ class RFQStatusService:
         try:
             if user.role == UserRole.BUYER:
                 return [
-                    {"id": "create_rfq", "title": "Create RFQ"},
-                    {"id": "search_bfs", "title": "Search Stocks (Coming soon)"},
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "search_bfs", "title": "Search Stocks"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
             elif user.role == UserRole.SELLER:

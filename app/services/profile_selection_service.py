@@ -301,8 +301,8 @@ class ProfileSelectionService:
                     f"What would you like to do?"
                 )
                 buttons_config = [
-                    {"id": "create_rfq", "title": "Create RFQ"},
-                    {"id": "search_bfs", "title": "Search Stocks (Coming soon)"}
+                    {"id": "create_rfq", "title": "Create new  RFQ"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
                 ]
                 
                 await self.whatsapp_service.send_configurable_buttons(
@@ -856,9 +856,9 @@ class ProfileSelectionService:
                 menu_message = f"👋 Hi {name}! Let's continue with your Buyer profile ({email})."
                 header = "What would you like to do today?"
                 buttons_config = [
-                    {"id": "create_rfq", "title": "Create RFQ"},
-                    {"id": "rfq_status", "title": "Show RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Stocks (Coming soon)"}
+                    {"id": "create_rfq", "title": "Create new  RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks "}
                 ]
             else:  # seller
                 # Get name from user_data fullName field
@@ -1285,8 +1285,8 @@ class ProfileSelectionService:
             
             # Show the three buttons as requested
             buttons_config = [
-                {"id": "create_rfq", "title": "Create RFQ"},
-                {"id": "rfq_status", "title": "Show RFQ Status"},
+                {"id": "create_rfq", "title": "Create new RFQ"},
+                {"id": "rfq_status", "title": "Check RFQ Status"},
                 {"id": "contact_support", "title": "Get Support Info"}
             ]
             

@@ -369,9 +369,9 @@ class ResponseHelpers:
         if user_role and user_role.lower() == "buyer":
 
             buttons_config = [
-                {"id": "create_rfq", "title": "Create RFQ"},
-                {"id": "rfq_status", "title": "Show RFQ Status"},
-                {"id": "search_bfs", "title": "Search Stocks (Coming soon)"}
+                {"id": "create_rfq", "title": "Create new  RFQ"},
+                {"id": "rfq_status", "title": "Check RFQ Status"},
+                {"id": "search_bfs", "title": "Search Stocks"}
             ]
             message = (
                 "What can I assist you with today?"
