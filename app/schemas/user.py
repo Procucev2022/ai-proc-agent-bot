@@ -104,15 +104,15 @@ class BuyerRegistrationSchema(BaseModel):
 
 
 class SellerRegistrationSchema(BaseModel):
-    full_name: str = Field(..., description="Full name")
-    company_name: str = Field(..., description="Company name")
-    email: str = Field(..., description="Business email")
-    location: str = Field(..., description="Location with Pincode")
-    pincode: str = Field(..., description="Pincode")
-    gstin: str = Field(..., description="GSTIN number")
-    products_services: str = Field(..., description="Products or Services offered")
-    organizationPhonenumber: Optional[str] = Field(None, description="Phone number")
-    whatsapp: Optional[bool] = Field(None, description="WhatsApp flag")
+    full_name: str
+    company_name: str
+    email: str
+    location: str
+    pincode: str
+    gstin: str
+    products_services: str
+    organizationPhonenumber: Optional[str] = None
+    whatsapp: Optional[bool] = None
     source_type: str = "W"
 
     @field_validator("email")
