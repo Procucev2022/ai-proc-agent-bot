@@ -187,6 +187,9 @@ class ProductsArrayHandler:
         context["products"] = products
         context["date_validation_error"] = date_validation_error
         
+        # Add extracted entities to context for enhanced formatting
+        context["extracted_entities"] = [prod["entities"] for prod in incomplete_products]
+        
         response = await self.response_helpers.generate_clarification_response(all_questions, completeness, context, chat_summaries)
         await self.whatsapp_service.send_message(user.phone_number, response)
         
