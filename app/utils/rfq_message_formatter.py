@@ -21,7 +21,7 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
 
     # --- Captured Entities ---
     if extracted_entities:
-        message_parts.append("✅ *Identified:*")
+        message_parts.append("✅ *Items Requested:*")
 
         # Detect common fields (delivery details common to all products)
         common_fields = {}
@@ -47,7 +47,7 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
             specs = entity.get('remarks', '')
 
             # Main product line
-            line = f"• *{description}*"
+            line = f"• {description}"
             if quantity:
                 line += f" – {quantity}"
             if unit:
@@ -121,7 +121,7 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
 
     # Missing details section
     if actual_missing_fields:
-        message_parts.append("⚠️ *Missing Details:*")
+        message_parts.append("⚠️ *Need More Information:*")
 
         field_mapping = {
             "How many items do you need (quantity)?": "• Quantity",
@@ -178,7 +178,7 @@ def format_rfq_entities_with_global_fields(
 
     # --- Display Captured Entities ---
     if extracted_entities or global_fields:
-        message_parts.append("✅ *Identified:*")
+        message_parts.append("✅ *Items Requested:*")
         message_parts.append("")
 
         # Show individual product entities
@@ -194,7 +194,7 @@ def format_rfq_entities_with_global_fields(
             specs = entity.get("remarks")
 
             # Product line
-            line = f"• *{description}*"
+            line = f"• {description}"
             if quantity:
                 line += f" – {quantity}"
             if unit:
@@ -206,9 +206,6 @@ def format_rfq_entities_with_global_fields(
                 message_parts.append(f"   • Brand: {brand}")
             if specs:
                 message_parts.append(f"   • Specifications: {specs}")
-
-            if len(extracted_entities) > 1 and i < len(extracted_entities):
-                message_parts.append("")
 
         # --- Global Fields (apply to all items) ---
         if global_fields and any(global_fields.values()):
@@ -257,7 +254,7 @@ def format_rfq_entities_with_global_fields(
 
     # Missing details
     if actual_missing_fields:
-        message_parts.append("⚠️ *Missing Details:*")
+        message_parts.append("⚠️ *Need More Information:*")
 
         field_mapping = {
             "How many items do you need (quantity)?": "• Quantity",
