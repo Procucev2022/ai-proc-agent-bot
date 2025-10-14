@@ -102,7 +102,7 @@ class AuthenticationOrchestrator:
                 logger.info("Routing to existing authentication workflow")
                 return await self._handle_authentication_workflow(user_phone, message_content, session, intent_result or {})
             elif workflow_type_str in ["workflowtype.registration", "registration"]:
-                return await self._handle_registration_workflow(user_phone, message_content, session, {})
+                return await self._handle_registration_workflow(user_phone, message_content, session, intent_result or {})
             
             # Step 5: Intent result should always be provided from ChatService
             # If not provided, there's a bug in the calling code
@@ -314,7 +314,18 @@ class AuthenticationOrchestrator:
                                             session: ConversationSession, intent_result: Dict) -> Dict[str, Any]:
         """Handle ongoing authentication workflow."""
         try:
-            # Check for profile selection response first
+            # Check authentication stage first (OTP takes priority over profile selection)
+            auth_stage = session.workflow_state.get("authentication_stage")
+            logger.info(f"Handling authentication workflow stage: {auth_stage}")
+            
+            # Handle OTP stage immediately - HIGHEST PRIORITY
+            if auth_stage == "email_otp":
+                logger.info(f"Processing OTP validation for message: {message_content}")
+                return await self.authentication_service.handle_email_otp_validation(
+                    user_phone, message_content, session
+                )
+            
+            # Check for profile selection response
             if session.workflow_state.get("profile_selection_stage"):
                 logger.info(f"Handling profile selection response")
                 return await self.profile_selection_service.handle_profile_selection_response(
@@ -326,11 +337,8 @@ class AuthenticationOrchestrator:
             if switch_result:
                 return switch_result
             
-            auth_stage = session.workflow_state.get("authentication_stage")
-            logger.info(f"Handling authentication workflow stage: {auth_stage}")
-            
-            # Check for intent switch during authentication stages
-            if auth_stage in ["email_confirmation", "email_otp"]:
+            # Check for intent switch during authentication stages (but NOT during OTP)
+            if auth_stage == "email_confirmation":
                 # Use pre-classified intent from ChatService to detect potential switches
                 new_intent_result = intent_result
                 
@@ -350,10 +358,6 @@ class AuthenticationOrchestrator:
                 
                 return await self.authentication_service.handle_email_confirmation(
                     user_phone, message_content, session, stored_intent_result
-                )
-            elif auth_stage == "email_otp":
-                return await self.authentication_service.handle_email_otp_validation(
-                    user_phone, message_content, session
                 )
             else:
                 # No valid auth stage - use stored intent and start new flow
@@ -440,9 +444,18 @@ class AuthenticationOrchestrator:
                     user_phone, message_content, session, stored_intent_result
                 )
             elif registration_stage == "email_otp":
-                return await self.registration_service.handle_registration_otp_validation(
+                result = await self.registration_service.handle_registration_otp_validation(
                     user_phone, message_content, session
                 )
+                
+                # Check if registration is completely finished
+                if result.get("status") == "registration_completed" and result.get("registration_flow_complete"):
+                    logger.info(f"Registration flow completely finished - stopping further processing")
+                    # Clear workflow to prevent any further processing
+                    session.workflow_type = None
+                    session.workflow_state = {}
+                
+                return result
             elif registration_stage == "domain_matching":
                 return await self.authentication_service.handle_domain_matching(
                     user_phone, message_content, session
@@ -470,8 +483,9 @@ class AuthenticationOrchestrator:
     
     async def _should_handle_intent_switch_during_auth(self, new_intent: str, confidence: float, auth_stage: str, session: ConversationSession = None) -> bool:
         """Check if we should handle intent switch during authentication."""
-        # Don't interrupt critical authentication stages
-        if auth_stage == "email_otp" and confidence < 80:
+        # NEVER interrupt OTP validation - OTP codes should always be processed as OTP
+        if auth_stage == "email_otp":
+            logger.info(f"Blocking intent switch during OTP stage - message should be processed as OTP")
             return False
 
         # Handle high-confidence switches
@@ -604,6 +618,7 @@ class AuthenticationOrchestrator:
     async def _redirect_to_registration_flow(self, user_phone: str, session: ConversationSession, user_type: str = "buyer") -> Dict[str, Any]:
         """Redirect to registration flow."""
         try:
+            # starting registration flow
             logger.info(f"AuthOrchestrator: Redirecting to registration flow for user_type: {user_type}")
             logger.info(f"AuthOrchestrator: Session workflow_state before redirect: {session.workflow_state}")
             
@@ -694,7 +709,10 @@ class AuthenticationOrchestrator:
             return None
     
     async def _handle_auth_clarification_request(self, user_phone: str, message_content: str) -> Dict[str, Any]:
-        """Handle ambiguous messages requiring clarification before proceeding to auth flow."""
+        """ 
+            Handle general or ambiguous user messages by sending clarification prompts
+            before proceeding with authentication or registration flow.
+        """
         try:
             clarification_questions = [
                 "Could you be more specific about what you're looking for?",
