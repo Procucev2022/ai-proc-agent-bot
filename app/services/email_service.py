@@ -34,19 +34,46 @@ class EmailService:
         if template_name in self.templates_cache:
             return self.templates_cache[template_name]
             
-        template_path = os.path.join(self.settings.email_templates_path, f"{template_name}.json")
+        # Get the base directory of the application
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
-        try:
-            with open(template_path, 'r', encoding='utf-8') as f:
-                template = json.load(f)
-                self.templates_cache[template_name] = template
-                return template
-        except FileNotFoundError:
-            logger.error(f"Email template not found: {template_path}")
-            return None
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in template {template_path}: {e}")
-            return None
+        # Build template paths to try
+        paths_to_try = [
+            # Relative to current working directory
+            os.path.normpath(os.path.join(self.settings.email_templates_path, f"{template_name}.json")),
+            # Absolute path from current working directory
+            os.path.abspath(os.path.join(self.settings.email_templates_path, f"{template_name}.json")),
+            # Relative to app directory
+            os.path.join(app_dir, "app", "email_templates", f"{template_name}.json"),
+            # Direct path from app directory
+            os.path.join(app_dir, "email_templates", f"{template_name}.json")
+        ]
+        
+        for path in paths_to_try:
+            try:
+                if os.path.exists(path):
+                    with open(path, 'r', encoding='utf-8') as f:
+                        template = json.load(f)
+                        self.templates_cache[template_name] = template
+                        logger.info(f"Successfully loaded email template: {path}")
+                        return template
+            except FileNotFoundError:
+                continue
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in template {path}: {e}")
+                return None
+            except Exception as e:
+                logger.error(f"Error loading template {path}: {e}")
+                continue
+        
+        # If all paths fail, log detailed error
+        logger.error(f"Email template not found: {template_name}")
+        logger.error(f"Tried paths: {paths_to_try}")
+        logger.error(f"Current working directory: {os.getcwd()}")
+        logger.error(f"App directory: {app_dir}")
+        logger.error(f"Template directory exists: {os.path.exists(self.settings.email_templates_path)}")
+        
+        return None
     
     def _process_template(self, template: Dict[str, Any], variables: Dict[str, Any], user_role: str = None) -> Dict[str, Any]:
         """Process template with variables and role-specific logic."""

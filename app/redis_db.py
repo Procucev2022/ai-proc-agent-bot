@@ -131,8 +131,12 @@ class AuthRedisService(BaseRedisService):
         if data:
             # Refresh token on successful retrieval (user activity)
             await self.refresh_user_token(phone_number)
-            return User(**data)
-        return False
+            try:
+                return User.from_mixed_data(data)
+            except Exception as e:
+                logger.error(f"Error creating User from stored data for {phone_number}: {e}")
+                return None
+        return None
 
     async def delete_auth(self, phone_number: str) -> bool:
         key = f"auth:{phone_number}"

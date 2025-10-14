@@ -223,12 +223,13 @@ class ChatService:
             # Check if authentication is still in progress
             if isinstance(auth_result, dict):
                 auth_status = auth_result.get("status")
-                logger.info(f"Authentication in progress - status: {auth_status}")
+                logger.info(f"CHAT_SERVICE: Authentication result - status: {auth_status}")
                 
                 # Authentication/registration flow statuses - stay in auth loop
                 auth_in_progress_statuses = [
                     "clarification_sent", "general_inquiry_handled", "fallback_handled",
-                    "redirected_to_registration", "redirected_to_email_confirmation", "otp_sent",
+                    "redirected_to_registration", "redirected_to_buyer_registration", "redirected_to_seller_registration",
+                    "redirected_to_email_confirmation", "otp_sent",
                     "email_selection_requested", "registration_initiated", "data_collection_in_progress",
                     "awaiting_confirmation", "registration_restarted", "otp_validated", "otp_invalid",
                     "domain_approved", "domain_approval_required", "email_confirmation_requested",
@@ -252,10 +253,32 @@ class ChatService:
                         except (ValueError, KeyError):
                             workflow_type = WorkflowType.authentication
                     await self.session_manager.save_session(session, workflow_type)
-                    logger.info(f"Authentication flow handled - returning without main flow processing")
+                    logger.info(f"CHAT_SERVICE: 🔄 Authentication flow in progress - status: {auth_status}")
                     return auth_result
+                elif auth_status == "redirected_to_support" or auth_status == "redirect_to_support" :
+                    # Max OTP retries exceeded or other support-requiring scenario
+                    logger.info(f"Redirect to support requested - calling exit service for {user_phone}")
+                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                    await self.session_manager.save_session(session, WorkflowType.user_exit)
+                    return exit_result
                 elif auth_status == "registration_completed":
-                    # Registration completed - check user type and handle appropriately
+                    # Registration completed - check if this is truly complete or needs further processing
+                    registration_flow_complete = auth_result.get("registration_flow_complete", False)
+                    user_type = auth_result.get("user_type", "unknown")
+                    approved = auth_result.get("approved", False)
+                    
+                    logger.info(f"CHAT_SERVICE: Registration completed for {user_phone} - user_type: {user_type}, approved: {approved}, flow_complete: {registration_flow_complete}")
+                    
+                    if registration_flow_complete:
+                        # Registration is completely done - no further processing needed
+                        logger.info(f"CHAT_SERVICE: ✅ Registration flow completely finished for {user_phone}")
+                        # Clear workflow completely to prevent any further processing
+                        session.workflow_type = None
+                        session.workflow_state = {}
+                        await self.session_manager.save_session(session, None)
+                        return {"status": "registration_completed", "message": "Registration successful", "flow_terminated": True}
+                    
+                    # Legacy handling for cases where registration_flow_complete is not set
                     user = await self.authentication_service.validate_token(user_phone)
                     if user:
                         # Refresh user cache after successful registration to include the new account
@@ -412,7 +435,22 @@ class ChatService:
                 else:
                     # Invalid user but not registered, handle as general inquiry
                     return await self._process_text_message(auth_result, session, message_content, message_intent_result)
-
+            elif isinstance(auth_result, dict):
+                # Handle dict responses that weren't caught above
+                auth_status = auth_result.get("status")
+                if auth_status == "redirected_to_support" or auth_status == "redirect_to_support" :
+                    logger.info(f"Final redirect to support - calling exit service for {user_phone}")
+                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                    await self.session_manager.save_session(session, WorkflowType.user_exit)
+                    return exit_result
+                elif auth_status == "verification_required":
+                    # Handle verification required status
+                    logger.info(f"Verification required for {user_phone}")
+                    await self.session_manager.save_session(session, WorkflowType.authentication)
+                    return auth_result
+                else:
+                    logger.error(f"Unexpected auth_result dict with status: {auth_status}")
+                    return {"status": "error", "error": "Authentication failed"}
             else:
                 logger.error(f"Unexpected auth_result type: {type(auth_result)}")
                 return {"status": "error", "error": "Authentication failed"}
@@ -2382,8 +2420,9 @@ class ChatService:
             ]
 
             # Skip OTP-like messages and auth/registration flow responses
+            # BUT ONLY FOR TRACKING - these messages still need to be processed by auth orchestrator
             if self._is_auth_flow_response(message_content, intent):
-                logger.info(f"Skipping auth/registration flow response: '{str(message_content)[:50]}...' with intent: {intent}")
+                logger.info(f"Not tracking auth/registration flow response (but will still process): '{str(message_content)[:50]}...' with intent: {intent}")
                 return
 
             # Skip account selection responses during role switch
