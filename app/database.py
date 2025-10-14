@@ -44,7 +44,7 @@ def init_database():
         max_overflow=20,
         pool_timeout=60
     )
-    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=True)
 
     # Create all tables
     Base.metadata.create_all(bind=engine)
@@ -132,7 +132,7 @@ def get_db_session():
                 max_overflow=20,
                 pool_timeout=60
             )
-            SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+            SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=True)
         except Exception as e:
             logger.error(f"Database engine creation failed: {e}")
             # Import here to avoid circular imports
@@ -550,7 +550,14 @@ class DatabaseManager:
         from sqlalchemy.exc import SQLAlchemyError
 
         try:
+            # Force expiration of any cached objects to prevent stale data
+            self.session.expire_all()
+
             session = self.session.query(ConversationSession).filter_by(session_id=session_id).first()
+
+            # Refresh the session object to ensure latest data from database
+            if session:
+                self.session.refresh(session)
 
             # Fix potential JSON deserialization issues
             if session and session.workflow_state:

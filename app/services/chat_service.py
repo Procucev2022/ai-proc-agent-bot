@@ -63,7 +63,7 @@ from app.services.confirmation_service import ConfirmationService
 from app.services.workflow_manager import WorkflowManager, WorkflowStage, PendingFlag
 
 from app.database import SessionLocal, DatabaseManager
-from app.models import ConversationSession, WorkflowType
+from app.models import ConversationSession, WorkflowType, ConversationOutcome
 from app.schemas.user import User
 
 logger = logging.getLogger(__name__)
@@ -2387,7 +2387,7 @@ class ChatService:
             ]
 
             # Skip OTP-like messages and auth/registration flow responses
-            if self._is_auth_flow_response(message_content, intent):
+            if self._is_auth_flow_response(message_content, intent, session):
                 logger.info(f"Skipping auth/registration flow response: '{str(message_content)[:50]}...' with intent: {intent}")
                 return
 
@@ -2406,7 +2406,7 @@ class ChatService:
         except Exception as e:
             logger.error(f"Error tracking meaningful message: {e}")
 
-    def _is_auth_flow_response(self, message_content: str, intent: str) -> bool:
+    def _is_auth_flow_response(self, message_content: str, intent: str, session: ConversationSession = None) -> bool:
         """Check if this message is an auth/registration flow response that shouldn't be processed as business intent."""
         try:
             # Handle non-string message content (like interactive button responses)
@@ -2424,7 +2424,6 @@ class ChatService:
             # These responses might be answers to optional field questions or RFQ confirmations
             if message_lower in ["yes", "y", "no", "n", "confirm", "correct", "ok", "restart", "wrong", "incorrect", "skip", "exit"]:
                 # Check if user has active workflow with pending optional fields or confirmations
-                session = session_context.get()
                 if session and session.workflow_state:
                     has_pending_optional = bool(
                         session.workflow_state.get("pending_optional_rfq") or
@@ -2480,7 +2479,7 @@ class ChatService:
             else:
                 # No tracked message - check if current message is an auth flow response
                 current_intent = current_intent_result.get('intent', '')
-                if self._is_auth_flow_response(current_message, current_intent):
+                if self._is_auth_flow_response(current_message, current_intent, session):
                     logger.info(f"No meaningful message tracked and current message is auth flow response. Creating default general inquiry.")
                     # Return a default general inquiry since user completed auth/registration without meaningful business request
                     default_message = "What can I assist you with today?"
