@@ -13,6 +13,7 @@ from typing import Dict
 
 from ..services.openai_service import OpenAIService
 from ..utils.datetime_utils import format_date_display
+from ..utils.pincode_lookup import get_location_from_pincode_async
 
 
 class EntityService:
@@ -21,7 +22,7 @@ class EntityService:
     def __init__(self, openai_service=None):
         self.openai_service = openai_service or OpenAIService()
 
-    def extract_entities(self, message: str, context: dict = None, workflow_type: str = "buy_something") -> dict:
+    async def extract_entities(self, message: str, context: dict = None, workflow_type: str = "buy_something") -> dict:
         """
         Extract entities using OpenAI function calling with modification context awareness and reference detection.
         
@@ -41,7 +42,7 @@ class EntityService:
                 reference_details = intent_context.get("context_analysis", {}).get("reference_details", {})
                 if reference_details.get("reference_type") and reference_details.get("has_history"):
                     print(f"EntityService: Using intent-detected reference: {reference_details}")
-                    return self._handle_reference_extraction(message, context, {
+                    return await self._handle_reference_extraction(message, context, {
                         "reference_type": reference_details.get("reference_type"),
                         "confidence": intent_context.get("confidence", 0),
                         "reasoning": intent_context.get("reasoning", ""),
@@ -51,11 +52,11 @@ class EntityService:
             # Check if this is a modification request based on workflow_type (set by intent classification)
             if workflow_type == "modification_request":
                 print(f"EntityService: Workflow type is modification_request - handling as modification")
-                return self._handle_modification_extraction(message, context, workflow_type)
+                return await self._handle_modification_extraction(message, context, workflow_type)
             else:
                 # Standard entity extraction for other workflow types
                 print(f"EntityService: Using standard extraction for workflow_type: {workflow_type}")
-                return self._handle_standard_extraction(message, context, workflow_type)
+                return await self._handle_standard_extraction(message, context, workflow_type)
 
         except Exception as e:
             print(f"Entity extraction error: {e}")
@@ -105,7 +106,7 @@ class EntityService:
             logger.error(f"Registration entity extraction error: {e}", exc_info=True)
             return {"entities": {}, "confidence": 0, "success": False}
     
-    def _handle_standard_extraction(self, message: str, context: dict = None, workflow_type: str = "buy_something") -> dict:
+    async def _handle_standard_extraction(self, message: str, context: dict = None, workflow_type: str = "buy_something") -> dict:
         """Handle standard entity extraction for new requests."""
         # Build prompt for entity extraction
         prompt = f"Extract entities from: '{message}'"
@@ -155,8 +156,16 @@ class EntityService:
                 "pincode": response.get("pincode")
             }
 
+            # Filter out "NO_PRODUCTS_MENTIONED" entries - these are just supplementary data
+            actual_products = []
+            for product in products:
+                if product.get("description") != "NO_PRODUCTS_MENTIONED":
+                    actual_products.append(product)
+                else:
+                    print(f"EntityService: Filtered out NO_PRODUCTS_MENTIONED entry - treating as supplementary data only")
+
             # Merge global fields into each product for backward compatibility
-            merged_products = self._merge_global_fields_into_products(products, global_fields)
+            merged_products = self._merge_global_fields_into_products(actual_products, global_fields)
 
             # If we have existing context and the new extraction returned data, merge them intelligently
             if existing_context and merged_products:
@@ -167,8 +176,15 @@ class EntityService:
                 # Apply the global fields to existing products
                 print(f"EntityService: No new products extracted, applying supplementary data to {len(existing_context)} existing products")
                 merged_products = self._apply_supplementary_data_to_existing_products(existing_context, global_fields)
+            elif existing_context and not actual_products and products:
+                # Special case: AI created NO_PRODUCTS_MENTIONED but we have existing context
+                # This means user provided only supplementary data (like date/location)
+                print(f"EntityService: User provided only supplementary data, applying to {len(existing_context)} existing products")
+                merged_products = self._apply_supplementary_data_to_existing_products(existing_context, global_fields)
 
             validated_products, has_date_validation_error = self._validate_dates_in_products(merged_products, message)
+            # Auto-fill city and state from pincode
+            validated_products = await self._auto_fill_location_from_pincode(validated_products)
 
             print(f"EntityService: Final products array with {len(validated_products)} products")
             print(f"EntityService: Global fields: {global_fields}")
@@ -193,7 +209,7 @@ class EntityService:
                 "date_validation_error": has_date_validation_error
             }
     
-    def _handle_modification_extraction(self, message: str, context: dict, workflow_type: str = "buy_something") -> dict:
+    async def _handle_modification_extraction(self, message: str, context: dict, workflow_type: str = "buy_something") -> dict:
         """Handle entity extraction for modification requests with existing pending confirmations."""
         print(f"EntityService: Processing modification request: '{message}'")
         
@@ -238,7 +254,7 @@ class EntityService:
         
         if not pending_products:
             print(f"EntityService: No pending products found, falling back to standard extraction")
-            return self._handle_standard_extraction(message, context, workflow_type)
+            return await self._handle_standard_extraction(message, context, workflow_type)
         
         # Extract modification details from the message
         modification_prompt = f"""
@@ -274,8 +290,12 @@ class EntityService:
                 print(f"EntityService: User provided new values, applying {len(modifications)} modifications")
                 # Convert modifications to products format for existing logic
                 converted_products = self._convert_modifications_to_products_format(modifications)
+                # Convert modifications to products format for existing logic
+                converted_products = self._convert_modifications_to_products_format(modifications)
                 # Validate dates in converted products
                 validated_products, has_date_validation_error = self._validate_dates_in_products(converted_products, message)
+                # Auto-fill city and state from pincode
+                validated_products = await self._auto_fill_location_from_pincode(validated_products)
                 modified_products = self._apply_modifications_to_existing_products(
                     pending_products, validated_products, message
                 )
@@ -308,6 +328,8 @@ class EntityService:
             if has_meaningful_modifications:
                 # Validate dates in modification products
                 validated_products, has_date_validation_error = self._validate_dates_in_products(response["products"], message)
+                # Auto-fill city and state from pincode
+                validated_products = await self._auto_fill_location_from_pincode(validated_products)
                 modified_products = self._apply_modifications_to_existing_products(
                     pending_products, validated_products, message
                 )
@@ -509,11 +531,20 @@ class EntityService:
                 
                 # Additional programmatic check for AI-returned date
                 if validation_result.get("is_valid") and validation_result.get("normalized_date"):
-                    if not self._is_date_future_or_today(validation_result.get("normalized_date")):
+                    normalized_date = validation_result.get("normalized_date")
+                    current_date = datetime.now().date()
+                    
+                    try:
+                        ai_date = datetime.strptime(normalized_date, "%Y-%m-%d").date()
+                        if ai_date < current_date:
+                            validation_result["is_valid"] = False
+                            extracted_date = format_date_display(datetime.strptime(normalized_date, "%Y-%m-%d"))
+                            validation_result["user_friendly_message"] = f"The date {extracted_date} is in the past. Kindly share a valid delivery date from today onward."
+                            print(f"EntityService: AI date validation override - date {extracted_date} is before current date {current_date}")
+                    except ValueError as e:
                         validation_result["is_valid"] = False
-                        extracted_date = format_date_display(datetime.strptime(validation_result.get("normalized_date"), "%Y-%m-%d"))
-                        validation_result["user_friendly_message"] = f"The date {extracted_date} is in the past. Kindly share a valid delivery date from today onward."
-                        print(f"EntityService: AI date validation override - date is in past: {extracted_date}")
+                        validation_result["user_friendly_message"] = "Invalid date format. Kindly share a valid delivery date."
+                        print(f"EntityService: Invalid date format from AI: {normalized_date}, error: {e}")
                 
                 date_validation_cache[date] = validation_result
 
@@ -562,11 +593,20 @@ class EntityService:
             
             # Additional programmatic check for AI-returned date
             if validation_result.get("is_valid") and validation_result.get("normalized_date"):
-                if not self._is_date_future_or_today(validation_result.get("normalized_date")):
+                normalized_date = validation_result.get("normalized_date")
+                current_date = datetime.now().date()
+                
+                try:
+                    ai_date = datetime.strptime(normalized_date, "%Y-%m-%d").date()
+                    if ai_date < current_date:
+                        validation_result["is_valid"] = False
+                        extracted_date = format_date_display(datetime.strptime(normalized_date, "%Y-%m-%d"))
+                        validation_result["user_friendly_message"] = f"The date {extracted_date} is in the past. Kindly share a valid delivery date from today onward."
+                        print(f"EntityService: AI date validation override - date {extracted_date} is before current date {current_date}")
+                except ValueError as e:
                     validation_result["is_valid"] = False
-                    extracted_date = format_date_display(datetime.strptime(validation_result.get("normalized_date"), "%Y-%m-%d"))
-                    validation_result["user_friendly_message"] = f"The date {extracted_date} is in the past. Kindly share a valid delivery date from today onward."
-                    print(f"EntityService: AI date validation override - date is in past: {extracted_date}")
+                    validation_result["user_friendly_message"] = "Invalid date format. Kindly share a valid delivery date."
+                    print(f"EntityService: Invalid date format from AI: {normalized_date}, error: {e}")
             
             if validation_result.get("is_valid"):
                 validated_entities["deliveryDate"] = validation_result.get("normalized_date")
@@ -613,7 +653,7 @@ class EntityService:
         
         return False
 
-    def _handle_reference_extraction(self, message: str, context: dict, reference_detection: dict) -> dict:
+    async def _handle_reference_extraction(self, message: str, context: dict, reference_detection: dict) -> dict:
         """
         Handle entity extraction when reference phrases are detected using intelligent analysis.
         
@@ -635,7 +675,7 @@ class EntityService:
         
         if not chat_history:
             print(f"EntityService: No chat history available, falling back to standard extraction")
-            return self._handle_standard_extraction(message, context, "buy_something")
+            return await self._handle_standard_extraction(message, context, "buy_something")
         
         # Use OpenAI to intelligently extract historical options
         historical_result = self.openai_service.extract_historical_options(
@@ -661,9 +701,9 @@ class EntityService:
             }
         else:
             print(f"EntityService: No relevant historical options found, falling back to standard extraction")
-            return self._handle_standard_extraction(message, context, "buy_something")
+            return await self._handle_standard_extraction(message, context, "buy_something")
 
-    def extract_entities_with_summary_context(self, message: str, context: dict = None, workflow_type: str = "buy_something") -> dict:
+    async def extract_entities_with_summary_context(self, message: str, context: dict = None, workflow_type: str = "buy_something") -> dict:
         """
         Extract entities using historical context from chat summaries.
         
@@ -686,7 +726,7 @@ class EntityService:
                 reference_details = intent_context.get("context_analysis", {}).get("reference_details", {})
                 if reference_details.get("reference_type") and reference_details.get("has_history"):
                     print(f"EntityService: Using intent-detected reference: {reference_details}")
-                    return self._handle_reference_extraction(message, context, {
+                    return await self._handle_reference_extraction(message, context, {
                         "reference_type": reference_details.get("reference_type"),
                         "confidence": intent_context.get("confidence", 0),
                         "reasoning": intent_context.get("reasoning", ""),
@@ -696,14 +736,14 @@ class EntityService:
             # Check if this is a modification request based on workflow_type (set by intent classification)
             if workflow_type == "modification_request":
                 print(f"EntityService: Workflow type is modification_request - handling as modification with summary context")
-                return self._handle_modification_extraction(message, context, workflow_type)
+                return await self._handle_modification_extraction(message, context, workflow_type)
             
             # Check if we have chat summaries for context
             chat_summaries = context.get("chat_summaries", []) if context else []
             
             if not chat_summaries:
                 print("EntityService: No chat summaries available, falling back to standard extraction")
-                return self._handle_standard_extraction(message, context, workflow_type)
+                return await self._handle_standard_extraction(message, context, workflow_type)
             
             print(f"EntityService: Using summary-aware extraction with {len(chat_summaries)} summaries")
             
@@ -732,6 +772,8 @@ class EntityService:
             # Validate dates in the final products
             if "products" in response:
                 validated_products, has_date_validation_error = self._validate_dates_in_products(response["products"], message)
+                # Auto-fill city and state from pincode
+                validated_products = await self._auto_fill_location_from_pincode(validated_products)
                 response["products"] = validated_products
                 response["date_validation_error"] = has_date_validation_error
                 print(f"EntityService: Validated dates in {len(validated_products)} products from summary-aware extraction")
@@ -741,7 +783,7 @@ class EntityService:
         except Exception as e:
             print(f"EntityService: Summary-aware extraction error: {e}")
             # Fallback to standard extraction on error
-            return self._handle_standard_extraction(message, context, workflow_type)
+            return await self._handle_standard_extraction(message, context, workflow_type)
 
     def _apply_resolved_references_intelligently(self, products: list, resolved_refs: list, original_message: str) -> list:
         """
@@ -860,6 +902,11 @@ class EntityService:
         for new_prod in new_products:
             new_desc = new_prod.get("description")
 
+            # Skip NO_PRODUCTS_MENTIONED entries - they should be filtered out earlier
+            if new_desc == "NO_PRODUCTS_MENTIONED":
+                print(f"EntityService: Skipping NO_PRODUCTS_MENTIONED entry in merge")
+                continue
+
             # Handle None or non-string descriptions
             if new_desc is None or not isinstance(new_desc, str):
                 # This product has no description - it's supplementary data for ALL existing products
@@ -924,6 +971,8 @@ class EntityService:
 
         return updated_products
 
+
+
     def _get_schema(self, workflow_type: str) -> dict:
         """Load schema from JSON file for reference."""
         schema_files = {
@@ -942,3 +991,56 @@ class EntityService:
         except FileNotFoundError:
             print(f"Schema file not found: {schema_path}")
             return {}
+
+    async def _auto_fill_location_from_pincode(self, products: list) -> list:
+        """
+        Auto-fill city and state from pincode using direct API lookup.
+        
+        Args:
+            products: List of product entities
+            
+        Returns:
+            Updated products list with city and state filled from pincode lookup
+        """
+        updated_products = []
+        
+        for product in products:
+            updated_product = product.copy()
+            pincode = product.get("pincode")
+            
+            # Only lookup if pincode exists and city/state are missing
+            if pincode and (not product.get("city") or not product.get("state")):
+                try:
+                    # Validate pincode format first
+                    clean_pincode = str(pincode).strip()
+                    if not clean_pincode.isdigit() or len(clean_pincode) != 6:
+                        print(f"EntityService: Invalid pincode format: {pincode}")
+                        updated_products.append(updated_product)
+                        continue
+                    
+                    location_data = await get_location_from_pincode_async(clean_pincode)
+                    if location_data:
+                        city = location_data.get("city", "")
+                        state = location_data.get("state", "")
+                        
+                        if not updated_product.get("city") and city:
+                            updated_product["city"] = city
+                            print(f"EntityService: Auto-filled city '{city}' from pincode {pincode}")
+                        
+                        if not updated_product.get("state") and state:
+                            updated_product["state"] = state
+                            print(f"EntityService: Auto-filled state '{state}' from pincode {pincode}")
+                    else:
+                        print(f"EntityService: No location data returned for pincode {pincode}")
+                        # Set pincode, city, and state to None when no location found
+                        updated_product["pincode"] = None
+                        updated_product["city"] = None
+                        updated_product["state"] = None
+                        updated_product["pincode_validation_error"] = f"Could not find location for pincode {pincode}. Please enter valid pincode"
+                        print(f"EntityService: Set pincode, city, and state to None for invalid pincode {pincode}")
+                except Exception as e:
+                    print(f"EntityService: Error fetching location for pincode {pincode}: {e}")
+            
+            updated_products.append(updated_product)
+        
+        return updated_products

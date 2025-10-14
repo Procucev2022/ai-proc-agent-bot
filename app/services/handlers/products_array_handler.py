@@ -14,6 +14,7 @@ from app.services.openai_service import OpenAIService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.utils.datetime_utils import utc_now
+from app.utils.rfq_message_formatter import format_rfq_entities_message, format_rfq_response_message, format_rfq_entities_with_global_fields
 
 logger = logging.getLogger(__name__)
 
@@ -356,10 +357,17 @@ class ProductsArrayHandler:
         
         # Check if this is a response to optional questions (look for specific workflow state)
         if optional_questions and not session.workflow_state.get("optional_fields_asked"):
-            # Ask about optional fields first
-            optional_intro = "Would you like to provide any additional details such as:"
-            optional_text = "\n".join(f"• {q}" for q in optional_questions)
-            optional_message = f"{optional_intro}\n\n{optional_text}\n\n You may send the details now or reply “No” to continue."
+
+            # Show extracted details using RFQ message formatter
+            global_fields = {
+                'deliveryDate': product_info["entities"].get('deliveryDate'),
+                'state': product_info["entities"].get('state'),
+                'city': product_info["entities"].get('city'),
+                'pincode': product_info["entities"].get('pincode')
+            }
+            formatted_message = format_rfq_response_message([product_info["entities"]], global_fields, optional_questions, include_optional=True)
+          
+            optional_message = f"{formatted_message}\n\nYou may send the details now or reply 'No' to continue."
             
             await self.whatsapp_service.send_message(user.phone_number, optional_message)
             
@@ -432,13 +440,26 @@ class ProductsArrayHandler:
         
         # Check if we should ask about optional fields
         optional_questions = combined_schema.get_optional_questions()
+
         
         # Check if this is a response to optional questions
         if optional_questions and not session.workflow_state.get("optional_fields_asked"):
-            # Use the same structured format as single product
-            optional_intro = "Would you like to provide any additional details such as:"
-            optional_text = "\n".join(f"• {q}" for q in optional_questions)
-            optional_message = f"{optional_intro}\n\n{optional_text}\n\n You may send the details now or reply 'No' to continue."
+            # Show extracted details using RFQ message formatter
+            all_products_entities = [prod["entities"] for prod in complete_products]
+
+            # Extract global fields from first product
+            global_fields = {}
+            if all_products_entities:
+                first_entity = all_products_entities[0]
+                global_fields = {
+                    'deliveryDate': first_entity.get('deliveryDate'),
+                    'state': first_entity.get('state'),
+                    'city': first_entity.get('city'),
+                    'pincode': first_entity.get('pincode')
+                }
+            formatted_message = format_rfq_response_message(all_products_entities, global_fields, optional_questions, include_optional=True)
+
+            optional_message = f"{formatted_message}\n\nYou may send the details now or reply 'No' to continue."
             
             await self.whatsapp_service.send_message(user.phone_number, optional_message)
 
@@ -450,7 +471,6 @@ class ProductsArrayHandler:
             }
 
             # Store all complete products in extracted_entities for full context
-            all_products_entities = [prod["entities"] for prod in complete_products]
             session.workflow_state["extracted_entities"] = ChatServiceHelpers.serialize_products_for_session(all_products_entities)
             print(f"ProductsArrayHandler: Stored {len(all_products_entities)} complete products in extracted_entities (optional fields stage)")
 
@@ -641,6 +661,24 @@ class ProductsArrayHandler:
                         if "date_validation_error" in merged_entity:
                             del merged_entity["date_validation_error"]
                             print(f"ProductsArrayHandler: Cleared date_validation_error for {existing_desc} (valid date provided)")
+                    
+                    # Handle pincode validation error updates
+                    if "pincode_validation_error" in reextracted_product:
+                        # Only update if there's actually an error message
+                        if reextracted_product["pincode_validation_error"]:
+                            merged_entity["pincode_validation_error"] = reextracted_product["pincode_validation_error"]
+                            print(f"ProductsArrayHandler: Updated pincode_validation_error for {existing_desc}")
+                        else:
+                            # Empty error message means clear the error
+                            if "pincode_validation_error" in merged_entity:
+                                del merged_entity["pincode_validation_error"]
+                                print(f"ProductsArrayHandler: Cleared empty pincode_validation_error for {existing_desc}")
+                    
+                    # Clear pincode validation error if valid location data is provided
+                    if reextracted_product.get("pincode") and reextracted_product.get("city") and reextracted_product.get("state") and not reextracted_product.get("pincode_validation_error"):
+                        if "pincode_validation_error" in merged_entity:
+                            del merged_entity["pincode_validation_error"]
+                            print(f"ProductsArrayHandler: Cleared pincode_validation_error for {existing_desc} (valid location provided)")
 
                 # Apply global supplementary data to fields that are missing or None
                 for field, value in supplementary_data.items():
@@ -650,10 +688,14 @@ class ProductsArrayHandler:
                 
 
 
-                # Final cleanup: Clear date validation error if delivery date exists and is valid
+                # Final cleanup: Clear validation errors if valid data exists
                 if merged_entity.get("deliveryDate") and "date_validation_error" in merged_entity:
                     del merged_entity["date_validation_error"]
                     print(f"ProductsArrayHandler: Final cleanup - cleared date_validation_error for valid delivery date")
+                
+                if merged_entity.get("pincode") and merged_entity.get("city") and merged_entity.get("state") and "pincode_validation_error" in merged_entity:
+                    del merged_entity["pincode_validation_error"]
+                    print(f"ProductsArrayHandler: Final cleanup - cleared pincode_validation_error for valid location data")
                 
                 merged_products.append(merged_entity)
 

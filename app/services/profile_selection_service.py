@@ -796,11 +796,52 @@ class ProfileSelectionService:
                                             intent: str) -> Dict[str, Any]:
         """Set the active profile and proceed with the intended action."""
         try:
-            # Store user session using the profile data
+            # Get user data and perform verification check
             user_data = profile['user_data']
+            
+            # CRITICAL: Perform verification check (including domain check) before storing session
+            verification_check = await self.authentication_service.verification_check_service.check_and_enforce_verification(
+                user_phone, user_data
+            )
+            
+            if not verification_check.get("access_granted"):
+                # User doesn't meet verification requirements
+                logger.info(f"Profile selection blocked due to verification requirements: {verification_check}")
+                redirect_info = verification_check.get("redirect_info", {})
+                
+                if verification_check.get("redirect_to_support"):
+                    # Redirect to support
+                    support_message = redirect_info.get("message", "Please contact our support team for assistance.")
+                    await self.whatsapp_service.send_message(user_phone, support_message)
+                    
+                    return {
+                        "status": "verification_failed",
+                        "reason": redirect_info.get("reason"),
+                        "redirect_to_support": True
+                    }
+                else:
+                    # OTP verification required - set session stage for OTP handling
+                    if verification_check.get("otp_sent") and redirect_info.get("flow") == "email_verification":
+                        from app.services.workflow_manager import WorkflowManager
+                        from app.models import WorkflowType
+                        WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="profile_selection")
+                        session.workflow_state["authentication_stage"] = "email_otp"
+                        session.workflow_state["otp_email"] = redirect_info.get("email")
+                        session.workflow_state["otp_retry_count"] = 0
+                        session.workflow_state["selected_user"] = user_data
+                        session.workflow_state["filtered_users"] = [user_data]  # Add filtered_users for OTP validation
+                        # Clear profile selection stage to prevent conflicts
+                        session.workflow_state.pop("profile_selection_stage", None)
+                        session.workflow_state.pop("profile_options", None)
+                        logger.info(f"Set authentication stage to email_otp for {user_phone}")
+                    
+                    return {
+                        "status": "verification_required",
+                        "redirect_info": redirect_info
+                    }
+            
+            # Verification passed - proceed with session storage
             user_details = User.from_api_response(user_data)
-
-            # Store session
             session_stored = await self.authentication_service.store_user_session(
                 user_phone, user_details
             )
@@ -813,8 +854,6 @@ class ProfileSelectionService:
             session.workflow_state = session.workflow_state or {}
             session.workflow_state.pop('profile_selection_stage', None)
             session.workflow_state.pop('profile_options', None)
-
-            # Profile selection confirmed - no message needed
 
             return {
                 "status": "profile_selected_and_authenticated",
@@ -836,13 +875,19 @@ class ProfileSelectionService:
             role = profile['role']
             email = profile['email']
 
-            # Set active profile first
+            # Set active profile first with verification check
             result = await self._set_active_profile_and_proceed(
                 user_phone, profile, session, "", "general_inquiry"
             )
 
             if result.get('status') != 'profile_selected_and_authenticated':
-                return result
+                # Handle verification failures
+                if result.get('status') == 'verification_failed':
+                    return result
+                elif result.get('status') == 'verification_required':
+                    return result
+                else:
+                    return result
 
             # Show role-specific menu with buttons
             if role == 'buyer':

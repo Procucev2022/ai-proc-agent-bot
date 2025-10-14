@@ -103,28 +103,28 @@ Result: normalized_date = "2025-10-02"
 
 USER-FRIENDLY ERROR MESSAGES:
 - For past dates: "The date [DATE] is in the past. Kindly share a valid delivery date from today onward."
-- For invalid formats: "Kindly share a valid delivery date format (e.g., 15 Dec 2024, next Friday, or in 3 days)."
+- For invalid formats: "Kindly share a valid delivery date format (e.g., 15 Dec , next Friday, or in 3 days)."
 - Always format dates in user-friendly format like "12 Sept 2025" in error messages
 - Always be specific about what was wrong and how to fix it
 
 EXAMPLES (assuming current date is {current_date}):
 - Input: "12 sept" → Valid: "{current_year}-09-12" (current year assumed)
 - Input: "asap" → Valid: "{current_date}" (today's date)
-- Input: "this weekend" → Valid: "2025-09-27" (this Saturday from current date)
-- Input: "next weekend" → Valid: "2025-10-04" (next Saturday from current date)
+- Input: "this weekend" → this Saturday from current date
+- Input: "next weekend" → next Saturday from current date
 - Input: "start of month" → Valid: "{current_year}-{current_month:02d}-01" (current month assumed)
 - Input: "start of the month" → Valid: "{current_year}-{current_month:02d}-01" (current month assumed)
 - Input: "day before yesterday" → Calculate: {current_date} minus 2 days, then validate (invalid as past)
 - Input: "yesterday" → Calculate: {current_date} minus 1 day, then invalid (past date)
-- Input: "23/09/2025" → Valid: "2025-09-23" (explicit year)
+- Input: "23/09/2025" → explicit year
 - Input: "next Friday" → Valid: "[next Friday's date from {current_date}]"
 - Input: "in 5 days" → Valid: "{current_date} + 5 days"
 - Input: "5 working days from now" → Valid: "[calculate 5 business days from {current_date}, skipping weekends]"
 - Input: "3 business days" → Valid: "[calculate 3 business days from {current_date}, skipping weekends]"
 - Input: "last Monday" → Calculate: most recent Monday before {current_date}, then invalid (past)
-- Input: "2nd week of oct" → Valid: "2025-10-13" (second Monday of October in current year)
-- Input: "second week of october" → Valid: "2025-10-13" (second Monday of October in current year)
-- Input: "1st week of dec" → Valid: "2025-12-01" (first Monday of December in current year)
-- Input: "third week of nov" → Valid: "2025-11-17" (third Monday of November in current year)
+- Input: "2nd week of oct" → second Monday of October in current year
+- Input: "second week of october" → second Monday of October in current year
+- Input: "1st week of dec" → first Monday of December in current year
+- Input: "third week of nov" → third Monday of November in current year
 
 Always provide helpful suggestions for invalid dates and support all the listed formats.

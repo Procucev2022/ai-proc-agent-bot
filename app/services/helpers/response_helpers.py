@@ -7,7 +7,7 @@ extracted from the main ChatService class for better organization.
 
 import logging
 from typing import Dict, Any, List, Union
-from app.utils.rfq_message_formatter import format_rfq_entities_message, format_simple_missing_fields_message
+from app.utils.rfq_message_formatter import format_rfq_entities_message, format_simple_missing_fields_message, format_rfq_response_message, format_rfq_entities_with_global_fields
 
 logger = logging.getLogger(__name__)
 
@@ -484,9 +484,12 @@ class ResponseHelpers:
         try:
             # Get date validation errors (already formatted)
             date_validation_errors = self._extract_date_validation_errors(context)
+            
+            # Get pincode validation errors (already formatted)
+            pincode_validation_errors = self._extract_pincode_validation_errors(context)
 
             # Combine only the actual questions
-            all_questions = date_validation_errors + questions
+            all_questions = date_validation_errors + pincode_validation_errors + questions
 
             if not all_questions:
                 return "Thank you for the information! Let me process your RFQ."
@@ -668,12 +671,8 @@ class ResponseHelpers:
                     'pincode': first_entity.get('pincode')
                 }
             
-            # Use the enhanced formatter with global fields if any exist
-            if any(global_fields.values()):
-                from app.utils.rfq_message_formatter import format_rfq_entities_with_global_fields
-                result = format_rfq_entities_with_global_fields(extracted_entities, global_fields, missing_fields)
-            else:
-                result = format_rfq_entities_message(extracted_entities, missing_fields)
+            # Use the new conversational formatter
+            result = format_rfq_response_message(extracted_entities, global_fields, missing_fields)
             
             logger.info(f"Formatted message result: {result[:100]}...")
             return result
@@ -683,16 +682,16 @@ class ResponseHelpers:
 
     def _extract_date_validation_errors(self, context: dict) -> list:
         """Extract date validation error messages from context."""
-        date_errors = []
+        date_errors = set()  # Use set to automatically handle duplicates
         
         # Check extracted entities for date validation errors
         extracted_entities = context.get("extracted_entities", [])
         if isinstance(extracted_entities, list):
             for entity in extracted_entities:
                 if isinstance(entity, dict) and entity.get("date_validation_error"):
-                    date_errors.append(entity["date_validation_error"])
+                    date_errors.add(entity["date_validation_error"])
         elif isinstance(extracted_entities, dict) and extracted_entities.get("date_validation_error"):
-            date_errors.append(extracted_entities["date_validation_error"])
+            date_errors.add(extracted_entities["date_validation_error"])
         
         # Check products in context
         if context.get("products"):
@@ -700,7 +699,31 @@ class ResponseHelpers:
             if isinstance(products, list):
                 for product in products:
                     if isinstance(product, dict) and product.get("date_validation_error"):
-                        date_errors.append(product["date_validation_error"])
+                        date_errors.add(product["date_validation_error"])
         
-        # Remove duplicate error messages while preserving order
-        return list(dict.fromkeys(date_errors))
+        # Convert set back to list
+        return list(date_errors)
+
+    def _extract_pincode_validation_errors(self, context: dict) -> list:
+        """Extract pincode validation error messages from context."""
+        pincode_errors = set()  # Use set to automatically handle duplicates
+        
+        # Check extracted entities for pincode validation errors
+        extracted_entities = context.get("extracted_entities", [])
+        if isinstance(extracted_entities, list):
+            for entity in extracted_entities:
+                if isinstance(entity, dict) and entity.get("pincode_validation_error"):
+                    pincode_errors.add(entity["pincode_validation_error"])
+        elif isinstance(extracted_entities, dict) and extracted_entities.get("pincode_validation_error"):
+            pincode_errors.add(extracted_entities["pincode_validation_error"])
+        
+        # Check products in context
+        if context.get("products"):
+            products = context["products"]
+            if isinstance(products, list):
+                for product in products:
+                    if isinstance(product, dict) and product.get("pincode_validation_error"):
+                        pincode_errors.add(product["pincode_validation_error"])
+        
+        # Convert set back to list
+        return list(pincode_errors)

@@ -172,7 +172,7 @@ class VerificationCheckService:
                                 "redirect_info": {
                                     "flow": "pending_approval",
                                     "reason": "domain_not_approved",
-                                    "message": "Domain verification pending - our team will contact you shortly"
+                                    "message": "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
                                 }
                             }
                     else:
@@ -284,11 +284,12 @@ class VerificationCheckService:
             return {"success": False, "message": str(e)}
     
     async def _check_domain_approval(self, user_id: str) -> Dict[str, Any]:
-        """Check user domain approval using auth_reg_service."""
+        """Check user domain approval using domain check service."""
         try:
-            from app.services.auth_reg_service import AuthRegService
-            auth_reg_service = AuthRegService()
-            return await auth_reg_service.user_domain_check(user_id)
+            from app.services.domain_check_service import DomainCheckService
+            domain_check_service = DomainCheckService()
+            # Use the user approval API call directly
+            return await domain_check_service.user_approval_api_call(user_id)
         except Exception as e:
             logger.error(f"Domain approval check error: {e}")
             return {"approved": False, "error": str(e)}
