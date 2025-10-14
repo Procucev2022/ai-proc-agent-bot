@@ -256,26 +256,8 @@ class ChatService:
                     await self.session_manager.save_session(session, workflow_type)
                     logger.info(f"Authentication flow handled - returning without main flow processing")
                     return auth_result
-                elif auth_status == "redirect_to_support":
-                    # Max OTP retries exceeded or other support-requiring scenario
-                    logger.info(f"Redirect to support requested - calling exit service for {user_phone}")
-                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                    await self.session_manager.save_session(session, WorkflowType.user_exit)
-                    return exit_result
                 elif auth_status == "registration_completed":
-                    # Registration completed - check if this is truly complete or needs further processing
-                    registration_flow_complete = auth_result.get("registration_flow_complete", False)
-                    
-                    if registration_flow_complete:
-                        # Registration is completely done - no further processing needed
-                        logger.info(f"Registration flow completely finished for {user_phone}")
-                        # Clear workflow completely to prevent any further processing
-                        session.workflow_type = None
-                        session.workflow_state = {}
-                        await self.session_manager.save_session(session, None)
-                        return {"status": "registration_completed", "message": "Registration successful", "flow_terminated": True}
-                    
-                    # Legacy handling for cases where registration_flow_complete is not set
+                    # Registration completed - check user type and handle appropriately
                     user = await self.authentication_service.validate_token(user_phone)
                     if user:
                         # Refresh user cache after successful registration to include the new account
@@ -432,17 +414,6 @@ class ChatService:
                 else:
                     # Invalid user but not registered, handle as general inquiry
                     return await self._process_text_message(auth_result, session, message_content, message_intent_result)
-            elif isinstance(auth_result, dict):
-                # Handle dict responses that weren't caught above
-                auth_status = auth_result.get("status")
-                if auth_status == "redirect_to_support":
-                    logger.info(f"Final redirect to support - calling exit service for {user_phone}")
-                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                    await self.session_manager.save_session(session, WorkflowType.user_exit)
-                    return exit_result
-                else:
-                    logger.error(f"Unexpected auth_result dict with status: {auth_status}")
-                    return {"status": "error", "error": "Authentication failed"}
             else:
                 logger.error(f"Unexpected auth_result type: {type(auth_result)}")
                 return {"status": "error", "error": "Authentication failed"}
@@ -594,14 +565,30 @@ class ChatService:
                 await self.session_manager.save_session(session, session.workflow_type)
                 return cancel_result
 
-            # Handle exit intent immediately - highest priority
+            # Handle exit intent - but check for pending optional fields first
             if intent == "exit_system" and confidence > 50:
-                logger.info(f"Exit intent detected with {confidence}% confidence - handling system exit")
-                # Use the same phone format as used in authentication flow
-                user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
-                exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                await self.session_manager.save_session(session, WorkflowType.user_exit)
-                return exit_result
+                # Check if user has pending optional fields - they might mean "skip" instead of "exit"
+                has_pending_optional = bool(
+                    session.workflow_state.get("pending_optional_rfq") or
+                    session.workflow_state.get("pending_optional_combined_rfq")
+                )
+
+                if has_pending_optional:
+                    # User said "exit" but has pending optional fields
+                    # Interpret as "skip optional fields and proceed to confirmation"
+                    logger.info(f"Exit intent detected but user has pending optional fields - treating as 'skip optional' instead")
+                    # Route to optional fields handler which will skip and proceed to confirmation
+                    result = await self.confirmation_handler.handle_optional_fields_response(user, session, message)
+                    await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+                    return result
+                else:
+                    # No pending optional fields - treat as genuine exit
+                    logger.info(f"Exit intent detected with {confidence}% confidence - handling system exit")
+                    # Use the same phone format as used in authentication flow
+                    user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                    await self.session_manager.save_session(session, WorkflowType.user_exit)
+                    return exit_result
 
             if intent == "support" and confidence > 0.7:
                 logger.info(f"Support intent detected with {confidence}% confidence - handling immediately")
@@ -2560,9 +2547,8 @@ class ChatService:
             ]
 
             # Skip OTP-like messages and auth/registration flow responses
-            # BUT ONLY FOR TRACKING - these messages still need to be processed by auth orchestrator
             if self._is_auth_flow_response(message_content, intent):
-                logger.info(f"Not tracking auth/registration flow response (but will still process): '{str(message_content)[:50]}...' with intent: {intent}")
+                logger.info(f"Skipping auth/registration flow response: '{str(message_content)[:50]}...' with intent: {intent}")
                 return
 
             # Skip account selection responses during role switch
@@ -2586,7 +2572,7 @@ class ChatService:
             # Handle non-string message content (like interactive button responses)
             if not isinstance(message_content, str):
                 return False
-                
+
             message_lower = message_content.lower().strip()
 
             # OTP patterns (4-6 digits, possibly with spaces)
@@ -2594,8 +2580,27 @@ class ChatService:
             if re.match(r'^\s*\d{4,6}\s*$', message_content.strip()):
                 return True
 
-            # Confirmation responses
-            if message_lower in ["yes", "y", "no", "n", "confirm", "correct", "ok", "restart", "wrong", "incorrect"]:
+            # Confirmation responses - BUT NOT if we have pending optional fields or confirmations
+            # These responses might be answers to optional field questions or RFQ confirmations
+            if message_lower in ["yes", "y", "no", "n", "confirm", "correct", "ok", "restart", "wrong", "incorrect", "skip", "exit"]:
+                # Check if user has active workflow with pending optional fields or confirmations
+                session = session_context.get()
+                if session and session.workflow_state:
+                    has_pending_optional = bool(
+                        session.workflow_state.get("pending_optional_rfq") or
+                        session.workflow_state.get("pending_optional_combined_rfq")
+                    )
+                    has_pending_confirmations = bool(
+                        session.workflow_state.get("pending_combined_rfq") or
+                        session.workflow_state.get("pending_rfq")
+                    )
+
+                    # If there are pending optional fields or confirmations, this is NOT an auth flow response
+                    if has_pending_optional or has_pending_confirmations:
+                        logger.info(f"Message '{message_lower}' detected with pending optional/confirmation - NOT treating as auth flow response")
+                        return False
+
+                # Otherwise, treat as auth flow response
                 return True
 
             # Email addresses (during email confirmation)
