@@ -54,6 +54,33 @@ class SessionManagementService:
         # Try to get existing session first
         session = self.db_manager.get_conversation_session(session_id)
 
+        # Check if session exists but has been completed/abandoned (e.g., after exit)
+        if session and session.outcome:
+            from app.models import ConversationOutcome
+            # If session was abandoned (exit), completed, or timed out by cleanup job, reset it for new conversation
+            if session.outcome in [ConversationOutcome.abandoned, ConversationOutcome.completed, ConversationOutcome.timeout]:
+                logger.info(f"Session {session_id} was {session.outcome.value}, resetting for new conversation")
+                # Reset the session state for fresh start
+                session.workflow_state = {"extracted_entities": [], "last_activity_at": utc_now().isoformat()}
+                session.conversation_history = {"messages": []}
+                session.extracted_entities = {}
+                session.outcome = None
+                session.completed_at = None
+                session.workflow_type = None
+                # Save the reset session
+                session = self.db_manager.save_conversation_session({
+                    'session_id': session.session_id,
+                    'external_user_id': session.external_user_id,
+                    'workflow_type': None,
+                    'outcome': None,
+                    'workflow_state': session.workflow_state,
+                    'conversation_history': session.conversation_history,
+                    'extracted_entities': session.extracted_entities,
+                    'retention_date': session.retention_date,
+                    'completed_at': None
+                })
+                logger.info(f"Session {session_id} reset successfully")
+
         if not session:
             # Create new session - the save method now handles duplicates gracefully
             session_data = {
