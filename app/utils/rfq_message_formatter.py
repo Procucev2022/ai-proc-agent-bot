@@ -71,10 +71,6 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
                     pass
                 message_parts.append(f"   • Delivery Date: {delivery_date}")
 
-            # Space between items
-            if len(extracted_entities) > 1 and i < len(extracted_entities):
-                message_parts.append("")
-
         # --- Common Fields (for all items) ---
         if common_fields:
             message_parts.append("")
@@ -173,7 +169,7 @@ def format_rfq_entities_with_global_fields(
     Format RFQ message for WhatsApp showing extracted entities with global fields and missing details.
     (No Markdown or bold text — clean mobile-friendly format)
     """
-    message_parts = ["Thanks!", "Here's what I found from your request:"]
+    message_parts = ["Thanks!", "Here's what I've got so far:"]
     message_parts.append("")
 
     # --- Display Captured Entities ---
@@ -285,7 +281,7 @@ def format_rfq_entities_with_global_fields(
                     message_parts.append("• Delivery State")
                     message_parts.append("• Pin Code / ZIP")
                 else:
-                    message_parts.append(f"• {field}: —")
+                    message_parts.append(f"• {field}")
         message_parts.append("")
 
     # --- Prompt for Correction / Action Buttons ---
