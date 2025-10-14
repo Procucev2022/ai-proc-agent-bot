@@ -701,7 +701,6 @@ Return only the selected email address or "none" if no clear selection.
             # If OTP is valid, refresh user data and complete authentication
             if otp_result.get("status") == "otp_valid":
                 selected_email = session.workflow_state.get("otp_email")
-                selected_user = session.workflow_state.get("selected_user")
                 
                 # Clear user cache and force fresh API call to get updated verification status
                 logger.info(f"OTP validated successfully, forcing fresh user data refresh for {user_phone}")
@@ -711,34 +710,23 @@ Return only the selected email address or "none" if no clear selection.
                 user_cache_service = get_user_cache_service()
                 await user_cache_service.clear_user_data(user_phone)
                 
-                # CRITICAL: For buyers, trigger domain check after OTP validation
-                is_self_client = selected_user.get("selfClient") or selected_user.get("self_client", True)
-                user_type = "buyer" if is_self_client else "seller"
-                
-                if user_type == "buyer":
-                    user_id = selected_user.get("id")
-                    if user_id:
-                        logger.info(f"Triggering domain check for buyer {user_id} after OTP validation")
-                        domain_result = await self._check_domain_approval(user_id)
-                        logger.info(f"Domain check result: {domain_result}")
-                
-                # Force fresh API call to get updated user details
+                # Force fresh API call
                 auth_response = await self.user_authenticate(user_phone, "refresh_after_otp", session)
                 
                 if auth_response.get("success") and auth_response.get("response"):
                     fresh_users = auth_response["response"]
                     
                     # Find the selected user from fresh data
-                    fresh_selected_user = None
+                    selected_user = None
                     for user in fresh_users:
                         user_email = user.get("email") or user.get("username")
                         if user_email == selected_email:
-                            fresh_selected_user = user
+                            selected_user = user
                             break
                     
-                    if fresh_selected_user:
-                        # CRITICAL: Check verification status after OTP validation and domain check
-                        verification_check = await self.verification_check_service.check_and_enforce_verification(user_phone, fresh_selected_user)
+                    if selected_user:
+                        # CRITICAL: Check verification status after OTP validation
+                        verification_check = await self.verification_check_service.check_and_enforce_verification(user_phone, selected_user)
                         
                         if not verification_check.get("access_granted"):
                             # User still doesn't meet verification requirements (e.g., approved=False for buyers)
@@ -772,8 +760,12 @@ Return only the selected email address or "none" if no clear selection.
                         
                         # CRITICAL: Update auth token with fresh user data that has updated verification status
                         normalized_phone = user_phone.lstrip('+')
-                        await self.auth_redis_service.store(normalized_phone, fresh_selected_user, expiry_seconds=3600)
+                        await self.auth_redis_service.store(normalized_phone, selected_user, expiry_seconds=3600)
                         logger.info(f"Updated auth token with fresh verification status for {user_phone}")
+                        
+                        # Determine user type for response
+                        is_self_client = selected_user.get("selfClient") or selected_user.get("self_client")
+                        user_type = "buyer" if is_self_client else "seller"
                         
                         if session_stored:
                             logger.info(f"User session stored successfully after OTP validation for {user_phone}")

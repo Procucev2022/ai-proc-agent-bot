@@ -270,11 +270,4 @@ class RegisterAPIService:
         
         except Exception as e:
             logger.error(f"Error getting User Approval: {e}")
-            return {
-                "statusCode": "500",
-                "message": "Internal server error",
-                "errorMsg": str(e),
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "status": "Failure",
-                "type": None
-            }
+            return {"success": False, "error": str(e)}
