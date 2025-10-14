@@ -8,10 +8,38 @@ in the WhatsApp RFQ workflow.
 import logging
 import aiohttp
 import base64
+import os
 from typing import Dict, Any, Optional
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 
 logger = logging.getLogger(__name__)
+
+# Set up WhatsApp payload logger with file handler
+whatsapp_payload_logger = logging.getLogger("whatsapp_payload")
+whatsapp_payload_logger.setLevel(logging.DEBUG)
+
+# Create whatsapp_logs directory if it doesn't exist
+log_dir = "whatsapp_logs"
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+# Add file handler if not already present
+if not whatsapp_payload_logger.handlers:
+    log_file = os.path.join(log_dir, f"whatsapp_media_{datetime.now().strftime('%Y-%m-%d')}.log")
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=10 * 1024 * 1024,  # 10MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    file_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(formatter)
+    whatsapp_payload_logger.addHandler(file_handler)
 
 
 class AttachmentHelpers:
@@ -46,22 +74,56 @@ class AttachmentHelpers:
                     mime_type = "image/jpeg"  # Default
             
             logger.info(f"Downloading attachment: {filename} from {file_url}")
-            
+
+            # Log to WhatsApp payload file
+            whatsapp_payload_logger.info("="*80)
+            whatsapp_payload_logger.info("MEDIA DOWNLOAD STARTED")
+            whatsapp_payload_logger.info(f"Filename: {filename}")
+            whatsapp_payload_logger.info(f"MIME Type: {mime_type}")
+            whatsapp_payload_logger.info(f"URL: {file_url}")
+            whatsapp_payload_logger.info("REQUEST DETAILS:")
+            whatsapp_payload_logger.info(f"  Method: GET")
+            whatsapp_payload_logger.info(f"  URL: {file_url}")
+            whatsapp_payload_logger.info(f"  Timeout: 30 seconds")
+            whatsapp_payload_logger.debug(f"  Request Payload: None (GET request with no body)")
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(file_url, timeout=30) as response:
+                    # Log response details for debugging
+                    logger.info(f"Media download response - Status: {response.status}, Content-Type: {response.headers.get('Content-Type', 'unknown')}")
+
+                    # Log full response to WhatsApp payload file
+                    whatsapp_payload_logger.info(f"Response Status: {response.status}")
+                    whatsapp_payload_logger.info(f"Response Content-Type: {response.headers.get('Content-Type', 'unknown')}")
+                    whatsapp_payload_logger.debug(f"Response Headers: {dict(response.headers)}")
+
                     if response.status == 200:
                         file_data = await response.read()
                         file_content_b64 = base64.b64encode(file_data).decode('utf-8')
-                        
+
+                        # Log download payload details
+                        logger.info(f"Media download payload - Size: {len(file_data)} bytes, MIME: {mime_type}, Filename: {filename}")
+
+                        # Log full payload to WhatsApp file
+                        whatsapp_payload_logger.info(f"File Size: {len(file_data)} bytes ({len(file_data)/1024:.2f} KB)")
+                        whatsapp_payload_logger.info(f"Base64 Length: {len(file_content_b64)} characters")
+                        whatsapp_payload_logger.debug(f"Base64 Preview (first 200 chars): {file_content_b64[:200]}...")
+                        whatsapp_payload_logger.debug(f"Full Payload Structure: {{'file_name': '{filename}', 'file_type': '{mime_type}', 'file_size': {len(file_data)}}}")
+
                         # Validate file size (limit to 10MB)
                         if len(file_data) > 10 * 1024 * 1024:  # 10MB
+                            logger.warning(f"File size exceeds 10MB limit: {len(file_data)} bytes")
+                            whatsapp_payload_logger.warning(f"File size exceeds 10MB limit: {len(file_data)} bytes")
+                            whatsapp_payload_logger.info("="*80)
                             return {
                                 "success": False,
                                 "error": "File size exceeds 10MB limit"
                             }
-                        
+
                         logger.info(f"Successfully downloaded and encoded attachment: {filename} ({len(file_data)} bytes)")
-                        
+                        whatsapp_payload_logger.info("DOWNLOAD SUCCESS")
+                        whatsapp_payload_logger.info("="*80)
+
                         return {
                             "success": True,
                             "attachment": {
@@ -74,7 +136,20 @@ class AttachmentHelpers:
                             }
                         }
                     else:
+                        # Log error response details
+                        error_body = await response.text()
                         logger.error(f"Failed to download attachment: HTTP {response.status}")
+                        logger.error(f"Error response body: {error_body[:500]}")
+
+                        # Log full error to WhatsApp payload file
+                        whatsapp_payload_logger.error("DOWNLOAD FAILED")
+                        whatsapp_payload_logger.error(f"Status Code: {response.status}")
+                        whatsapp_payload_logger.error(f"Error Body (first 500 chars): {error_body[:500]}")
+                        whatsapp_payload_logger.debug(f"Error Body (full): {error_body}")
+                        whatsapp_payload_logger.debug(f"Error Response Headers: {dict(response.headers)}")
+                        whatsapp_payload_logger.error(f"Full Error Payload Structure: {{'status': {response.status}, 'url': '{file_url}', 'filename': '{filename}', 'mime_type': '{mime_type}', 'error_body_length': {len(error_body)}}}")
+                        whatsapp_payload_logger.info("="*80)
+
                         return {
                             "success": False,
                             "error": f"Failed to download file: HTTP {response.status}"
@@ -82,12 +157,24 @@ class AttachmentHelpers:
                         
         except aiohttp.ClientTimeout:
             logger.error("Timeout downloading attachment")
+            whatsapp_payload_logger.error("DOWNLOAD TIMEOUT")
+            whatsapp_payload_logger.error(f"URL: {file_url}")
+            whatsapp_payload_logger.error(f"Filename: {filename}")
+            whatsapp_payload_logger.error(f"Full Timeout Payload Structure: {{'error': 'timeout', 'url': '{file_url}', 'filename': '{filename}', 'mime_type': '{mime_type}', 'timeout_seconds': 30}}")
+            whatsapp_payload_logger.info("="*80)
             return {
                 "success": False,
                 "error": "Timeout downloading file"
             }
         except Exception as e:
             logger.error(f"Error downloading attachment: {e}")
+            whatsapp_payload_logger.error("DOWNLOAD EXCEPTION")
+            whatsapp_payload_logger.error(f"Error: {str(e)}")
+            whatsapp_payload_logger.error(f"Error Type: {type(e).__name__}")
+            whatsapp_payload_logger.error(f"URL: {file_url}")
+            whatsapp_payload_logger.error(f"Filename: {filename}")
+            whatsapp_payload_logger.error(f"Full Exception Payload Structure: {{'error': '{str(e)}', 'error_type': '{type(e).__name__}', 'url': '{file_url}', 'filename': '{filename}', 'mime_type': '{mime_type}'}}")
+            whatsapp_payload_logger.info("="*80)
             return {
                 "success": False,
                 "error": f"Download error: {str(e)}"

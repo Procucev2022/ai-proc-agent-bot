@@ -18,10 +18,13 @@ from fastapi import APIRouter, Request, Query, HTTPException, BackgroundTasks
 from fastapi.responses import PlainTextResponse, JSONResponse
 from urllib.parse import unquote
 import logging
+import os
 from typing import Dict, Any, Optional
 import json
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+from logging.handlers import RotatingFileHandler
+from datetime import datetime
 
 from app.config import get_settings
 from app.services.chat_service import ChatService
@@ -29,6 +32,32 @@ from app.services.chat_service import ChatService
 router = APIRouter()
 logger = logging.getLogger(__name__)
 chat_service = ChatService()
+
+# Set up WhatsApp webhook payload logger
+webhook_payload_logger = logging.getLogger("whatsapp_webhook")
+webhook_payload_logger.setLevel(logging.DEBUG)
+
+# Create whatsapp_logs directory if it doesn't exist
+log_dir = "whatsapp_logs"
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+# Add file handler if not already present
+if not webhook_payload_logger.handlers:
+    log_file = os.path.join(log_dir, f"whatsapp_webhook_{datetime.now().strftime('%Y-%m-%d')}.log")
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=10 * 1024 * 1024,  # 10MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    file_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(formatter)
+    webhook_payload_logger.addHandler(file_handler)
 
 # Initialize rate limiter for webhook endpoints
 settings = get_settings()
@@ -232,9 +261,31 @@ def parse_user_response_callback(data: Dict[str, Any]) -> Optional[Dict[str, Any
                 # ICS sends JSON data URL-encoded for media messages
                 message_data["content"] = json.loads(decoded_message)
                 logger.info(f"Successfully parsed {reply_type.upper()} message content as JSON")
+
+                # Log media message payload to separate file
+                webhook_payload_logger.info("="*80)
+                webhook_payload_logger.info(f"MEDIA WEBHOOK RECEIVED - Type: {reply_type.upper()}")
+                webhook_payload_logger.info(f"From: {customer_number}")
+                webhook_payload_logger.info(f"Timestamp: {timestamp}")
+                webhook_payload_logger.info(f"Message ID: {mid}")
+                webhook_payload_logger.debug(f"Full Content: {message_data['content']}")
+
+                # Log file details for document/image
+                if reply_type.upper() in ["IMAGE", "DOCUMENT"]:
+                    content_obj = message_data['content']
+                    media_key = "image" if reply_type.upper() == "IMAGE" else "document"
+                    if isinstance(content_obj, dict) and media_key in content_obj:
+                        media_info = content_obj[media_key]
+                        webhook_payload_logger.info(f"File URL: {media_info.get('link', 'N/A')}")
+                        webhook_payload_logger.info(f"Filename: {media_info.get('filename', 'N/A')}")
+                        webhook_payload_logger.info(f"MIME Type: {media_info.get('mime_type', 'N/A')}")
+
+                webhook_payload_logger.info("="*80)
+
             except json.JSONDecodeError:
                 # Keep as string if JSON parsing fails
                 logger.info(f"Keeping {reply_type.upper()} message content as string")
+                webhook_payload_logger.warning(f"Failed to parse {reply_type.upper()} content as JSON")
                 pass
 
         logger.info(f"Successfully parsed ICS webhook: Type={message_data['type']}, From={message_data['from']}")
