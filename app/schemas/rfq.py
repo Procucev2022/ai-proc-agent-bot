@@ -502,7 +502,7 @@ class RFQValidationSchema(BaseModel):
             questions.append("Do you have any additional remarks or special requirements?")
             
         if not self.attachments:
-            questions.append("Would you like to add any specification documents or images to your RFQ? You can send an image now or reply 'no' to continue.")
+            questions.append("Would you like to add any specification documents or images to your RFQ? ")
         
         return questions
     

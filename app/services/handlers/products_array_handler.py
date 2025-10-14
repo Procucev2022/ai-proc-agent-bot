@@ -14,7 +14,7 @@ from app.services.openai_service import OpenAIService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.utils.datetime_utils import utc_now
-from app.utils.rfq_message_formatter import format_rfq_entities_message
+from app.utils.rfq_message_formatter import format_rfq_entities_message, format_rfq_response_message, format_rfq_entities_with_global_fields
 
 logger = logging.getLogger(__name__)
 
@@ -357,8 +357,16 @@ class ProductsArrayHandler:
         
         # Check if this is a response to optional questions (look for specific workflow state)
         if optional_questions and not session.workflow_state.get("optional_fields_asked"):
+
             # Show extracted details using RFQ message formatter
-            formatted_message = format_rfq_entities_message([product_info["entities"]], optional_questions, are_required=False)
+            global_fields = {
+                'deliveryDate': product_info["entities"].get('deliveryDate'),
+                'state': product_info["entities"].get('state'),
+                'city': product_info["entities"].get('city'),
+                'pincode': product_info["entities"].get('pincode')
+            }
+            formatted_message = format_rfq_response_message([product_info["entities"]], global_fields, optional_questions, include_optional=True)
+          
             optional_message = f"{formatted_message}\n\nYou may send the details now or reply 'No' to continue."
             
             await self.whatsapp_service.send_message(user.phone_number, optional_message)
@@ -432,12 +440,25 @@ class ProductsArrayHandler:
         
         # Check if we should ask about optional fields
         optional_questions = combined_schema.get_optional_questions()
+
         
         # Check if this is a response to optional questions
         if optional_questions and not session.workflow_state.get("optional_fields_asked"):
             # Show extracted details using RFQ message formatter
             all_products_entities = [prod["entities"] for prod in complete_products]
-            formatted_message = format_rfq_entities_message(all_products_entities, optional_questions, are_required=False)
+
+            # Extract global fields from first product
+            global_fields = {}
+            if all_products_entities:
+                first_entity = all_products_entities[0]
+                global_fields = {
+                    'deliveryDate': first_entity.get('deliveryDate'),
+                    'state': first_entity.get('state'),
+                    'city': first_entity.get('city'),
+                    'pincode': first_entity.get('pincode')
+                }
+            formatted_message = format_rfq_response_message(all_products_entities, global_fields, optional_questions, include_optional=True)
+
             optional_message = f"{formatted_message}\n\nYou may send the details now or reply 'No' to continue."
             
             await self.whatsapp_service.send_message(user.phone_number, optional_message)
