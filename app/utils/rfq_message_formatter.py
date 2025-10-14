@@ -11,7 +11,7 @@ from typing import Dict, Any, List
 from typing import List, Dict, Any
 from datetime import datetime
 
-def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missing_fields: List[str]) -> str:
+def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missing_fields: List[str], are_required: bool = True) -> str:
     """
     Format RFQ message for WhatsApp showing extracted entities and missing details.
     (No markdown or asterisks; clean, emoji-friendly formatting)
@@ -152,7 +152,8 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
         message_parts.append("")
 
     if error_messages or actual_missing_fields:
-        message_parts.append("Please share the missing or invalid details to continue.")
+        if are_required:
+            message_parts.append("Please share the missing or invalid details to continue.")
 
     return "\n".join(message_parts)
 
@@ -163,7 +164,8 @@ from datetime import datetime
 def format_rfq_entities_with_global_fields(
     extracted_entities: List[Dict[str, Any]],
     global_fields: Dict[str, Any],
-    missing_fields: List[str]
+    missing_fields: List[str],
+    are_required: bool = True
 ) -> str:
     """
     Format RFQ message for WhatsApp showing extracted entities with global fields and missing details.
@@ -284,10 +286,9 @@ def format_rfq_entities_with_global_fields(
                     message_parts.append(f"• {field}")
         message_parts.append("")
 
-    # --- Prompt for Correction / Action Buttons ---
     if error_messages or actual_missing_fields:
-        message_parts.append("Please share the missing or invalid details to continue.")
-
+        if are_required:
+            message_parts.append("Please share the missing or invalid details to continue.")
 
     return "\n".join(message_parts)
 

@@ -674,9 +674,9 @@ class ResponseHelpers:
             # Use the enhanced formatter with global fields if any exist
             if any(global_fields.values()):
                 from app.utils.rfq_message_formatter import format_rfq_entities_with_global_fields
-                result = format_rfq_entities_with_global_fields(extracted_entities, global_fields, missing_fields)
+                result = format_rfq_entities_with_global_fields(extracted_entities, global_fields, missing_fields, are_required=True)
             else:
-                result = format_rfq_entities_message(extracted_entities, missing_fields)
+                result = format_rfq_entities_message(extracted_entities, missing_fields, are_required=True)
             
             logger.info(f"Formatted message result: {result[:100]}...")
             return result

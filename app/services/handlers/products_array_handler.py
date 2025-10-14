@@ -14,6 +14,7 @@ from app.services.openai_service import OpenAIService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.utils.datetime_utils import utc_now
+from app.utils.rfq_message_formatter import format_rfq_entities_message
 
 logger = logging.getLogger(__name__)
 
@@ -356,10 +357,9 @@ class ProductsArrayHandler:
         
         # Check if this is a response to optional questions (look for specific workflow state)
         if optional_questions and not session.workflow_state.get("optional_fields_asked"):
-            # Ask about optional fields first
-            optional_intro = "Would you like to provide any additional details such as:"
-            optional_text = "\n".join(f"• {q}" for q in optional_questions)
-            optional_message = f"{optional_intro}\n\n{optional_text}\n\n You may send the details now or reply “No” to continue."
+            # Show extracted details using RFQ message formatter
+            formatted_message = format_rfq_entities_message([product_info["entities"]], optional_questions, are_required=False)
+            optional_message = f"{formatted_message}\n\nYou may send the details now or reply 'No' to continue."
             
             await self.whatsapp_service.send_message(user.phone_number, optional_message)
             
@@ -435,10 +435,10 @@ class ProductsArrayHandler:
         
         # Check if this is a response to optional questions
         if optional_questions and not session.workflow_state.get("optional_fields_asked"):
-            # Use the same structured format as single product
-            optional_intro = "Would you like to provide any additional details such as:"
-            optional_text = "\n".join(f"• {q}" for q in optional_questions)
-            optional_message = f"{optional_intro}\n\n{optional_text}\n\n You may send the details now or reply 'No' to continue."
+            # Show extracted details using RFQ message formatter
+            all_products_entities = [prod["entities"] for prod in complete_products]
+            formatted_message = format_rfq_entities_message(all_products_entities, optional_questions, are_required=False)
+            optional_message = f"{formatted_message}\n\nYou may send the details now or reply 'No' to continue."
             
             await self.whatsapp_service.send_message(user.phone_number, optional_message)
 
@@ -450,7 +450,6 @@ class ProductsArrayHandler:
             }
 
             # Store all complete products in extracted_entities for full context
-            all_products_entities = [prod["entities"] for prod in complete_products]
             session.workflow_state["extracted_entities"] = ChatServiceHelpers.serialize_products_for_session(all_products_entities)
             print(f"ProductsArrayHandler: Stored {len(all_products_entities)} complete products in extracted_entities (optional fields stage)")
 
