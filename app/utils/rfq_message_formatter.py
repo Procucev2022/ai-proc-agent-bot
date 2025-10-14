@@ -101,9 +101,15 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
     actual_missing_fields = []
 
     for field in missing_fields:
-        if ("date" in field.lower() and (
-            "past" in field.lower() or "invalid" in field.lower() or "kindly" in field.lower())) or \
-           ("pincode" in field.lower() and ("could not find" in field.lower() or "invalid" in field.lower())):
+        if (
+            "date" in field.lower() and (
+                "past" in field.lower() or "invalid" in field.lower() or "kindly" in field.lower()
+            )
+        ) or (
+            "pincode" in field.lower() and (
+                "could not find" in field.lower() or "invalid" in field.lower()
+            )
+        ):
             error_messages.append(field)
         else:
             actual_missing_fields.append(field)
@@ -238,6 +244,9 @@ def format_rfq_entities_with_global_fields(
         if (
             "date" in field.lower()
             and ("past" in field.lower() or "invalid" in field.lower() or "kindly" in field.lower())
+        ) or (
+            "pincode" in field.lower()
+            and ("could not find" in field.lower() or "invalid" in field.lower())
         ):
             error_messages.append(field)
         else:

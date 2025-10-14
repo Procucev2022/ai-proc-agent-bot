@@ -531,11 +531,20 @@ class EntityService:
                 
                 # Additional programmatic check for AI-returned date
                 if validation_result.get("is_valid") and validation_result.get("normalized_date"):
-                    if not self._is_date_future_or_today(validation_result.get("normalized_date")):
+                    normalized_date = validation_result.get("normalized_date")
+                    current_date = datetime.now().date()
+                    
+                    try:
+                        ai_date = datetime.strptime(normalized_date, "%Y-%m-%d").date()
+                        if ai_date < current_date:
+                            validation_result["is_valid"] = False
+                            extracted_date = format_date_display(datetime.strptime(normalized_date, "%Y-%m-%d"))
+                            validation_result["user_friendly_message"] = f"The date {extracted_date} is in the past. Kindly share a valid delivery date from today onward."
+                            print(f"EntityService: AI date validation override - date {extracted_date} is before current date {current_date}")
+                    except ValueError as e:
                         validation_result["is_valid"] = False
-                        extracted_date = format_date_display(datetime.strptime(validation_result.get("normalized_date"), "%Y-%m-%d"))
-                        validation_result["user_friendly_message"] = f"The date {extracted_date} is in the past. Kindly share a valid delivery date from today onward."
-                        print(f"EntityService: AI date validation override - date is in past: {extracted_date}")
+                        validation_result["user_friendly_message"] = "Invalid date format. Kindly share a valid delivery date."
+                        print(f"EntityService: Invalid date format from AI: {normalized_date}, error: {e}")
                 
                 date_validation_cache[date] = validation_result
 
@@ -584,11 +593,20 @@ class EntityService:
             
             # Additional programmatic check for AI-returned date
             if validation_result.get("is_valid") and validation_result.get("normalized_date"):
-                if not self._is_date_future_or_today(validation_result.get("normalized_date")):
+                normalized_date = validation_result.get("normalized_date")
+                current_date = datetime.now().date()
+                
+                try:
+                    ai_date = datetime.strptime(normalized_date, "%Y-%m-%d").date()
+                    if ai_date < current_date:
+                        validation_result["is_valid"] = False
+                        extracted_date = format_date_display(datetime.strptime(normalized_date, "%Y-%m-%d"))
+                        validation_result["user_friendly_message"] = f"The date {extracted_date} is in the past. Kindly share a valid delivery date from today onward."
+                        print(f"EntityService: AI date validation override - date {extracted_date} is before current date {current_date}")
+                except ValueError as e:
                     validation_result["is_valid"] = False
-                    extracted_date = format_date_display(datetime.strptime(validation_result.get("normalized_date"), "%Y-%m-%d"))
-                    validation_result["user_friendly_message"] = f"The date {extracted_date} is in the past. Kindly share a valid delivery date from today onward."
-                    print(f"EntityService: AI date validation override - date is in past: {extracted_date}")
+                    validation_result["user_friendly_message"] = "Invalid date format. Kindly share a valid delivery date."
+                    print(f"EntityService: Invalid date format from AI: {normalized_date}, error: {e}")
             
             if validation_result.get("is_valid"):
                 validated_entities["deliveryDate"] = validation_result.get("normalized_date")
