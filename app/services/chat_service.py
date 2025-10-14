@@ -166,18 +166,6 @@ class ChatService:
         workflow routing, and response generation.
         """
         try:
-            # Handle interactive message content extraction
-            if message_type == "interactive" and isinstance(message_content, dict):
-                # Extract the actual message content from interactive structure
-                button_reply = message_content.get("button_reply", {})
-                if button_reply and button_reply.get("id"):
-                    # Use button ID as the message content for processing
-                    message_content = button_reply.get("id")
-                    logger.info(f"Extracted button ID from interactive message: {message_content}")
-                else:
-                    # Fallback to string representation
-                    message_content = str(message_content)
-                    logger.warning(f"Could not extract button ID, using string representation: {message_content}")
             # Check and send welcome message if needed (before session creation)
             welcome_service = get_welcome_service()
             welcome_sent = False
