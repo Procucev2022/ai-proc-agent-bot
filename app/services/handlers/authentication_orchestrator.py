@@ -409,17 +409,9 @@ class AuthenticationOrchestrator:
                 exit_result = await exit_service.handle_exit_intent(user_phone, session)
                 return exit_result
             
-            # Also check for simple "exit" keyword with lower confidence threshold during registration
-            if message_content.lower().strip() in ["exit", "quit", "stop", "cancel"] and registration_stage in ["data_collection", "confirmation"]:
-                logger.info(f"Exit keyword detected during registration: '{message_content}'")
-                exit_service = ExitService(self.whatsapp_service, self.authentication_service,
-                                         self.chat_service.session_manager if self.chat_service else None,
-                                         self.chat_service.db_manager if self.chat_service else None)
-                exit_result = await exit_service.handle_exit_intent(user_phone, session)
-                return exit_result
-
             registration_stage = session.workflow_state.get("registration_stage")
             current_user_type = session.workflow_state.get("user_type", "buyer")
+
 
             # Check if user wants to switch intent during registration
             if await self._should_handle_intent_switch_during_registration(new_intent, confidence, current_user_type):
