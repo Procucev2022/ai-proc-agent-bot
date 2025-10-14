@@ -811,7 +811,7 @@ class ProfileSelectionService:
             await self.whatsapp_service.send_message(user_phone, welcome_message)
             
             return {
-                "status": "redirected_to_registration",
+                "status": "redirected_to_buyer_registration",
                 "workflow_type": "registration",
                 "user_type": "buyer"
             }
@@ -842,7 +842,7 @@ class ProfileSelectionService:
             await self.whatsapp_service.send_message(user_phone, welcome_message)
             
             return {
-                "status": "redirected_to_registration",
+                "status": "redirected_to_seller_registration",
                 "workflow_type": "registration",
                 "user_type": "seller"
             }

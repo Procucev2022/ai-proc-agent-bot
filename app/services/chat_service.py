@@ -412,12 +412,7 @@ class ChatService:
                 else:
                     # Invalid user but not registered, handle as general inquiry
                     return await self._process_text_message(auth_result, session, message_content, message_intent_result)
-            elif isinstance(auth_result, dict):
-                # Authentication returned a dictionary - this should have been handled above
-                # If we reach here, it means the status wasn't in our expected list
-                auth_status = auth_result.get("status")
-                logger.warning(f"Unhandled auth status: {auth_status}")
-                return auth_result
+
             else:
                 logger.error(f"Unexpected auth_result type: {type(auth_result)}")
                 return {"status": "error", "error": "Authentication failed"}
