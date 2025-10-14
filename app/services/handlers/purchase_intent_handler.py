@@ -29,11 +29,17 @@ class PurchaseIntentHandler:
         self.products_array_handler = products_array_handler
         self.session_manager = session_manager
     
-    async def handle_purchase_intent(self, user: User, session: ConversationSession, 
+    async def handle_purchase_intent(self, user: User, session: ConversationSession,
                                    message: str, intent_result: Dict[str, Any] = None,
                                    should_use_summary_aware_extraction_func=None) -> Dict[str, Any]:
         """Handle purchase intent with data model driven orchestration."""
         try:
+            # DEFENSIVE CLEANUP: Remove any lingering session_archive from timeout
+            # This prevents old RFQ data from leaking into new workflows
+            if session.workflow_state and 'session_archive' in session.workflow_state:
+                logger.warning(f"[CLEANUP] Removing lingering session_archive from workflow_state")
+                del session.workflow_state['session_archive']
+
             # 1. Extract entities using EntityService (focused service)
             # Include both existing entities and incomplete products in context
             existing_entities = session.workflow_state.get("extracted_entities", [])

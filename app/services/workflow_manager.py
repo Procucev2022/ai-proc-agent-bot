@@ -521,3 +521,8 @@ class WorkflowManager:
                 'last_activity_at': utc_now().isoformat()
             }
             logger.info(f"[WORKFLOW_INIT] Session {session.session_id}: Initialized workflow_state")
+        else:
+            # DEFENSIVE CLEANUP: Remove any lingering session_archive
+            if 'session_archive' in session.workflow_state:
+                logger.warning(f"[WORKFLOW_INIT] Session {session.session_id}: Removing lingering session_archive")
+                del session.workflow_state['session_archive']
