@@ -483,6 +483,14 @@ class WorkflowManager:
         """
         caller_info = caller or inspect.stack()[1].function
 
+        # Check if optional fields exist before reset
+        had_optional_fields = bool(
+            session.workflow_state and (
+                'pending_optional_rfq' in session.workflow_state or
+                'pending_optional_combined_rfq' in session.workflow_state
+            )
+        )
+
         # Determine fields to preserve
         fields_to_preserve = set(WorkflowManager.PROTECTED_FIELDS)
         if preserve_fields:
@@ -498,6 +506,10 @@ class WorkflowManager:
         logger.warning(f"[WORKFLOW_RESET] Session {session.session_id}: "
                       f"Resetting workflow_state (preserving: {list(preserved_data.keys())}) "
                       f"(caller: {caller_info})")
+
+        if had_optional_fields:
+            logger.warning(f"[WORKFLOW_RESET_ALERT] Session {session.session_id}: "
+                          f"CLEARED pending_optional fields during reset! Caller: {caller_info}")
 
         # Reset state with preserved data
         session.workflow_state = {

@@ -50,10 +50,10 @@ class SessionManagementService:
         """Retrieve or create conversation context for user session."""
         # Generate session ID using helper method (configurable strategy)
         session_id = SessionHelpers.generate_session_id(phone_number, "daily")
-    
+
         # Try to get existing session first
         session = self.db_manager.get_conversation_session(session_id)
-        
+
         if not session:
             # Create new session - the save method now handles duplicates gracefully
             session_data = {
@@ -67,11 +67,15 @@ class SessionManagementService:
                 'retention_date': date.today() + timedelta(days=30)
             }
             session = self.db_manager.save_conversation_session(session_data)
-            
+
             logger.info(f"Created new session: {session_id}")
         else:
             logger.info(f"Found existing session: {session_id}")
-        
+            # Debug: Check workflow_state immediately after retrieval
+            if session.workflow_state:
+                has_optional = 'pending_optional_rfq' in session.workflow_state or 'pending_optional_combined_rfq' in session.workflow_state
+                logger.info(f"[GET_CONTEXT_DEBUG] Session {session_id} has_optional_fields={has_optional}, keys={list(session.workflow_state.keys())}")
+
         return session
     
     async def create_session(self, phone_number: str, workflow_type: str = None, user_type: str = None) -> ConversationSession:

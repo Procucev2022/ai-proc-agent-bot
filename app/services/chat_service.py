@@ -673,6 +673,12 @@ class ChatService:
             print(
                 f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}")
 
+            # Debug logging for optional fields state
+            if has_pending_optional:
+                logger.info(f"[OPTIONAL_FIELDS_DEBUG] Session {session.session_id} has pending optional fields!")
+            else:
+                logger.info(f"[OPTIONAL_FIELDS_DEBUG] Session {session.session_id} does NOT have pending optional fields. workflow_state keys: {list(session.workflow_state.keys()) if session.workflow_state else 'None'}")
+
            
 
 

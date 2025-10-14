@@ -548,10 +548,10 @@ class DatabaseManager:
     def get_conversation_session(self, session_id: str) -> Optional[ConversationSession]:
         """Get a conversation session by ID."""
         from sqlalchemy.exc import SQLAlchemyError
-        
+
         try:
             session = self.session.query(ConversationSession).filter_by(session_id=session_id).first()
-            
+
             # Fix potential JSON deserialization issues
             if session and session.workflow_state:
                 try:
@@ -559,17 +559,25 @@ class DatabaseManager:
                     if isinstance(session.workflow_state, str):
                         session.workflow_state = json.loads(session.workflow_state)
 
-                    # Debug logging for optional fields
+                    # Debug logging for optional fields - ENHANCED
                     if 'pending_optional_rfq' in session.workflow_state or 'pending_optional_combined_rfq' in session.workflow_state:
                         logger.info(f"[SESSION_LOAD_DEBUG] Loaded session {session_id} with optional fields: {list(session.workflow_state.keys())}")
+                        if 'pending_optional_combined_rfq' in session.workflow_state:
+                            optional_data = session.workflow_state['pending_optional_combined_rfq']
+                            logger.info(f"[SESSION_LOAD_DEBUG] pending_optional_combined_rfq has keys: {list(optional_data.keys()) if isinstance(optional_data, dict) else 'Not a dict'}")
+                    else:
+                        # Log when optional fields are NOT present
+                        logger.info(f"[SESSION_LOAD_DEBUG] Loaded session {session_id} WITHOUT optional fields. Keys: {list(session.workflow_state.keys())}")
 
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.error(f"Failed to deserialize workflow_state for session {session_id}: {e}")
                     # Reset to empty dict to prevent further errors
                     session.workflow_state = {"extracted_entities": []}
+            elif session:
+                logger.info(f"[SESSION_LOAD_DEBUG] Loaded session {session_id} with NO workflow_state")
 
             return session
-            
+
         except SQLAlchemyError as e:
             logger.error(f"Database error in get_conversation_session: {e}")
             self.session.rollback()
