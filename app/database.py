@@ -493,8 +493,8 @@ class DatabaseManager:
                 self.session.add(session)
             
             self.session.commit()
-            # Expunge the session object to prevent stale data in identity map
-            self.session.expunge(session)
+            # Refresh to ensure we return the latest state
+            self.session.refresh(session)
             return session
             
         except IntegrityError as e:
@@ -515,7 +515,7 @@ class DatabaseManager:
                     if key in ['workflow_state', 'conversation_history', 'extracted_entities', 'whatsapp_context', 'error_details', 'performance_metrics', 'bfs_products_searched', 'bfs_price_accepted', 'bfs_counter_offers', 'products_bid_for', 'bids_received', 'bids_accepted', 'counter_offers_made', 'counter_offers_accepted', 'rfqs_with_response']:
                         flag_modified(existing_session, key)
                 self.session.commit()
-                self.session.expunge(existing_session)
+                self.session.refresh(existing_session)
                 return existing_session
             else:
                 # Fallback: return session object without saving
@@ -539,7 +539,7 @@ class DatabaseManager:
                         if key in ['workflow_state', 'conversation_history', 'extracted_entities', 'whatsapp_context', 'error_details', 'performance_metrics', 'bfs_products_searched', 'bfs_price_accepted', 'bfs_counter_offers', 'products_bid_for', 'bids_received', 'bids_accepted', 'counter_offers_made', 'counter_offers_accepted', 'rfqs_with_response']:
                             flag_modified(existing_session, key)
                     self.session.commit()
-                    self.session.expunge(existing_session)
+                    self.session.refresh(existing_session)
                     return existing_session
                 else:
                     # Return original session object to prevent data loss
