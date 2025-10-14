@@ -8,10 +8,25 @@ INTENT CATEGORIES:
 2. **sell_something** (75%+ confidence) - User wants to sell products, offer services, or become a vendor
    Examples: "I want to sell generators", "We offer construction materials", "Can I become a vendor?", "I have office supplies to sell"
 
-3. **general_inquiry** (60%+ confidence) - User asking how things work, general questions, help, or greeting messages
+3. **bfs_search** (75%+ confidence) - User wants to search Buy From Stock (BFS) inventory for immediate purchase
+   Examples: "Do you have laptops in stock?", "Search your inventory for printers", "Can I buy directly?", "What's available in BFS?", "Show me stock items", "I need immediate delivery"
+   
+   **BFS SEARCH INDICATORS:**
+   - Stock/inventory keywords: "stock", "inventory", "available", "in stock", "BFS", "buy from stock"
+   - Immediate need: "immediate", "urgent", "right now", "today", "ASAP", "quick delivery"
+   - Direct purchase: "buy directly", "purchase now", "can I buy", "direct purchase"
+   - Availability check: "do you have", "is available", "what's in stock", "show me", "search inventory"
+   
+   Context clues:
+   - User emphasizes speed/urgency over custom quotes
+   - Asks about existing inventory rather than requesting quotes
+   - Wants to see what's immediately available for purchase
+   - NOT interested in creating RFQ or waiting for vendor responses
+
+4. **general_inquiry** (60%+ confidence) - User asking how things work, general questions, help, or greeting messages
    Examples: "How does this work?", "What can you do?", "What's up?", "Hello", "Hi", "Good morning", "Hey there"
 
-4. **modification_request** (80%+ confidence) - User wants to CHANGE/REPLACE existing confirmed data
+5. **modification_request** (80%+ confidence) - User wants to CHANGE/REPLACE existing confirmed data
    Examples: "Change chairs to 55", "Modify the delivery date to tomorrow", "Actually make that 20 printers instead"
 
    **MODIFICATION VERBS & PATTERNS:**
@@ -49,7 +64,7 @@ INTENT CATEGORIES:
    - User: "Update the specs to include 16GB RAM" (enhancement)
    - User: "Switch that to IT Department" (reference + change)
 
-5. **confirmation_response** (85%+ confidence) - User responding to a confirmation request OR optional field questions
+6. **confirmation_response** (85%+ confidence) - User responding to a confirmation request OR optional field questions
    Examples: "Yes", "Confirm", "No, make changes", "Yes but change the delivery date", "No" (when asked about optional fields/attachments)
    Context clues:
    - Previous bot message asked for confirmation → yes/no responses
@@ -57,20 +72,20 @@ INTENT CATEGORIES:
    - Context shows "Has Pending Optional Fields: True" or "Has Pending Attachment Decision: True"
    IMPORTANT: If user says "No" when bot asked about optional fields/brands/specifications/attachments → confirmation_response (declining optional fields)
 
-6. **rfq_status_check** (70%+ confidence) - User checking status of existing RFQ or inquiry
+7. **rfq_status_check** (70%+ confidence) - User checking status of existing RFQ or inquiry
    Examples: "What's the status of my RFQ?", "Track my request", "Any updates on my order?", "When will I receive vendor responses?", "Has my quote been processed?", "Check my order status"
    Context clues: Status keywords (status, track, progress, update, submitted, pending, completed, vendor responses, quote status)
 
 
-7. **contextual_reference** (80%+ confidence) - User referencing previously provided information
+8. **contextual_reference** (80%+ confidence) - User referencing previously provided information
    Examples: "I already told you that", "As I mentioned before", "I provided those details earlier"
    Context clues: Reference phrases, user referring to conversation history
 
-8. **session_inquiry** (75%+ confidence) - User asking about collected information or session state
+9. **session_inquiry** (75%+ confidence) - User asking about collected information or session state
    Examples: "What do you have so far?", "Show me the information", "Give me a summary"
    Context clues: Summary requests, information display requests
 
-9. **exit_system** (85%+ confidence) - User wants to exit, logout, or end the session completely
+10. **exit_system** (85%+ confidence) - User wants to exit, logout, or end the session completely
     Examples: "Exit", "Quit", "Bye", "Goodbye", "I want to logout", "End session", "Stop"
 
     **EXIT KEYWORDS:**
@@ -87,7 +102,7 @@ INTENT CATEGORIES:
     - User says "cancel" when in middle of workflow → cancel_workflow instead
     - Context suggests they want to cancel current workflow rather than exit completely
 
-10. **cancel_workflow** (80%+ confidence) - User wants to cancel or restart the current workflow
+11. **cancel_workflow** (80%+ confidence) - User wants to cancel or restart the current workflow
     Examples: "Cancel this order", "Start over", "Cancel", "Restart", "Clear everything", "Forget what I said", "I want to cancel"
 
     **CANCEL KEYWORDS:**
@@ -105,7 +120,7 @@ INTENT CATEGORIES:
     - User wants to exit system completely → exit_system instead
     - User wants to modify existing data → modification_request instead
 
-11. **account_switch** (80%+ confidence) - User wants to switch between buyer/seller accounts or different accounts
+12. **account_switch** (80%+ confidence) - User wants to switch between buyer/seller accounts or different accounts
     Examples: "Switch to my seller account", "Change to buyer mode", "Use my other account", "I want to sell now", "Switch account"
 
     Context clues:
@@ -118,7 +133,7 @@ INTENT CATEGORIES:
     - User is not authenticated yet → register_account instead
     - User wants to register additional account → register_account instead
 
-12. **register_account** (80%+ confidence) - User wants to register a new account or additional account
+13. **register_account** (80%+ confidence) - User wants to register a new account or additional account
     Examples: "I want to register", "Create account", "Sign up", "Register as seller", "Add seller account", "I want to become a vendor"
 
     Context clues:
@@ -132,15 +147,15 @@ INTENT CATEGORIES:
     - If user says "I want to sell" and is not authenticated as seller → register_account (seller)
     - If user is authenticated and wants different account → account_switch instead
 
-13. **alternative_request** (75%+ confidence) - User wanting different approach or service
+14. **alternative_request** (75%+ confidence) - User wanting different approach or service
     Examples: "Do you have this in stock?", "Can I buy directly?", "Search your inventory"
     Context clues: Alternative service requests, direct purchase interest
 
-14. **support** (80%+ confidence) - User needs help, wants to contact support, or has technical issues
+15. **support** (80%+ confidence) - User needs help, wants to contact support, or has technical issues
     Examples: "How to contact support?", "I need help", "Contact customer service", "Technical support", "Help me", "Support team"
     Context clues: Support keywords (support, help, contact, customer service, technical, assistance)
 
-15. **ambiguous** (<60% confidence) - Unclear intent, mixed signals, insufficient information, or conflicting intents in same message
+16. **ambiguous** (<60% confidence) - Unclear intent, mixed signals, insufficient information, or conflicting intents in same message
     Examples: "I want to sell fridge and buy 2 chairs 3 tables", "Looking to purchase laptops but also have printers to sell", "Need office supplies, also we supply construction materials"
     
 

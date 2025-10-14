@@ -402,24 +402,26 @@ class AuthenticationService:
             # Removed button handling - using text-based selection
 
             if confirmation_stage in ["selection", "intent_filtered_selection"]:
-                # AI-first email rejection detection
-                is_rejection = await self._ai_detect_email_rejection(message)
-                if is_rejection:
-                    await self.whatsapp_service.send_message(user_phone, "I understand these emails don't match yours. Let me help you register with your correct information.")
-                    return {"status": "redirect_to_registration"}
-
-                # AI-first email selection parsing
-                selected_email = await self._ai_parse_email_selection(message, email_options)
+                # Use ProfileSelectionService to handle the response
+                from app.services.profile_selection_service import ProfileSelectionService
+                profile_service = ProfileSelectionService(
+                    whatsapp_service=self.whatsapp_service,
+                    authentication_service=self,
+                    openai_service=self.openai_service
+                )
                 
-                # if not selected_email:
-                #     # Fallback to pattern matching
-                #     selected_email = await self._parse_email_selection(message, email_options)
+                # Handle profile selection response
+                result = await profile_service.handle_profile_selection_response(
+                    user_phone, message, session
+                )
                 
-                if selected_email:
-                    return await self._process_selected_email(user_phone, session, selected_email, filtered_users)
-                else:
-                    # Send retry message
-                    return await self._request_email_selection_with_text(user_phone, session, email_options, filtered_users)
+                # If profile was selected successfully, process it
+                if result.get("status") == "profile_selected_and_authenticated":
+                    selected_email = result.get("email")
+                    if selected_email:
+                        return await self._process_selected_email(user_phone, session, selected_email, filtered_users)
+                
+                return result
             
             elif confirmation_stage == "intent_clarification":
                 # Handle intent clarification response
@@ -1177,48 +1179,46 @@ Respond only with: "yes" or "no"
     
     async def _request_email_selection_with_text(self, user_phone: str, session: ConversationSession,
                                                emails: List[str], filtered_users: List[Dict]) -> Dict[str, Any]:
-        """Request email selection using text-based selection."""
+        """Request email selection using ProfileSelectionService."""
         try:
-            username = self._get_username_from_users(filtered_users)
+            # Use ProfileSelectionService to handle profile selection
+            from app.services.profile_selection_service import ProfileSelectionService
+            profile_service = ProfileSelectionService(
+                whatsapp_service=self.whatsapp_service,
+                authentication_service=self,
+                openai_service=self.openai_service
+            )
             
-            # Check if we have mixed user types for better messaging
-            buyer_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Buyer"]
-            seller_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Seller"]
-
-            # Get the current intent from session to determine message type
+            # Convert filtered_users to profiles format expected by ProfileSelectionService
+            profiles = []
+            for user_data in filtered_users:
+                try:
+                    from app.schemas.user import User
+                    user = User.from_api_response(user_data)
+                    profile = {
+                        "email": user.email,
+                        "role": user.role.value,
+                        "name": user.name,
+                        "company": user.company_name,
+                        "user_data": user_data
+                    }
+                    profiles.append(profile)
+                except Exception as e:
+                    logger.warning(f"Failed to convert user data to profile: {e}")
+                    continue
+            
+            # Get current intent from session
             current_intent_result = session.workflow_state.get("current_intent_result", {})
-            intent = current_intent_result.get("intent", "general_inquiry")
-
-            if buyer_emails and seller_emails:
-                # Default mixed message
-                message = "Welcome! Are you looking to buy or sell today?\n\nPlease select your profile by choosing the associated email address:\n"
-
-                for i, email in enumerate(emails, 1):
-                    user_type = self._get_user_type_for_email(email, filtered_users)
-                    type_label = f" — {user_type}" if user_type else ""
-                    message += f"  {i}. {email}{type_label}\n"
-                message += "\nReply with the number corresponding to your email address to continue."
-            else:
-                # Default message
-                message = "Welcome! Please select your profile by choosing the associated email address:\n"
-
-                for i, email in enumerate(emails, 1):
-                    user_type = self._get_user_type_for_email(email, filtered_users)
-                    type_label = f" — {user_type}" if user_type else ""
-                    message += f"  {i}. {email}{type_label}\n"
-                message += "\nReply with the number corresponding to your email address to continue."
             
-            await self.whatsapp_service.send_message(user_phone, message)
+            # Handle profile selection based on intent
+            result = await profile_service.handle_profile_selection(
+                user_phone, "", session, current_intent_result
+            )
             
-            return {
-                "status": "email_selection_requested",
-                "stage": "email_confirmation",
-                "email_options": emails,
-                "using_buttons": False
-            }
+            return result
             
         except Exception as e:
-            logger.error(f"Text email selection error: {e}")
+            logger.error(f"Profile selection error: {e}")
             return {"status": "error", "error": str(e)}
     
     async def _request_email_selection_text_fallback(self, user_phone: str, session: ConversationSession,

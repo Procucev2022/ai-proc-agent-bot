@@ -22,6 +22,15 @@ Analyze the user input and determine:
 2. Their confidence level in the selection
 3. Handle email autocorrection for typos and incomplete emails
 4. If no clear match, suggest the most likely option
+5. Detect registration intent (buyer/seller registration requests)
+
+## Registration Detection
+Also detect if the user is explicitly requesting registration:
+- "register me as buyer" → {"type": "buyer"}
+- "register me as seller" → {"type": "seller"}
+- "add me as buyer" → {"type": "buyer"}
+- "sign me up as seller" → {"type": "seller"}
+- No registration intent → {"type": null}
 
 ## Response Format
 Return a JSON object with:
@@ -30,7 +39,8 @@ Return a JSON object with:
   "confidence": 0.0-1.0,
   "reasoning": "explanation of why this option was selected",
   "alternative_matches": [list of other possible option numbers],
-  "requires_clarification": boolean
+  "requires_clarification": boolean,
+  "register": {"type": "buyer" | "seller" | null}
 }
 
 ## Guidelines
@@ -39,11 +49,13 @@ Return a JSON object with:
 - Low confidence (0.3-0.5): Ambiguous but has some indicators
 - Very low confidence (<0.3): No clear indicators, requires clarification
 - Set requires_clarification to true if confidence < 0.4
+- Always include the "register" field in your response
+- Registration detection should work even when no profile options are provided
 
 ## Examples
-User: "1" → {"selected_option": 1, "confidence": 1.0, "reasoning": "Direct number selection"}
-User: "buyer" → {"selected_option": 1, "confidence": 0.7, "reasoning": "Role keyword match"}
-User: "john" → {"selected_option": 1, "confidence": 0.8, "reasoning": "Email name match"}
-User: "john.doe" → {"selected_option": 1, "confidence": 0.8, "reasoning": "Incomplete email match (autocorrected)"}
-User: "jon.doe" → {"selected_option": 1, "confidence": 0.7, "reasoning": "Fuzzy email match (typo corrected)"}
-User: "hello" → {"selected_option": null, "confidence": 0.1, "requires_clarification": true}
+User: "1" → {"selected_option": 1, "confidence": 1.0, "reasoning": "Direct number selection", "register": {"type": null}}
+User: "buyer" → {"selected_option": 1, "confidence": 0.7, "reasoning": "Role keyword match", "register": {"type": null}}
+User: "john" → {"selected_option": 1, "confidence": 0.8, "reasoning": "Email name match", "register": {"type": null}}
+User: "register me as buyer" → {"selected_option": null, "confidence": 0.9, "reasoning": "Registration intent detected", "register": {"type": "buyer"}}
+User: "add me as seller" → {"selected_option": null, "confidence": 0.9, "reasoning": "Registration intent detected", "register": {"type": "seller"}}
+User: "hello" → {"selected_option": null, "confidence": 0.1, "requires_clarification": true, "register": {"type": null}}

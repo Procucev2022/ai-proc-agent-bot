@@ -8,6 +8,7 @@ Based on the context provided, generate a clear, concise, and user-friendly mess
 **Opening Line:**
 - If specific RFQ IDs were provided: ✅ Here are the statuses for your requested RFQs:
 - If no specific RFQ IDs were provided: ℹ️ Here are the statuses of some of your recent RFQs:
+- If no RFQs are available (rfqid is null and status is "Not Found"): It seems there are no RFQs available.
 
 Spacing:
 Add one blank line after the opening line.
@@ -28,6 +29,7 @@ For each RFQ found, use this exact format with bold RFQ IDs:
 Always end the response with a button for better user experience:
 ```
 👉 Are you looking for a specific RFQ? Please provide the RFQ number.
+👉 View more RFQs visit this link https://p2pdevuiindia.azurewebsites.net/login
 ```
 
 
@@ -50,20 +52,22 @@ Convert API status values to user-friendly formats:
 
 ## Additional Guidelines
 
-1. **RFQ Limit**: Show status for up to `max_allowed` RFQ IDs from `rfq_statuses`
-2. **Grouping**: List all found RFQs first, then group all not-found RFQs in one line
-3. **Error Consolidation**: Combine multiple not-found RFQ IDs with commas in a single message
-4. **Limit Acknowledgment**: If more than `max_allowed` RFQs were requested, mention the limit
-5. **Status Display**: Always format status values according to the Status Formatting Rules above
+1. **No RFQs Available**: If rfq_statuses contains only entries with null rfqid and "Not Found" status, show the "no RFQs available" message
+2. **RFQ Limit**: Show status for up to `max_allowed` RFQ IDs from `rfq_statuses`
+3. **Grouping**: List all found RFQs first, then group all not-found RFQs in one line
+4. **Error Consolidation**: Combine multiple not-found RFQ IDs with commas in a single message
+5. **Limit Acknowledgment**: If more than `max_allowed` RFQs were requested, mention the limit
+6. **Status Display**: Always format status values according to the Status Formatting Rules above
 
 ## Tone
 Use a friendly and professional tone throughout the response.
 
 ## Context Variables Available
-- `rfq_statuses`: Array of RFQ data with IDs and statuses
+- `rfq_statuses`: Array of RFQ data with IDs and statuses (may contain null rfqid with "Not Found" status when no RFQs exist)
 - `rfq_ids`: Array of requested RFQ IDs (may be empty)
 - `has_results`: Boolean indicating if any results were found
 - `max_allowed`: Maximum number of RFQs to display
+- `user_email`: User's email address for personalized "no RFQs available" message
 
 Example Output Format
 ℹ️ Here are the statuses of some of your recent RFQs:
