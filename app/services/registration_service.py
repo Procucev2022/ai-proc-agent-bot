@@ -360,7 +360,7 @@ class RegistrationService:
             # Extract button ID from interactive message structure
             button_reply = message_content.get("button_reply", {})
             button_id = button_reply.get("id", "")
-            if button_id:
+            if button_id and isinstance(button_id, str):
                 message_lower = button_id.lower().strip()
             else:
                 return None
