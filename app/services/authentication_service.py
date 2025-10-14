@@ -1,4 +1,4 @@
-S"""
+"""
 Authentication Service for WhatsApp Bot.
 
 Handles complete user authentication flow including:
