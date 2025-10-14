@@ -1519,7 +1519,15 @@ class ChatService:
         # Check if this is a confirmation button response
         elif button_id == "confirm_rfq":
             # Route to confirmation handler
-            return await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
+            result = await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
+
+            # Save session after confirmation handling to persist any session clearing
+            # This ensures that when RFQ is successfully created, the cleared workflow_state
+            # is saved to the database so the next request starts fresh
+            await self.session_manager.save_session(session)
+            logger.info(f"Session saved after confirmation button handling for {user.phone_number}")
+
+            return result
 
         # Check if this is an email confirmation button response during authentication
         elif button_id in ["confirm_email", "reject_email"]:
