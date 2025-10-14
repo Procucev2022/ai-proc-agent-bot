@@ -13,6 +13,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from geopy.distance import geodesic
 import json
 import os
+from ..utils.pincode_lookup import get_location_from_pincode_async
 
 logger = logging.getLogger(__name__)
 
@@ -88,37 +89,48 @@ class LocationService:
     
     async def get_coordinates_from_pincode(self, pincode: str) -> Dict[str, Any]:
         """
-        Convert pincode to latitude/longitude coordinates.
+        Convert pincode to city/state using India Post API only.
         
         Args:
             pincode: 6-digit Indian pincode
             
         Returns:
-            Dictionary with lat, lng, city, state information
+            Dictionary with city, state information or None if invalid
         """
         try:
-            # Clean pincode (remove spaces, ensure 6 digits)
             clean_pincode = str(pincode).strip()
             
             if not clean_pincode.isdigit() or len(clean_pincode) != 6:
                 logger.warning(f"Invalid pincode format: {pincode}")
-                return self.default_coordinates.copy()
+                return None
             
-            # Look up coordinates
-            coordinates = self.pincode_coordinates.get(clean_pincode)
+            # Use API result only
+            api_result = await get_location_from_pincode_async(clean_pincode)
             
-            if coordinates:
-                logger.debug(f"Found coordinates for pincode {clean_pincode}: {coordinates['city']}")
-                return coordinates.copy()
-            else:
-                # For unknown pincodes, generate approximate coordinates based on first 2 digits
-                approx_coords = await self._get_approximate_coordinates(clean_pincode)
-                logger.info(f"Using approximate coordinates for pincode {clean_pincode}")
-                return approx_coords
+            if api_result:
+                logger.info(f"Found location via API for pincode {clean_pincode}: {api_result['city']}, {api_result['state']}")
+                return {
+                    "city": api_result.get("city", ""),
+                    "state": api_result.get("state", "")
+                }
+            
+            # If API fails, use regional approximation for state only
+            logger.info(f"API lookup failed for pincode {clean_pincode}, using regional approximation")
+            region = clean_pincode[:2]
+            region_states = {
+                "11": "Delhi", "12": "Punjab", "13": "Haryana", "30": "Rajasthan",
+                "38": "Gujarat", "40": "Maharashtra", "41": "Maharashtra", 
+                "50": "Telangana", "56": "Karnataka", "60": "Tamil Nadu",
+                "68": "Kerala", "70": "West Bengal"
+            }
+            return {
+                "city": "",
+                "state": region_states.get(region, "")
+            }
                 
         except Exception as e:
             logger.error(f"Error converting pincode {pincode} to coordinates: {str(e)}")
-            return self.default_coordinates.copy()
+            return None
     
     async def _get_approximate_coordinates(self, pincode: str) -> Dict[str, Any]:
         """
@@ -181,37 +193,39 @@ class LocationService:
             logger.error(f"Error calculating distance: {str(e)}")
             return float('inf')
     
-    async def get_delivery_coordinates(self, delivery_location: Dict[str, str]) -> Dict[str, Any]:
+    async def get_delivery_location(self, delivery_location: Dict[str, str]) -> Dict[str, Any]:
         """
-        Get coordinates for RFQ delivery location.
+        Get location info for RFQ delivery location.
         
         Args:
             delivery_location: Dictionary with 'state', 'city', 'pincode'
             
         Returns:
-            Dictionary with coordinates and location info
+            Dictionary with location info
         """
         try:
             pincode = delivery_location.get('pincode', '')
             city = delivery_location.get('city', '')
             state = delivery_location.get('state', '')
             
-            # Get coordinates from pincode
-            coordinates = await self.get_coordinates_from_pincode(pincode)
+            # Get location from pincode
+            location = await self.get_coordinates_from_pincode(pincode)
             
-            # Override city/state with actual values if coordinates were approximated
-            if coordinates.get('city') in ['Unknown', f'{state} Region'] and city:
-                coordinates['city'] = city
-            if coordinates.get('state') == 'Unknown' and state:
-                coordinates['state'] = state
+            if location:
+                # Use provided city/state if API didn't return them
+                if not location.get('city') and city:
+                    location['city'] = city
+                if not location.get('state') and state:
+                    location['state'] = state
+            else:
+                location = {'city': city, 'state': state}
             
-            logger.info(f"Delivery location coordinates: {city}, {state} ({pincode}) -> {coordinates['lat']}, {coordinates['lng']}")
-            
-            return coordinates
+            logger.info(f"Delivery location: {location.get('city', '')}, {location.get('state', '')} ({pincode})")
+            return location
             
         except Exception as e:
-            logger.error(f"Error getting delivery coordinates: {str(e)}")
-            return self.default_coordinates.copy()
+            logger.error(f"Error getting delivery location: {str(e)}")
+            return {'city': '', 'state': ''}
     
     async def filter_sellers_by_distance(self, sellers: List[Dict[str, Any]], 
                                        delivery_coordinates: Dict[str, float], 

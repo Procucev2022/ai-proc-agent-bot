@@ -641,6 +641,24 @@ class ProductsArrayHandler:
                         if "date_validation_error" in merged_entity:
                             del merged_entity["date_validation_error"]
                             print(f"ProductsArrayHandler: Cleared date_validation_error for {existing_desc} (valid date provided)")
+                    
+                    # Handle pincode validation error updates
+                    if "pincode_validation_error" in reextracted_product:
+                        # Only update if there's actually an error message
+                        if reextracted_product["pincode_validation_error"]:
+                            merged_entity["pincode_validation_error"] = reextracted_product["pincode_validation_error"]
+                            print(f"ProductsArrayHandler: Updated pincode_validation_error for {existing_desc}")
+                        else:
+                            # Empty error message means clear the error
+                            if "pincode_validation_error" in merged_entity:
+                                del merged_entity["pincode_validation_error"]
+                                print(f"ProductsArrayHandler: Cleared empty pincode_validation_error for {existing_desc}")
+                    
+                    # Clear pincode validation error if valid location data is provided
+                    if reextracted_product.get("pincode") and reextracted_product.get("city") and reextracted_product.get("state") and not reextracted_product.get("pincode_validation_error"):
+                        if "pincode_validation_error" in merged_entity:
+                            del merged_entity["pincode_validation_error"]
+                            print(f"ProductsArrayHandler: Cleared pincode_validation_error for {existing_desc} (valid location provided)")
 
                 # Apply global supplementary data to fields that are missing or None
                 for field, value in supplementary_data.items():
@@ -650,10 +668,14 @@ class ProductsArrayHandler:
                 
 
 
-                # Final cleanup: Clear date validation error if delivery date exists and is valid
+                # Final cleanup: Clear validation errors if valid data exists
                 if merged_entity.get("deliveryDate") and "date_validation_error" in merged_entity:
                     del merged_entity["date_validation_error"]
                     print(f"ProductsArrayHandler: Final cleanup - cleared date_validation_error for valid delivery date")
+                
+                if merged_entity.get("pincode") and merged_entity.get("city") and merged_entity.get("state") and "pincode_validation_error" in merged_entity:
+                    del merged_entity["pincode_validation_error"]
+                    print(f"ProductsArrayHandler: Final cleanup - cleared pincode_validation_error for valid location data")
                 
                 merged_products.append(merged_entity)
 

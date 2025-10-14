@@ -23,7 +23,7 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
     
     # Show captured entities if any
     if extracted_entities:
-        message_parts.append("✅ **Correctly Identified**")
+        message_parts.append("**Identified**")
         
         # Check if we have common fields across all entities
         common_fields = {}
@@ -103,29 +103,30 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
     actual_missing_fields = []
     
     for field in missing_fields:
-        if "date" in field.lower() and ("past" in field.lower() or "invalid" in field.lower() or "kindly" in field.lower()):
+        if ("date" in field.lower() and ("past" in field.lower() or "invalid" in field.lower() or "kindly" in field.lower())) or \
+           ("pincode" in field.lower() and ("could not find" in field.lower() or "invalid" in field.lower())):
             error_messages.append(field)
         else:
             actual_missing_fields.append(field)
     
     # Show error messages if any
     if error_messages:
-        message_parts.append("❌ **Invalid Details**")
+        message_parts.append("**Invalid Details**")
         for error in error_messages:
             message_parts.append(f"• {error}")
         message_parts.append("")
     
     # Show missing information if any
     if actual_missing_fields:
-        message_parts.append("⚠️ **Missing Details**")
+        message_parts.append("**Missing Details**")
         
         field_mapping = {
-            "How many items do you need (quantity)?": "• Quantity: —",
-            "What is the required delivery date?": "• Delivery Date: —",
-            "What is the delivery state?": "• Delivery State: —",
-            "What is the delivery city?": "• Delivery City: —", 
-            "What is the delivery pincode?": "• Pin Code / ZIP: —",
-            "Where should the items be delivered?": "• Delivery City: —\n• Delivery State: —\n• Pin Code / ZIP: —"
+            "How many items do you need (quantity)?": "• Quantity",
+            "What is the required delivery date?": "• Delivery Date",
+            "What is the delivery state?": "• Delivery State",
+            "What is the delivery city?": "• Delivery City",
+            "What is the delivery pincode?": "• Pin Code / ZIP",
+            "Where should the items be delivered?": "• Delivery City\n• Delivery State\n• Pin Code / ZIP"
         }
         
         for field in actual_missing_fields:
@@ -133,48 +134,25 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
                 message_parts.append(field_mapping[field])
             else:
                 if "quantity" in field.lower():
-                    message_parts.append("• Quantity: —")
+                    message_parts.append("• Quantity")
                 elif "delivery date" in field.lower():
-                    message_parts.append("• Delivery Date: —")
+                    message_parts.append("• Delivery Date")
                 elif "state" in field.lower():
-                    message_parts.append("• Delivery State: —")
+                    message_parts.append("• Delivery State")
                 elif "city" in field.lower():
-                    message_parts.append("• Delivery City: —")
+                    message_parts.append("• Delivery City")
                 elif "pincode" in field.lower():
-                    message_parts.append("• Pin Code / ZIP: —")
+                    message_parts.append("• Pin Code / ZIP")
                 elif "delivery" in field.lower() or "location" in field.lower():
-                    message_parts.append("• Delivery City: —")
-                    message_parts.append("• Delivery State: —")
-                    message_parts.append("• Pin Code / ZIP: —")
+                    message_parts.append("• Delivery City")
+                    message_parts.append("• Delivery State")
+                    message_parts.append("• Pin Code / ZIP")
                 else:
-                    message_parts.append(f"• {field}: —")
+                    message_parts.append(f"• {field}")
         message_parts.append("")
     
     if error_messages or actual_missing_fields:
         message_parts.append("Please provide the correct or missing information so I can continue with your request.")
-        message_parts.append("")
-        message_parts.append("What would you like to update?")
-        
-        # Add action buttons based on missing fields
-        action_buttons = []
-        for field in missing_fields:
-            if "quantity" in field.lower():
-                action_buttons.append("🔢 Add Quantity")
-            elif "delivery date" in field.lower():
-                action_buttons.append("📅 Update Delivery Date")
-            elif "state" in field.lower():
-                action_buttons.append("📍 Add Delivery State")
-            elif "city" in field.lower():
-                action_buttons.append("📍 Add Delivery City")
-            elif "pincode" in field.lower():
-                action_buttons.append("🔢 Add Pin Code")
-            elif "delivery" in field.lower() or "location" in field.lower():
-                action_buttons.append("📍 Add Delivery Location")
-                action_buttons.append("🔢 Add Pin Code")
-        
-        # Remove duplicates and add to message
-        unique_buttons = list(dict.fromkeys(action_buttons))
-        message_parts.extend(unique_buttons)
     
     return "\n".join(message_parts)
 

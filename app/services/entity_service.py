@@ -13,7 +13,7 @@ from typing import Dict
 
 from ..services.openai_service import OpenAIService
 from ..utils.datetime_utils import format_date_display
-from ..services.location_service import LocationService
+from ..utils.pincode_lookup import get_location_from_pincode_async
 
 
 class EntityService:
@@ -21,7 +21,6 @@ class EntityService:
 
     def __init__(self, openai_service=None):
         self.openai_service = openai_service or OpenAIService()
-        self.location_service = LocationService()
 
     async def extract_entities(self, message: str, context: dict = None, workflow_type: str = "buy_something") -> dict:
         """
@@ -959,8 +958,7 @@ class EntityService:
 
     async def _auto_fill_location_from_pincode(self, products: list) -> list:
         """
-        Auto-fill city and state from pincode for products that have pincode but missing city/state.
-        Uses local LocationService instead of external API for better reliability.
+        Auto-fill city and state from pincode using direct API lookup.
         
         Args:
             products: List of product entities
@@ -980,44 +978,30 @@ class EntityService:
                     # Validate pincode format first
                     clean_pincode = str(pincode).strip()
                     if not clean_pincode.isdigit() or len(clean_pincode) != 6:
-                        updated_product["pincode_validation_error"] = f"Invalid pincode format '{pincode}'. Please provide a valid 6-digit Indian pincode."
-                        updated_product["pincode"] = None  # Clear invalid pincode
                         print(f"EntityService: Invalid pincode format: {pincode}")
                         updated_products.append(updated_product)
                         continue
                     
-                    location_data = await self.location_service.get_coordinates_from_pincode(clean_pincode)
+                    location_data = await get_location_from_pincode_async(clean_pincode)
                     if location_data:
                         city = location_data.get("city", "")
                         state = location_data.get("state", "")
                         
-                        # Handle exact matches
-                        if city and state and not city.endswith(" Region") and city != "Unknown":
-                            if not updated_product.get("city"):
-                                updated_product["city"] = city
-                                print(f"EntityService: Auto-filled city '{city}' from pincode {pincode}")
-                            
-                            if not updated_product.get("state"):
-                                updated_product["state"] = state
-                                print(f"EntityService: Auto-filled state '{state}' from pincode {pincode}")
+                        if not updated_product.get("city") and city:
+                            updated_product["city"] = city
+                            print(f"EntityService: Auto-filled city '{city}' from pincode {pincode}")
                         
-                        # Handle regional approximations - only fill state, leave city empty for user input
-                        elif state and state != "Unknown":
-                            if not updated_product.get("state"):
-                                updated_product["state"] = state
-                                print(f"EntityService: Auto-filled state '{state}' from pincode {pincode} (regional approximation)")
-                            print(f"EntityService: Exact city not found for pincode {pincode}, state filled from region")
-                        
-                        else:
-                            # LocationService returned data but couldn't determine location
-                            updated_product["pincode_validation_error"] = f"I couldn't recognize pincode '{pincode}'. Please provide the complete address (State, City, and Pincode)."
-                            updated_product["pincode"] = None  # Clear invalid pincode
-                            print(f"EntityService: Could not determine location for pincode {pincode}")
+                        if not updated_product.get("state") and state:
+                            updated_product["state"] = state
+                            print(f"EntityService: Auto-filled state '{state}' from pincode {pincode}")
                     else:
-                        # LocationService returned None - complete failure
-                        updated_product["pincode_validation_error"] = f"I couldn't recognize pincode '{pincode}'. Please provide the complete address (State, City, and Pincode)."
-                        updated_product["pincode"] = None  # Clear invalid pincode
                         print(f"EntityService: No location data returned for pincode {pincode}")
+                        # Set pincode, city, and state to None when no location found
+                        updated_product["pincode"] = None
+                        updated_product["city"] = None
+                        updated_product["state"] = None
+                        updated_product["pincode_validation_error"] = f"Could not find location for pincode {pincode}. Please enter valid pincode"
+                        print(f"EntityService: Set pincode, city, and state to None for invalid pincode {pincode}")
                 except Exception as e:
                     print(f"EntityService: Error fetching location for pincode {pincode}: {e}")
             
