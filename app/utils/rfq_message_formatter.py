@@ -21,7 +21,7 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
 
     # --- Captured Entities ---
     if extracted_entities:
-        message_parts.append("Identified:")
+        message_parts.append("✅ *Identified:*")
 
         # Detect common fields (delivery details common to all products)
         common_fields = {}
@@ -47,7 +47,7 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
             specs = entity.get('remarks', '')
 
             # Main product line
-            line = f"• {description}"
+            line = f"• *{description}*"
             if quantity:
                 line += f" – {quantity}"
             if unit:
@@ -114,14 +114,14 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
 
     # Invalid details section
     if error_messages:
-        message_parts.append("Invalid Details:")
+        message_parts.append("❌ *Invalid Details:*")
         for error in error_messages:
             message_parts.append(f"• {error}")
         message_parts.append("")
 
     # Missing details section
     if actual_missing_fields:
-        message_parts.append("Missing Details:")
+        message_parts.append("⚠️ *Missing Details:*")
 
         field_mapping = {
             "How many items do you need (quantity)?": "• Quantity",
@@ -178,7 +178,7 @@ def format_rfq_entities_with_global_fields(
 
     # --- Display Captured Entities ---
     if extracted_entities or global_fields:
-        message_parts.append("Identified:")
+        message_parts.append("✅ *Identified:*")
         message_parts.append("")
 
         # Show individual product entities
@@ -194,7 +194,7 @@ def format_rfq_entities_with_global_fields(
             specs = entity.get("remarks")
 
             # Product line
-            line = f"• {description}"
+            line = f"• *{description}*"
             if quantity:
                 line += f" – {quantity}"
             if unit:
@@ -250,14 +250,14 @@ def format_rfq_entities_with_global_fields(
 
     # Invalid details
     if error_messages:
-        message_parts.append("Invalid Details:")
+        message_parts.append("❌ *Invalid Details:*")
         for error in error_messages:
             message_parts.append(f"• {error}")
         message_parts.append("")
 
     # Missing details
     if actual_missing_fields:
-        message_parts.append("Missing Details:")
+        message_parts.append("⚠️ *Missing Details:*")
 
         field_mapping = {
             "How many items do you need (quantity)?": "• Quantity",
