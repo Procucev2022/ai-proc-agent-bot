@@ -240,7 +240,8 @@ class ChatService:
                     "registration_choice_presented", "registration_type_choice_presented",
                     "profile_selection_retry_presented", "role_menu_presented",
                     "redirected_to_buyer_registration", "redirected_to_seller_registration",
-                    "intent_mismatch_handled", "intent_mismatch_retry_sent"
+                    "intent_mismatch_handled", "intent_mismatch_retry_sent", "new_user_registration_presented",
+                    "buyer_options_presented"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
@@ -341,6 +342,18 @@ class ChatService:
                                 return {"status": "registration_completed", "message": "Buyer registration successful - awaiting approval"}
                     else:
                         return {"status": "error", "error": "Session not found after registration"}
+                elif auth_status == "buyer_options_presented":
+                    # Buyer options were presented - authentication is complete, return to main flow
+                    logger.info(f"Buyer options presented - authentication completed for {user_phone}")
+                    user = await self.authentication_service.validate_token(user_phone)
+                    if user:
+                        # Clear authentication workflow state
+                        session.workflow_type = None
+                        session.workflow_state = {}
+                        await self.session_manager.save_session(session, None)
+                        return {"status": "buyer_options_presented", "message": "Buyer options presented"}
+                    else:
+                        return {"status": "error", "error": "Session not found after buyer options presentation"}
                 elif auth_status in ["authentication_completed", "profile_selected_and_authenticated"]:
                     # Authentication completed - check user type before processing
                     user_type = auth_result.get("user_type")
@@ -2587,7 +2600,7 @@ class ChatService:
 
             # Skip OTP-like messages and auth/registration flow responses
             # BUT ONLY FOR TRACKING - these messages still need to be processed by auth orchestrator
-            if self._is_auth_flow_response(message_content, intent):
+            if self._is_auth_flow_response(message_content, intent, session):
                 logger.info(f"Not tracking auth/registration flow response (but will still process): '{str(message_content)[:50]}...' with intent: {intent}")
                 return
 
@@ -2606,7 +2619,7 @@ class ChatService:
         except Exception as e:
             logger.error(f"Error tracking meaningful message: {e}")
 
-    def _is_auth_flow_response(self, message_content: str, intent: str) -> bool:
+    def _is_auth_flow_response(self, message_content: str, intent: str, session: ConversationSession = None) -> bool:
         """Check if this message is an auth/registration flow response that shouldn't be processed as business intent."""
         try:
             # Handle non-string message content (like interactive button responses)
@@ -2624,7 +2637,6 @@ class ChatService:
             # These responses might be answers to optional field questions or RFQ confirmations
             if message_lower in ["yes", "y", "no", "n", "confirm", "correct", "ok", "restart", "wrong", "incorrect", "skip", "exit"]:
                 # Check if user has active workflow with pending optional fields or confirmations
-                session = session_context.get()
                 if session and session.workflow_state:
                     has_pending_optional = bool(
                         session.workflow_state.get("pending_optional_rfq") or
@@ -2680,7 +2692,7 @@ class ChatService:
             else:
                 # No tracked message - check if current message is an auth flow response
                 current_intent = current_intent_result.get('intent', '')
-                if self._is_auth_flow_response(current_message, current_intent):
+                if self._is_auth_flow_response(current_message, current_intent, session):
                     logger.info(f"No meaningful message tracked and current message is auth flow response. Creating default general inquiry.")
                     # Return a default general inquiry since user completed auth/registration without meaningful business request
                     default_message = "What can I assist you with today?"
