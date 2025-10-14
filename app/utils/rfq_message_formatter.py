@@ -79,7 +79,7 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
         if common_fields:
             message_parts.append("")
             if len(extracted_entities) > 1:
-                message_parts.append("For all items:")
+                message_parts.append("*For all items:*")
 
             if common_fields.get('deliveryDate'):
                 delivery_date = common_fields['deliveryDate']
@@ -156,7 +156,7 @@ def format_rfq_entities_message(extracted_entities: List[Dict[str, Any]], missin
         message_parts.append("")
 
     if error_messages or actual_missing_fields:
-        message_parts.append("Please provide the correct or missing information so I can continue with your request.")
+        message_parts.append("Please share the missing or invalid details to continue.")
 
     return "\n".join(message_parts)
 
@@ -214,7 +214,7 @@ def format_rfq_entities_with_global_fields(
         if global_fields and any(global_fields.values()):
             message_parts.append("")
             if len(extracted_entities) > 1:
-                message_parts.append("For all items:")
+                message_parts.append("*For all items:*")
 
             if global_fields.get("deliveryDate"):
                 delivery_date = global_fields["deliveryDate"]
@@ -293,7 +293,7 @@ def format_rfq_entities_with_global_fields(
 
     # --- Prompt for Correction / Action Buttons ---
     if error_messages or actual_missing_fields:
-        message_parts.append("Please provide the correct or missing information so I can continue with your request.")
+        message_parts.append("Please share the missing or invalid details to continue.")
 
 
     return "\n".join(message_parts)
