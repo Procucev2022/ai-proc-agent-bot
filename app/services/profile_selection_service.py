@@ -283,38 +283,42 @@ class ProfileSelectionService:
                 return await self._handle_intent_mismatch(user_phone, session, "buyer", profiles)
 
             if len(buyer_profiles) == 1:
-                # Single buyer profile - auto-select and show buying options
+                # Single buyer profile - show selection options
                 profile = buyer_profiles[0]
-
-                # Set active profile first
-                result = await self._set_active_profile_and_proceed(
-                    user_phone, profile, session, message, "buy_something"
-                )
-
-                if result.get('status') != 'profile_selected_and_authenticated':
-                    return result
-
-                # Show buying options with buttons
-                buying_message = (
-                    f"Got it, you'd like to buy items!\n"
-                    f"Let's continue with your Buyer profile ({profile['email']}).\n"
-                    f"What would you like to do?"
-                )
-                buttons_config = [
-                    {"id": "create_rfq", "title": "Create new  RFQ"},
-                    {"id": "search_bfs", "title": "Search Stocks"}
+                
+                message_parts = [
+                    "I understand you want to buy items. Please choose:"
                 ]
                 
-                await self.whatsapp_service.send_configurable_buttons(
-                    user_phone,
-                    buying_message,
-                    buttons_config
-                )
-
+                profile_options = [
+                    {
+                        "number": 1,
+                        "profile": profile,
+                        "display": f"{profile['email']} — Buyer"
+                    },
+                    {
+                        "number": 2,
+                        "action": "register_buyer",
+                        "display": "Register a new Buyer account"
+                    }
+                ]
+                
+                message_parts.append(f" 1️⃣ {profile['email']} — Buyer")
+                message_parts.append(f" 2️⃣ Register a new Buyer account")
+                
+                # Store context in session
+                session.workflow_state = session.workflow_state or {}
+                session.workflow_state['profile_selection_stage'] = 'buyer_intent'
+                session.workflow_state['profile_options'] = profile_options
+                session.workflow_state['original_message'] = message
+                session.workflow_state['original_intent'] = intent_result
+                
+                full_message = "\n".join(message_parts)
+                await self.whatsapp_service.send_message(user_phone, full_message)
+                
                 return {
-                    "status": "buyer_options_presented",
-                    "user_type": profile['role'],
-                    "email": profile['email']
+                    "status": "single_buyer_profile_selection_presented",
+                    "options_count": len(profile_options)
                 }
 
             else:
@@ -568,6 +572,22 @@ class ProfileSelectionService:
     async def _parse_profile_selection(self, message: str, profile_options: List[Dict]) -> Optional[Dict]:
         """Parse user's profile selection from message using intelligent analysis."""
         try:
+            message_lower = message.strip().lower()
+            
+            # Check for explicit existing account selection phrases
+            existing_phrases = [
+                'use existing', 'existing account', 'continue with existing', 
+                'use current', 'current account', 'existing profile',
+                'continue with current', 'use my account', 'my existing'
+            ]
+            
+            # Check for new registration phrases  
+            new_phrases = [
+                'new account', 'register new', 'create new', 'new profile',
+                'register a new', 'create a new', 'new buyer', 'new seller',
+                'register me', 'sign me up', 'create account'
+            ]
+            
             # Use the user selection tool for comprehensive analysis if available
             if self.user_selection_tool:
                 analysis_result = await self.user_selection_tool.analyze_user_selection(message, profile_options)
@@ -599,13 +619,13 @@ class ProfileSelectionService:
                 # If analysis suggests clarification is needed or no clear match
                 return None
             else:
-                # Fallback to simple parsing if user selection tool is not available
-                return await self._simple_parse_profile_selection(message, profile_options)
+                # Enhanced fallback parsing with phrase detection
+                return await self._enhanced_simple_parse_profile_selection(message, profile_options)
 
         except Exception as e:
             logger.error(f"Error parsing profile selection: {e}")
             # Fallback to simple parsing on error
-            return await self._simple_parse_profile_selection(message, profile_options)
+            return await self._enhanced_simple_parse_profile_selection(message, profile_options)
 
     def _fuzzy_email_match(self, user_input: str, target_email: str) -> Dict[str, Any]:
         """Fuzzy match user input against target email for typos/incomplete entries."""
@@ -673,23 +693,51 @@ class ProfileSelectionService:
         except Exception:
             return 0.0
 
-    async def _simple_parse_profile_selection(self, message: str, profile_options: List[Dict]) -> Optional[Dict]:
-        """Simple fallback parsing for profile selection."""
+    async def _enhanced_simple_parse_profile_selection(self, message: str, profile_options: List[Dict]) -> Optional[Dict]:
+        """Enhanced fallback parsing for profile selection with phrase detection."""
         try:
             message = message.strip()
             message_lower = message.lower()
             
+            # Check for explicit existing account selection phrases
+            existing_phrases = [
+                'use existing', 'existing account', 'continue with existing', 
+                'use current', 'current account', 'existing profile',
+                'continue with current', 'use my account', 'my existing'
+            ]
+            
+            # Check for new registration phrases  
+            new_phrases = [
+                'new account', 'register new', 'create new', 'new profile',
+                'register a new', 'create a new', 'new buyer', 'new seller',
+                'register me', 'sign me up', 'create account'
+            ]
+            
             # Check for registration intent first
             registration_type = await self._detect_registration_intent(message)
             if registration_type:
-                logger.info(f"Simple parsing detected registration intent: {registration_type}")
+                logger.info(f"Enhanced parsing detected registration intent: {registration_type}")
                 return {
                     "action": f"register_{registration_type}",
                     "display": f"Register as {registration_type.title()}",
                     "registration_type": registration_type
                 }
+            
+            # Check for new registration phrases
+            for phrase in new_phrases:
+                if phrase in message_lower:
+                    for option in profile_options:
+                        if 'action' in option and 'register' in option['action']:
+                            return option
+            
+            # Check for existing account phrases
+            for phrase in existing_phrases:
+                if phrase in message_lower:
+                    for option in profile_options:
+                        if 'profile' in option:
+                            return option
 
-            # Try to parse as number
+            # Try number parsing
             try:
                 selection_num = int(message)
                 for option in profile_options:
@@ -698,39 +746,27 @@ class ProfileSelectionService:
             except ValueError:
                 pass
 
-            # First try exact matches
-            for option in profile_options:
-                if 'profile' in option:
-                    profile = option['profile']
-                    email = profile.get('email', '').lower()
-                    role = profile.get('role', '').lower()
+            # Use AI analysis if phrases not found
+            if hasattr(self, 'user_selection_tool') and self.user_selection_tool:
+                try:
+                    analysis_result = await self.user_selection_tool.analyze_user_selection(message, profile_options)
+                    if analysis_result.get('selected_option') and not analysis_result.get('requires_clarification'):
+                        selected_num = analysis_result['selected_option']
+                        for option in profile_options:
+                            if option.get('number') == selected_num:
+                                return option
+                except Exception:
+                    pass
 
-                    if email in message_lower or role in message_lower:
-                        return option
-                elif 'action' in option:
-                    action = option['action'].lower()
-                    if 'register' in message_lower and ('buyer' in action or 'seller' in action):
-                        return option
-
-            # Try fuzzy email matching if no exact match
-            best_match = None
-            best_confidence = 0.0
-
-            for option in profile_options:
-                if 'profile' in option:
-                    profile = option['profile']
-                    email = profile.get('email', '')
-
-                    fuzzy_result = self._fuzzy_email_match(message_lower, email)
-                    if fuzzy_result['confidence'] > best_confidence and fuzzy_result['confidence'] > 0.6:
-                        best_match = option
-                        best_confidence = fuzzy_result['confidence']
-
-            return best_match
+            return None
 
         except Exception as e:
-            logger.error(f"Error in simple profile selection parsing: {e}")
+            logger.error(f"Error in enhanced profile selection parsing: {e}")
             return None
+    
+    async def _simple_parse_profile_selection(self, message: str, profile_options: List[Dict]) -> Optional[Dict]:
+        """Simple fallback parsing for profile selection."""
+        return await self._enhanced_simple_parse_profile_selection(message, profile_options)
 
     async def _process_selected_profile(self, user_phone: str, selected_option: Dict,
                                       session: ConversationSession) -> Dict[str, Any]:
@@ -770,9 +806,36 @@ class ProfileSelectionService:
 
                 # Determine next action based on selection stage
                 if selection_stage == 'buyer_intent':
-                    return await self._set_active_profile_and_proceed(
+                    # Set active profile and show buying options
+                    result = await self._set_active_profile_and_proceed(
                         user_phone, profile, session, original_message, "buy_something"
                     )
+                    
+                    if result.get('status') != 'profile_selected_and_authenticated':
+                        return result
+                    
+                    # Show buying options with buttons
+                    buying_message = (
+                        f"Got it, you'd like to buy items!\n"
+                        f"Let's continue with your Buyer profile ({profile['email']}).\n"
+                        f"What would you like to do?"
+                    )
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new  RFQ"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                    
+                    await self.whatsapp_service.send_configurable_buttons(
+                        user_phone,
+                        buying_message,
+                        buttons_config
+                    )
+                    
+                    return {
+                        "status": "buyer_options_presented",
+                        "user_type": profile['role'],
+                        "email": profile['email']
+                    }
                 elif selection_stage == 'seller_intent':
                     return await self._set_active_profile_and_proceed(
                         user_phone, profile, session, original_message, "sell_something"
