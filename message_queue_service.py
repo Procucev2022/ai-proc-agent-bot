@@ -134,20 +134,34 @@ class MessageQueueService:
         """
         
         try:
-            # Extract message details
-            timestamp = float(webhook_data.get("timestamp", time.time()))
+            # Extract and parse timestamp
+            timestamp_raw = webhook_data.get("timestamp", time.time())
+            
+            # Handle string timestamp format '2025-10-15 19:20:49'
+            if isinstance(timestamp_raw, str):
+                from datetime import datetime
+                dt = datetime.strptime(timestamp_raw, '%Y-%m-%d %H:%M:%S')
+                timestamp = dt.timestamp()
+            else:
+                timestamp = float(timestamp_raw)
+            
             user_phone = webhook_data.get("from", "").lstrip('+')
             message_id = webhook_data.get("message_id", f"{user_phone}_{timestamp}")
             message_type = webhook_data.get("type", "text")
             
-            # Extract content based on message type
-            content = ""
-            if message_type == "text":
-                content = webhook_data.get("text", {}).get("body", "")
-            elif message_type == "image":
-                content = webhook_data.get("image", {}).get("caption", "[Image]")
-            elif message_type == "audio":
-                content = "[Audio message]"
+            # Extract content - ICS format uses 'content' field directly
+            content = webhook_data.get("content", "")
+            
+            # Fallback for other formats
+            if not content:
+                if message_type == "text":
+                    content = webhook_data.get("text", {}).get("body", "")
+                elif message_type == "image":
+                    content = webhook_data.get("image", {}).get("caption", "[Image]")
+                elif message_type == "document":
+                    content = ""
+                else:
+                    content = ""
 
             # Create Message object
             message = Message(
