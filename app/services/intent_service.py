@@ -170,6 +170,7 @@ class IntentService:
         all_scores = {
             "buy_something": 20,
             "sell_something": 10,
+            "bfs_search": 10,
             "account_switch": 5,
             "register_account": 5,
             "general_inquiry": 20,
@@ -212,7 +213,9 @@ class IntentService:
             return "support", 80
         elif any(keyword in message_lower for keyword in ["status", "track", "progress", "update", "rfq id", "reference", "submitted", "pending", "completed", "check my order", "my request", "my rfq", "order status", "quote status", "vendor responses", "response received", "when will i receive"]):
             return "rfq_status_check", 70
-        elif any(keyword in message_lower for keyword in ["do you have", "available", "stock", "inventory", "search", "rfq", "quote", "buy", "purchase", "need to buy", "looking for", "need"]):
+        elif any(keyword in message_lower for keyword in ["do you have", "available", "stock", "inventory", "bfs", "buy from stock", "immediate", "urgent", "right now", "today", "asap", "quick delivery", "buy directly", "purchase now", "direct purchase", "what's in stock", "show me stock", "search inventory"]):
+            return "bfs_search", 70
+        elif any(keyword in message_lower for keyword in ["search", "rfq", "quote", "buy", "purchase", "need to buy", "looking for", "need"]):
             return "buy_something", 60
         elif any(keyword in message_lower for keyword in ["sell", "selling", "offer", "provide", "vendor", "supplier", "want to sell", "have to sell", "we offer", "can supply"]):
             return "sell_something", 60

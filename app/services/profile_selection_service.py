@@ -54,6 +54,14 @@ class ProfileSelectionService:
             
             logger.info(f"Profile selection for {user_phone}: intent={intent}, confidence={confidence}")
             
+            # Check for explicit registration intent first
+            registration_intent = await self._detect_registration_intent(message)
+            if registration_intent:
+                if registration_intent == 'buyer':
+                    return await self._redirect_to_buyer_registration(user_phone, session, message)
+                elif registration_intent == 'seller':
+                    return await self._redirect_to_seller_registration(user_phone, session, message)
+            
             # Get user profiles from cache or API
             profiles_result = await self._get_user_profiles(user_phone, message, session)
             
@@ -72,7 +80,7 @@ class ProfileSelectionService:
 
             # Case 3: Ambiguous buying intent (verb but no object)
             elif intent == 'buy_something' and 50 <= confidence <= 70:
-                return await self._handle_ambiguous_buying_intent(user_phone, profiles, message, session, intent_result)
+                return await self._handle_buyer_intent(user_phone, profiles, message, session, intent_result)
 
             # Case 3: Seller Intent Detected
             elif intent == 'sell_something' and confidence > 70:
@@ -94,6 +102,14 @@ class ProfileSelectionService:
                                               session: ConversationSession) -> Dict[str, Any]:
         """Handle user response to profile selection."""
         try:
+            # Check if awaiting registration type choice
+            if session.workflow_state.get('awaiting_registration_type'):
+                return await self._handle_registration_type_response(user_phone, message, session)
+            
+            # Check if handling intent mismatch response
+            if session.workflow_state.get('profile_selection_stage') == 'intent_mismatch':
+                return await self._handle_intent_mismatch_response(user_phone, message, session)
+            
             # Get stored profile options from session
             profile_options = session.workflow_state.get('profile_options', [])
 
@@ -164,68 +180,137 @@ class ProfileSelectionService:
                 continue
 
         return profiles
+    
+    def _extract_user_name(self, profiles: List[Dict]) -> Optional[str]:
+        """Extract user's first name from profiles."""
+        try:
+            for profile in profiles:
+                user_data = profile.get('user_data', {})
+                full_name = user_data.get('fullName')
+                if full_name and full_name.strip():
+                    # Extract first name
+                    first_name = full_name.strip().split()[0]
+                    return first_name.title()
+            return None
+        except Exception as e:
+            logger.warning(f"Error extracting user name: {e}")
+            return None
 
     async def _handle_neutral_greeting(self, user_phone: str, profiles: List[Dict],
                                      session: ConversationSession) -> Dict[str, Any]:
         """Handle Case 1: Neutral/Greeting Start."""
         try:
             # Group profiles by role
-            buyer_profiles = [p for p in profiles if p['role'] == 'buyer']
-            seller_profiles = [p for p in profiles if p['role'] == 'seller']
-
-            # Build profile selection message
-            message_parts = [
-                "👋 Hi there! I can help you with both Buying (creating or checking RFQs) and Selling (responding to buyer requests).",
-                "",
-                "Please select your profile to continue:"
-            ]
-
-            profile_options = []
-            option_num = 1
-
-            # Add buyer profiles
-            for profile in buyer_profiles:
-                message_parts.append(f" {option_num}️⃣ {profile['email']} — Buyer")
+            buyer_profiles = [p for p in profiles if p.get('role') == 'buyer']
+            seller_profiles = [p for p in profiles if p.get('role') == 'seller']
+            
+            # Get user's name from the first available profile
+            user_name = self._extract_user_name(profiles)
+            greeting = f"👋 Hi {user_name}!" if user_name else "👋 Hi there!"
+            
+            # Case: Only buyer profile exists
+            if buyer_profiles and not seller_profiles:
+                profile = buyer_profiles[0]
+                message_parts = [
+                    greeting,
+                    "I can help you with Buying (creating/checking RFQs) ",
+                    "",
+                    "Please select your profile to continue:",
+                    f" 1️⃣ {profile['email']} — Buyer",
+                    " 2️⃣ ➕ Add or Register a new profile",
+                    "",
+                    "Reply with the number corresponding to your account to continue."
+                ]
+                
+                profile_options = [
+                    {"number": 1, "profile": profile, "display": f"{profile['email']} — Buyer"},
+                    {"number": 2, "action": "register_new", "display": "➕ Add or Register a new profile"}
+                ]
+            
+            # Case: Only seller profile exists
+            elif seller_profiles and not buyer_profiles:
+                profile = seller_profiles[0]
+                message_parts = [
+                    greeting,
+                    "I can help you with Selling (responding to buyer requests).",
+                    "",
+                    "Please select your profile to continue:",
+                    f" 1️⃣ {profile['email']} — Seller",
+                    " 2️⃣ ➕ Add or Register a new profile",
+                    "",
+                    "Reply with the number corresponding to your account to continue."
+                ]
+                
+                profile_options = [
+                    {"number": 1, "profile": profile, "display": f"{profile['email']} — Seller"},
+                    {"number": 2, "action": "register_new", "display": "➕ Add or Register a new profile"}
+                ]
+            
+            # Case: Both buyer and seller profiles exist
+            else:
+                message_parts = [
+                    greeting,
+                    "I can help you with both Buying (creating/checking RFQs) and Selling (responding to buyer requests).",
+                    "",
+                    "Please select your profile to continue:"
+                ]
+                
+                profile_options = []
+                option_num = 1
+                
+                # Add buyer profiles
+                for profile in buyer_profiles:
+                    message_parts.append(f" {option_num}️⃣ {profile['email']} — Buyer")
+                    profile_options.append({
+                        "number": option_num,
+                        "profile": profile,
+                        "display": f"{profile['email']} — Buyer"
+                    })
+                    option_num += 1
+                
+                # Add seller profiles
+                for profile in seller_profiles:
+                    message_parts.append(f" {option_num}️⃣ {profile['email']} — Seller")
+                    profile_options.append({
+                        "number": option_num,
+                        "profile": profile,
+                        "display": f"{profile['email']} — Seller"
+                    })
+                    option_num += 1
+                
+                # Add registration option
+                message_parts.append(f" {option_num}️⃣ ➕ Add or Register a new profile")
                 profile_options.append({
                     "number": option_num,
-                    "profile": profile,
-                    "display": f"{profile['email']} — Buyer"
+                    "action": "register_new",
+                    "display": "➕ Add or Register a new profile"
                 })
-                option_num += 1
-
-            # Add seller profiles
-            for profile in seller_profiles:
-                message_parts.append(f" {option_num}️⃣ {profile['email']} — Seller")
-                profile_options.append({
-                    "number": option_num,
-                    "profile": profile,
-                    "display": f"{profile['email']} — Seller"
-                })
-                option_num += 1
-
-
-
-            message_parts.append("")
-            message_parts.append("Reply with the number corresponding to your account to continue.")
-
-            # Store options in session
+                
+                message_parts.extend([
+                    "",
+                    "Reply with the number corresponding to your account to continue."
+                ])
+            
+            # Store in session for later reference
             session.workflow_state = session.workflow_state or {}
-            session.workflow_state['profile_selection_stage'] = 'neutral_greeting'
             session.workflow_state['profile_options'] = profile_options
-
-            # Send message
+            session.workflow_state['profile_selection_stage'] = 'neutral_greeting'
+            
+            # Send profile selection message
             full_message = "\n".join(message_parts)
             await self.whatsapp_service.send_message(user_phone, full_message)
-
+            
             return {
-                "status": "profile_selection_presented",
-                "selection_type": "neutral_greeting",
-                "options_count": len(profile_options)
+                "status": "profile_selection_sent",
+                "profiles_count": len(profiles),
+                "selection_type": "neutral_greeting"
             }
-
         except Exception as e:
             logger.error(f"Error handling neutral greeting for {user_phone}: {e}")
             return {"status": "error", "error": str(e)}
+
+
+
 
     async def _handle_buyer_intent(self, user_phone: str, profiles: List[Dict], message: str,
                                  session: ConversationSession, intent_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -234,25 +319,47 @@ class ProfileSelectionService:
             buyer_profiles = [p for p in profiles if p['role'] == 'buyer']
 
             if not buyer_profiles:
-                # No buyer profiles - redirect to registration
-                return await self._redirect_to_buyer_registration(user_phone, session, message)
+                # Case 7: Intent Mismatch - User wants to buy but only has Seller account(s)
+                return await self._handle_intent_mismatch(user_phone, session, "buyer", profiles)
 
             if len(buyer_profiles) == 1:
-                # Single buyer profile - auto-select and proceed
+                # Single buyer profile - show selection options
                 profile = buyer_profiles[0]
-
+                
                 message_parts = [
-                    f"Got it! You want to create an RFQ to buy items.",
-                    "",
-                    f"Let's continue with your Buyer profile ({profile['email']})."
+                    "I understand you want to buy items. Please choose:"
                 ]
-
-                await self.whatsapp_service.send_message(user_phone, "\n".join(message_parts))
-
-                # Set active profile and proceed to RFQ creation
-                return await self._set_active_profile_and_proceed(
-                    user_phone, profile, session, message, "buy_something"
-                )
+                
+                profile_options = [
+                    {
+                        "number": 1,
+                        "profile": profile,
+                        "display": f"{profile['email']} — Buyer"
+                    },
+                    {
+                        "number": 2,
+                        "action": "register_buyer",
+                        "display": "Register a new Buyer account"
+                    }
+                ]
+                
+                message_parts.append(f" 1️⃣ {profile['email']} — Buyer")
+                message_parts.append(f" 2️⃣ Register a new Buyer account")
+                
+                # Store context in session
+                session.workflow_state = session.workflow_state or {}
+                session.workflow_state['profile_selection_stage'] = 'buyer_intent'
+                session.workflow_state['profile_options'] = profile_options
+                session.workflow_state['original_message'] = message
+                session.workflow_state['original_intent'] = intent_result
+                
+                full_message = "\n".join(message_parts)
+                await self.whatsapp_service.send_message(user_phone, full_message)
+                
+                return {
+                    "status": "single_buyer_profile_selection_presented",
+                    "options_count": len(profile_options)
+                }
 
             else:
                 # Multiple buyer profiles - show selection
@@ -306,8 +413,8 @@ class ProfileSelectionService:
             seller_profiles = [p for p in profiles if p['role'] == 'seller']
 
             if not seller_profiles:
-                # No seller profiles - redirect to registration
-                return await self._redirect_to_seller_registration(user_phone, session, message)
+                # Case 7: Intent Mismatch - User wants to sell but only has Buyer account(s)
+                return await self._handle_intent_mismatch(user_phone, session, "seller", profiles)
 
             if len(seller_profiles) == 1:
                 # Single seller profile - auto-select and proceed
@@ -372,12 +479,24 @@ class ProfileSelectionService:
 
     async def _handle_rfq_status_check(self, user_phone: str, profiles: List[Dict],
                                      session: ConversationSession) -> Dict[str, Any]:
-        """Handle Case 4: RFQ Status Check."""
+        """Handle Case 4: RFQ Status Check - Common Intent (Buyer & Seller Applicable)."""
         try:
-            # Both buyers and sellers can check RFQ status
+            # Handle single profile case - proceed directly
+            if len(profiles) == 1:
+                profile = profiles[0]
+                role_display = "Buyer" if profile['role'] == 'buyer' else "Seller"
+                
+                # Auto-select single profile and proceed to RFQ status check
+                logger.info(f"Single profile found for RFQ status check: {profile['email']} ({role_display})")
+                return await self._set_active_profile_and_proceed(
+                    user_phone, profile, session, "check RFQ status", "rfq_status_check"
+                )
+            
+            # Multiple profiles case - ask user to choose
             message_parts = [
-                "I understand you'd like to check the RFQ status.",
-                "Please choose the profile you want to use for this request:"
+                "I understand you'd like to check an RFQ status.",
+                "",
+                "Please choose which profile you'd like to use:"
             ]
 
             profile_options = []
@@ -393,7 +512,8 @@ class ProfileSelectionService:
                 })
                 option_num += 1
 
-            # Support multiple profiles, not just 1 or 2
+            message_parts.append("")
+            message_parts.append("Reply with the number to continue.")
 
             # Store context in session
             session.workflow_state = session.workflow_state or {}
@@ -456,28 +576,35 @@ class ProfileSelectionService:
 
     async def _handle_no_profiles_found(self, user_phone: str, intent: str,
                                       session: ConversationSession) -> Dict[str, Any]:
-        """Handle when no profiles are found for the user."""
+        """Handle Case 6: New User (No Existing Profiles)."""
         try:
-            if intent == 'buy_something':
-                return await self._redirect_to_buyer_registration(user_phone, session, "")
-            elif intent == 'sell_something':
-                return await self._redirect_to_seller_registration(user_phone, session, "")
-            else:
-                # General case - ask what they want to do
-                message = (
-                    "Welcome! I can help you with procurement needs.\n\n"
-                    "Would you like to:\n"
-                    "• Register as a Buyer (to create RFQs)\n"
-                    "• Register as a Seller (to respond to RFQs)\n\n"
-                    "Please let me know how you'd like to proceed."
-                )
+            # Case 6: New User Registration Flow
+            message = (
+                "👋 Hi there! I don't see any registered accounts linked to this number or email.\n"
+                "Would you like to get started by creating a new profile?\n\n"
+                "Please select:\n"
+                " 1️⃣ Register as Buyer\n"
+                " 2️⃣ Register as Seller\n"
+                " 3️⃣ Exit"
+            )
 
-                await self.whatsapp_service.send_message(user_phone, message)
+            # Store registration options in session
+            profile_options = [
+                {"number": 1, "action": "register_buyer", "display": "Register as Buyer"},
+                {"number": 2, "action": "register_seller", "display": "Register as Seller"},
+                {"number": 3, "action": "exit", "display": "Exit"}
+            ]
 
-                return {
-                    "status": "registration_choice_presented",
-                    "reason": "no_profiles_found"
-                }
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state['profile_selection_stage'] = 'new_user_registration'
+            session.workflow_state['profile_options'] = profile_options
+
+            await self.whatsapp_service.send_message(user_phone, message)
+
+            return {
+                "status": "new_user_registration_presented",
+                "reason": "no_profiles_found"
+            }
 
         except Exception as e:
             logger.error(f"Error handling no profiles found for {user_phone}: {e}")
@@ -486,11 +613,40 @@ class ProfileSelectionService:
     async def _parse_profile_selection(self, message: str, profile_options: List[Dict]) -> Optional[Dict]:
         """Parse user's profile selection from message using intelligent analysis."""
         try:
+            message_lower = message.strip().lower()
+            
+            # Check for explicit existing account selection phrases
+            existing_phrases = [
+                'use existing', 'existing account', 'continue with existing', 
+                'use current', 'current account', 'existing profile',
+                'continue with current', 'use my account', 'my existing'
+            ]
+            
+            # Check for new registration phrases  
+            new_phrases = [
+                'new account', 'register new', 'create new', 'new profile',
+                'register a new', 'create a new', 'new buyer', 'new seller',
+                'register me', 'sign me up', 'create account'
+            ]
+            
             # Use the user selection tool for comprehensive analysis if available
             if self.user_selection_tool:
                 analysis_result = await self.user_selection_tool.analyze_user_selection(message, profile_options)
 
                 logger.info(f"Selection analysis: {analysis_result}")
+
+                # Check for registration intent first
+                register_info = analysis_result.get('register', {})
+                register_type = register_info.get('type')
+                
+                if register_type in ['buyer', 'seller']:
+                    logger.info(f"Registration intent detected in profile selection: {register_type}")
+                    # Create a special option for registration
+                    return {
+                        "action": f"register_{register_type}",
+                        "display": f"Register as {register_type.title()}",
+                        "registration_type": register_type
+                    }
 
                 # If analysis found a clear selection
                 if analysis_result.get('selected_option') and not analysis_result.get('requires_clarification'):
@@ -504,13 +660,13 @@ class ProfileSelectionService:
                 # If analysis suggests clarification is needed or no clear match
                 return None
             else:
-                # Fallback to simple parsing if user selection tool is not available
-                return await self._simple_parse_profile_selection(message, profile_options)
+                # Enhanced fallback parsing with phrase detection
+                return await self._enhanced_simple_parse_profile_selection(message, profile_options)
 
         except Exception as e:
             logger.error(f"Error parsing profile selection: {e}")
             # Fallback to simple parsing on error
-            return await self._simple_parse_profile_selection(message, profile_options)
+            return await self._enhanced_simple_parse_profile_selection(message, profile_options)
 
     def _fuzzy_email_match(self, user_input: str, target_email: str) -> Dict[str, Any]:
         """Fuzzy match user input against target email for typos/incomplete entries."""
@@ -578,12 +734,51 @@ class ProfileSelectionService:
         except Exception:
             return 0.0
 
-    async def _simple_parse_profile_selection(self, message: str, profile_options: List[Dict]) -> Optional[Dict]:
-        """Simple fallback parsing for profile selection."""
+    async def _enhanced_simple_parse_profile_selection(self, message: str, profile_options: List[Dict]) -> Optional[Dict]:
+        """Enhanced fallback parsing for profile selection with phrase detection."""
         try:
             message = message.strip()
+            message_lower = message.lower()
+            
+            # Check for explicit existing account selection phrases
+            existing_phrases = [
+                'use existing', 'existing account', 'continue with existing', 
+                'use current', 'current account', 'existing profile',
+                'continue with current', 'use my account', 'my existing'
+            ]
+            
+            # Check for new registration phrases  
+            new_phrases = [
+                'new account', 'register new', 'create new', 'new profile',
+                'register a new', 'create a new', 'new buyer', 'new seller',
+                'register me', 'sign me up', 'create account'
+            ]
+            
+            # Check for registration intent first
+            registration_type = await self._detect_registration_intent(message)
+            if registration_type:
+                logger.info(f"Enhanced parsing detected registration intent: {registration_type}")
+                return {
+                    "action": f"register_{registration_type}",
+                    "display": f"Register as {registration_type.title()}",
+                    "registration_type": registration_type
+                }
+            
+            # Check for new registration phrases
+            for phrase in new_phrases:
+                if phrase in message_lower:
+                    for option in profile_options:
+                        if 'action' in option and 'register' in option['action']:
+                            return option
+            
+            # Check for existing account phrases
+            for phrase in existing_phrases:
+                if phrase in message_lower:
+                    for option in profile_options:
+                        if 'profile' in option:
+                            return option
 
-            # Try to parse as number
+            # Try number parsing
             try:
                 selection_num = int(message)
                 for option in profile_options:
@@ -592,42 +787,27 @@ class ProfileSelectionService:
             except ValueError:
                 pass
 
-            # Try to match email or role keywords with fuzzy matching
-            message_lower = message.lower()
+            # Use AI analysis if phrases not found
+            if hasattr(self, 'user_selection_tool') and self.user_selection_tool:
+                try:
+                    analysis_result = await self.user_selection_tool.analyze_user_selection(message, profile_options)
+                    if analysis_result.get('selected_option') and not analysis_result.get('requires_clarification'):
+                        selected_num = analysis_result['selected_option']
+                        for option in profile_options:
+                            if option.get('number') == selected_num:
+                                return option
+                except Exception:
+                    pass
 
-            # First try exact matches
-            for option in profile_options:
-                if 'profile' in option:
-                    profile = option['profile']
-                    email = profile.get('email', '').lower()
-                    role = profile.get('role', '').lower()
-
-                    if email in message_lower or role in message_lower:
-                        return option
-                elif 'action' in option:
-                    action = option['action'].lower()
-                    if 'register' in message_lower and ('buyer' in action or 'seller' in action):
-                        return option
-
-            # Try fuzzy email matching if no exact match
-            best_match = None
-            best_confidence = 0.0
-
-            for option in profile_options:
-                if 'profile' in option:
-                    profile = option['profile']
-                    email = profile.get('email', '')
-
-                    fuzzy_result = self._fuzzy_email_match(message_lower, email)
-                    if fuzzy_result['confidence'] > best_confidence and fuzzy_result['confidence'] > 0.6:
-                        best_match = option
-                        best_confidence = fuzzy_result['confidence']
-
-            return best_match
+            return None
 
         except Exception as e:
-            logger.error(f"Error in simple profile selection parsing: {e}")
+            logger.error(f"Error in enhanced profile selection parsing: {e}")
             return None
+    
+    async def _simple_parse_profile_selection(self, message: str, profile_options: List[Dict]) -> Optional[Dict]:
+        """Simple fallback parsing for profile selection."""
+        return await self._enhanced_simple_parse_profile_selection(message, profile_options)
 
     async def _process_selected_profile(self, user_phone: str, selected_option: Dict,
                                       session: ConversationSession) -> Dict[str, Any]:
@@ -643,9 +823,21 @@ class ProfileSelectionService:
                     return await self._redirect_to_buyer_registration(user_phone, session, "")
                 elif action == 'register_seller':
                     return await self._redirect_to_seller_registration(user_phone, session, "")
+                elif action == 'exit':
+                    return await self._handle_exit_action(user_phone, session)
+            
+            # Handle direct registration intent detected in parsing
+            if 'registration_type' in selected_option:
+                registration_type = selected_option['registration_type']
+                logger.info(f"Processing direct registration intent: {registration_type}")
+                
+                if registration_type == 'buyer':
+                    return await self._redirect_to_buyer_registration(user_phone, session, "")
+                elif registration_type == 'seller':
+                    return await self._redirect_to_seller_registration(user_phone, session, "")
 
             # Handle profile selection
-            elif 'profile' in selected_option:
+            if 'profile' in selected_option:
                 profile = selected_option['profile']
 
                 # Get original context
@@ -655,9 +847,36 @@ class ProfileSelectionService:
 
                 # Determine next action based on selection stage
                 if selection_stage == 'buyer_intent':
-                    return await self._set_active_profile_and_proceed(
+                    # Set active profile and show buying options
+                    result = await self._set_active_profile_and_proceed(
                         user_phone, profile, session, original_message, "buy_something"
                     )
+                    
+                    if result.get('status') != 'profile_selected_and_authenticated':
+                        return result
+                    
+                    # Show buying options with buttons
+                    buying_message = (
+                        f"Got it, you'd like to buy items!\n"
+                        f"Let's continue with your Buyer profile ({profile['email']}).\n"
+                        f"What would you like to do?"
+                    )
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                    
+                    await self.whatsapp_service.send_configurable_buttons(
+                        user_phone,
+                        buying_message,
+                        buttons_config
+                    )
+                    
+                    return {
+                        "status": "buyer_options_presented",
+                        "user_type": profile['role'],
+                        "email": profile['email']
+                    }
                 elif selection_stage == 'seller_intent':
                     return await self._set_active_profile_and_proceed(
                         user_phone, profile, session, original_message, "sell_something"
@@ -681,11 +900,52 @@ class ProfileSelectionService:
                                             intent: str) -> Dict[str, Any]:
         """Set the active profile and proceed with the intended action."""
         try:
-            # Store user session using the profile data
+            # Get user data and perform verification check
             user_data = profile['user_data']
+            
+            # CRITICAL: Perform verification check (including domain check) before storing session
+            verification_check = await self.authentication_service.verification_check_service.check_and_enforce_verification(
+                user_phone, user_data
+            )
+            
+            if not verification_check.get("access_granted"):
+                # User doesn't meet verification requirements
+                logger.info(f"Profile selection blocked due to verification requirements: {verification_check}")
+                redirect_info = verification_check.get("redirect_info", {})
+                
+                if verification_check.get("redirect_to_support"):
+                    # Redirect to support
+                    support_message = redirect_info.get("message", "Please contact our support team for assistance.")
+                    await self.whatsapp_service.send_message(user_phone, support_message)
+                    
+                    return {
+                        "status": "verification_failed",
+                        "reason": redirect_info.get("reason"),
+                        "redirect_to_support": True
+                    }
+                else:
+                    # OTP verification required - set session stage for OTP handling
+                    if verification_check.get("otp_sent") and redirect_info.get("flow") == "email_verification":
+                        from app.services.workflow_manager import WorkflowManager
+                        from app.models import WorkflowType
+                        WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="profile_selection")
+                        session.workflow_state["authentication_stage"] = "email_otp"
+                        session.workflow_state["otp_email"] = redirect_info.get("email")
+                        session.workflow_state["otp_retry_count"] = 0
+                        session.workflow_state["selected_user"] = user_data
+                        session.workflow_state["filtered_users"] = [user_data]  # Add filtered_users for OTP validation
+                        # Clear profile selection stage to prevent conflicts
+                        session.workflow_state.pop("profile_selection_stage", None)
+                        session.workflow_state.pop("profile_options", None)
+                        logger.info(f"Set authentication stage to email_otp for {user_phone}")
+                    
+                    return {
+                        "status": "verification_required",
+                        "redirect_info": redirect_info
+                    }
+            
+            # Verification passed - proceed with session storage
             user_details = User.from_api_response(user_data)
-
-            # Store session
             session_stored = await self.authentication_service.store_user_session(
                 user_phone, user_details
             )
@@ -698,8 +958,6 @@ class ProfileSelectionService:
             session.workflow_state = session.workflow_state or {}
             session.workflow_state.pop('profile_selection_stage', None)
             session.workflow_state.pop('profile_options', None)
-
-            # Profile selection confirmed - no message needed
 
             return {
                 "status": "profile_selected_and_authenticated",
@@ -721,25 +979,45 @@ class ProfileSelectionService:
             role = profile['role']
             email = profile['email']
 
-            # Set active profile first
+            # Set active profile first with verification check
             result = await self._set_active_profile_and_proceed(
                 user_phone, profile, session, "", "general_inquiry"
             )
 
             if result.get('status') != 'profile_selected_and_authenticated':
-                return result
+                # Handle verification failures
+                if result.get('status') == 'verification_failed':
+                    return result
+                elif result.get('status') == 'verification_required':
+                    return result
+                else:
+                    return result
 
             # Show role-specific menu with buttons
             if role == 'buyer':
-                menu_message = f"You're now using your Buyer account ({email})."
-                header = "What can I assist you with today?"
+                # Get name from user_data fullName field  
+                user_data = profile.get('user_data', {})
+                name = user_data.get('fullName')
+                if name:
+                    name = name.title()
+                else:
+                    name = 'there'
+                menu_message = f"👋 Hi {name}! Let's continue with your Buyer profile ({email})."
+                header = "What would you like to do today?"
                 buttons_config = [
-                    {"id": "new_rfq", "title": "Create new RFQ"},
-                    {"id": "rfq_status", "title": "Check RFQs Status"},
-                    {"id": "contact_support", "title": "Contact Support"}
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
                 ]
             else:  # seller
-                menu_message = f"You're now using your Seller account ({email})."
+                # Get name from user_data fullName field
+                user_data = profile.get('user_data', {})
+                name = user_data.get('fullName')
+                if name:
+                    name = name.title()
+                else:
+                    name = 'there'
+                menu_message = f"👋 Hi {name}! You're now using your Seller profile ({email})."
                 header = "What would you like to do today?"
                 buttons_config = [
                     {"id": "rfq_status", "title": "Check RFQs Status"},
@@ -791,29 +1069,46 @@ class ProfileSelectionService:
     
     async def _redirect_to_buyer_registration(self, user_phone: str, session: ConversationSession, 
                                             message: str) -> Dict[str, Any]:
-        """Redirect to buyer registration flow."""
+        """Redirect to buyer registration flow and create new buyer profile."""
         try:
+            logger.info(f"Redirecting {user_phone} to buyer registration with message: '{message}'")
+            
+            # Import registration service
+            from app.services.registration_service import RegistrationService
+            
+            # Initialize registration service
+            registration_service = RegistrationService(
+                whatsapp_service=self.whatsapp_service,
+                openai_service=OpenAIService() if not hasattr(self, 'openai_service') else self.openai_service
+            )
+            
             # Set workflow type to registration
             WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="profile_selection")
             
+            # Initialize session state for registration
             session.workflow_state = session.workflow_state or {}
             session.workflow_state.update({
                 "registration_stage": "data_collection",
                 "user_type": "buyer",
-                "original_message": message
+                "original_message": message,
+                "registration_entities": {}  # Will be filled during data collection
             })
             
-            welcome_message = (
-                "I'll help you register as a Buyer so you can create RFQs and purchase items.\n\n"
-                "Let's start with some basic information..."
+            # Start the registration process
+            result = await registration_service.initiate_registration(
+                user_phone=user_phone,
+                session=session,
+                user_type="buyer",
+                message=message
             )
             
-            await self.whatsapp_service.send_message(user_phone, welcome_message)
+            logger.info(f"Buyer registration initiated: {result}")
             
             return {
                 "status": "redirected_to_buyer_registration",
                 "workflow_type": "registration",
-                "user_type": "buyer"
+                "user_type": "buyer",
+                "registration_result": result
             }
             
         except Exception as e:
@@ -822,29 +1117,46 @@ class ProfileSelectionService:
     
     async def _redirect_to_seller_registration(self, user_phone: str, session: ConversationSession, 
                                              message: str) -> Dict[str, Any]:
-        """Redirect to seller registration flow."""
+        """Redirect to seller registration flow and create new seller profile."""
         try:
+            logger.info(f"Redirecting {user_phone} to seller registration with message: '{message}'")
+            
+            # Import registration service
+            from app.services.registration_service import RegistrationService
+            
+            # Initialize registration service
+            registration_service = RegistrationService(
+                whatsapp_service=self.whatsapp_service,
+                openai_service=OpenAIService() if not hasattr(self, 'openai_service') else self.openai_service
+            )
+            
             # Set workflow type to registration
             WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="profile_selection")
             
+            # Initialize session state for registration
             session.workflow_state = session.workflow_state or {}
             session.workflow_state.update({
                 "registration_stage": "data_collection",
                 "user_type": "seller",
-                "original_message": message
+                "original_message": message,
+                "registration_entities": {}  # Will be filled during data collection
             })
             
-            welcome_message = (
-                "I'll help you register as a Seller so you can respond to RFQs and sell items.\n\n"
-                "Let's start with some basic information..."
+            # Start the registration process
+            result = await registration_service.initiate_registration(
+                user_phone=user_phone,
+                session=session,
+                user_type="seller",
+                message=message
             )
             
-            await self.whatsapp_service.send_message(user_phone, welcome_message)
+            logger.info(f"Seller registration initiated: {result}")
             
             return {
                 "status": "redirected_to_seller_registration",
                 "workflow_type": "registration",
-                "user_type": "seller"
+                "user_type": "seller",
+                "registration_result": result
             }
             
         except Exception as e:
@@ -878,4 +1190,267 @@ class ProfileSelectionService:
             
         except Exception as e:
             logger.error(f"Error showing profile selection retry for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def _handle_registration_type_response(self, user_phone: str, message: str,
+                                               session: ConversationSession) -> Dict[str, Any]:
+        """Handle user response to registration type choice (buyer/seller)."""
+        try:
+            message_lower = message.strip().lower()
+            
+            # First try to detect registration intent using the user selection tool
+            detected_type = await self._detect_registration_intent(message)
+            
+            if detected_type == 'buyer':
+                session.workflow_state.pop('awaiting_registration_type', None)
+                return await self._redirect_to_buyer_registration(user_phone, session, message)
+            elif detected_type == 'seller':
+                session.workflow_state.pop('awaiting_registration_type', None)
+                return await self._redirect_to_seller_registration(user_phone, session, message)
+            
+            # Fallback to simple keyword matching
+            elif any(keyword in message_lower for keyword in ['buyer', 'buy', '1', 'one', 'first']):
+                session.workflow_state.pop('awaiting_registration_type', None)
+                return await self._redirect_to_buyer_registration(user_phone, session, message)
+            
+            # Check for seller keywords
+            elif any(keyword in message_lower for keyword in ['seller', 'sell', '2', 'two', 'second']):
+                session.workflow_state.pop('awaiting_registration_type', None)
+                return await self._redirect_to_seller_registration(user_phone, session, message)
+            
+            else:
+                # Use the user selection tool to detect registration intent
+                detected_type = await self._detect_registration_intent(message)
+                
+                if detected_type == 'buyer':
+                    session.workflow_state.pop('awaiting_registration_type', None)
+                    return await self._redirect_to_buyer_registration(user_phone, session, message)
+                elif detected_type == 'seller':
+                    session.workflow_state.pop('awaiting_registration_type', None)
+                    return await self._redirect_to_seller_registration(user_phone, session, message)
+                else:
+                    # Still unclear - ask for clarification
+                    clarification_message = (
+                        "Please specify whether you'd like to register as:\n"
+                        "• Type 'buyer' or '1' for Buyer registration\n"
+                        "• Type 'seller' or '2' for Seller registration"
+                    )
+                    await self.whatsapp_service.send_message(user_phone, clarification_message)
+                    
+                    return {
+                        "status": "registration_type_clarification_sent"
+                    }
+                
+        except Exception as e:
+            logger.error(f"Error handling registration type response for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+    
+
+    
+    async def _detect_registration_intent(self, message: str) -> Optional[str]:
+        """Detect explicit registration intent from user message using user selection tool."""
+        try:
+            # Use the user selection tool to detect registration intent
+            if self.user_selection_tool:
+                # Create a dummy profile options list for the analysis
+                dummy_options = []
+                analysis_result = await self.user_selection_tool.analyze_user_selection(message, dummy_options)
+                
+                # Extract registration intent from the analysis
+                register_info = analysis_result.get('register', {})
+                register_type = register_info.get('type')
+                
+                if register_type in ['buyer', 'seller']:
+                    logger.info(f"User selection tool detected registration intent: {register_type}")
+                    return register_type
+            
+            # Fallback to simple phrase matching
+            message_lower = message.lower().strip()
+            
+            buyer_phrases = [
+                'register me as buyer', 'register as buyer', 'register me as a buyer',
+                'sign me up as buyer', 'sign up as buyer', 'create buyer account',
+                'i want to register as buyer', 'register buyer account', 'add me as buyer'
+            ]
+            
+            seller_phrases = [
+                'register me as seller', 'register as seller', 'register me as a seller',
+                'sign me up as seller', 'sign up as seller', 'create seller account',
+                'i want to register as seller', 'register seller account', 'add me as seller'
+            ]
+            
+            for phrase in buyer_phrases:
+                if phrase in message_lower:
+                    logger.info(f"Fallback: Matched buyer phrase '{phrase}' in message '{message}'")
+                    return 'buyer'
+            
+            for phrase in seller_phrases:
+                if phrase in message_lower:
+                    logger.info(f"Fallback: Matched seller phrase '{phrase}' in message '{message}'")
+                    return 'seller'
+            
+            logger.info(f"No registration intent detected for message: '{message}'")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error detecting registration intent: {e}")
+            return None
+    
+
+    
+    async def _handle_intent_mismatch(self, user_phone: str, session: ConversationSession, 
+                                     target_role: str, existing_profiles: List[Dict]) -> Dict[str, Any]:
+        """Handle Case 7: Intent Mismatch - User wants one role but only has the other."""
+        try:
+            # Determine the existing role
+            existing_role = "seller" if target_role == "buyer" else "buyer"
+            
+            # Create appropriate message based on target role
+            if target_role == "buyer":
+                message_parts = [
+                    "It looks like you don't have a Buyer profile linked to your account.",
+                    "Would you like to register as a Buyer to continue?",
+                    "",
+                    "1️⃣ Register as Buyer",
+                    "2️⃣ Exit"
+                ]
+            else:  # target_role == "seller"
+                message_parts = [
+                    "It looks like you don't have a Seller profile linked to your account.",
+                    "Would you like to register as a Seller to continue?",
+                    "",
+                    "1️⃣ Register as Seller", 
+                    "2️⃣ Exit"
+                ]
+            
+            # Store intent mismatch options in session
+            profile_options = [
+                {"number": 1, "action": f"register_{target_role}", "display": f"Register as {target_role.title()}"},
+                {"number": 2, "action": "exit", "display": "Exit"}
+            ]
+            
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state['profile_selection_stage'] = 'intent_mismatch'
+            session.workflow_state['profile_options'] = profile_options
+            session.workflow_state['target_role'] = target_role
+            session.workflow_state['existing_profiles'] = existing_profiles
+            
+            full_message = "\n".join(message_parts)
+            await self.whatsapp_service.send_message(user_phone, full_message)
+            
+            return {
+                "status": "intent_mismatch_handled",
+                "target_role": target_role,
+                "existing_role": existing_role,
+                "options_count": len(profile_options)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling intent mismatch for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def _handle_intent_mismatch_response(self, user_phone: str, message: str,
+                                             session: ConversationSession) -> Dict[str, Any]:
+        """Handle user response to intent mismatch options."""
+        try:
+            target_role = session.workflow_state.get('target_role')
+            profile_options = session.workflow_state.get('profile_options', [])
+            
+            if not target_role or not profile_options:
+                logger.error(f"Missing intent mismatch data for {user_phone}")
+                return {"status": "restart_profile_selection"}
+            
+            # Parse user selection
+            selected_option = await self._parse_profile_selection(message, profile_options)
+            
+            if selected_option:
+                action = selected_option.get('action')
+                
+                if action == f"register_{target_role}":
+                    # User chose to register for the target role
+                    logger.info(f"User chose to register as {target_role} to resolve intent mismatch")
+                    
+                    # Clear intent mismatch state
+                    session.workflow_state.pop('profile_selection_stage', None)
+                    session.workflow_state.pop('profile_options', None)
+                    session.workflow_state.pop('target_role', None)
+                    session.workflow_state.pop('existing_profiles', None)
+                    
+                    # Redirect to appropriate registration
+                    if target_role == "buyer":
+                        return await self._redirect_to_buyer_registration(user_phone, session, message)
+                    else:
+                        return await self._redirect_to_seller_registration(user_phone, session, message)
+                        
+                elif action == "exit":
+                    # User chose to exit
+                    return await self._handle_exit_action(user_phone, session)
+                    
+            # Invalid selection - show options again
+            message_parts = [
+                "Please select a valid option:",
+                "",
+                f"1️⃣ Register as {target_role.title()}",
+                "2️⃣ Exit"
+            ]
+            
+            retry_message = "\n".join(message_parts)
+            await self.whatsapp_service.send_message(user_phone, retry_message)
+            
+            return {
+                "status": "intent_mismatch_retry_sent",
+                "target_role": target_role
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling intent mismatch response for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def _handle_exit_action(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
+        """Handle user selecting exit option."""
+        try:
+            message = "Thank you for your interest. Feel free to reach out anytime if you need assistance with procurement!"
+            await self.whatsapp_service.send_message(user_phone, message)
+            
+            # Clear session state
+            session.workflow_state = {}
+            session.workflow_type = None
+            
+            return {
+                "status": "user_exited",
+                "session_cleared": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling exit action for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def handle_bfs_coming_soon_response(self, user_phone: str, profile: Dict) -> Dict[str, Any]:
+        """Handle BFS search coming soon response with follow-up buttons."""
+        try:
+            # Send coming soon message
+            coming_soon_message = "BFS search is coming soon!"
+            await self.whatsapp_service.send_message(user_phone, coming_soon_message)
+            
+            # Show the three buttons as requested
+            buttons_config = [
+                {"id": "create_rfq", "title": "Create new RFQ"},
+                {"id": "rfq_status", "title": "Check RFQ Status"},
+                {"id": "contact_support", "title": "Get Support Info"}
+            ]
+            
+            await self.whatsapp_service.send_configurable_buttons(
+                user_phone,
+                "What would you like to do?",
+                buttons_config
+            )
+            
+            return {
+                "status": "bfs_coming_soon_handled",
+                "user_type": profile['role'],
+                "email": profile['email']
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling BFS coming soon response for {user_phone}: {e}")
             return {"status": "error", "error": str(e)}

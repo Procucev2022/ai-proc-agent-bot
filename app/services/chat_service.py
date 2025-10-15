@@ -224,12 +224,13 @@ class ChatService:
             # Check if authentication is still in progress
             if isinstance(auth_result, dict):
                 auth_status = auth_result.get("status")
-                logger.info(f"Authentication in progress - status: {auth_status}")
+                logger.info(f"CHAT_SERVICE: Authentication result - status: {auth_status}")
                 
                 # Authentication/registration flow statuses - stay in auth loop
                 auth_in_progress_statuses = [
                     "clarification_sent", "general_inquiry_handled", "fallback_handled",
-                    "redirected_to_registration", "redirected_to_email_confirmation", "otp_sent",
+                    "redirected_to_registration", "redirected_to_buyer_registration", "redirected_to_seller_registration",
+                    "redirected_to_email_confirmation", "otp_sent",
                     "email_selection_requested", "registration_initiated", "data_collection_in_progress",
                     "awaiting_confirmation", "registration_restarted", "otp_validated", "otp_invalid",
                     "domain_approved", "domain_approval_required", "email_confirmation_requested",
@@ -238,7 +239,10 @@ class ChatService:
                     "buyer_profile_selection_presented", "seller_profile_selection_presented",
                     "rfq_status_profile_selection_presented", "ambiguous_profile_selection_presented",
                     "registration_choice_presented", "registration_type_choice_presented",
-                    "profile_selection_retry_presented", "role_menu_presented"
+                    "profile_selection_retry_presented", "role_menu_presented",
+                    "redirected_to_buyer_registration", "redirected_to_seller_registration",
+                    "intent_mismatch_handled", "intent_mismatch_retry_sent", "new_user_registration_presented",
+                    "buyer_options_presented", "single_buyer_profile_selection_presented", "profile_selection_sent"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
@@ -253,10 +257,32 @@ class ChatService:
                         except (ValueError, KeyError):
                             workflow_type = WorkflowType.authentication
                     await self.session_manager.save_session(session, workflow_type)
-                    logger.info(f"Authentication flow handled - returning without main flow processing")
+                    logger.info(f"CHAT_SERVICE: 🔄 Authentication flow in progress - status: {auth_status}")
                     return auth_result
+                elif auth_status == "redirected_to_support" or auth_status == "redirect_to_support" :
+                    # Max OTP retries exceeded or other support-requiring scenario
+                    logger.info(f"Redirect to support requested - calling exit service for {user_phone}")
+                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                    await self.session_manager.save_session(session, WorkflowType.user_exit)
+                    return exit_result
                 elif auth_status == "registration_completed":
-                    # Registration completed - check user type and handle appropriately
+                    # Registration completed - check if this is truly complete or needs further processing
+                    registration_flow_complete = auth_result.get("registration_flow_complete", False)
+                    user_type = auth_result.get("user_type", "unknown")
+                    approved = auth_result.get("approved", False)
+                    
+                    logger.info(f"CHAT_SERVICE: Registration completed for {user_phone} - user_type: {user_type}, approved: {approved}, flow_complete: {registration_flow_complete}")
+                    
+                    if registration_flow_complete:
+                        # Registration is completely done - no further processing needed
+                        logger.info(f"CHAT_SERVICE: ✅ Registration flow completely finished for {user_phone}")
+                        # Clear workflow completely to prevent any further processing
+                        session.workflow_type = None
+                        session.workflow_state = {}
+                        await self.session_manager.save_session(session, None)
+                        return {"status": "registration_completed", "message": "Registration successful", "flow_terminated": True}
+                    
+                    # Legacy handling for cases where registration_flow_complete is not set
                     user = await self.authentication_service.validate_token(user_phone)
                     if user:
                         # Refresh user cache after successful registration to include the new account
@@ -317,6 +343,18 @@ class ChatService:
                                 return {"status": "registration_completed", "message": "Buyer registration successful - awaiting approval"}
                     else:
                         return {"status": "error", "error": "Session not found after registration"}
+                elif auth_status == "buyer_options_presented":
+                    # Buyer options were presented - authentication is complete, return to main flow
+                    logger.info(f"Buyer options presented - authentication completed for {user_phone}")
+                    user = await self.authentication_service.validate_token(user_phone)
+                    if user:
+                        # Clear authentication workflow state
+                        session.workflow_type = None
+                        session.workflow_state = {}
+                        await self.session_manager.save_session(session, None)
+                        return {"status": "buyer_options_presented", "message": "Buyer options presented"}
+                    else:
+                        return {"status": "error", "error": "Session not found after buyer options presentation"}
                 elif auth_status in ["authentication_completed", "profile_selected_and_authenticated"]:
                     # Authentication completed - check user type before processing
                     user_type = auth_result.get("user_type")
@@ -413,6 +451,22 @@ class ChatService:
                 else:
                     # Invalid user but not registered, handle as general inquiry
                     return await self._process_text_message(auth_result, session, message_content, message_intent_result)
+            elif isinstance(auth_result, dict):
+                # Handle dict responses that weren't caught above
+                auth_status = auth_result.get("status")
+                if auth_status == "redirected_to_support" or auth_status == "redirect_to_support" :
+                    logger.info(f"Final redirect to support - calling exit service for {user_phone}")
+                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                    await self.session_manager.save_session(session, WorkflowType.user_exit)
+                    return exit_result
+                elif auth_status == "verification_required":
+                    # Handle verification required status
+                    logger.info(f"Verification required for {user_phone}")
+                    await self.session_manager.save_session(session, WorkflowType.authentication)
+                    return auth_result
+                else:
+                    logger.error(f"Unexpected auth_result dict with status: {auth_status}")
+                    return {"status": "error", "error": "Authentication failed"}
             else:
                 logger.error(f"Unexpected auth_result type: {type(auth_result)}")
                 return {"status": "error", "error": "Authentication failed"}
@@ -909,6 +963,33 @@ class ChatService:
                 logger.info(f"Handling reference request with context: {intent_result.get('context_analysis', {})}")
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result,
                                                                                  self._should_use_summary_aware_extraction)
+            elif intent == "bfs_search" and confidence > 0.7:
+                # Handle BFS search intent with profile selection message
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                user_email = getattr(user, 'email', 'your profile')
+                
+                # Create the profile selection message
+                profile_message = f"Got it, you're looking to check if items are available in stock.\nLet's continue with your {user_role.title()} profile ({user_email}).\n\nBFS Search coming soon!\nPlease confirm what you'd like to do next:"
+                
+                if user_role == "buyer":
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "get_support", "title": "Get Support Info"}
+                    ]
+                else:  # seller or other roles
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "get_support", "title": "Get Support Info"}
+                    ]
+                
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    profile_message,
+                    buttons_config
+                )
+                
+                return {"status": "bfs_search_handled"}
             elif intent == "rfq_status_check" and confidence > 0.7:
                 return await self._handle_rfq_status_inquiry(user, message, session)
             elif intent == "sell_something" and confidence > 0.7:
@@ -1246,28 +1327,47 @@ class ChatService:
                 # ✅ Role-based button configuration
                 if user_role == "buyer":
                     buttons_config = [
-
-                        {"id": "raise_rfq", "title": "📄 Raise a new RFQ"},
-                        {"id": "check_rfqs", "title": "🔍 Check your previous RFQs"},
-                        {"id": "other_support", "title": "💬 Any other support you need"}
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
                     ]
                     header = "What can I assist you with today?"
                 
                 elif user_role == "seller":
                     buttons_config = [
-                        {"id": "view_rfqs", "title": "📤 View available RFQs to quote"},
-                        {"id": "check_submissions", "title": "📈 Check your previous submissions"},
-                        {"id": "other_support", "title": "💬 Get other support"}
+                        {"id": "rfq_status", "title": "Check RFQ status"},
+                        {"id": "get_support", "title": "Get Support Info"}
                     ]
                     header = "What would you like to do today?"
                 
 
                 else:
-                    # Unknown role → generic buttons
-                    buttons_config = [
-                        {"id": "contact_support", "title": "💬 Contact Support"},
-                        {"id": "exit", "title": "❌ Exit"}
-                    ]
+                    # Unknown role → check if we can determine role from user object
+                    if hasattr(user, 'role') and user.role:
+                        actual_role = user.role.value if hasattr(user.role, 'value') else user.role
+                        if actual_role == "buyer":
+                            buttons_config = [
+                                {"id": "create_rfq", "title": "Create new RFQ"},
+                                {"id": "rfq_status", "title": "Check RFQ Status"},
+                                {"id": "search_bfs", "title": "Search Stocks"}
+                            ]
+                        elif actual_role == "seller":
+                            buttons_config = [
+                                {"id": "rfq_status", "title": "Check RFQs Status"},
+                                {"id": "contact_support", "title": "Contact Support"}
+                            ]
+                        else:
+                            buttons_config = [
+                                {"id": "create_rfq", "title": "Create new RFQ"},
+                                {"id": "rfq_status", "title": "Check RFQ Status"},
+                                {"id": "search_bfs", "title": "Search Stocks"}
+                            ]
+                    else:
+                        buttons_config = [
+                            {"id": "create_rfq", "title": "Create new RFQ"},
+                            {"id": "rfq_status", "title": "Check RFQ Status"},
+                            {"id": "search_bfs", "title": "Search Stocks"}
+                        ]
                     header = "How can I help you with your procurement needs today?"
 
                 # ✅ Send interactive buttons
@@ -1294,14 +1394,45 @@ class ChatService:
                                                      "How can I assist you today?")
 
     async def _handle_support_request(self, user: User, message: str) -> Dict[str, Any]:
-        """Handle support requests by providing contact information."""
+        """Handle support requests by providing contact information and menu options."""
         try:
             settings = get_settings()
             support_contact = settings.support_contact_info
             
+            # Get user role for appropriate menu
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+            
+            # Create support message with contact info
             support_message = f"For support assistance, please contact us at: {support_contact}"
             
-            await self.whatsapp_service.send_message(user.phone_number, support_message)
+            # Role-based button configuration
+            if user_role == "buyer":
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
+                ]
+                header = "What else can I help you with?"
+            elif user_role == "seller":
+                buttons_config = [
+                    {"id": "rfq_status", "title": "Show RFQ status"},
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+                header = "What else would you like to do?"
+            else:
+                buttons_config = [
+                    {"id": "contact_support", "title": "Contact Support"},
+                    {"id": "exit", "title": "Exit"}
+                ]
+                header = "How can I help you?"
+            
+            # Send interactive buttons
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                support_message,
+                buttons_config,
+                header
+            )
             
             return {"status": "support_handled"}
 
@@ -1316,27 +1447,57 @@ class ChatService:
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
             
             if user_role == "buyer":
-
-                # Buyer fallback menu
-                fallback_message = (
-                    "What can I assist you with today?\n"
-                    "• 📄 Raise a new RFQ\n"
-                    "• 🔍 Check your previous RFQs\n"
-                    "• 💬 Any other support you need"
+                # Buyer fallback with buttons
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "What can I assist you with today?",
+                    buttons_config,
+                    "Please choose an option:"
                 )
             elif user_role == "seller":
-                # Seller fallback menu
-                fallback_message = (
-                    "What would you like to do today?\n"
-                    "• 📤 View available RFQs to quote\n"
-                    "• 📈 Check your previous submissions\n"
-                    "• 💬 Get other support"
+                # Seller fallback with buttons
+                buttons_config = [
+                    {"id": "rfq_status", "title": "🔍 Show RFQ status"},
+                    {"id": "get_support", "title": "💬 Get Support Info"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "What would you like to do today?",
+                    buttons_config,
+                    "Please choose an option:"
                 )
             else:
-                # Fallback for unknown role
-                fallback_message = "How can I help you with your procurement needs?"
+                # Fallback based on user role
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                if user_role == "buyer":
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                elif user_role == "seller":
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQs Status"},
+                        {"id": "contact_support", "title": "Contact Support"}
+                    ]
+                else:
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "How can I help you with your procurement needs today?",
+                    buttons_config,
+                    "Please choose an option:"
+                )
             
-            await self.whatsapp_service.send_message(user.phone_number, fallback_message)
             return {"status": "clarification_sent"}
 
         except Exception as e:
@@ -1350,28 +1511,57 @@ class ChatService:
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
             
             if user_role == "buyer":
-                # Buyer fallback menu
-                fallback_message = (
-                    "What can I assist you with today?\n"
-
-                    "• 📄 Raise a new RFQ\n"
-                    "• 🔍 Check your previous RFQs\n"
-                    "• 💬 Any other support you need"
+                # Buyer fallback with buttons
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "What can I assist you with today?",
+                    buttons_config,
+                    "Please choose an option:"
                 )
             elif user_role == "seller":
-                # Seller fallback menu
-                fallback_message = (
-                    "What would you like to do today?\n"
-
-                    "• 📤 View available RFQs to quote\n"
-                    "• 📈 Check your previous submissions\n"
-                    "• 💬 Get other support"
+                # Seller fallback with buttons
+                buttons_config = [
+                    {"id": "rfq_status", "title": "🔍 Check RFQ status"},
+                    {"id": "get_support", "title": "💬 Get Support Info"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "What would you like to do today?",
+                    buttons_config,
+                    "Please choose an option:"
                 )
             else:
-                # Fallback for unknown role
-                fallback_message = "How can I help you with your procurement needs?"
+                # Fallback based on user role
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                if user_role == "buyer":
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                elif user_role == "seller":
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQs Status"},
+                        {"id": "contact_support", "title": "Contact Support"}
+                    ]
+                else:
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "How can I help you with your procurement needs today?",
+                    buttons_config,
+                    "Please choose an option:"
+                )
             
-            await self.whatsapp_service.send_message(user.phone_number, fallback_message)
             return {"status": "fallback_handled"}
 
         except Exception as e:
@@ -1478,13 +1668,41 @@ class ChatService:
         logger.info(f"Button response from {user.phone_number}: {button_id}")
 
         # Handle new menu buttons
-        if button_id == "new_rfq" or button_id == "raise_rfq":
+        if button_id == "new_rfq" or button_id == "raise_rfq" or button_id == "create_rfq":
             # Trigger RFQ creation flow
             intent_result = {"intent": "buy_something", "confidence": 95}
             return await self.purchase_intent_handler.handle_purchase_intent(
                 user, session, "I want to create a new RFQ", intent_result, 
                 self._should_use_summary_aware_extraction
             )
+        
+        elif button_id == "search_bfs":
+            # Handle BFS search coming soon with profile selection message
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+            user_email = getattr(user, 'email', 'your profile')
+            
+            # Create the profile selection message
+            profile_message = f"Got it, you're looking to check if items are available in stock.\nLet's continue with your {user_role.title()} profile ({user_email}).\n\nBFS Search coming soon!\nPlease confirm what you'd like to do next:"
+            
+            if user_role == "buyer":
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+            else:  # seller or other roles
+                buttons_config = [
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+            
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                profile_message,
+                buttons_config
+            )
+            
+            return {"status": "bfs_coming_soon_handled"}
         
         elif button_id == "rfq_status" or button_id == "check_rfqs":
             # Trigger RFQ status check flow
@@ -1498,7 +1716,7 @@ class ChatService:
             # Trigger seller submission check flow
             return await self._handle_seller_flow(user, session, "Check my previous submissions")
         
-        elif button_id == "contact_support" or button_id == "other_support":
+        elif button_id == "contact_support" or button_id == "other_support" or button_id == "get_support":
             # Trigger support flow
             return await self._handle_support_request(user, "I need support")
         

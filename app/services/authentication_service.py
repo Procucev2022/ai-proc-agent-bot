@@ -29,7 +29,9 @@ from app.procucev_apis.register_apis import RegisterAPIService
 from app.services.support_notification_service import SupportNotificationService
 from app.services.user_cache_service import get_user_cache_service
 from app.context import user_context
-from app.services.auth_reg_service import AuthRegService
+from app.services.domain_check_service import DomainCheckService
+from app.services.otp_service import OTPService
+from app.services.verification_check_service import VerificationCheckService
 
 logger = logging.getLogger(__name__)
 
@@ -49,28 +51,64 @@ class AuthenticationService:
         self.register_api_service = RegisterAPIService()
         self.support_notification_service = SupportNotificationService()
         self.user_cache_service = get_user_cache_service()
-        self.auth_reg_service = AuthRegService()
+        self.domain_check_service = DomainCheckService(self.openai_service, self.whatsapp_service, session_manager)
+        self.otp_service = OTPService(self.register_api_service, self.whatsapp_service, self.support_notification_service)
+        self.verification_check_service = VerificationCheckService(self.auth_api_service, self.otp_service, self.whatsapp_service)
         self.session_manager = session_manager  # Will be injected from ChatService
     
     async def validate_token(self, user_phone: str) -> Optional[User]:
-        """Validate user token from Redis auth storage and refresh on activity."""
+        """Validate user token and check verification status before main flow access.
+        
+        Returns:
+        - User object if authenticated and verified
+        - Dict with verification_required=True if verification needed
+        - False if token expired or max retries exceeded
+        """
         try:
             # Normalize phone number (remove + prefix for consistent Redis keys)
             normalized_phone = user_phone.lstrip('+')
-            logger.info(f"user token validation called for {normalized_phone}")
+            logger.info(f"Token validation called for {normalized_phone}")
             user_data = await self.auth_redis_service.retrieve(normalized_phone)
             if user_data:
+                # Check verification status before granting access
+                verification_check = await self.verification_check_service.check_and_enforce_verification(user_phone, user_data)
+                
+                if verification_check.get("access_granted"):
+                    # Save user details in global context
+                    user_context.set(normalized_phone, {"user_details": user_data})
+                    logger.info(f"Token validated and main flow access granted for user {normalized_phone}")
+                    return user_data
+                else:
+                    # Verification required - refresh user data and retry
+                    logger.info(f"Verification required for user {normalized_phone}, refreshing user data")
+                    refresh_result = await self.verification_check_service.refresh_user_verification_status(user_phone)
+                    
+                    # Check if max retries exceeded and support redirection needed
+                    if refresh_result.get("exit_flow"):
+                        logger.info(f"Max retries exceeded for user {normalized_phone} - exiting flow")
+                        return False  # Exit the authentication flow
+                    
+                    if refresh_result.get("success"):
+                        # Re-check with fresh data
+                        fresh_data = refresh_result.get("data", [])
+                        if fresh_data:
+                            # Use first user data for verification check
+                            fresh_user_data = fresh_data[0] if isinstance(fresh_data, list) else fresh_data
+                            fresh_check = await self.verification_check_service.check_and_enforce_verification(user_phone, fresh_user_data)
+                            
+                            if fresh_check.get("access_granted"):
+                                # Update cached data and grant access
+                                await self.auth_redis_service.store(normalized_phone, fresh_user_data, expiry_seconds=3600)
+                                user_context.set(normalized_phone, {"user_details": fresh_user_data})
+                                logger.info(f"Fresh verification check passed for user {normalized_phone}")
+                                return fresh_user_data
+                    
+                    # Still requires verification - return verification info
+                    logger.info(f"Token valid but verification still required for user {normalized_phone}")
+                    return {"verification_required": True, "verification_info": verification_check.get("redirect_info", {})}
 
-                # Save user details in global context
-                user_context.set(normalized_phone, {"user_details": user_data})
-
-                # Token automatically refreshed in retrieve method
-                logger.info(f"Token validated and refreshed for user {normalized_phone}")
-                return user_data
-
-            # Token expired or not found - send welcome message
-            logger.info(f"Token expired for user {normalized_phone}, sending welcome message")
-
+            # Token expired or not found
+            logger.info(f"Token expired or not found for user {normalized_phone}")
             return False
         except Exception as e:
             logger.error(f"Authentication error for {user_phone}: {e}")
@@ -364,24 +402,26 @@ class AuthenticationService:
             # Removed button handling - using text-based selection
 
             if confirmation_stage in ["selection", "intent_filtered_selection"]:
-                # AI-first email rejection detection
-                is_rejection = await self._ai_detect_email_rejection(message)
-                if is_rejection:
-                    await self.whatsapp_service.send_message(user_phone, "I understand these emails don't match yours. Let me help you register with your correct information.")
-                    return {"status": "redirect_to_registration"}
-
-                # AI-first email selection parsing
-                selected_email = await self._ai_parse_email_selection(message, email_options)
+                # Use ProfileSelectionService to handle the response
+                from app.services.profile_selection_service import ProfileSelectionService
+                profile_service = ProfileSelectionService(
+                    whatsapp_service=self.whatsapp_service,
+                    authentication_service=self,
+                    openai_service=self.openai_service
+                )
                 
-                # if not selected_email:
-                #     # Fallback to pattern matching
-                #     selected_email = await self._parse_email_selection(message, email_options)
+                # Handle profile selection response
+                result = await profile_service.handle_profile_selection_response(
+                    user_phone, message, session
+                )
                 
-                if selected_email:
-                    return await self._process_selected_email(user_phone, session, selected_email, filtered_users)
-                else:
-                    # Send retry message
-                    return await self._request_email_selection_with_text(user_phone, session, email_options, filtered_users)
+                # If profile was selected successfully, process it
+                if result.get("status") == "profile_selected_and_authenticated":
+                    selected_email = result.get("email")
+                    if selected_email:
+                        return await self._process_selected_email(user_phone, session, selected_email, filtered_users)
+                
+                return result
             
             elif confirmation_stage == "intent_clarification":
                 # Handle intent clarification response
@@ -602,18 +642,70 @@ Return only the selected email address or "none" if no clear selection.
             logger.info(f"Processing email {selected_email} for user_type: {user_type} (selfClient={is_self_client})")
             
             if user_type == "buyer":
-                # Buyers: Store token session and redirect to main flow
+                # CRITICAL: Check verification status before allowing buyer access
+                verification_check = await self.verification_check_service.check_and_enforce_verification(user_phone, selected_user)
+                
+                if not verification_check.get("access_granted"):
+                    # User doesn't meet verification requirements
+                    logger.info(f"User {user_phone} blocked due to verification requirements: {verification_check}")
+                    redirect_info = verification_check.get("redirect_info", {})
+                    
+                    # Check if redirect to support is required
+                    if verification_check.get("redirect_to_support"):
+                        # Call exit service and redirect to support
+                        from app.services.exit_service import ExitService
+                        exit_service = ExitService(self.whatsapp_service, self, 
+                                                 self.session_manager, None)
+                        
+                        # Send support message
+                        support_message = redirect_info.get("message", "Please contact our support team for assistance.")
+                        await self.whatsapp_service.send_message(user_phone, support_message)
+                        
+                        # Clear session and exit
+                        await exit_service.handle_exit_intent(user_phone, session)
+                        
+                        return {
+                            "status": "redirected_to_support",
+                            "user_type": user_type,
+                            "reason": redirect_info.get("reason"),
+                            "exit_completed": True
+                        }
+                    else:
+                        # Email verification required - set up OTP flow
+                        if redirect_info.get("flow") == "email_verification":
+                            WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="authentication_service")
+                            session.workflow_state["authentication_stage"] = "email_otp"
+                            session.workflow_state["otp_email"] = selected_email
+                            session.workflow_state["otp_retry_count"] = 0
+                            session.workflow_state["selected_user"] = selected_user
+                            session.workflow_state["filtered_users"] = filtered_users
+                            
+                            return {
+                                "status": "otp_sent",
+                                "user_type": "buyer",
+                                "workflow_type": "authentication"
+                            }
+                        else:
+                            return {
+                                "status": "verification_required",
+                                "user_type": "buyer",
+                                "redirect_info": redirect_info
+                            }
+                
+                # Buyer meets verification requirements - proceed with authentication
                 session_stored = await self.store_user_session_with_email(user_phone, filtered_users, selected_email)
 
                 if session_stored:
-                    logger.info(f"User session stored successfully for buyer {user_phone}")
+                    logger.info(f"User session stored successfully for verified buyer {user_phone}")
                 else:
-                    logger.error(f"Failed to store user session for buyer {user_phone}")
+                    logger.error(f"Failed to store user session for verified buyer {user_phone}")
 
                 # Get username from fullName or fallback to firstName or generic "there"
                 username = selected_user.get("fullName") or selected_user.get("name") or selected_user.get("firstName") or "there"
 
-
+                # Send welcome message to user
+                welcome_message = f"Hi {username}! Email verified successfully! You can now proceed."
+                await self.whatsapp_service.send_message(user_phone, welcome_message)
 
                 # Preserve original message from workflow state for processing after authentication
                 original_message = session.workflow_state.get("original_message") if session.workflow_state else None
@@ -621,25 +713,86 @@ Return only the selected email address or "none" if no clear selection.
                 # Clear authentication workflow state after successful authentication
                 session.workflow_type = None
                 session.workflow_state = {}
-                logger.info(f"Cleared authentication workflow state for buyer {user_phone}")
+                logger.info(f"Cleared authentication workflow state for verified buyer {user_phone}")
 
                 return {
                     "status": "authentication_completed",
                     "user_type": "buyer",
+                    "approved": True,
                     "redirect_to_main_flow": True,
                     "original_message": original_message
                 }
             elif user_type == "seller":
-                # Sellers: Redirect to email OTP validation
-                WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="authentication_service")
-                session.workflow_state["authentication_stage"] = "email_otp"
-                session.workflow_state["otp_email"] = selected_email
-                session.workflow_state["otp_retry_count"] = 0
-                session.workflow_state["selected_user"] = selected_user
-                session.workflow_state["filtered_users"] = filtered_users
+                # CRITICAL: Check verification status before allowing seller access
+                verification_check = await self.verification_check_service.check_and_enforce_verification(user_phone, selected_user)
+                
+                if not verification_check.get("access_granted"):
+                    # Check if redirect to support is required
+                    if verification_check.get("redirect_to_support"):
+                        # Call exit service and redirect to support
+                        from app.services.exit_service import ExitService
+                        exit_service = ExitService(self.whatsapp_service, self, 
+                                                 self.session_manager, None)
+                        
+                        redirect_info = verification_check.get("redirect_info", {})
+                        support_message = redirect_info.get("message", "Please contact our support team for assistance.")
+                        await self.whatsapp_service.send_message(user_phone, support_message)
+                        
+                        # Clear session and exit
+                        await exit_service.handle_exit_intent(user_phone, session)
+                        
+                        return {
+                            "status": "redirected_to_support",
+                            "user_type": "seller",
+                            "reason": redirect_info.get("reason"),
+                            "exit_completed": True
+                        }
+                    else:
+                        # Seller needs email verification - redirect to OTP flow
+                        logger.info(f"Seller {user_phone} needs email verification - redirecting to OTP")
+                        WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="authentication_service")
+                        session.workflow_state["authentication_stage"] = "email_otp"
+                        session.workflow_state["otp_email"] = selected_email
+                        session.workflow_state["otp_retry_count"] = 0
+                        session.workflow_state["selected_user"] = selected_user
+                        session.workflow_state["filtered_users"] = filtered_users
 
-                # Send OTP immediately
-                return await self._send_otp(user_phone, session, selected_email)
+                        # Send OTP and return status indicating OTP flow started
+                        otp_result = await self.otp_service.send_otp(user_phone, selected_email, session)
+                        return {
+                            "status": "otp_sent",
+                            "user_type": "seller",
+                            "workflow_type": "authentication"
+                        }
+                else:
+                    # Seller is already verified - complete authentication immediately
+                    logger.info(f"Seller {user_phone} already verified - completing authentication")
+                    session_stored = await self.store_user_session_with_email(user_phone, filtered_users, selected_email)
+
+                    if session_stored:
+                        logger.info(f"User session stored successfully for verified seller {user_phone}")
+                    else:
+                        logger.error(f"Failed to store user session for verified seller {user_phone}")
+
+                    # Get username from fullName or fallback to firstName or generic "there"
+                    username = selected_user.get("fullName") or selected_user.get("name") or selected_user.get("firstName") or "there"
+                    message = f"Hi {username}! Email verified successfully! You can now proceed."
+                    await self.whatsapp_service.send_message(user_phone, message)
+
+                    # Preserve original message from workflow state for processing after authentication
+                    original_message = session.workflow_state.get("original_message") if session.workflow_state else None
+
+                    # Clear authentication workflow state after successful authentication
+                    session.workflow_type = None
+                    session.workflow_state = {}
+                    logger.info(f"Cleared authentication workflow state for verified seller {user_phone}")
+
+                    return {
+                        "status": "authentication_completed",
+                        "user_type": "seller",
+                        "redirect_to_main_flow": True,
+                        "original_message": original_message
+                    }
             else:
                 return {"status": "redirect_to_support", "reason": "unknown_user_type"}
                 
@@ -687,16 +840,12 @@ Return only the selected email address or "none" if no clear selection.
                                         session: ConversationSession) -> Dict[str, Any]:
         """Handle email OTP validation process."""
         try:
-            otp_email = session.workflow_state.get("otp_email")
             filtered_users = session.workflow_state.get("filtered_users", [])
-            retry_count = session.workflow_state.get("otp_retry_count", 0)
-            
-            if not otp_email or not filtered_users:
+            if not filtered_users:
                 return {"status": "restart_authentication"}
             
-            # Check for resend request
-            if message.strip().upper() == "RESEND" and retry_count < 3:
-                return await self._send_otp(user_phone, session, otp_email)
+            # Use OTP service for validation
+            otp_result = await self.otp_service.handle_user_message(user_phone, message, session)
             
             # If OTP is valid, refresh user data and complete authentication
             if otp_result.get("status") == "otp_valid":
@@ -760,8 +909,13 @@ Return only the selected email address or "none" if no clear selection.
                         
                         # CRITICAL: Update auth token with fresh user data that has updated verification status
                         normalized_phone = user_phone.lstrip('+')
-                        await self.auth_redis_service.store(normalized_phone, selected_user, expiry_seconds=3600)
-                        logger.info(f"Updated auth token with fresh verification status for {user_phone}")
+                        # Create proper User object for session storage
+                        user_obj = User.from_mixed_data(selected_user)
+                        success = await self.auth_redis_service.store(normalized_phone, user_obj.dict(), expiry_seconds=3600)
+                        if success:
+                            logger.info(f"Successfully updated auth token with fresh verification status for {user_phone}")
+                        else:
+                            logger.error(f"Failed to update auth token for {user_phone}")
                         
                         # Determine user type for response
                         is_self_client = selected_user.get("selfClient") or selected_user.get("self_client")
@@ -769,6 +923,9 @@ Return only the selected email address or "none" if no clear selection.
                         
                         if session_stored:
                             logger.info(f"User session stored successfully after OTP validation for {user_phone}")
+                            
+                            # Preserve original message from workflow state for processing after authentication
+                            original_message = session.workflow_state.get("original_message") if session.workflow_state else None
                             
                             # Clear authentication workflow state
                             session.workflow_type = None
@@ -778,14 +935,36 @@ Return only the selected email address or "none" if no clear selection.
                             return {
                                 "status": "authentication_completed",
                                 "user_type": user_type,
-                                "redirect_to_main_flow": True
+                                "redirect_to_main_flow": True,
+                                "original_message": original_message
                             }
                         else:
                             logger.error(f"Failed to store user session after OTP validation for {user_phone}")
                 
-                # If refresh or session storage fails, clear state and redirect to main flow anyway
-                # The user has successfully validated their email, so we should let them proceed
-                logger.warning(f"OTP validated but session storage failed for {user_phone} - allowing access anyway")
+                # If refresh or session storage fails, try to store session with existing data
+                logger.warning(f"OTP validated but session storage failed for {user_phone} - trying with existing data")
+                
+                # Try to store session with the selected user from workflow state
+                selected_user = session.workflow_state.get("selected_user")
+                selected_email = session.workflow_state.get("otp_email")
+                
+                if selected_user and selected_email:
+                    # Create User object and store session
+                    user_details = User.from_mixed_data(selected_user)
+                    session_stored = await self.store_user_session(user_phone, user_details)
+                    
+                    # Also store in auth Redis for token validation
+                    normalized_phone = user_phone.lstrip('+')
+                    auth_stored = await self.auth_redis_service.store(normalized_phone, user_details.dict(), expiry_seconds=3600)
+                    
+                    if session_stored and auth_stored:
+                        logger.info(f"Successfully stored session and auth token with existing user data for {user_phone}")
+                    else:
+                        logger.error(f"Failed to store session or auth token for {user_phone} - session: {session_stored}, auth: {auth_stored}")
+                
+                # Preserve original message from workflow state for processing after authentication
+                original_message = session.workflow_state.get("original_message") if session.workflow_state else None
+                
                 session.workflow_type = None
                 session.workflow_state = {}
                 
@@ -793,46 +972,20 @@ Return only the selected email address or "none" if no clear selection.
                     "status": "authentication_completed",
                     "user_type": "unknown",
                     "redirect_to_main_flow": True,
+                    "original_message": original_message,
                     "note": "OTP validated successfully"
                 }
             
             return otp_result
             
         except Exception as e:
-            logger.error(f"Invalid OTP format handling error: {e}")
+            logger.error(f"Email OTP validation error: {e}")
+            # Clear authentication state on error
+            session.workflow_type = None
+            session.workflow_state = {}
             return {"status": "error", "error": str(e)}
     
-    async def _handle_invalid_otp(self, user_phone: str, session: ConversationSession, email: str) -> Dict[str, Any]:
-        """Handle invalid OTP with retry mechanism."""
-        try:
-            retry_count = session.workflow_state.get("otp_retry_count", 0)
-            
-            if retry_count >= 3:
-                # Send email notification to support team for max retries exceeded
-                await self.support_notification_service.notify_otp_validation_failed(
-                    "User", email, user_phone
-                )
-                
-                await self.whatsapp_service.send_message(user_phone, "Maximum OTP attempts exceeded. Please contact support.")
-                return {"status": "redirect_to_support", "reason": "max_otp_retries_exceeded"}
-            
-            remaining_attempts = 3 - retry_count
-            message = (
-                f"Invalid OTP. You have {remaining_attempts} attempts remaining.\n\n"
-                "Please enter the correct OTP or reply 'RESEND' to get a new OTP:"
-            )
-            await self.whatsapp_service.send_message(user_phone, message)
-            
-            return {
-                "status": "otp_invalid",
-                "stage": "email_otp",
-                "retry_count": retry_count,
-                "remaining_attempts": remaining_attempts
-            }
-            
-        except Exception as e:
-            logger.error(f"Invalid OTP handling error: {e}")
-            return {"status": "error", "error": str(e)}
+
     
     # Domain Matching Sub-Service
     async def handle_domain_matching(self, user_phone: str, message: str,
@@ -1026,48 +1179,46 @@ Respond only with: "yes" or "no"
     
     async def _request_email_selection_with_text(self, user_phone: str, session: ConversationSession,
                                                emails: List[str], filtered_users: List[Dict]) -> Dict[str, Any]:
-        """Request email selection using text-based selection."""
+        """Request email selection using ProfileSelectionService."""
         try:
-            username = self._get_username_from_users(filtered_users)
+            # Use ProfileSelectionService to handle profile selection
+            from app.services.profile_selection_service import ProfileSelectionService
+            profile_service = ProfileSelectionService(
+                whatsapp_service=self.whatsapp_service,
+                authentication_service=self,
+                openai_service=self.openai_service
+            )
             
-            # Check if we have mixed user types for better messaging
-            buyer_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Buyer"]
-            seller_emails = [email for email in emails if self._get_user_type_for_email(email, filtered_users) == "Seller"]
-
-            # Get the current intent from session to determine message type
+            # Convert filtered_users to profiles format expected by ProfileSelectionService
+            profiles = []
+            for user_data in filtered_users:
+                try:
+                    from app.schemas.user import User
+                    user = User.from_api_response(user_data)
+                    profile = {
+                        "email": user.email,
+                        "role": user.role.value,
+                        "name": user.name,
+                        "company": user.company_name,
+                        "user_data": user_data
+                    }
+                    profiles.append(profile)
+                except Exception as e:
+                    logger.warning(f"Failed to convert user data to profile: {e}")
+                    continue
+            
+            # Get current intent from session
             current_intent_result = session.workflow_state.get("current_intent_result", {})
-            intent = current_intent_result.get("intent", "general_inquiry")
-
-            if buyer_emails and seller_emails:
-                # Default mixed message
-                message = "Welcome! Are you looking to buy or sell today?\n\nPlease select your profile by choosing the associated email address:\n"
-
-                for i, email in enumerate(emails, 1):
-                    user_type = self._get_user_type_for_email(email, filtered_users)
-                    type_label = f" — {user_type}" if user_type else ""
-                    message += f"  {i}. {email}{type_label}\n"
-                message += "\nReply with the number corresponding to your email address to continue."
-            else:
-                # Default message
-                message = "Welcome! Please select your profile by choosing the associated email address:\n"
-
-                for i, email in enumerate(emails, 1):
-                    user_type = self._get_user_type_for_email(email, filtered_users)
-                    type_label = f" — {user_type}" if user_type else ""
-                    message += f"  {i}. {email}{type_label}\n"
-                message += "\nReply with the number corresponding to your email address to continue."
             
-            await self.whatsapp_service.send_message(user_phone, message)
+            # Handle profile selection based on intent
+            result = await profile_service.handle_profile_selection(
+                user_phone, "", session, current_intent_result
+            )
             
-            return {
-                "status": "email_selection_requested",
-                "stage": "email_confirmation",
-                "email_options": emails,
-                "using_buttons": False
-            }
+            return result
             
         except Exception as e:
-            logger.error(f"Text email selection error: {e}")
+            logger.error(f"Profile selection error: {e}")
             return {"status": "error", "error": str(e)}
     
     async def _request_email_selection_text_fallback(self, user_phone: str, session: ConversationSession,

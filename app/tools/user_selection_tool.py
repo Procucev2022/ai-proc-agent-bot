@@ -32,7 +32,7 @@ class UserSelectionTool:
             profile_options: List of available profile options with numbers
             
         Returns:
-            Analysis result with selected option, confidence, and reasoning
+            Analysis result with selected option, confidence, reasoning, and registration detection
         """
         try:
             # First try rule-based matching for common patterns
@@ -57,7 +57,8 @@ class UserSelectionTool:
                 "confidence": 0.0,
                 "reasoning": f"Analysis error: {str(e)}",
                 "alternative_matches": [],
-                "requires_clarification": True
+                "requires_clarification": True,
+                "register": {"type": None}
             }
     
     def _fuzzy_email_match(self, user_input: str, target_email: str) -> Dict[str, Any]:
@@ -135,12 +136,14 @@ class UserSelectionTool:
         if number_match:
             option_num = int(number_match.group(1))
             if any(opt.get('number') == option_num for opt in profile_options):
+                register_type = self._detect_registration_intent(user_input)
                 return {
                     "selected_option": option_num,
                     "confidence": 0.95,
                     "reasoning": f"Direct number match: {option_num}",
                     "alternative_matches": [],
-                    "requires_clarification": False
+                    "requires_clarification": False,
+                    "register": {"type": register_type}
                 }
         
         # Word number matching
@@ -155,12 +158,14 @@ class UserSelectionTool:
         for word, num in word_numbers.items():
             if word in user_input:
                 if any(opt.get('number') == num for opt in profile_options):
+                    register_type = self._detect_registration_intent(user_input)
                     return {
                         "selected_option": num,
                         "confidence": 0.8,
                         "reasoning": f"Word number match: {word} -> {num}",
                         "alternative_matches": [],
-                        "requires_clarification": False
+                        "requires_clarification": False,
+                        "register": {"type": register_type}
                     }
         
         # Email and role matching with fuzzy correction
@@ -201,20 +206,28 @@ class UserSelectionTool:
             best_match = matches[0]
             alternatives = [m[0] for m in matches[1:3]]  # Top 2 alternatives
             
+            # Check for registration intent
+            register_type = self._detect_registration_intent(user_input)
+            
             return {
                 "selected_option": best_match[0],
                 "confidence": best_match[1],
                 "reasoning": best_match[2],
                 "alternative_matches": alternatives,
-                "requires_clarification": best_match[1] < 0.4
+                "requires_clarification": best_match[1] < 0.4,
+                "register": {"type": register_type}
             }
+        
+        # Check for registration intent
+        register_type = self._detect_registration_intent(user_input)
         
         return {
             "selected_option": None,
             "confidence": 0.1,
             "reasoning": "No rule-based matches found",
             "alternative_matches": [],
-            "requires_clarification": True
+            "requires_clarification": True,
+            "register": {"type": register_type}
         }
     
     async def _ai_based_analysis(self, user_input: str, profile_options: List[Dict]) -> Dict[str, Any]:
@@ -262,7 +275,8 @@ class UserSelectionTool:
                 "confidence": 0.2,
                 "reasoning": "AI analysis failed",
                 "alternative_matches": [],
-                "requires_clarification": True
+                "requires_clarification": True,
+                "register": {"type": None}
             }
             
         except Exception as e:
@@ -272,5 +286,39 @@ class UserSelectionTool:
                 "confidence": 0.1,
                 "reasoning": f"AI analysis error: {str(e)}",
                 "alternative_matches": [],
-                "requires_clarification": True
+                "requires_clarification": True,
+                "register": {"type": None}
             }
+    
+    def _detect_registration_intent(self, user_input: str) -> Optional[str]:
+        """Detect registration intent from user message."""
+        try:
+            message_lower = user_input.lower().strip()
+            
+            # Check for explicit buyer registration phrases
+            buyer_phrases = [
+                'register me as buyer', 'register as buyer', 'register me as a buyer',
+                'sign me up as buyer', 'sign up as buyer', 'create buyer account',
+                'i want to register as buyer', 'register buyer account', 'add me as buyer'
+            ]
+            
+            # Check for explicit seller registration phrases
+            seller_phrases = [
+                'register me as seller', 'register as seller', 'register me as a seller',
+                'sign me up as seller', 'sign up as seller', 'create seller account',
+                'i want to register as seller', 'register seller account', 'add me as seller'
+            ]
+            
+            for phrase in buyer_phrases:
+                if phrase in message_lower:
+                    return 'buyer'
+            
+            for phrase in seller_phrases:
+                if phrase in message_lower:
+                    return 'seller'
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error detecting registration intent: {e}")
+            return None

@@ -434,7 +434,7 @@ class ConfirmationHandler:
         buttons_config = [
             {"id": "new_rfq", "title": "Create new RFQ"},
             {"id": "rfq_status", "title": "Check RFQs Status"},
-            {"id": "contact_support", "title": "Contact Support"}
+            {"id": "search_bfs", "title": "Search Stocks"}
         ]
         
         await self.whatsapp_service.send_configurable_buttons(
@@ -453,7 +453,7 @@ class ConfirmationHandler:
             openai_service = OpenAIService()
 
             # Extract only specifications from the message
-            extraction_result = openai_service.extract_entities(message, "buy_something")
+            extraction_result = await openai_service.extract_entities(message, "buy_something")
             extracted_product = extraction_result.get("products", [{}])[0] if extraction_result.get("products") else {}
 
             # Get the existing complete product from session
