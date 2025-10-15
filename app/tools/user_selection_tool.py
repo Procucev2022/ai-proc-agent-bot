@@ -255,7 +255,7 @@ class UserSelectionTool:
                 tool_def = json.load(f)
             
             # Call OpenAI with function calling
-            response = self.openai_service.client.responses.create(
+            response = await self.openai_service.client.responses.create(
                 model=self.openai_service.default_model,
                 input=[{"role": "user", "content": user_message}],
                 instructions=system_prompt,
