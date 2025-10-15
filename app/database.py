@@ -43,9 +43,10 @@ def init_database():
         pool_size=10,
         max_overflow=20,
         pool_timeout=60,
-        echo_pool=False  # Set to True for pool debugging
+        echo_pool=False,  # Set to True for pool debugging
+        isolation_level="READ COMMITTED"  # See latest committed data across workers
     )
-    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=True)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
     # Create all tables
     Base.metadata.create_all(bind=engine)
@@ -137,9 +138,10 @@ def get_db_session():
                 pool_size=10,
                 max_overflow=20,
                 pool_timeout=60,
-                echo_pool=False
+                echo_pool=False,
+                isolation_level="READ COMMITTED"  # See latest committed data across workers
             )
-            SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=True)
+            SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
             logger.info("Initialized database session factory (lazy init)")
         except Exception as e:
             logger.error(f"Database engine creation failed: {e}")
