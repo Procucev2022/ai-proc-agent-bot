@@ -62,7 +62,7 @@ class EntityService:
             print(f"Entity extraction error: {e}")
             return {"products": [], "confidence": 0, "success": False}
     
-    def _handle_registration_extraction(self, message: str, context: dict = None, workflow_type: str = "buyer_registration") -> dict:
+    async def _handle_registration_extraction(self, message: str, context: dict = None, workflow_type: str = "buyer_registration") -> dict:
         """Handle entity extraction for registration data with context awareness."""
         try:
             
@@ -80,7 +80,7 @@ class EntityService:
             
             # Extract registration entities using OpenAI
             logger.info(f"EntityService: Calling OpenAI extract_registration_entities")
-            response = self.openai_service.extract_registration_entities(
+            response = await self.openai_service.extract_registration_entities(
                 message=message,
                 conversation_context=conversation_context,
                 user_type=user_type,
@@ -140,7 +140,7 @@ class EntityService:
             print(f"EntityService: Added {len(existing_context)} existing products to extraction context")
 
         # Call OpenAI extract_entities method
-        response = self.openai_service.extract_entities(
+        response = await self.openai_service.extract_entities(
             message=prompt,
             workflow_type=workflow_type
         )
@@ -169,7 +169,7 @@ class EntityService:
                 print(f"EntityService: No new products extracted, applying supplementary data to {len(existing_context)} existing products")
                 merged_products = self._apply_supplementary_data_to_existing_products(existing_context, global_fields)
 
-            validated_products, has_date_validation_error = self._validate_dates_in_products(merged_products, message)
+            validated_products, has_date_validation_error = await self._validate_dates_in_products(merged_products, message)
             # Auto-fill city and state from pincode
             validated_products = await self._auto_fill_location_from_pincode(validated_products)
 
@@ -186,7 +186,7 @@ class EntityService:
         else:
             # Backward compatibility for old single entity format - validate date
             entities = response.get("entities", {})
-            validated_entities, has_date_validation_error = self._validate_date_in_entity(entities, message)
+            validated_entities, has_date_validation_error = await self._validate_date_in_entity(entities, message)
             
             print(f"EntityService: Using backward compatibility with entities: {validated_entities}")
             return {
@@ -260,8 +260,8 @@ class EntityService:
         return null for state/city/pincode fields.
         """
         
-        # Call OpenAI to extract modification details  
-        response = self.openai_service.extract_entities(
+        # Call OpenAI to extract modification details
+        response = await self.openai_service.extract_entities(
             message=modification_prompt,
             workflow_type=workflow_type
         )
@@ -280,7 +280,7 @@ class EntityService:
                 # Convert modifications to products format for existing logic
                 converted_products = self._convert_modifications_to_products_format(modifications)
                 # Validate dates in converted products
-                validated_products, has_date_validation_error = self._validate_dates_in_products(converted_products, message)
+                validated_products, has_date_validation_error = await self._validate_dates_in_products(converted_products, message)
                 # Auto-fill city and state from pincode
                 validated_products = await self._auto_fill_location_from_pincode(validated_products)
                 modified_products = self._apply_modifications_to_existing_products(
@@ -314,7 +314,7 @@ class EntityService:
             
             if has_meaningful_modifications:
                 # Validate dates in modification products
-                validated_products, has_date_validation_error = self._validate_dates_in_products(response["products"], message)
+                validated_products, has_date_validation_error = await self._validate_dates_in_products(response["products"], message)
                 # Auto-fill city and state from pincode
                 validated_products = await self._auto_fill_location_from_pincode(validated_products)
                 modified_products = self._apply_modifications_to_existing_products(
@@ -489,7 +489,7 @@ class EntityService:
         print(f"EntityService: Converted {len(modifications)} modifications to {len(converted_products)} products")
         return converted_products
 
-    def _validate_dates_in_products(self, products: list, original_message: str) -> tuple:
+    async def _validate_dates_in_products(self, products: list, original_message: str) -> tuple:
         """Validate delivery dates in products list.
 
         Returns:
@@ -511,7 +511,7 @@ class EntityService:
         for date in unique_dates.keys():
             if date not in date_validation_cache:
                 print(f"EntityService: Validating unique delivery date: {date} (appears in {unique_dates[date]} products)")
-                validation_result = self.openai_service.validate_delivery_date(
+                validation_result = await self.openai_service.validate_delivery_date(
                     raw_date_input=date,
                     extracted_date=date
                 )
@@ -562,7 +562,7 @@ class EntityService:
         
         return validated_products, has_date_validation_error
     
-    def _validate_date_in_entity(self, entities: dict, original_message: str) -> tuple:
+    async def _validate_date_in_entity(self, entities: dict, original_message: str) -> tuple:
         """Validate delivery date in single entity.
         
         Returns:
@@ -573,7 +573,7 @@ class EntityService:
         delivery_date = entities.get("deliveryDate")
         
         if delivery_date:
-            validation_result = self.openai_service.validate_delivery_date(
+            validation_result = await self.openai_service.validate_delivery_date(
                 raw_date_input=delivery_date,
                 extracted_date=delivery_date
             )
@@ -735,7 +735,7 @@ class EntityService:
             print(f"EntityService: Using summary-aware extraction with {len(chat_summaries)} summaries")
             
             # Use new OpenAI method with summaries
-            response = self.openai_service.extract_entities_with_summary_context(
+            response = await self.openai_service.extract_entities_with_summary_context(
                 message=message,
                 chat_summaries=chat_summaries,
                 workflow_type="rfq_creation"
@@ -752,13 +752,13 @@ class EntityService:
                 
                 # Use AI to intelligently apply resolved references to product entities
                 products = response.get("products", [])
-                updated_products = self._apply_resolved_references_intelligently(products, resolved_refs, message)
+                updated_products = await self._apply_resolved_references_intelligently(products, resolved_refs, message)
                 response["products"] = updated_products
                 print(f"EntityService: Applied resolved references to {len(updated_products)} products using AI")
             
             # Validate dates in the final products
             if "products" in response:
-                validated_products, has_date_validation_error = self._validate_dates_in_products(response["products"], message)
+                validated_products, has_date_validation_error = await self._validate_dates_in_products(response["products"], message)
                 # Auto-fill city and state from pincode
                 validated_products = await self._auto_fill_location_from_pincode(validated_products)
                 response["products"] = validated_products
@@ -772,7 +772,7 @@ class EntityService:
             # Fallback to standard extraction on error
             return await self._handle_standard_extraction(message, context, workflow_type)
 
-    def _apply_resolved_references_intelligently(self, products: list, resolved_refs: list, original_message: str) -> list:
+    async def _apply_resolved_references_intelligently(self, products: list, resolved_refs: list, original_message: str) -> list:
         """
         Use AI to intelligently apply resolved references to product entities.
         
@@ -792,7 +792,7 @@ class EntityService:
                 return products
             
             # Use OpenAI to intelligently merge the resolved references
-            merge_result = self.openai_service.merge_resolved_references_with_entities(
+            merge_result = await self.openai_service.merge_resolved_references_with_entities(
                 products=products,
                 resolved_references=resolved_refs,
                 original_message=original_message

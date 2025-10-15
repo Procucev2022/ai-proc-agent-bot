@@ -60,7 +60,7 @@ class ResponseHelpers:
                 enhanced_context["has_historical_context"] = True
                 print(f"ResponseHelpers: Enhanced context with {len(chat_summaries)} chat summaries")
             
-            return self.openai_service.generate_contextual_response(enhanced_context, base_questions, conversation_stage)
+            return await self.openai_service.generate_contextual_response(enhanced_context, base_questions, conversation_stage)
         except Exception as e:
             logger.error(f"Error generating contextual response: {e}")
             if base_questions:
@@ -71,14 +71,14 @@ class ResponseHelpers:
     async def generate_rfq_status_contextual_response(self, context: dict) -> str:
         """Generate contextual response using OpenAI."""
         try:
-            return self.openai_service.generate_rfq_status_response(context)
+            return await self.openai_service.generate_rfq_status_response(context)
         except Exception as e:
             logger.error(f"Error generating contextual response: {e}")
 
     async def generate_seller_contextual_intent_response(self, context: dict) -> str:
         """Generate contextual response using OpenAI."""
         try:
-            return self.openai_service.generate_seller_intent(context)
+            return await self.openai_service.generate_seller_intent(context)
         except Exception as e:
             logger.error(f"Error generating contextual response: {e}")
 
@@ -474,7 +474,7 @@ class ResponseHelpers:
         """Generate completion response using OpenAI."""
         try:
             rfq_data = rfq_schema.dict() if hasattr(rfq_schema, 'dict') else {}
-            return self.openai_service.generate_completion_response(rfq_data, context)
+            return await self.openai_service.generate_completion_response(rfq_data, context)
         except Exception as e:
             logger.error(f"Error generating completion response: {e}")
             return "Excellent! Your RFQ is now complete. I'll process this request and get back to you soon."
@@ -543,7 +543,7 @@ class ResponseHelpers:
                 print(f"ResponseHelpers: Enhanced RFQ summary context with {len(chat_summaries)} chat summaries")
             
             # Use specialized RFQ confirmation generation
-            return self.openai_service.generate_rfq_confirmation(
+            return await self.openai_service.generate_rfq_confirmation(
                 rfq_schema.dict() if hasattr(rfq_schema, 'dict') else {},
                 summary_context
             )
@@ -581,12 +581,12 @@ class ResponseHelpers:
                 logger.error(f"Error generating RFQ failure response: {e}")
                 return f"There was an issue creating your RFQ: {gmt_result.get('error', 'Unknown error')}. Please try again."
     
-    def generate_registration_confirmation(self, entities: Dict[str, Any], context: Dict[str, Any]) -> str:
+    async def generate_registration_confirmation(self, entities: Dict[str, Any], context: Dict[str, Any]) -> str:
         """Generate registration confirmation message using OpenAI."""
         try:
-            return self.openai_service.generate_contextual_response(
-                context, 
-                ["Please confirm your registration details"], 
+            return await self.openai_service.generate_contextual_response(
+                context,
+                ["Please confirm your registration details"],
                 "registration_confirmation"
             )
         except Exception as e:
@@ -611,7 +611,7 @@ class ResponseHelpers:
     async def generate_registration_clarification(self, missing_fields: List[str], completeness: float, context: Dict[str, Any]) -> str:
         """Generate registration clarification message using OpenAI."""
         try:
-            return self.openai_service.generate_clarification_response(
+            return await self.openai_service.generate_clarification_response(
                 missing_fields, completeness, context
             )
         except Exception as e:
