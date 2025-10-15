@@ -61,15 +61,15 @@ class IPRestrictionMiddleware(BaseHTTPMiddleware):
             client_ip = request.client.host
             x_forwarded_for = request.headers.get("x-forwarded-for")
             x_real_ip = request.headers.get("x-real-ip")
-            
+
             real_ip = x_real_ip or (x_forwarded_for.split(",")[0] if x_forwarded_for else client_ip)
-            
+
             if real_ip not in self.allowed_ips:
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "Access forbidden: IP not allowed"}
                 )
-        
+
         response = await call_next(request)
         return response
 
