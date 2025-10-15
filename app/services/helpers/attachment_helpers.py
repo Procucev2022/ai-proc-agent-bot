@@ -51,7 +51,7 @@ class AttachmentHelpers:
         Download attachment from URL and encode as base64.
         
         Args:
-            file_url: URL to download the file from
+            file_url: URL to download the file from or media ID for ICS API
             filename: Optional filename (auto-generated if not provided)
             mime_type: Optional MIME type (defaults to image/jpeg)
             
@@ -73,22 +73,28 @@ class AttachmentHelpers:
                 else:
                     mime_type = "image/jpeg"  # Default
             
-            logger.info(f"Downloading attachment: {filename} from {file_url}")
+            # Fix ICS media download URL construction
+            download_url = AttachmentHelpers._construct_media_download_url(file_url)
+            
+            logger.info(f"Downloading attachment: {filename} from {download_url}")
 
             # Log to WhatsApp payload file
             whatsapp_payload_logger.info("="*80)
             whatsapp_payload_logger.info("MEDIA DOWNLOAD STARTED")
-            whatsapp_payload_logger.info(f"Filename: {filename}")
+            whatsapp_payload_logger.info(f"Media ID: {file_url}")
             whatsapp_payload_logger.info(f"MIME Type: {mime_type}")
-            whatsapp_payload_logger.info(f"URL: {file_url}")
             whatsapp_payload_logger.info("REQUEST DETAILS:")
             whatsapp_payload_logger.info(f"  Method: GET")
-            whatsapp_payload_logger.info(f"  URL: {file_url}")
+            whatsapp_payload_logger.info(f"  URL: {download_url}")
+            whatsapp_payload_logger.info(f"  Headers: {{'wanumber': '917090170855'}}")
             whatsapp_payload_logger.info(f"  Timeout: 30 seconds")
-            whatsapp_payload_logger.debug(f"  Request Payload: None (GET request with no body)")
 
             async with aiohttp.ClientSession() as session:
-                async with session.get(file_url, timeout=30) as response:
+                # Add required header for ICS API
+                from app.config import get_settings
+                settings = get_settings()
+                headers = {'wanumber': settings.WHATSAPP_FROM_NUMBER}
+                async with session.get(download_url, headers=headers, timeout=30) as response:
                     # Log response details for debugging
                     logger.info(f"Media download response - Status: {response.status}, Content-Type: {response.headers.get('Content-Type', 'unknown')}")
 
@@ -368,3 +374,29 @@ class AttachmentHelpers:
             }
         
         return {"valid": True}
+    
+    @staticmethod
+    def _construct_media_download_url(file_url_or_id: str) -> str:
+        """
+        Construct proper ICS media download URL.
+        
+        Args:
+            file_url_or_id: Either a full URL or just the media ID
+            
+        Returns:
+            Properly constructed ICS media download URL
+        """
+        from app.config import get_settings
+        settings = get_settings()
+        
+        # If it's already a full URL, return as is
+        if file_url_or_id.startswith('http'):
+            # Check if it's the old incorrect URL format and fix it
+            if 'media.sendmsg.in/wamessage/media/' in file_url_or_id:
+                # Extract media ID from old URL format
+                media_id = file_url_or_id.split('/')[-1]
+                return f"{settings.WHATSAPP_MEDIA_DOWNLOAD_URL}/{media_id}"
+            return file_url_or_id
+        
+        # If it's just a media ID, construct the proper ICS URL
+        return f"{settings.WHATSAPP_MEDIA_DOWNLOAD_URL}/{file_url_or_id}"

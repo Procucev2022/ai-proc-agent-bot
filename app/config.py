@@ -55,6 +55,7 @@ class Settings:
         self.WHATSAPP_PASSWORD = os.getenv("WHATSAPP_PASSWORD", "test_password")
         self.WHATSAPP_FROM_NUMBER = os.getenv("WHATSAPP_FROM_NUMBER", "918147745000")
         self.WHATSAPP_BASE_URL = os.getenv("WHATSAPP_BASE_URL", "https://media.sendmsg.in")
+        self.WHATSAPP_MEDIA_DOWNLOAD_URL = os.getenv("WHATSAPP_MEDIA_DOWNLOAD_URL", "https://download.sendmsg.in/whatsapp-mediadownloader")
         self.WHATSAPP_TEMPLATE_BASE_URL = os.getenv("WHATSAPP_TEMPLATE_BASE_URL", "https://wsapi.sendmsg.in")
         self.WHATSAPP_WEBHOOK_URL = os.getenv("WHATSAPP_WEBHOOK_URL")
         self.WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "test_verify_token")
@@ -248,7 +249,9 @@ class Settings:
         return {
             "access_token": self.whatsapp_access_token,
             "verify_token": self.whatsapp_verify_token,
-            "webhook_url": self.whatsapp_webhook_url
+            "webhook_url": self.whatsapp_webhook_url,
+            "media_download_url": self.WHATSAPP_MEDIA_DOWNLOAD_URL,
+            "from_number": self.WHATSAPP_FROM_NUMBER
         }
         
     def get_logging_config(self) -> Dict[str, Any]:
