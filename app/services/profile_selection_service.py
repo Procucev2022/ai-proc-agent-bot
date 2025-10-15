@@ -995,7 +995,7 @@ class ProfileSelectionService:
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new  RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Stocks "}
+                    {"id": "search_bfs", "title": "Search Stocks"}
                 ]
             else:  # seller
                 # Get name from user_data fullName field
