@@ -185,8 +185,38 @@ class ProfileSelectionService:
                                      session: ConversationSession) -> Dict[str, Any]:
         """Handle Case 1: Neutral/Greeting Start."""
         try:
+            # Initialize profile_options
+            profile_options = []
+            
             # Group profiles by role
-            buyer_profiles = [p for p in profiles if p['role'] == 'buyer']
+            buyer_profiles = [p for p in profiles if p.get('role') == 'buyer']
+            seller_profiles = [p for p in profiles if p.get('role') == 'seller']
+            
+            # Create profile options for selection
+            for i, profile in enumerate(profiles, 1):
+                profile_options.append({
+                    'number': i,
+                    'profile': profile,
+                    'display': f"{i}. {profile.get('name', 'Unknown')} - {profile.get('company', 'Unknown Company')} ({profile.get('role', 'Unknown Role')})"
+                })
+            
+            # Store in session for later reference
+            session.workflow_state['profile_options'] = profile_options
+            session.workflow_state['profile_selection_stage'] = 'neutral_greeting'
+            
+            # Send profile selection message
+            message_text = "Welcome! I found multiple profiles for your number. Please select which profile you'd like to use:\n\n"
+            for option in profile_options:
+                message_text += f"{option['display']}\n"
+            message_text += "\nPlease reply with the number of your choice."
+            
+            await self.whatsapp_service.send_message(user_phone, message_text)
+            
+            return {
+                "status": "profile_selection_sent",
+                "profiles_count": len(profiles),
+                "selection_type": "neutral_greeting"
+            }iles = [p for p in profiles if p['role'] == 'buyer']
             seller_profiles = [p for p in profiles if p['role'] == 'seller']
 
             # Case: Both Buyer & Seller profiles exist
