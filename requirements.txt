@@ -2,6 +2,7 @@
 # Core web framework and API
 fastapi
 uvicorn
+gunicorn
 python-dateutil
 pytz
 jinja2
