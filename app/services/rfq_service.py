@@ -51,7 +51,7 @@ class RFQService:
         """
 
         # Step 1: Extract entities (RFQ IDs) via LLM
-        entity_result = await self.openai_service.extract_entities(
+        entity_result = self.openai_service.extract_entities(
             message=message,
             workflow_type="rfq_status_check"
         )
