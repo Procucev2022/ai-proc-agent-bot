@@ -23,7 +23,9 @@ fi
 # Kill existing process
 echo "Stopping old server..."
 sudo pkill -f "gunicorn.*app.main:app"
-sleep 2
+sudo pkill -f "uvicorn.*app.main:app"
+sudo fuser -k 80/tcp 2>/dev/null || true
+sleep 3
 
 # Start the application with Gunicorn
 echo "Starting new server..."
