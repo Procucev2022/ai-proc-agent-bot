@@ -216,7 +216,12 @@ class ProfileSelectionService:
                 "status": "profile_selection_sent",
                 "profiles_count": len(profiles),
                 "selection_type": "neutral_greeting"
-            }iles = [p for p in profiles if p['role'] == 'buyer']
+            }
+        except Exception as e:
+            logger.error(f"Error handling neutral greeting for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+
+
             seller_profiles = [p for p in profiles if p['role'] == 'seller']
 
             # Case: Both Buyer & Seller profiles exist
@@ -275,12 +280,6 @@ class ProfileSelectionService:
                 
                 # Auto-select single profile and show role-based menu
                 return await self._show_role_based_menu(user_phone, profile, session)
-                
-                return {
-                    "status": "single_profile_selected",
-                    "user_type": profile['role'],
-                    "email": profile['email']
-                }
 
             # Store options in session for multiple profiles case
             if len(profiles) > 1:
