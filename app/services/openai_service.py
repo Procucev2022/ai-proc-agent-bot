@@ -25,7 +25,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-from openai import OpenAI
+from openai import AsyncOpenAI
 from openai import APIError, APITimeoutError, RateLimitError, APIConnectionError
 from app.config import get_settings
 from app.tools.interaction_logger import get_interaction_logger
@@ -46,7 +46,7 @@ class OpenAIService:
     def __init__(self):
         """Initialize OpenAI service with configuration."""
         self.settings = get_settings()
-        self.client = OpenAI(
+        self.client = AsyncOpenAI(
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             base_url=os.getenv("AZURE_OPENAI_ENDPOINT"),
             default_query={"api-version": "preview"},
@@ -204,7 +204,7 @@ class OpenAIService:
         return False
         
     @log_service_method("openai_service")
-    def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
+    async def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
         """
         Classify user intent using OpenAI function calling with conversation context awareness.
         
@@ -304,7 +304,7 @@ class OpenAIService:
             # Track this OpenAI call
             self._track_openai_call("intent_classification")
 
-            response = self.client.responses.create(
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=input_messages,
                 instructions=self._load_prompt("intent_classification", "_get_intent_system_prompt"),
@@ -358,7 +358,7 @@ class OpenAIService:
             logger.error(f"OpenAI API error in intent classification: {error_msg}")
             
             # Send WhatsApp notification
-            asyncio.create_task(self._notify_openai_error("API Error", error_msg, "classify_intent"))
+            await self._notify_openai_error("API Error", error_msg, "classify_intent")
             
             # Log error
             self.interaction_logger.log_error(
@@ -372,9 +372,9 @@ class OpenAIService:
             return self._get_fallback_intent_response(error_msg)
         except Exception as e:
             error_msg = str(e)
-            
+
             # Send WhatsApp notification for unexpected errors
-            asyncio.create_task(self._notify_openai_error("Unexpected Error", error_msg, "classify_intent"))
+            await self._notify_openai_error("Unexpected Error", error_msg, "classify_intent")
             
             # Log error
             self.interaction_logger.log_error(
@@ -388,7 +388,7 @@ class OpenAIService:
             return self._get_fallback_intent_response(error_msg)
         
     @log_service_method("openai_service")
-    def extract_entities(self, message: str, workflow_type: str = "product_search") -> Dict[str, Any]:
+    async def extract_entities(self, message: str, workflow_type: str = "product_search") -> Dict[str, Any]:
         """
         Extract structured entities from user message using OpenAI.
         
@@ -442,7 +442,7 @@ class OpenAIService:
             # Track this OpenAI call
             self._track_openai_call("entity_extraction")
 
-            response = self.client.responses.create(
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": message}],
                 instructions=self._load_prompt(prompt_category, prompt_name, current_year=current_year),
@@ -573,9 +573,9 @@ class OpenAIService:
             
             # Log API error
             logger.error(f"OpenAI API error in entity extraction: {error_msg}")
-            
+
             # Send WhatsApp notification
-            asyncio.create_task(self._notify_openai_error("API Error", error_msg, "extract_entities"))
+            await self._notify_openai_error("API Error", error_msg, "extract_entities")
             
             # Log error
             self.interaction_logger.log_error(
@@ -589,9 +589,9 @@ class OpenAIService:
             return {"products": [], "completeness": 0, "missing_fields": [], "confidence": 0, "next_questions": [], "success": False}
         except Exception as e:
             error_msg = str(e)
-            
+
             # Send WhatsApp notification for unexpected errors
-            asyncio.create_task(self._notify_openai_error("Unexpected Error", error_msg, "extract_entities"))
+            await self._notify_openai_error("Unexpected Error", error_msg, "extract_entities")
             
             # Log error
             self.interaction_logger.log_error(

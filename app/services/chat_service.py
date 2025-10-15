@@ -191,7 +191,8 @@ class ChatService:
             # Classify intent once for all message routing and tracking
             try:
                 conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
-                message_intent_result = self.intent_service.classify_intent(message_content, conversation_context)
+                # Now using async OpenAI service
+                message_intent_result = await self.intent_service.classify_intent(message_content, conversation_context)
                 intent = message_intent_result.get('intent')
                 confidence = message_intent_result.get('confidence', 0)
                 self.session_manager.add_message_to_history(session, "user", message_content, message_type, intent, confidence)
@@ -542,7 +543,7 @@ class ChatService:
             if not intent_result:
                 # Fallback: classify intent if not provided (shouldn't happen with our optimization)
                 conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
-                intent_result = self.intent_service.classify_intent(message, conversation_context)
+                intent_result = await self.intent_service.classify_intent(message, conversation_context)
                 logger.warning(f"Had to fallback to intent classification - this shouldn't happen")
 
             logger.info(f"Intent classification result: {intent_result}")
@@ -1903,7 +1904,7 @@ class ChatService:
             candidate_ids = {str(r.get("rfq_id")) for r in candidate_rfqs if r.get("rfq_id") is not None}
 
             # Use existing AI extraction pipeline to parse RFQ IDs from free text
-            extraction = self.openai_service.extract_entities(message=message, workflow_type="rfq_status_check")
+            extraction = await self.openai_service.extract_entities(message=message, workflow_type="rfq_status_check")
             extracted_ids = extraction.get("rfq_id") or []
 
             # Normalize and filter to candidates
