@@ -84,7 +84,7 @@ class MessageQueueService:
         self.redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
 
         # Configuration
-        self.batch_window = settings.BATCH_WINDOW_SECONDS if settings.BATCH_WINDOW_SECONDS else 5
+        self.batch_window = settings.batch_window_seconds
         
         # Track active timer tasks per user (in-memory, for this worker)
         self._active_timers: Dict[str, asyncio.Task] = {}
