@@ -7,6 +7,9 @@ LOG_DIR="$APP_DIR/logs"
 DATE=$(date +%Y-%m-%d)
 LOG_FILE="$LOG_DIR/app_$DATE.log"
 
+# Worker configuration (override with: WORKERS=8 ./restart_app.sh)
+export WORKERS=${WORKERS:-auto}
+
 # Create logs directory if it doesn't exist
 mkdir -p "$LOG_DIR"
 
