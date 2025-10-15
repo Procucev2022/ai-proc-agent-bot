@@ -141,7 +141,7 @@ class ProductsArrayHandler:
                 "To create your RFQ, please provide:\n"
                 "• Items with quantities, brand & specifications (type here or attach an Excel)\n"
                 "• Delivery date\n"
-                "• Delivery location (State, City, Pincode)\n\n"
+                "• Delivery location (Please just give the pincode directly)\n\n"
                 "Once I have these details, I can help raise the RFQ and ensure timely processing."
             )
             await self.whatsapp_service.send_message(user.phone_number, no_products_message)

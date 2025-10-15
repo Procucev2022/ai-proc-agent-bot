@@ -301,7 +301,7 @@ def format_rfq_response_message(
 
         # If all missing → ask for overall location
         if missing_city and missing_state and missing_pincode:
-            questions.append("What is the delivery location (city, state, and pincode)?")
+            questions.append("What is the delivery location (Please share the delivery pincode directly)?")
 
         # Otherwise, ask for specific missing fields
         elif missing_pincode:
