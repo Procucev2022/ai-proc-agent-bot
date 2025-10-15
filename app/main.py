@@ -28,7 +28,7 @@ from slowapi.errors import RateLimitExceeded
 from typing import Dict, Any
 from app.config import get_settings
 from app.api.webhook import router as webhook_router
-from app.database import init_database, cleanup_scoped_session
+from app.database import init_database
 from app.services.chat_service import ChatService
 from app.services.global_error_handler import handle_server_error
 from app.context.middleware import ContextMiddleware
@@ -72,25 +72,6 @@ class IPRestrictionMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
         return response
-
-
-class DatabaseSessionMiddleware(BaseHTTPMiddleware):
-    """
-    Middleware to manage scoped database sessions per request.
-
-    Ensures that the scoped session is cleaned up after each request,
-    preventing stale data issues from identity map caching.
-    """
-    async def dispatch(self, request: Request, call_next):
-        try:
-            # Process the request
-            response = await call_next(request)
-            return response
-        finally:
-            # Always cleanup scoped session after request completes
-            # This removes the session from the scoped registry and closes it
-            cleanup_scoped_session()
-            logger.debug(f"Cleaned up database session for {request.method} {request.url.path}")
 
 
 @asynccontextmanager
@@ -169,9 +150,6 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # Add context middleware (must be first)
 app.add_middleware(ContextMiddleware)
-# Add database session cleanup middleware (second - after context)
-app.add_middleware(DatabaseSessionMiddleware)
-logger.info("Database session cleanup middleware added")
 # Add IP restriction middleware
 if settings.allowed_ips:
     app.add_middleware(IPRestrictionMiddleware, allowed_ips=settings.allowed_ips)

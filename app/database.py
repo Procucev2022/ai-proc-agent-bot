@@ -3,7 +3,7 @@ Database connection and session management for the AI Procurement Agent.
 """
 
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import SQLAlchemyError, DisconnectionError, TimeoutError as SQLTimeoutError
 from datetime import datetime, date, timedelta
@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 engine = None
 SessionLocal = None
-ScopedSession = None  # Scoped session factory for thread-safe session reuse
 
 # Remote database connection for item categorization
 remote_engine = None
@@ -29,7 +28,7 @@ RemoteSessionLocal = None
 
 def init_database():
     """Initialize database tables and create sample data."""
-    global engine, SessionLocal, ScopedSession
+    global engine, SessionLocal
 
     settings = get_settings()
 
@@ -46,11 +45,6 @@ def init_database():
         pool_timeout=60
     )
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=True)
-
-    # Create scoped session for thread-safe session reuse
-    # This ensures a single session per thread/request context
-    ScopedSession = scoped_session(SessionLocal)
-    logger.info("Initialized scoped session factory for thread-safe session management")
 
     # Create all tables
     Base.metadata.create_all(bind=engine)
@@ -122,11 +116,9 @@ def get_db_session():
     """
     Get database session with error handling.
 
-    Returns a scoped session that ensures a single session per thread/request context.
-    This prevents stale data issues from multiple SQLAlchemy sessions having
-    independent identity map caches.
+    Returns a new database session. Caller is responsible for closing the session.
     """
-    global engine, SessionLocal, ScopedSession
+    global engine, SessionLocal
 
     if SessionLocal is None:
         # Initialize with SSL configuration based on database mode
@@ -146,10 +138,7 @@ def get_db_session():
                 pool_timeout=60
             )
             SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=True)
-
-            # Initialize scoped session for thread-safe session reuse
-            ScopedSession = scoped_session(SessionLocal)
-            logger.info("Initialized scoped session factory (lazy init)")
+            logger.info("Initialized database session factory (lazy init)")
         except Exception as e:
             logger.error(f"Database engine creation failed: {e}")
             # Import here to avoid circular imports
@@ -158,11 +147,11 @@ def get_db_session():
             raise
 
     try:
-        # Return scoped session - this will return the SAME session within the same thread/request
-        session = ScopedSession()
+        # Return new session - caller must close it when done
+        session = SessionLocal()
         # Test connection
         session.execute(text("SELECT 1"))
-        logger.debug(f"Returning scoped session: {id(session)}")
+        logger.debug(f"Returning database session: {id(session)}")
         return session
     except (SQLAlchemyError, DisconnectionError, SQLTimeoutError) as e:
         logger.error(f"Database connection failed: {e}")
@@ -176,27 +165,6 @@ def get_db_session():
         from .services.global_error_handler import handle_database_error
         asyncio.create_task(handle_database_error(f"Unexpected database error: {str(e)}"))
         raise
-
-
-def cleanup_scoped_session():
-    """
-    Clean up the scoped session for the current thread/request context.
-
-    This should be called at the end of each request to:
-    1. Remove the session from the scoped registry
-    2. Close the session and release database connections back to the pool
-
-    In a FastAPI context, this should be called in a try/finally block
-    or using a dependency with yield.
-    """
-    global ScopedSession
-
-    if ScopedSession:
-        try:
-            ScopedSession.remove()
-            logger.debug("Cleaned up scoped session for current context")
-        except Exception as e:
-            logger.error(f"Error cleaning up scoped session: {e}")
 
 
 def get_remote_db_session():
