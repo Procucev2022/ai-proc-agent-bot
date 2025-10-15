@@ -862,7 +862,7 @@ class ProfileSelectionService:
                         f"What would you like to do?"
                     )
                     buttons_config = [
-                        {"id": "create_rfq", "title": "Create new  RFQ"},
+                        {"id": "create_rfq", "title": "Create new RFQ"},
                         {"id": "search_bfs", "title": "Search Stocks"}
                     ]
                     
@@ -1005,7 +1005,7 @@ class ProfileSelectionService:
                 menu_message = f"👋 Hi {name}! Let's continue with your Buyer profile ({email})."
                 header = "What would you like to do today?"
                 buttons_config = [
-                    {"id": "create_rfq", "title": "Create new  RFQ"},
+                    {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "search_bfs", "title": "Search Stocks"}
                 ]

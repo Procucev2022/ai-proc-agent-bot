@@ -1506,7 +1506,7 @@ class ChatService:
             if user_role == "buyer":
                 # Buyer fallback with buttons
                 buttons_config = [
-                    {"id": "create_rfq", "title": "Create new  RFQ"},
+                    {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "search_bfs", "title": "Search Stocks"}
                 ]
