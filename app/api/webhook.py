@@ -30,10 +30,12 @@ from app.config import get_settings
 from app.services.chat_service import ChatService
 from app.services.cancel_service import CancelService
 from app.services.session_management_service import SessionManagementService
+from message_queue_service import MessageQueueService 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 chat_service = ChatService()
+message_queue_service = MessageQueueService()  # Instantiate message_queue service
 
 # Set up WhatsApp webhook payload logger
 webhook_payload_logger = logging.getLogger("whatsapp_webhook")
@@ -110,8 +112,8 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
             logger.warning("No processable data in webhook")
             return JSONResponse(content={"status": "ok"})
         
-        # Process message in background to avoid timeout
-        background_tasks.add_task(process_message_async, webhook_data)
+        # Enqueue message to message queue service instead of direct processing
+        background_tasks.add_task(enqueue_message_async, webhook_data)
         
         # Return success immediately
         return JSONResponse(content={"status": "ok"})
@@ -309,50 +311,35 @@ def parse_json_webhook(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return data
 
 
-async def process_message_async(webhook_data: Dict[str, Any]):
+async def enqueue_message_async(webhook_data: Dict[str, Any]):
     """
-    Process incoming message asynchronously.
-
-    Routes the message through the chat service for processing.
+    Enqueue incoming message to the message queue service.
+    
+    This replaces direct processing and allows batching of messages.
     """
     from_number = None
     try:
-        logger.info(f"Processing message: {webhook_data}")
+        logger.info(f"Enqueueing message: {webhook_data}")
 
-        # Extract message details
-        message_type = webhook_data.get("type", "text")
-        from_number = webhook_data.get("from")
-        content = webhook_data.get("content")
-
-        if not from_number or not content:
-            logger.warning("Missing required message data")
-            return
-
-        # Handle document messages specifically
-        if message_type.lower() == "document":
-            await process_document_message(webhook_data)
-        else:
-            # Process regular messages through chat service
-            await chat_service.process_message(
-                user_phone=from_number,
-                message_content=content,
-                message_type=message_type
-            )
+        # Enqueue the message - the service will handle batching and processing
+        await message_queue_service.enqueue_message(webhook_data)
 
     except Exception as e:
-        logger.error(f"Error in async message processing: {e}", exc_info=True)
+        logger.error(f"Error enqueueing message: {e}", exc_info=True)
 
+        # Extract user phone for error handling
+        from_number = webhook_data.get("from")
+        
         # Clear workflow state and notify user of technical error
         if from_number:
             try:
                 await handle_technical_error_with_cancel(
                     user_phone=from_number,
-                    error_message=f"Message processing error: {str(e)}",
-                    error_type="Message Processing Error"
+                    error_message=f"Message enqueueing error: {str(e)}",
+                    error_type="Message Queue Error"
                 )
             except Exception as cancel_error:
-                logger.error(f"Failed to handle technical error in async processing: {cancel_error}")
-
+                logger.error(f"Failed to handle technical error in async enqueueing: {cancel_error}")
 
 async def process_document_message(webhook_data: Dict[str, Any]):
     """
