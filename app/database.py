@@ -38,11 +38,12 @@ def init_database():
     engine = create_engine(
         settings.get_database_url(),
         connect_args=connect_args,
-        pool_pre_ping=True,
-        pool_recycle=300,
+        pool_pre_ping=True,  # Test connections before using
+        pool_recycle=3600,  # Recycle connections after 1 hour (MySQL timeout is 8h)
         pool_size=10,
         max_overflow=20,
-        pool_timeout=60
+        pool_timeout=60,
+        echo_pool=False  # Set to True for pool debugging
     )
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=True)
 
@@ -131,11 +132,12 @@ def get_db_session():
             engine = create_engine(
                 settings.get_database_url(),
                 connect_args=connect_args,
-                pool_pre_ping=True,
-                pool_recycle=300,
+                pool_pre_ping=True,  # Test connections before using
+                pool_recycle=3600,  # Recycle connections after 1 hour
                 pool_size=10,
                 max_overflow=20,
-                pool_timeout=60
+                pool_timeout=60,
+                echo_pool=False
             )
             SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=True)
             logger.info("Initialized database session factory (lazy init)")
@@ -187,8 +189,8 @@ def get_remote_db_session():
             # Create remote engine with connection pooling
             remote_engine = create_engine(
                 remote_database_url,
-                pool_pre_ping=True,
-                pool_recycle=300,
+                pool_pre_ping=True,  # Test connections before using
+                pool_recycle=3600,  # Recycle connections after 1 hour
                 pool_size=5,
                 max_overflow=10,
                 echo=settings.sql_debug

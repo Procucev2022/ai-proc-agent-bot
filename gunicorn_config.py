@@ -105,8 +105,9 @@ proc_name = "procurement_agent"
 reload = os.getenv("ENV", "production").lower() == "development"
 
 # Preload application code before worker processes are forked
-# Better memory efficiency but may cause issues with some code
-preload_app = os.getenv("PRELOAD_APP", "true").lower() == "true"
+# Set to False if you experience stale data issues with module-level instances
+# True = Better memory efficiency, False = Fresh initialization per worker
+preload_app = os.getenv("PRELOAD_APP", "false").lower() == "true"
 
 # ============================================
 # SECURITY
@@ -141,6 +142,19 @@ def pre_fork(server, worker):
 def post_fork(server, worker):
     """Called just after a worker has been forked."""
     server.log.info(f"Worker spawned (pid: {worker.pid})")
+
+    # Dispose database connections inherited from parent process
+    # This prevents "MySQL server has gone away" errors
+    try:
+        from app.database import engine, remote_engine
+        if engine:
+            engine.dispose()
+            server.log.info(f"Worker {worker.pid}: Disposed main database engine")
+        if remote_engine:
+            remote_engine.dispose()
+            server.log.info(f"Worker {worker.pid}: Disposed remote database engine")
+    except Exception as e:
+        server.log.warning(f"Worker {worker.pid}: Error disposing engines: {e}")
 
 def pre_exec(server):
     """Called just before a new master process is forked."""
