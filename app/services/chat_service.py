@@ -430,12 +430,12 @@ class ChatService:
             else:
                 result = {"status": "error", "error": f"Unknown message type: {message_type}"}
 
-            # Log OpenAI call summary for performance monitoring
-            call_summary = self.openai_service.get_call_summary(user_phone)
-            if call_summary:
-                total_calls = sum(call_summary.values())
-                call_breakdown = ", ".join([f"{call_type}: {count}" for call_type, count in call_summary.items()])
-                logger.info(f"OpenAI calls for {user_phone}: {total_calls} total ({call_breakdown})")
+            # # Log OpenAI call summary for performance monitoring
+            # call_summary = self.openai_service.get_call_summary(user_phone)
+            # if call_summary:
+            #     total_calls = sum(call_summary.values())
+            #     call_breakdown = ", ".join([f"{call_type}: {count}" for call_type, count in call_summary.items()])
+            #     logger.info(f"OpenAI calls for {user_phone}: {total_calls} total ({call_breakdown})")
 
             # Include welcome message information in the result if it was sent
             if welcome_sent:
