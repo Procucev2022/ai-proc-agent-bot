@@ -63,6 +63,7 @@ class MessageQueueService:
     - {user_phone}:outgoing -> List (FIFO queue of json(Batch))
     - {user_phone}:timer -> String (timestamp when timer was started)
     - {user_phone}:processing -> String (batch_id currently being processed)
+    - {user_phone}:current_batch -> String (batch_id currently being sent)
     - {user_phone}:lock:timer -> Lock for timer operations
     - {user_phone}:lock:batch -> Lock for batch creation operations
     """
@@ -70,8 +71,8 @@ class MessageQueueService:
     INCOMING_QUEUE_SUFFIX = ":incoming"
     OUTGOING_QUEUE_SUFFIX = ":outgoing"
     TIMER_KEY_SUFFIX = ":timer"
-    # TIMER_TASK_SUFFIX = ":timer_task"  # Unused - commented out
     PROCESSING_KEY_SUFFIX = ":processing"
+    CURRENT_BATCH_SUFFIX = ":current_batch"  # NEW: stores batch_id for current send operation
     TIMER_LOCK_SUFFIX = ":lock:timer"
     BATCH_LOCK_SUFFIX = ":lock:batch"
 
@@ -107,12 +108,12 @@ class MessageQueueService:
 
     def get_timer_key(self, user_phone: str) -> str:
         return f"{user_phone}{self.TIMER_KEY_SUFFIX}"
-    
-    # def get_timer_task_key(self, user_phone: str) -> str:
-    #     return f"{user_phone}{self.TIMER_TASK_SUFFIX}"
 
     def get_processing_key(self, user_phone: str) -> str:
         return f"{user_phone}{self.PROCESSING_KEY_SUFFIX}"
+
+    def get_current_batch_key(self, user_phone: str) -> str:
+        return f"{user_phone}{self.CURRENT_BATCH_SUFFIX}"
 
     def get_timer_lock_key(self, user_phone: str) -> str:
         return f"{user_phone}{self.TIMER_LOCK_SUFFIX}"
@@ -364,151 +365,234 @@ class MessageQueueService:
 
     async def _process_batch(self, batch: Batch):
         """
-        Process a batch by calling dummy_process_message.
+        Process a batch through ChatService.
         """
         try:
+            # Store batch context in Redis for wrapper methods to access
+            current_batch_key = self.get_current_batch_key(batch.user_phone)
+            self.redis_client.set(current_batch_key, batch.batch_id, ex=300)  # 5 min expiry
+            
             logger.info(
                 f"Processing batch {batch.batch_id} for user {batch.user_phone}"
             )
             
-            await self.dummy_process_message(
+            # Import ChatService here to avoid circular import
+            from app.services.chat_service import ChatService
+            chat_service = ChatService(message_queue_service=self)
+            
+            # Process through ChatService
+            await chat_service.process_message(
                 user_phone=batch.user_phone,
                 message_content=batch.concatenated_content,
-                message_type=batch.message_type,
-                batch_id=batch.batch_id
+                message_type=batch.message_type
             )
+            
+            # Note: cleanup happens in wrapper methods (send_message/send_configurable_buttons)
+            # If processing completes without calling any send method, cleanup here
+            if self.redis_client.exists(current_batch_key):
+                logger.warning(
+                    f"Batch {batch.batch_id} completed without sending message. "
+                    "Cleaning up manually."
+                )
+                await self._handle_batch_cleanup(batch.batch_id, batch.user_phone, success=True)
 
         except Exception as e:
             logger.error(
                 f"Error processing batch {batch.batch_id}: {e}",
                 exc_info=True
             )
+            # Cleanup on error
+            await self._handle_batch_cleanup(batch.batch_id, batch.user_phone, success=False)
 
-    async def dummy_process_message(
-        self,
-        user_phone: str,
-        message_content: str,
-        message_type: str,
-        batch_id: str
-    ):
+    # ========================================
+    # WhatsApp Wrapper Methods (with cleanup)
+    # ========================================
+
+    async def send_message(self, recipient_id: str, message: str):
         """
-        Dummy processing function that simulates a long-running pipeline.
+        Send text message via WhatsApp and handle batch cleanup.
         
-        Sleeps for 3-8 seconds, then calls send_whatsapp_response.
+        This is a wrapper around WhatsAppService.send_message() that adds
+        batch queue management logic.
         """
-        processing_time = random.uniform(3, 8)
+        # Get batch context from Redis
+        current_batch_key = self.get_current_batch_key(recipient_id)
+        batch_id = self.redis_client.get(current_batch_key)
         
-        logger.info(
-            f"[DUMMY] Processing batch {batch_id} for {user_phone}. "
-            f"Content length: {len(message_content)}. "
-            f"Simulating {processing_time:.2f}s processing..."
-        )
-
-        await asyncio.sleep(processing_time)
-
-        logger.info(
-            f"[DUMMY] Batch {batch_id} processing complete. Sending response..."
-        )
-
-        await self.send_whatsapp_response(
-            user_phone=user_phone,
-            batch_id=batch_id,
-            response_content=f"Processed: {message_content}..."
-        )
-
-    async def send_whatsapp_response(
-        self,
-        user_phone: str,
-        batch_id: str,
-        response_content: str
-    ):
-        """
-        Send WhatsApp response using the actual WhatsApp service.
+        if not batch_id:
+            logger.warning(
+                f"send_message called for {recipient_id} but no batch context found. "
+                "This might be a direct call outside of batch processing."
+            )
+            # Fallback: send directly without cleanup
+            return await self.whatsapp_service.send_message(recipient_id, message)
         
-        Flow:
-        1. Send message via WhatsApp service
-        2. Remove batch from outgoing queue
-        3. Clear processing marker
-        4. Check if there's a next batch to process
-        5. If incoming queue has messages, start timer
-        """
         try:
-            # Send actual WhatsApp message
+            # Send via WhatsApp service
             logger.info(
-                f"Sending WhatsApp response to {user_phone} for batch {batch_id}"
+                f"Sending message to {recipient_id} for batch {batch_id}"
             )
+            result = await self.whatsapp_service.send_message(recipient_id, message)
             
-            message_response = await self.whatsapp_service.send_message(
-                recipient_id=user_phone,
-                message=response_content
-            )
-            
-            if message_response.success:
+            if result.success:
                 logger.info(
-                    f"WhatsApp message sent successfully to {user_phone} "
-                    f"for batch {batch_id}. Message ID: {message_response.message_id}"
+                    f"Message sent successfully to {recipient_id} "
+                    f"for batch {batch_id}. Message ID: {result.message_id}"
                 )
             else:
                 logger.error(
-                    f"Failed to send WhatsApp message to {user_phone} "
-                    f"for batch {batch_id}. Error: {message_response.error}"
+                    f"Failed to send message to {recipient_id} "
+                    f"for batch {batch_id}. Error: {result.error}"
                 )
-                # Continue with cleanup even if message sending failed
-
+            
+            # Handle batch cleanup
+            await self._handle_batch_cleanup(batch_id, recipient_id, result.success)
+            
+            return result
+            
         except Exception as e:
-            logger.error(
-                f"Error sending WhatsApp message for batch {batch_id}: {e}",
-                exc_info=True
+            logger.error(f"Error in send_message wrapper: {e}", exc_info=True)
+            # Cleanup even on exception
+            await self._handle_batch_cleanup(batch_id, recipient_id, success=False)
+            raise
+
+    async def send_configurable_buttons(
+        self,
+        recipient_id: str,
+        body: str,
+        buttons_config: List[Dict[str, str]],
+        header: str = None,
+        footer: str = "(Type 'Exit' anytime to end the chat)"
+    ):
+        """
+        Send button message via WhatsApp and handle batch cleanup.
+        
+        This is a wrapper around WhatsAppService.send_configurable_buttons() that adds
+        batch queue management logic.
+        """
+        # Get batch context from Redis
+        current_batch_key = self.get_current_batch_key(recipient_id)
+        batch_id = self.redis_client.get(current_batch_key)
+        
+        if not batch_id:
+            logger.warning(
+                f"send_configurable_buttons called for {recipient_id} but no batch context found. "
+                "This might be a direct call outside of batch processing."
             )
-            # Continue with cleanup even if there was an exception
-
-        # Proceed with batch cleanup regardless of send success
-        outgoing_key = self.get_outgoing_key(user_phone)
-        processing_key = self.get_processing_key(user_phone)
-        batch_lock_key = self.get_batch_lock_key(user_phone)
-
-        with self.redis_client.lock(batch_lock_key, timeout=10, blocking_timeout=10):
-            # Remove the processed batch from outgoing queue
-            batch_json = self.redis_client.lpop(outgoing_key)
+            # Fallback: send directly without cleanup
+            return await self.whatsapp_service.send_configurable_buttons(
+                recipient_id, body, buttons_config, header, footer
+            )
+        
+        try:
+            # Send via WhatsApp service
+            logger.info(
+                f"Sending configurable buttons to {recipient_id} for batch {batch_id}"
+            )
+            result = await self.whatsapp_service.send_configurable_buttons(
+                recipient_id, body, buttons_config, header, footer
+            )
             
-            if batch_json:
-                try:
-                    processed_batch = json.loads(batch_json)
-                    if processed_batch.get('batch_id') == batch_id:
-                        logger.info(f"Batch {batch_id} removed from outgoing queue")
-                    else:
-                        logger.warning(
-                            f"Batch ID mismatch: expected {batch_id}, "
-                            f"got {processed_batch.get('batch_id')}"
-                        )
-                except Exception as e:
-                    logger.error(f"Error parsing batch during removal: {e}")
-
-            # Clear processing marker
-            self.redis_client.delete(processing_key)
-
-            # Check for next batch
-            next_batch_json = self.redis_client.lindex(outgoing_key, 0)
-            
-            if next_batch_json:
-                # Process next batch
-                logger.info(f"Next batch found for user {user_phone}, starting processing")
-                await self._check_and_start_processing(user_phone)
+            if result.success:
+                logger.info(
+                    f"Buttons sent successfully to {recipient_id} "
+                    f"for batch {batch_id}. Message ID: {result.message_id}"
+                )
             else:
-                # No more batches, check if incoming queue has messages
-                incoming_key = self.get_incoming_key(user_phone)
-                incoming_count = self.redis_client.zcard(incoming_key)
+                logger.error(
+                    f"Failed to send buttons to {recipient_id} "
+                    f"for batch {batch_id}. Error: {result.error}"
+                )
+            
+            # Handle batch cleanup
+            await self._handle_batch_cleanup(batch_id, recipient_id, result.success)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in send_configurable_buttons wrapper: {e}", exc_info=True)
+            # Cleanup even on exception
+            await self._handle_batch_cleanup(batch_id, recipient_id, success=False)
+            raise
+
+    # ==================
+    # Batch Cleanup
+    # ==================
+
+    async def _handle_batch_cleanup(self, batch_id: str, user_phone: str, success: bool):
+        """
+        Handle batch completion and queue management.
+        
+        This method:
+        1. Removes current batch context from Redis
+        2. Removes processed batch from outgoing queue
+        3. Clears processing marker
+        4. Checks for next batch to process
+        5. Starts timer if incoming queue has messages
+        """
+        try:
+            # Remove batch context
+            current_batch_key = self.get_current_batch_key(user_phone)
+            self.redis_client.delete(current_batch_key)
+            
+            logger.info(
+                f"Cleaning up batch {batch_id} for user {user_phone}. "
+                f"Send success: {success}"
+            )
+            
+            # Proceed with queue cleanup
+            outgoing_key = self.get_outgoing_key(user_phone)
+            processing_key = self.get_processing_key(user_phone)
+            batch_lock_key = self.get_batch_lock_key(user_phone)
+
+            with self.redis_client.lock(batch_lock_key, timeout=10, blocking_timeout=10):
+                # Remove the processed batch from outgoing queue
+                batch_json = self.redis_client.lpop(outgoing_key)
                 
-                if incoming_count > 0:
-                    logger.info(
-                        f"Outgoing queue empty but incoming has {incoming_count} messages. "
-                        f"Starting timer for user {user_phone}"
-                    )
-                    timer_lock_key = self.get_timer_lock_key(user_phone)
-                    with self.redis_client.lock(timer_lock_key, timeout=5, blocking_timeout=5):
-                        await self._restart_timer(user_phone)
+                if batch_json:
+                    try:
+                        processed_batch = json.loads(batch_json)
+                        if processed_batch.get('batch_id') == batch_id:
+                            logger.info(f"Batch {batch_id} removed from outgoing queue")
+                        else:
+                            logger.warning(
+                                f"Batch ID mismatch: expected {batch_id}, "
+                                f"got {processed_batch.get('batch_id')}"
+                            )
+                    except Exception as e:
+                        logger.error(f"Error parsing batch during removal: {e}")
+
+                # Clear processing marker
+                self.redis_client.delete(processing_key)
+
+                # Check for next batch
+                next_batch_json = self.redis_client.lindex(outgoing_key, 0)
+                
+                if next_batch_json:
+                    # Process next batch
+                    logger.info(f"Next batch found for user {user_phone}, starting processing")
+                    await self._check_and_start_processing(user_phone)
                 else:
-                    logger.info(f"All queues empty for user {user_phone}. Flow complete.")
+                    # No more batches, check if incoming queue has messages
+                    incoming_key = self.get_incoming_key(user_phone)
+                    incoming_count = self.redis_client.zcard(incoming_key)
+                    
+                    if incoming_count > 0:
+                        logger.info(
+                            f"Outgoing queue empty but incoming has {incoming_count} messages. "
+                            f"Starting timer for user {user_phone}"
+                        )
+                        timer_lock_key = self.get_timer_lock_key(user_phone)
+                        with self.redis_client.lock(timer_lock_key, timeout=5, blocking_timeout=5):
+                            await self._restart_timer(user_phone)
+                    else:
+                        logger.info(f"All queues empty for user {user_phone}. Flow complete.")
+        
+        except Exception as e:
+            logger.error(f"Error in batch cleanup for {batch_id}: {e}", exc_info=True)
+
+    # Remove old send_whatsapp_response method - it's replaced by wrapper methods
+    # async def send_whatsapp_response(...):  # DELETE THIS
 
     # ==================
     # Utility Methods
@@ -523,17 +607,20 @@ class MessageQueueService:
         outgoing_key = self.get_outgoing_key(user_phone)
         processing_key = self.get_processing_key(user_phone)
         timer_key = self.get_timer_key(user_phone)
+        current_batch_key = self.get_current_batch_key(user_phone)
 
         incoming_count = self.redis_client.zcard(incoming_key)
         outgoing_count = self.redis_client.llen(outgoing_key)
         currently_processing = self.redis_client.get(processing_key)
         timer_started = self.redis_client.get(timer_key)
+        current_batch = self.redis_client.get(current_batch_key)
 
         return {
             "user_phone": user_phone,
             "incoming_queue_size": incoming_count,
             "outgoing_queue_size": outgoing_count,
             "currently_processing": currently_processing,
+            "current_batch_being_sent": current_batch,
             "timer_active": timer_started is not None,
             "timer_started_at": float(timer_started) if timer_started else None
         }
@@ -548,6 +635,7 @@ class MessageQueueService:
             self.get_outgoing_key(user_phone),
             self.get_timer_key(user_phone),
             self.get_processing_key(user_phone),
+            self.get_current_batch_key(user_phone),
         ]
         
         for key in keys_to_delete:
