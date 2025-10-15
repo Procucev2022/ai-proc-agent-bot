@@ -81,7 +81,7 @@ class MessageQueueService:
         settings = get_settings()
 
         # Instantiate Redis client
-        self.redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        self.redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
 
         # Configuration
         self.batch_window = settings.BATCH_WINDOW_SECONDS if settings.BATCH_WINDOW_SECONDS else 5
