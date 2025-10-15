@@ -89,6 +89,10 @@ class MessageQueueService:
         # Track active timer tasks per user (in-memory, for this worker)
         self._active_timers: Dict[str, asyncio.Task] = {}
 
+        # Import WhatsAppService for sending messages
+        from app.services.whatsapp_service import WhatsAppService
+        self.whatsapp_service = WhatsAppService()
+
         logger.info("MessageQueueService initialized with batch_window=%s seconds", self.batch_window)
 
     # =================
@@ -379,9 +383,6 @@ class MessageQueueService:
                 f"Error processing batch {batch.batch_id}: {e}",
                 exc_info=True
             )
-        finally:
-            # Cleanup happens in send_whatsapp_response
-            pass
 
     async def dummy_process_message(
         self,
@@ -412,7 +413,7 @@ class MessageQueueService:
         await self.send_whatsapp_response(
             user_phone=user_phone,
             batch_id=batch_id,
-            response_content=f"Processed: {message_content[:100]}..."  # Truncate for logging
+            response_content=f"Processed: {message_content}..."
         )
 
     async def send_whatsapp_response(
@@ -422,20 +423,46 @@ class MessageQueueService:
         response_content: str
     ):
         """
-        Dummy function to send WhatsApp response.
+        Send WhatsApp response using the actual WhatsApp service.
         
         Flow:
-        1. Log the response
+        1. Send message via WhatsApp service
         2. Remove batch from outgoing queue
         3. Clear processing marker
         4. Check if there's a next batch to process
         5. If incoming queue has messages, start timer
         """
-        logger.info(
-            f"[DUMMY] Sending WhatsApp response to {user_phone} for batch {batch_id}: "
-            f"{response_content[:100]}..."
-        )
+        try:
+            # Send actual WhatsApp message
+            logger.info(
+                f"Sending WhatsApp response to {user_phone} for batch {batch_id}"
+            )
+            
+            message_response = await self.whatsapp_service.send_message(
+                recipient_id=user_phone,
+                message=response_content
+            )
+            
+            if message_response.success:
+                logger.info(
+                    f"WhatsApp message sent successfully to {user_phone} "
+                    f"for batch {batch_id}. Message ID: {message_response.message_id}"
+                )
+            else:
+                logger.error(
+                    f"Failed to send WhatsApp message to {user_phone} "
+                    f"for batch {batch_id}. Error: {message_response.error}"
+                )
+                # Continue with cleanup even if message sending failed
 
+        except Exception as e:
+            logger.error(
+                f"Error sending WhatsApp message for batch {batch_id}: {e}",
+                exc_info=True
+            )
+            # Continue with cleanup even if there was an exception
+
+        # Proceed with batch cleanup regardless of send success
         outgoing_key = self.get_outgoing_key(user_phone)
         processing_key = self.get_processing_key(user_phone)
         batch_lock_key = self.get_batch_lock_key(user_phone)
