@@ -482,7 +482,16 @@ class DatabaseManager:
     def save_conversation_session(self, session_data: dict) -> ConversationSession:
         """Save or update a conversation session."""
         from sqlalchemy.exc import SQLAlchemyError, IntegrityError
-        
+        import os
+
+        worker_pid = os.getpid()
+        session_id = session_data.get('session_id', 'UNKNOWN')
+
+        # Log what we're saving
+        extracted_entities = session_data.get('extracted_entities', [])
+        workflow_state_keys = list(session_data.get('workflow_state', {}).keys()) if isinstance(session_data.get('workflow_state'), dict) else []
+        logger.info(f"[WORKER-{worker_pid}] [SESSION-SAVE] {session_id} | extracted_entities count: {len(extracted_entities)} | workflow_state keys: {workflow_state_keys}")
+
         try:
             # First, try to get existing session
             session = self.session.query(ConversationSession).filter_by(
@@ -562,6 +571,9 @@ class DatabaseManager:
     def get_conversation_session(self, session_id: str) -> Optional[ConversationSession]:
         """Get a conversation session by ID."""
         from sqlalchemy.exc import SQLAlchemyError
+        import os
+
+        worker_pid = os.getpid()
 
         try:
             # Force expiration of any cached objects to prevent stale data
@@ -572,6 +584,11 @@ class DatabaseManager:
             # Refresh the session object to ensure latest data from database
             if session:
                 self.session.refresh(session)
+
+                # Log what we loaded
+                extracted_entities_count = len(session.extracted_entities) if session.extracted_entities else 0
+                workflow_state_keys = list(session.workflow_state.keys()) if session.workflow_state else []
+                logger.info(f"[WORKER-{worker_pid}] [SESSION-LOAD] {session_id} | extracted_entities count: {extracted_entities_count} | workflow_state keys: {workflow_state_keys}")
 
             # Fix potential JSON deserialization issues
             if session and session.workflow_state:
