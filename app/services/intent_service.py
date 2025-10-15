@@ -31,7 +31,7 @@ class IntentService:
         self.openai_service = OpenAIService()
         self.settings = get_settings()
         
-    def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
+    async def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
         """
         Classify user message intent using OpenAI with conversation context awareness.
         
@@ -57,7 +57,7 @@ class IntentService:
         """
         try:
             # Get classification from OpenAI with context
-            classification_result = self.openai_service.classify_intent(message, context)
+            classification_result = await self.openai_service.classify_intent(message, context)
             
             if not classification_result.get("success", False):
                 logger.warning(f"OpenAI classification failed, using fallback")
@@ -72,7 +72,7 @@ class IntentService:
             
             # Handle contextual intents with intelligent responses
             if intent in ['contextual_reference', 'session_inquiry', 'alternative_request'] and confidence > 60:
-                return self._handle_contextual_intent(intent, message, context, classification_result)
+                return await self._handle_contextual_intent(intent, message, context, classification_result)
 
             # Handle exit intent - return immediately without contextual processing
             if intent == 'exit_system' and confidence > 50:
@@ -228,7 +228,7 @@ class IntentService:
         else:
             return "ambiguous", 30
     
-    def _handle_contextual_intent(self, intent: str, message: str, context: dict, classification_result: dict) -> Dict[str, Any]:
+    async def _handle_contextual_intent(self, intent: str, message: str, context: dict, classification_result: dict) -> Dict[str, Any]:
         """
         Handle contextual intents by generating intelligent responses and extracting entities.
         
@@ -243,7 +243,7 @@ class IntentService:
         """
         try:
             # Use comprehensive contextual interaction handler for all contextual intents
-            contextual_data = self.openai_service.handle_contextual_interaction(
+            contextual_data = await self.openai_service.handle_contextual_interaction(
                 message=message,
                 conversation_history=context.get('conversation_history', {}),
                 workflow_state=context.get('workflow_state', {}),
