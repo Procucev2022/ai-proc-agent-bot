@@ -156,16 +156,8 @@ class EntityService:
                 "pincode": response.get("pincode")
             }
 
-            # Filter out "NO_PRODUCTS_MENTIONED" entries - these are just supplementary data
-            actual_products = []
-            for product in products:
-                if product.get("description") != "NO_PRODUCTS_MENTIONED":
-                    actual_products.append(product)
-                else:
-                    print(f"EntityService: Filtered out NO_PRODUCTS_MENTIONED entry - treating as supplementary data only")
-
             # Merge global fields into each product for backward compatibility
-            merged_products = self._merge_global_fields_into_products(actual_products, global_fields)
+            merged_products = self._merge_global_fields_into_products(products, global_fields)
 
             # If we have existing context and the new extraction returned data, merge them intelligently
             if existing_context and merged_products:
@@ -175,11 +167,6 @@ class EntityService:
                 # User only provided supplementary data (no product descriptions)
                 # Apply the global fields to existing products
                 print(f"EntityService: No new products extracted, applying supplementary data to {len(existing_context)} existing products")
-                merged_products = self._apply_supplementary_data_to_existing_products(existing_context, global_fields)
-            elif existing_context and not actual_products and products:
-                # Special case: AI created NO_PRODUCTS_MENTIONED but we have existing context
-                # This means user provided only supplementary data (like date/location)
-                print(f"EntityService: User provided only supplementary data, applying to {len(existing_context)} existing products")
                 merged_products = self._apply_supplementary_data_to_existing_products(existing_context, global_fields)
 
             validated_products, has_date_validation_error = self._validate_dates_in_products(merged_products, message)
