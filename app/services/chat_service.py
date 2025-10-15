@@ -241,7 +241,7 @@ class ChatService:
                     "profile_selection_retry_presented", "role_menu_presented",
                     "redirected_to_buyer_registration", "redirected_to_seller_registration",
                     "intent_mismatch_handled", "intent_mismatch_retry_sent", "new_user_registration_presented",
-                    "buyer_options_presented","single_buyer_profile_selection_presented"
+                    "buyer_options_presented", "single_buyer_profile_selection_presented", "profile_selection_sent"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
