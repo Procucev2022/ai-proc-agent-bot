@@ -38,13 +38,15 @@ def init_database():
     engine = create_engine(
         settings.get_database_url(),
         connect_args=connect_args,
-        pool_pre_ping=True,
-        pool_recycle=300,
+        pool_pre_ping=True,  # Test connections before using
+        pool_recycle=3600,  # Recycle connections after 1 hour (MySQL timeout is 8h)
         pool_size=10,
         max_overflow=20,
-        pool_timeout=60
+        pool_timeout=60,
+        echo_pool=False,  # Set to True for pool debugging
+        isolation_level="READ COMMITTED"  # See latest committed data across workers
     )
-    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=True)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
     # Create all tables
     Base.metadata.create_all(bind=engine)
@@ -131,13 +133,15 @@ def get_db_session():
             engine = create_engine(
                 settings.get_database_url(),
                 connect_args=connect_args,
-                pool_pre_ping=True,
-                pool_recycle=300,
+                pool_pre_ping=True,  # Test connections before using
+                pool_recycle=3600,  # Recycle connections after 1 hour
                 pool_size=10,
                 max_overflow=20,
-                pool_timeout=60
+                pool_timeout=60,
+                echo_pool=False,
+                isolation_level="READ COMMITTED"  # See latest committed data across workers
             )
-            SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=True)
+            SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
             logger.info("Initialized database session factory (lazy init)")
         except Exception as e:
             logger.error(f"Database engine creation failed: {e}")
@@ -187,8 +191,8 @@ def get_remote_db_session():
             # Create remote engine with connection pooling
             remote_engine = create_engine(
                 remote_database_url,
-                pool_pre_ping=True,
-                pool_recycle=300,
+                pool_pre_ping=True,  # Test connections before using
+                pool_recycle=3600,  # Recycle connections after 1 hour
                 pool_size=5,
                 max_overflow=10,
                 echo=settings.sql_debug
@@ -480,7 +484,16 @@ class DatabaseManager:
     def save_conversation_session(self, session_data: dict) -> ConversationSession:
         """Save or update a conversation session."""
         from sqlalchemy.exc import SQLAlchemyError, IntegrityError
-        
+        import os
+
+        worker_pid = os.getpid()
+        session_id = session_data.get('session_id', 'UNKNOWN')
+
+        # Log what we're saving
+        extracted_entities = session_data.get('extracted_entities', [])
+        workflow_state_keys = list(session_data.get('workflow_state', {}).keys()) if isinstance(session_data.get('workflow_state'), dict) else []
+        logger.info(f"[WORKER-{worker_pid}] [SESSION-SAVE] {session_id} | extracted_entities count: {len(extracted_entities)} | workflow_state keys: {workflow_state_keys}")
+
         try:
             # First, try to get existing session
             session = self.session.query(ConversationSession).filter_by(
@@ -560,6 +573,9 @@ class DatabaseManager:
     def get_conversation_session(self, session_id: str) -> Optional[ConversationSession]:
         """Get a conversation session by ID."""
         from sqlalchemy.exc import SQLAlchemyError
+        import os
+
+        worker_pid = os.getpid()
 
         try:
             # Force expiration of any cached objects to prevent stale data
@@ -570,6 +586,11 @@ class DatabaseManager:
             # Refresh the session object to ensure latest data from database
             if session:
                 self.session.refresh(session)
+
+                # Log what we loaded
+                extracted_entities_count = len(session.extracted_entities) if session.extracted_entities else 0
+                workflow_state_keys = list(session.workflow_state.keys()) if session.workflow_state else []
+                logger.info(f"[WORKER-{worker_pid}] [SESSION-LOAD] {session_id} | extracted_entities count: {extracted_entities_count} | workflow_state keys: {workflow_state_keys}")
 
             # Fix potential JSON deserialization issues
             if session and session.workflow_state:
