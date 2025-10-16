@@ -105,6 +105,8 @@ class ConfirmationHandler:
         """Handle optional field responses using confirmation service."""
         # Use confirmation service to parse user response
         confirmation_result = await self.confirmation_service.parse_confirmation(message)
+
+        logger.info(f"confirmation result of optional field response is :{confirmation_result}")
         
         if confirmation_result == "no":
             # User wants to skip optional fields, proceed to confirmation
