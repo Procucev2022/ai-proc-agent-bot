@@ -847,133 +847,55 @@ Return only the selected email address or "none" if no clear selection.
             # Use OTP service for validation
             otp_result = await self.otp_service.handle_user_message(user_phone, message, session)
             
-            # If OTP is valid, refresh user data and complete authentication
+            # If OTP is valid, update Redis cache directly and complete authentication
             if otp_result.get("status") == "otp_valid":
                 selected_email = session.workflow_state.get("otp_email")
+                selected_user = session.workflow_state.get("selected_user")
                 
-                # Clear user cache and force fresh API call to get updated verification status
-                logger.info(f"OTP validated successfully, forcing fresh user data refresh for {user_phone}")
+                if not selected_user or not selected_email:
+                    logger.error(f"Missing selected_user or otp_email in workflow state for {user_phone}")
+                    return {"status": "error", "error": "Authentication data missing"}
                 
-                # Clear cached data to force fresh API call
+                # Update verification status in user data since OTP was validated
+                updated_user = selected_user.copy()
+                updated_user["verificationStatus"] = "EMAIL_VERIFIED"
+                
+                logger.info(f"OTP validated successfully, updating Redis cache for {user_phone}")
+                
+                # Create User object and store in both auth Redis and user cache
+                user_obj = User.from_mixed_data(updated_user)
+                normalized_phone = user_phone.lstrip('+')
+                
+                # Store in auth Redis
+                auth_stored = await self.auth_redis_service.store(normalized_phone, user_obj.dict(), expiry_seconds=3600)
+                
+                # Update user cache with verified status
                 from app.services.user_cache_service import get_user_cache_service
                 user_cache_service = get_user_cache_service()
-                await user_cache_service.clear_user_data(user_phone)
+                cache_stored = await user_cache_service.store_user_data(user_phone, [updated_user], expiry_seconds=3600)
                 
-                # Force fresh API call
-                auth_response = await self.user_authenticate(user_phone, "refresh_after_otp", session)
+                if auth_stored and cache_stored:
+                    logger.info(f"Successfully updated Redis cache with verified status for {user_phone}")
+                else:
+                    logger.error(f"Failed to update Redis cache for {user_phone} - auth: {auth_stored}, cache: {cache_stored}")
                 
-                if auth_response.get("success") and auth_response.get("response"):
-                    fresh_users = auth_response["response"]
-                    
-                    # Find the selected user from fresh data
-                    selected_user = None
-                    for user in fresh_users:
-                        user_email = user.get("email") or user.get("username")
-                        if user_email == selected_email:
-                            selected_user = user
-                            break
-                    
-                    if selected_user:
-                        # CRITICAL: Check verification status after OTP validation
-                        verification_check = await self.verification_check_service.check_and_enforce_verification(user_phone, selected_user)
-                        
-                        if not verification_check.get("access_granted"):
-                            # User still doesn't meet verification requirements (e.g., approved=False for buyers)
-                            logger.info(f"User {user_phone} blocked after OTP validation due to verification requirements: {verification_check}")
-                            redirect_info = verification_check.get("redirect_info", {})
-                            
-                            if verification_check.get("redirect_to_support"):
-                                # Redirect to support and exit
-                                from app.services.exit_service import ExitService
-                                exit_service = ExitService(self.whatsapp_service, self, self.session_manager, None)
-                                
-                                support_message = redirect_info.get("message", "Please contact our support team for assistance.")
-                                await self.whatsapp_service.send_message(user_phone, support_message)
-                                
-                                await exit_service.handle_exit_intent(user_phone, session)
-                                
-                                return {
-                                    "status": "redirect_to_support",
-                                    "reason": redirect_info.get("reason"),
-                                    "exit_completed": True
-                                }
-                            else:
-                                # Other verification requirements not met
-                                return {
-                                    "status": "verification_required",
-                                    "redirect_info": redirect_info
-                                }
-                        
-                        # Verification passed - proceed with session storage
-                        session_stored = await self.store_user_session_with_email(user_phone, fresh_users, selected_email)
-                        
-                        # CRITICAL: Update auth token with fresh user data that has updated verification status
-                        normalized_phone = user_phone.lstrip('+')
-                        # Create proper User object for session storage
-                        user_obj = User.from_mixed_data(selected_user)
-                        success = await self.auth_redis_service.store(normalized_phone, user_obj.dict(), expiry_seconds=3600)
-                        if success:
-                            logger.info(f"Successfully updated auth token with fresh verification status for {user_phone}")
-                        else:
-                            logger.error(f"Failed to update auth token for {user_phone}")
-                        
-                        # Determine user type for response
-                        is_self_client = selected_user.get("selfClient") or selected_user.get("self_client")
-                        user_type = "buyer" if is_self_client else "seller"
-                        
-                        if session_stored:
-                            logger.info(f"User session stored successfully after OTP validation for {user_phone}")
-                            
-                            # Preserve original message from workflow state for processing after authentication
-                            original_message = session.workflow_state.get("original_message") if session.workflow_state else None
-                            
-                            # Clear authentication workflow state
-                            session.workflow_type = None
-                            session.workflow_state = {}
-                            logger.info(f"Cleared authentication workflow state after OTP validation for {user_phone}")
-                            
-                            return {
-                                "status": "authentication_completed",
-                                "user_type": user_type,
-                                "redirect_to_main_flow": True,
-                                "original_message": original_message
-                            }
-                        else:
-                            logger.error(f"Failed to store user session after OTP validation for {user_phone}")
+                # Determine user type
+                is_self_client = updated_user.get("selfClient") or updated_user.get("self_client")
+                user_type = "buyer" if is_self_client else "seller"
                 
-                # If refresh or session storage fails, try to store session with existing data
-                logger.warning(f"OTP validated but session storage failed for {user_phone} - trying with existing data")
+                # Preserve original message from workflow state
+                original_message = session.workflow_state.get("original_message")
                 
-                # Try to store session with the selected user from workflow state
-                selected_user = session.workflow_state.get("selected_user")
-                selected_email = session.workflow_state.get("otp_email")
-                
-                if selected_user and selected_email:
-                    # Create User object and store session
-                    user_details = User.from_mixed_data(selected_user)
-                    session_stored = await self.store_user_session(user_phone, user_details)
-                    
-                    # Also store in auth Redis for token validation
-                    normalized_phone = user_phone.lstrip('+')
-                    auth_stored = await self.auth_redis_service.store(normalized_phone, user_details.dict(), expiry_seconds=3600)
-                    
-                    if session_stored and auth_stored:
-                        logger.info(f"Successfully stored session and auth token with existing user data for {user_phone}")
-                    else:
-                        logger.error(f"Failed to store session or auth token for {user_phone} - session: {session_stored}, auth: {auth_stored}")
-                
-                # Preserve original message from workflow state for processing after authentication
-                original_message = session.workflow_state.get("original_message") if session.workflow_state else None
-                
+                # Clear authentication workflow state
                 session.workflow_type = None
                 session.workflow_state = {}
+                logger.info(f"Authentication completed after OTP validation for {user_phone}")
                 
                 return {
                     "status": "authentication_completed",
-                    "user_type": "unknown",
+                    "user_type": user_type,
                     "redirect_to_main_flow": True,
-                    "original_message": original_message,
-                    "note": "OTP validated successfully"
+                    "original_message": original_message
                 }
             
             return otp_result

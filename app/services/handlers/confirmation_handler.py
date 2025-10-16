@@ -231,7 +231,7 @@ class ConfirmationHandler:
 
         buttons_config = [
             {"id": "confirm_rfq", "title": "Confirm"},
-            {"id": "no_rfq", "title": "Modify"}
+            {"id": "no_rfq", "title": "Add or Modify"}
         ]
         await self.whatsapp_service.send_configurable_buttons(
             user.phone_number,
@@ -279,7 +279,7 @@ class ConfirmationHandler:
             # Send confirmation message with buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
-                {"id": "no_rfq", "title": "Modify"}
+                {"id": "no_rfq", "title": "Add or Modify"}
             ]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
@@ -313,7 +313,7 @@ class ConfirmationHandler:
             # Send confirmation message with buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
-                {"id": "no_rfq", "title": "Modify"}
+                {"id": "no_rfq", "title": "Add or Modify"}
             ]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
@@ -484,7 +484,7 @@ class ConfirmationHandler:
                 # Send confirmation message with buttons
                 buttons_config = [
                     {"id": "confirm_rfq", "title": "Confirm"},
-                    {"id": "no_rfq", "title": "Modify"}
+                    {"id": "no_rfq", "title": "Add or Modify"}
                 ]
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
@@ -522,7 +522,7 @@ class ConfirmationHandler:
                 # Send confirmation message with buttons
                 buttons_config = [
                     {"id": "confirm_rfq", "title": "Confirm"},
-                    {"id": "no_rfq", "title": "Modify"}
+                    {"id": "no_rfq", "title": "Add or Modify"}
                 ]
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
