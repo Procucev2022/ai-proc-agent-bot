@@ -197,9 +197,6 @@ class Settings:
         self.rfq_max_allowed: int = 5  # Used for seller RFQ selection limit
         self.rfq_fetch_limit: int = 3  # Used for buyer RFQ creation, seller uses seller_rfq_fetch_limit
 
-        # Queue Configuration
-        self.batch_window_seconds: int = int(os.getenv("BATCH_WINDOW_SECONDS", "5"))
-
         # Validate configuration
         self.validate_config()
         

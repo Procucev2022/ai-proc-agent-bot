@@ -21,26 +21,11 @@ logger = logging.getLogger(__name__)
 class ExitService:
     """Handles complete system exit logic including cleanup and goodbye messages."""
 
-    def __init__(self, whatsapp_service = None,
+    def __init__(self, whatsapp_service: WhatsAppService = None,
                  authentication_service: AuthenticationService = None,
                  session_manager: SessionManagementService = None,
                  db_manager: DatabaseManager = None):
-        """
-        Initialize ExitService.
-        
-        Args:
-            whatsapp_service: Either MessageQueueService (batched) or WhatsAppService (direct).
-                If None, creates direct WhatsAppService for backward compatibility.
-            authentication_service: Authentication service instance
-            session_manager: Session management service instance
-            db_manager: Database manager instance
-        """
-        if whatsapp_service:
-            self.whatsapp_service = whatsapp_service
-        else:
-            self.whatsapp_service = WhatsAppService()
-            logger.warning("ExitService initialized without whatsapp_service - using direct WhatsAppService")
-        
+        self.whatsapp_service = whatsapp_service or WhatsAppService()
         self.authentication_service = authentication_service
         self.session_manager = session_manager
         self.db_manager = db_manager or DatabaseManager()
