@@ -369,7 +369,16 @@ class ProductsArrayHandler:
           
             optional_message = f"{formatted_message}\n\nIf yes please go ahead and upload now or click on ‘Continue’ to move ahead"
             
-            await self.whatsapp_service.send_message(user.phone_number, optional_message)
+            # Send message with Continue button
+            buttons_config = [
+                {"id": "continue_rfq", "title": "Continue"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                optional_message,
+                buttons_config,
+                "Optional Information"
+            )
             
             # Mark that we've asked about optional fields
             session.workflow_state["optional_fields_asked"] = True
@@ -461,7 +470,16 @@ class ProductsArrayHandler:
 
             optional_message = f"{formatted_message}\n\nIf yes please go ahead and upload now or click on ‘Continue’ to move ahead"
             
-            await self.whatsapp_service.send_message(user.phone_number, optional_message)
+            # Send message with Continue button
+            buttons_config = [
+                {"id": "continue_rfq", "title": "Continue"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                optional_message,
+                buttons_config,
+                "Optional Information"
+            )
 
             # Mark that we've asked about optional fields
             session.workflow_state["optional_fields_asked"] = True
