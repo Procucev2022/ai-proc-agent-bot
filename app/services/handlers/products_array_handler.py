@@ -14,7 +14,7 @@ from app.services.openai_service import OpenAIService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.utils.datetime_utils import utc_now
-from app.utils.rfq_message_formatter import format_rfq_entities_message, format_rfq_response_message, format_rfq_entities_with_global_fields
+from app.utils.rfq_message_formatter import format_rfq_response_message
 
 logger = logging.getLogger(__name__)
 

@@ -232,7 +232,7 @@ class ChatService:
                     "redirected_to_registration", "redirected_to_buyer_registration", "redirected_to_seller_registration",
                     "redirected_to_email_confirmation", "otp_sent",
                     "email_selection_requested", "registration_initiated", "data_collection_in_progress",
-                    "awaiting_confirmation", "registration_restarted", "otp_validated", "otp_invalid",
+                    "awaiting_confirmation", "registration_restarted", "otp_validated", "otp_invalid", "otp_format_invalid",
                     "domain_approved", "domain_approval_required", "email_confirmation_requested",
                     "auth_reg_switch_choice_presented", "exit_completed", "switch_authentication_started",
                     "role_switch_clarification_requested", "profile_selection_presented",

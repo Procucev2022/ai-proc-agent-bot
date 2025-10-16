@@ -37,11 +37,12 @@ class OTPService:
             if response.get("statusCode") in ["1001", "200"] or response.get("status") == "Success":
                 session.workflow_state["otp_email"] = email
                 session.workflow_state["otp_retry_count"] = 0
-                
+
                 await self.whatsapp_service.send_message(
                     user_phone,
-                    f"An OTP has been sent to your email: {email}.\nPlease enter this OTP to complete registration process."
+                    f"OTP sent to {email}.\nPlease verify your email to continue for today."
                 )
+
                 logger.info(f"OTP_SERVICE: OTP sent successfully to {email}")
                 return {"status": "otp_sent", "email": email}
             else:
