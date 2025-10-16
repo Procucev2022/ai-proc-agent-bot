@@ -140,8 +140,8 @@ class VerificationCheckService:
                     # Buyers need EMAIL_VERIFIED AND domain check
                     user_id = user_dict.get("id")
                     if user_id:
-                        # Always check domain approval for buyers
-                        domain_result = await self._check_domain_approval(user_id)
+                        # Check domain approval for buyers (skip API if already approved)
+                        domain_result = await self._check_domain_approval(user_id, approved)
                         if domain_result.get("approved"):
                             # Domain approved - refresh user data to get updated approved flag
                             logger.info(f"Domain approved for buyer {user_id}, refreshing user data")
@@ -283,12 +283,21 @@ class VerificationCheckService:
             logger.error(f"Error refreshing user data: {e}")
             return {"success": False, "message": str(e)}
     
-    async def _check_domain_approval(self, user_id: str) -> Dict[str, Any]:
-        """Check user domain approval using domain check service."""
+    async def _check_domain_approval(self, user_id: str, current_approved_status: bool = None) -> Dict[str, Any]:
+        """Check user domain approval - only call API if not already approved."""
         try:
+            # If user is already approved, don't call the API again
+            if current_approved_status is True:
+                logger.info(f"User {user_id} is already approved, skipping API call")
+                return {
+                    "approved": True,
+                    "status": "already_approved",
+                    "message": "User already approved"
+                }
+            
             from app.services.domain_check_service import DomainCheckService
             domain_check_service = DomainCheckService()
-            # Use the user approval API call directly
+            # Only call approval API if user is not already approved
             return await domain_check_service.user_approval_api_call(user_id)
         except Exception as e:
             logger.error(f"Domain approval check error: {e}")
