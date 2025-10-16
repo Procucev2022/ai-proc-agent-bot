@@ -500,9 +500,9 @@ class AuthenticationService:
                 email = emails[0]
                 user_type = self._get_user_type_for_email(email, filtered_users)
                 if user_type:
-                    email_text = f"Hi {username}! \nIs this your {user_type.lower()} email: {email}?"
+                    email_text = f"Hi there! \nIs this your {user_type.lower()} email: {email}?"
                 else:
-                    email_text = f"Hi {username}! \nIs this your email: {email}?"
+                    email_text = f"Hi there! \nIs this your email: {email}?"
             else:
                 # Multiple emails - show with buyer/seller labels and QUA welcome
                 email_list_items = []
@@ -524,9 +524,9 @@ class AuthenticationService:
                 
                 # Check if we have mixed user types for better messaging
                 if buyer_emails and seller_emails:
-                    email_text = f"Hi {username}! \nWould you like to buy or sell today?\n\n{email_list}\n\nReply with the number of your email address."
+                    email_text = f"Hi there! \nWould you like to buy or sell today?\n\n{email_list}\n\nReply with the number of your email address."
                 else:
-                    email_text = f"Hi {username}! \nPlease select your email address:\n\n{email_list}\n\nReply with the number of your email address."
+                    email_text = f"Hi there! \nPlease select your email address:\n\n{email_list}\n\nReply with the number of your email address."
             
             response = self.openai_service.generate_response(
                 context={"username": username, "email_text": email_text},
@@ -540,10 +540,10 @@ class AuthenticationService:
             logger.error(f"Error generating email confirmation response: {e}")
             # Fallback message
             if len(emails) == 1:
-                return f"Hi {username}! \nCould you please confirm your email address to proceed: {emails[0]}?"
+                return f"Hi there! \nCould you please confirm your email address to proceed: {emails[0]}?"
             else:
                 email_list = "\n".join([f"{i+1}. {email}" for i, email in enumerate(emails)])
-                return f"Hi {username}! \nPlease select your email address:\n\n{email_list}\n\nReply with the number of your email address."
+                return f"Hi there! \nPlease select your email address:\n\n{email_list}\n\nReply with the number of your email address."
     
     async def _parse_email_selection(self, message: str, email_options: List[str]) -> Optional[str]:
         """Parse email selection from user message."""
@@ -704,7 +704,7 @@ Return only the selected email address or "none" if no clear selection.
                 username = selected_user.get("fullName") or selected_user.get("name") or selected_user.get("firstName") or "there"
 
                 # Send welcome message to user
-                welcome_message = f"Hi {username}! Email verified successfully! You can now proceed."
+                welcome_message = f"Hi there! Email verified successfully! You can now proceed."
                 await self.whatsapp_service.send_message(user_phone, welcome_message)
 
                 # Preserve original message from workflow state for processing after authentication
@@ -776,7 +776,7 @@ Return only the selected email address or "none" if no clear selection.
 
                     # Get username from fullName or fallback to firstName or generic "there"
                     username = selected_user.get("fullName") or selected_user.get("name") or selected_user.get("firstName") or "there"
-                    message = f"Hi {username}! Email verified successfully! You can now proceed."
+                    message = f"Hi there! Email verified successfully! You can now proceed."
                     await self.whatsapp_service.send_message(user_phone, message)
 
                     # Preserve original message from workflow state for processing after authentication
@@ -1227,7 +1227,7 @@ Respond only with: "yes" or "no"
         try:
             username = self._get_username_from_users(filtered_users)
             
-            message = f"Hi {username}, please select your email address:\\n\\n"
+            message = f"Hi there!, please select your email address:\\n\\n"
             for i, email in enumerate(emails, 1):
                 user_type = self._get_user_type_for_email(email, filtered_users)
                 type_label = f" - {user_type}" if user_type else ""

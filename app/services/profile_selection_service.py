@@ -206,7 +206,7 @@ class ProfileSelectionService:
             
             # Get user's name from the first available profile
             user_name = self._extract_user_name(profiles)
-            greeting = f"👋 Hi {user_name}!" if user_name else "👋 Hi there!"
+            greeting =  "👋 Hi there!"
             
             # Case: Only buyer profile exists
             if buyer_profiles and not seller_profiles:
@@ -217,14 +217,14 @@ class ProfileSelectionService:
                     "",
                     "Please select your profile to continue:",
                     f" 1️⃣ {profile['email']} — Buyer",
-                    " 2️⃣ ➕ Add or Register a new profile",
+                    "  2️⃣ Add or Register a new profile",
                     "",
                     "Reply with the number corresponding to your account to continue."
                 ]
                 
                 profile_options = [
                     {"number": 1, "profile": profile, "display": f"{profile['email']} — Buyer"},
-                    {"number": 2, "action": "register_new", "display": "➕ Add or Register a new profile"}
+                    {"number": 2, "action": "register_new", "display": "Add or Register a new profile"}
                 ]
             
             # Case: Only seller profile exists
@@ -236,14 +236,14 @@ class ProfileSelectionService:
                     "",
                     "Please select your profile to continue:",
                     f" 1️⃣ {profile['email']} — Seller",
-                    " 2️⃣ ➕ Add or Register a new profile",
+                    "  2️⃣ Add or Register a new profile",
                     "",
                     "Reply with the number corresponding to your account to continue."
                 ]
                 
                 profile_options = [
                     {"number": 1, "profile": profile, "display": f"{profile['email']} — Seller"},
-                    {"number": 2, "action": "register_new", "display": "➕ Add or Register a new profile"}
+                    {"number": 2, "action": "register_new", "display": " Add or Register a new profile"}
                 ]
             
             # Case: Both buyer and seller profiles exist
@@ -279,11 +279,11 @@ class ProfileSelectionService:
                     option_num += 1
                 
                 # Add registration option
-                message_parts.append(f" {option_num}️⃣ ➕ Add or Register a new profile")
+                message_parts.append(f" {option_num}️⃣Add or Register a new profile")
                 profile_options.append({
                     "number": option_num,
                     "action": "register_new",
-                    "display": "➕ Add or Register a new profile"
+                    "display": "Add or Register a new profile"
                 })
                 
                 message_parts.extend([
@@ -995,14 +995,7 @@ class ProfileSelectionService:
 
             # Show role-specific menu with buttons
             if role == 'buyer':
-                # Get name from user_data fullName field  
-                user_data = profile.get('user_data', {})
-                name = user_data.get('fullName')
-                if name:
-                    name = name.title()
-                else:
-                    name = 'there'
-                menu_message = f"👋 Hi {name}! Let's continue with your Buyer profile ({email})."
+                menu_message = f"👋 Hi there! Let's continue with your Buyer profile ({email})."
                 header = "What would you like to do today?"
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
@@ -1013,11 +1006,7 @@ class ProfileSelectionService:
                 # Get name from user_data fullName field
                 user_data = profile.get('user_data', {})
                 name = user_data.get('fullName')
-                if name:
-                    name = name.title()
-                else:
-                    name = 'there'
-                menu_message = f"👋 Hi {name}! You're now using your Seller profile ({email})."
+                menu_message = f"👋 Hi there! You're now using your Seller profile ({email})."
                 header = "What would you like to do today?"
                 buttons_config = [
                     {"id": "rfq_status", "title": "Check RFQs Status"},

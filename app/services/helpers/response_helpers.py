@@ -7,7 +7,7 @@ extracted from the main ChatService class for better organization.
 
 import logging
 from typing import Dict, Any, List, Union
-from app.utils.rfq_message_formatter import format_rfq_entities_message, format_simple_missing_fields_message, format_rfq_response_message, format_rfq_entities_with_global_fields
+from app.utils.rfq_message_formatter import format_simple_missing_fields_message, format_rfq_response_message
 
 logger = logging.getLogger(__name__)
 
