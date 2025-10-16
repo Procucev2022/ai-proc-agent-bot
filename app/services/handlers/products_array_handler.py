@@ -404,23 +404,17 @@ class ProductsArrayHandler:
             "user_message": message,
             "extracted_entities": product_info["entities"]
         }, chat_summaries)
-
-        summary_response += (
-            "\n\nPlease review the above details carefully. "
-            'If everything is correct, kindly click "Confirm" to proceed with the RFQ creation. '
-            'If you wish to make any changes, click "Add or Modify."'
-        )
         
         # Send confirmation message with buttons
         buttons_config = [
             {"id": "confirm_rfq", "title": "Confirm"},
-            {"id": "no_rfq", "title": "Add or Modify"}
+            {"id": "no_rfq", "title": "Modify"}
         ]
         await self.whatsapp_service.send_configurable_buttons(
             user.phone_number,
             summary_response,
             buttons_config,
-            "Confirmation Required",
+            "Confirmation Required"
         )
         
         # Store for confirmation (serialize schema to dict)
