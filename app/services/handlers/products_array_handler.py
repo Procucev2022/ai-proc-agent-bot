@@ -367,7 +367,7 @@ class ProductsArrayHandler:
             }
             formatted_message = format_rfq_response_message([product_info["entities"]], global_fields, optional_questions, include_optional=True)
           
-            optional_message = f"{formatted_message}\n\nIf yes please go ahead and upload now or click on ‘Continue’ to move ahead"
+            optional_message = f"{formatted_message}\n\nIf yes, please upload them now — or click on ‘Continue’ to proceed."
             
             # Send message with Continue button
             buttons_config = [
@@ -468,7 +468,7 @@ class ProductsArrayHandler:
                 }
             formatted_message = format_rfq_response_message(all_products_entities, global_fields, optional_questions, include_optional=True)
 
-            optional_message = f"{formatted_message}\n\nIf yes please go ahead and upload now or click on ‘Continue’ to move ahead"
+            optional_message = f"{formatted_message}\n\n If yes, please upload them now — or click on ‘Continue’ to proceed."
             
             # Send message with Continue button
             buttons_config = [
