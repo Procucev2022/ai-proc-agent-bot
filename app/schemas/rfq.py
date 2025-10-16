@@ -494,13 +494,7 @@ class RFQValidationSchema(BaseModel):
     def get_optional_questions(self) -> List[str]:
         """Generate questions for optional fields."""
         questions = []
-        
-        if not self.preferred_brand and self.items:
-            questions.append("Do you have any preferred brand or specifications?")
-        
-        if not self.remarks:
-            questions.append("Do you have any additional remarks or special requirements?")
-            
+
         if not self.attachments:
             questions.append("Would you like to add any specification documents or images to your RFQ? ")
         
