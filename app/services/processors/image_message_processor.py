@@ -7,6 +7,7 @@ Extracted from ChatService to reduce complexity.
 
 import logging
 from typing import Dict, Any
+from datetime import datetime
 from app.models import User, ConversationSession
 from app.schemas.rfq import RFQValidationSchema
 from app.services.whatsapp_service import WhatsAppService
@@ -31,17 +32,61 @@ class ImageMessageProcessor:
             if not user.is_registered:
                 return await self._handle_registration_required(user)
             
-            # Extract image information from WhatsApp format or web UI format
-            image_info = content.get("image", {}) or content.get("document", {})
-            file_url = image_info.get("link")  # WhatsApp format
-            filename = image_info.get("filename")
-            mime_type = image_info.get("mime_type")
-            base64_data = image_info.get("data")  # Web UI format (TODO: remove later)
+            # Extract image information based on ICS V3.1 documentation format
+            # ICS sends flat JSON structure: {"mime_type": "...", "id": "...", "filename": "..."}
+            # NOT nested like {"image": {"link": "...", ...}}
+
+            if isinstance(content, dict):
+                # Check if this is ICS webhook format (has "id" and "mime_type")
+                if "id" in content and "mime_type" in content:
+                    # ICS webhook format - construct download URL from media ID
+                    media_id = content.get("id")
+                    mime_type = content.get("mime_type")
+                    filename = content.get("filename")  # Only present for DOCUMENT type
+
+                    # Auto-generate filename from MIME type if not provided
+                    if not filename:
+                        extension = mime_type.split('/')[-1] if mime_type else 'jpg'
+                        filename = f"attachment_{int(datetime.now().timestamp())}.{extension}"
+
+                    # Construct ICS media download URL
+                    file_url = f"https://download.sendmsg.in/whatsapp-mediadownloader/{media_id}"
+                    base64_data = None
+
+                    logger.info(f"Processing ICS media - ID: {media_id}, Type: {mime_type}, URL: {file_url}")
+
+                # Legacy format support (old nested structure or web UI)
+                elif "image" in content or "document" in content:
+                    image_info = content.get("image", {}) or content.get("document", {})
+                    file_url = image_info.get("link")  # Old WhatsApp format
+                    filename = image_info.get("filename")
+                    mime_type = image_info.get("mime_type")
+                    base64_data = image_info.get("data")  # Web UI format
+
+                    logger.info(f"Processing legacy format - URL: {file_url}")
+
+                # Web UI direct format
+                elif "data" in content:
+                    base64_data = content.get("data")
+                    filename = content.get("filename")
+                    mime_type = content.get("mime_type")
+                    file_url = None
+
+                    logger.info(f"Processing web UI format - Filename: {filename}")
+                else:
+                    file_url = None
+                    filename = None
+                    mime_type = None
+                    base64_data = None
+            else:
+                file_url = None
+                filename = None
+                mime_type = None
+                base64_data = None
             
             # Handle web UI format (base64 data) vs WhatsApp format (file URL)
             if base64_data:
                 # Web UI format - create attachment directly from base64 data
-                from datetime import datetime
                 download_result = {
                     "success": True,
                     "attachment": {
