@@ -643,6 +643,7 @@ class MessageQueueService:
                     f"Failed to acquire batch lock for cleanup of {batch_id} for user {user_phone}. "
                     f"Another process is holding the lock. Attempting emergency cleanup..."
                 )
+                # CRITICAL FIX: Release batch lock BEFORE acquiring timer lock to prevent deadlock
                 # Emergency cleanup: at least clear the processing marker so new batches can process
                 try:
                     processing_key = self.get_processing_key(user_phone)
@@ -650,7 +651,7 @@ class MessageQueueService:
                     logger.info(f"Emergency cleanup: Cleared processing marker for {user_phone}")
                 except Exception as emergency_error:
                     logger.error(f"Emergency cleanup also failed: {emergency_error}")
-                return            # CRITICAL FIX: Release batch lock BEFORE acquiring timer lock to prevent deadlock
+                return
             
             if next_batch_exists:
                 # Process next batch

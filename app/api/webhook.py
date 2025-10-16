@@ -34,7 +34,7 @@ from app.services.message_queue_service import MessageQueueService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-chat_service = ChatService()
+# chat_service = ChatService()
 message_queue_service = MessageQueueService()  # Instantiate message_queue service
 
 # Set up WhatsApp webhook payload logger
@@ -341,56 +341,56 @@ async def enqueue_message_async(webhook_data: Dict[str, Any]):
             except Exception as cancel_error:
                 logger.error(f"Failed to handle technical error in async enqueueing: {cancel_error}")
 
-async def process_document_message(webhook_data: Dict[str, Any]):
-    """
-    Process document message for Excel file uploads.
+# async def process_document_message(webhook_data: Dict[str, Any]):
+#     """
+#     Process document message for Excel file uploads.
 
-    Handles Excel file validation, processing, and routing to chat service.
-    """
-    try:
-        from_number = webhook_data.get("from")
-        content = webhook_data.get("content")
+#     Handles Excel file validation, processing, and routing to chat service.
+#     """
+#     try:
+#         from_number = webhook_data.get("from")
+#         content = webhook_data.get("content")
 
-        if not isinstance(content, dict):
-            logger.warning("Document message content is not a dictionary")
-            return
+#         if not isinstance(content, dict):
+#             logger.warning("Document message content is not a dictionary")
+#             return
 
-        # Extract document information
-        document_info = content.get("document", {})
-        if not document_info:
-            logger.warning("No document information found in message")
-            return
+#         # Extract document information
+#         document_info = content.get("document", {})
+#         if not document_info:
+#             logger.warning("No document information found in message")
+#             return
 
-        file_url = document_info.get("link")
-        filename = document_info.get("filename", "")
+#         file_url = document_info.get("link")
+#         filename = document_info.get("filename", "")
 
-        if not file_url:
-            logger.warning("No file URL found in document message")
-            return
+#         if not file_url:
+#             logger.warning("No file URL found in document message")
+#             return
 
-        logger.info(f"Processing document upload: {filename} from {from_number}")
+#         logger.info(f"Processing document upload: {filename} from {from_number}")
 
-        # Check if it's an Excel file
-        excel_extensions = ['.xlsx', '.xls', '.xlsm']
-        is_excel = any(filename.lower().endswith(ext) for ext in excel_extensions)
+#         # Check if it's an Excel file
+#         excel_extensions = ['.xlsx', '.xls', '.xlsm']
+#         is_excel = any(filename.lower().endswith(ext) for ext in excel_extensions)
 
-        if is_excel:
-            # Process as Excel file through chat service
-            await chat_service.process_message(
-                user_phone=from_number,
-                message_content=content,
-                message_type="excel_upload"
-            )
-        else:
-            # Handle non-Excel documents
-            await chat_service.process_message(
-                user_phone=from_number,
-                message_content=f"Received document: {filename}",
-                message_type="document"
-            )
+#         if is_excel:
+#             # Process as Excel file through chat service
+#             await chat_service.process_message(
+#                 user_phone=from_number,
+#                 message_content=content,
+#                 message_type="excel_upload"
+#             )
+#         else:
+#             # Handle non-Excel documents
+#             await chat_service.process_message(
+#                 user_phone=from_number,
+#                 message_content=f"Received document: {filename}",
+#                 message_type="document"
+#             )
 
-    except Exception as e:
-        logger.error(f"Error processing document message: {e}")
+#     except Exception as e:
+#         logger.error(f"Error processing document message: {e}")
 
 
 async def handle_technical_error_with_cancel(user_phone: str, error_message: str, error_type: str = "Technical Error"):
