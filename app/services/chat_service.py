@@ -81,9 +81,6 @@ class ChatService:
         self.intent_service = IntentService()
         self.entity_service = EntityService()
         self.vendor_service = VendorService()
-        self.seller_service = SellerService()
-        self.rfq_service = RFQService()
-        self.rfq_status_service = RFQStatusService()
         
         # Use message_queue_service if provided, otherwise use WhatsAppService directly
         self.message_queue_service = message_queue_service
@@ -104,10 +101,23 @@ class ChatService:
         self.daily_summary_service = DailySummaryService()
         self.rfq_background_service = RFQBackgroundService()
         
-        # Initialize extracted services first
+        # Initialize extracted services first (session_manager needs whatsapp_service)
         self.session_manager = SessionManagementService(
             self.db_manager, self.whatsapp_service,
             self.chat_summary_service, self.daily_summary_service
+        )
+        
+        # Initialize RFQ service (doesn't need whatsapp_service)
+        self.rfq_service = RFQService()
+        
+        # Initialize services that need whatsapp_service and session_manager
+        self.seller_service = SellerService(
+            whatsapp_service=self.whatsapp_service,
+            session_manager=self.session_manager
+        )
+        self.rfq_status_service = RFQStatusService(
+            whatsapp_service=self.whatsapp_service,
+            session_manager=self.session_manager
         )
         
         # Initialize confirmation service and tools

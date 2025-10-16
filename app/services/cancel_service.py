@@ -22,11 +22,26 @@ logger = logging.getLogger(__name__)
 class CancelService:
     """Handles workflow cancellation with confirmation flow."""
 
-    def __init__(self, whatsapp_service: WhatsAppService = None,
+    def __init__(self, whatsapp_service = None,
                  session_manager: SessionManagementService = None,
                  db_manager: DatabaseManager = None,
                  confirmation_service: ConfirmationService = None):
-        self.whatsapp_service = whatsapp_service or WhatsAppService()
+        """
+        Initialize CancelService.
+        
+        Args:
+            whatsapp_service: Either MessageQueueService (batched) or WhatsAppService (direct).
+                If None, creates direct WhatsAppService for backward compatibility.
+            session_manager: Session management service instance
+            db_manager: Database manager instance
+            confirmation_service: Confirmation service for yes/no detection
+        """
+        if whatsapp_service:
+            self.whatsapp_service = whatsapp_service
+        else:
+            self.whatsapp_service = WhatsAppService()
+            logger.warning("CancelService initialized without whatsapp_service - using direct WhatsAppService")
+        
         self.session_manager = session_manager
         self.db_manager = db_manager or DatabaseManager()
 

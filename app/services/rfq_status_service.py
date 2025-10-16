@@ -22,17 +22,36 @@ logger = logging.getLogger(__name__)
 class RFQStatusService:
     """Dedicated service for handling RFQ status inquiries."""
 
-    def __init__(self):
+    def __init__(self, whatsapp_service=None, session_manager=None):
+        """
+        Initialize RFQStatusService.
+        
+        Args:
+            whatsapp_service: Either MessageQueueService (batched) or WhatsAppService (direct).
+                If None, creates direct WhatsAppService for backward compatibility.
+            session_manager: Optional SessionManagementService instance. If provided, uses it directly.
+                If None, creates new instance with whatsapp_service.
+        """
         self.rfq_service = RFQService()
-        self.whatsapp_service = WhatsAppService()
+        
+        if whatsapp_service:
+            self.whatsapp_service = whatsapp_service
+        else:
+            self.whatsapp_service = WhatsAppService()
+            logger.warning("RFQStatusService initialized without whatsapp_service - using direct WhatsAppService")
+        
         self.db_manager = DatabaseManager()
         self.chat_summary_service = ChatSummaryService()
         self.daily_summary_service = DailySummaryService()
-        # Initialize extracted services
-        self.session_manager = SessionManagementService(
-            self.db_manager, self.whatsapp_service,
-            self.chat_summary_service, self.daily_summary_service
-        )
+        
+        # Use provided session_manager or create new one with whatsapp_service
+        if session_manager:
+            self.session_manager = session_manager
+        else:
+            self.session_manager = SessionManagementService(
+                self.db_manager, self.whatsapp_service,
+                self.chat_summary_service, self.daily_summary_service
+            )
 
     def _get_role_based_menu_options(self, user: User) -> List[Dict[str, str]]:
         """Get menu options based on user role."""

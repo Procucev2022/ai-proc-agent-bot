@@ -30,7 +30,7 @@ from app.config import get_settings
 from app.services.chat_service import ChatService
 from app.services.cancel_service import CancelService
 from app.services.session_management_service import SessionManagementService
-from message_queue_service import MessageQueueService 
+from app.services.message_queue_service import MessageQueueService 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -410,9 +410,26 @@ async def handle_technical_error_with_cancel(user_phone: str, error_message: str
     try:
         logger.error(f"{error_type} for user {user_phone}: {error_message}")
 
-        # Initialize services
-        session_manager = SessionManagementService()
-        cancel_service = CancelService(session_manager=session_manager)
+        # Initialize services for error handling
+        # Use direct WhatsAppService since this is an error scenario outside normal batch flow
+        from app.services.whatsapp_service import WhatsAppService
+        from app.services.chat_summary_service import ChatSummaryService
+        from app.services.daily_summary_service import DailySummaryService
+        from app.database import DatabaseManager
+        
+        whatsapp_service = WhatsAppService()
+        db_manager = DatabaseManager()
+        chat_summary_service = ChatSummaryService()
+        daily_summary_service = DailySummaryService()
+        
+        session_manager = SessionManagementService(
+            db_manager, whatsapp_service,
+            chat_summary_service, daily_summary_service
+        )
+        cancel_service = CancelService(
+            whatsapp_service=whatsapp_service,
+            session_manager=session_manager
+        )
 
         # Get user's current session
         session = await session_manager.get_conversation_context(user_phone)
@@ -423,9 +440,6 @@ async def handle_technical_error_with_cancel(user_phone: str, error_message: str
             await cancel_service._clear_workflow_state(session)
 
         # Send user-friendly error message
-        from app.services.whatsapp_service import WhatsAppService
-        whatsapp_service = WhatsAppService()
-
         error_notification = (
             "Due to a technical error, your request could not be processed. "
             "Your current session has been cleared. Please try again later or contact support if the issue persists."

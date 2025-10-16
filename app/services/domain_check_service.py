@@ -24,10 +24,25 @@ class DomainCheckService:
     """Enhanced domain check service with AI and fallback logic."""
     
     def __init__(self, openai_service: OpenAIService = None, 
-                 whatsapp_service: WhatsAppService = None,
-                 session_manager=None):
+                 whatsapp_service = None,
+                 session_manager = None):
+        """
+        Initialize DomainCheckService.
+        
+        Args:
+            openai_service: OpenAI service instance for AI-based domain matching
+            whatsapp_service: Either MessageQueueService (batched) or WhatsAppService (direct).
+                If None, creates direct WhatsAppService for backward compatibility.
+            session_manager: Session management service instance
+        """
         self.openai_service = openai_service or OpenAIService()
-        self.whatsapp_service = whatsapp_service or WhatsAppService()
+        
+        if whatsapp_service:
+            self.whatsapp_service = whatsapp_service
+        else:
+            self.whatsapp_service = WhatsAppService()
+            logger.warning("DomainCheckService initialized without whatsapp_service - using direct WhatsAppService")
+        
         self.register_api_service = RegisterAPIService()
         self.support_notification_service = SupportNotificationService()
         self.session_manager = session_manager

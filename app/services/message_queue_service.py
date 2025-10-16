@@ -571,6 +571,8 @@ class MessageQueueService:
         4. Checks for next batch to process
         5. Starts timer if incoming queue has messages
         """
+        from redis.lock import LockError
+        
         try:
             # Remove batch context
             current_batch_key = self.get_current_batch_key(user_phone)
@@ -586,48 +588,85 @@ class MessageQueueService:
             processing_key = self.get_processing_key(user_phone)
             batch_lock_key = self.get_batch_lock_key(user_phone)
 
-            with self.redis_client.lock(batch_lock_key, timeout=10, blocking_timeout=10):
-                # Remove the processed batch from outgoing queue
-                batch_json = self.redis_client.lpop(outgoing_key)
-                
-                if batch_json:
-                    try:
-                        processed_batch = json.loads(batch_json)
-                        if processed_batch.get('batch_id') == batch_id:
-                            logger.info(f"Batch {batch_id} removed from outgoing queue")
-                        else:
-                            logger.warning(
-                                f"Batch ID mismatch: expected {batch_id}, "
-                                f"got {processed_batch.get('batch_id')}"
-                            )
-                    except Exception as e:
-                        logger.error(f"Error parsing batch during removal: {e}")
+            # Track whether we need to restart timer (check inside lock)
+            has_incoming_messages = False
+            next_batch_exists = False
 
-                # Clear processing marker
-                self.redis_client.delete(processing_key)
-
-                # Check for next batch
-                next_batch_json = self.redis_client.lindex(outgoing_key, 0)
-                
-                if next_batch_json:
-                    # Process next batch
-                    logger.info(f"Next batch found for user {user_phone}, starting processing")
-                    await self._check_and_start_processing(user_phone)
-                else:
-                    # No more batches, check if incoming queue has messages
-                    incoming_key = self.get_incoming_key(user_phone)
-                    incoming_count = self.redis_client.zcard(incoming_key)
+            try:
+                with self.redis_client.lock(batch_lock_key, timeout=10, blocking_timeout=10):
+                    # CRITICAL FIX: Peek at batch BEFORE removing to validate ID
+                    batch_json = self.redis_client.lindex(outgoing_key, 0)
                     
-                    if incoming_count > 0:
-                        logger.info(
-                            f"Outgoing queue empty but incoming has {incoming_count} messages. "
-                            f"Starting timer for user {user_phone}"
-                        )
-                        timer_lock_key = self.get_timer_lock_key(user_phone)
-                        with self.redis_client.lock(timer_lock_key, timeout=5, blocking_timeout=5):
-                            await self._restart_timer(user_phone)
+                    if batch_json:
+                        try:
+                            processed_batch = json.loads(batch_json)
+                            expected_batch_id = processed_batch.get('batch_id')
+                            
+                            if expected_batch_id == batch_id:
+                                # IDs match - safe to remove
+                                self.redis_client.lpop(outgoing_key)
+                                logger.info(f"Batch {batch_id} removed from outgoing queue")
+                            else:
+                                # CRITICAL: IDs don't match - DO NOT REMOVE
+                                logger.error(
+                                    f"CRITICAL: Batch ID mismatch in cleanup! "
+                                    f"Expected to cleanup {batch_id}, but found {expected_batch_id} at front of queue. "
+                                    f"NOT removing batch to prevent data loss. "
+                                    f"This indicates a race condition or duplicate cleanup attempt."
+                                )
+                                # Don't proceed with cleanup to avoid corrupting queue
+                                # The correct cleanup will happen when the right batch completes
+                                return
+                        except Exception as e:
+                            logger.error(f"Error parsing batch during validation: {e}")
+                            # Don't remove if we can't validate
+                            return
                     else:
-                        logger.info(f"All queues empty for user {user_phone}. Flow complete.")
+                        logger.warning(f"No batch found in outgoing queue during cleanup of {batch_id}")
+
+                    # Clear processing marker only after successful batch removal
+                    self.redis_client.delete(processing_key)
+
+                    # Check for next batch
+                    next_batch_json = self.redis_client.lindex(outgoing_key, 0)
+                    
+                    if next_batch_json:
+                        next_batch_exists = True
+                    else:
+                        # No more batches, check if incoming queue has messages
+                        incoming_key = self.get_incoming_key(user_phone)
+                        incoming_count = self.redis_client.zcard(incoming_key)
+                        has_incoming_messages = incoming_count > 0
+            
+            except LockError:
+                logger.error(
+                    f"Failed to acquire batch lock for cleanup of {batch_id} for user {user_phone}. "
+                    f"Another process is holding the lock. Attempting emergency cleanup..."
+                )
+                # Emergency cleanup: at least clear the processing marker so new batches can process
+                try:
+                    processing_key = self.get_processing_key(user_phone)
+                    self.redis_client.delete(processing_key)
+                    logger.info(f"Emergency cleanup: Cleared processing marker for {user_phone}")
+                except Exception as emergency_error:
+                    logger.error(f"Emergency cleanup also failed: {emergency_error}")
+                return            # CRITICAL FIX: Release batch lock BEFORE acquiring timer lock to prevent deadlock
+            
+            if next_batch_exists:
+                # Process next batch
+                logger.info(f"Next batch found for user {user_phone}, starting processing")
+                await self._check_and_start_processing(user_phone)
+            elif has_incoming_messages:
+                # Restart timer for incoming messages (lock acquisition happens here, outside batch lock)
+                logger.info(
+                    f"Outgoing queue empty but incoming has messages. "
+                    f"Starting timer for user {user_phone}"
+                )
+                timer_lock_key = self.get_timer_lock_key(user_phone)
+                with self.redis_client.lock(timer_lock_key, timeout=5, blocking_timeout=5):
+                    await self._restart_timer(user_phone)
+            else:
+                logger.info(f"All queues empty for user {user_phone}. Flow complete.")
         
         except Exception as e:
             logger.error(f"Error in batch cleanup for {batch_id}: {e}", exc_info=True)
