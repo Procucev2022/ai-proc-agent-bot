@@ -202,8 +202,11 @@ class MessageQueueService:
         """
         Cancel existing timer and start a new one.
         Must be called within timer lock.
+        
+        In multi-worker deployments, only cancels local timer.
+        Redis timer key coordinates across workers.
         """
-        # Cancel existing timer task if it exists
+        # Cancel LOCAL timer task if it exists in this worker
         if user_phone in self._active_timers:
             existing_task = self._active_timers[user_phone]
             if not existing_task.done():
@@ -214,32 +217,89 @@ class MessageQueueService:
                     pass
             del self._active_timers[user_phone]
 
-        # Update timer timestamp in Redis
+        # Update timer timestamp in Redis - this is the source of truth
         timer_key = self.get_timer_key(user_phone)
-        self.redis_client.set(timer_key, time.time(), ex=self.batch_window + 5)
+        timer_expiry_time = time.time() + self.batch_window
+        
+        # Store when the timer should expire (not when it started)
+        self.redis_client.set(
+            timer_key, 
+            timer_expiry_time, 
+            ex=self.batch_window + 5  # Extra 5s buffer
+        )
 
-        # Start new timer task
-        timer_task = asyncio.create_task(self._timer_countdown(user_phone))
+        # Start new timer task in THIS worker
+        timer_task = asyncio.create_task(self._timer_countdown(user_phone, timer_expiry_time))
         self._active_timers[user_phone] = timer_task
 
-        logger.debug(f"Timer restarted for user {user_phone}")
+        logger.debug(f"Timer restarted for user {user_phone}, expires at {timer_expiry_time}")
 
-    async def _timer_countdown(self, user_phone: str):
+    async def _timer_countdown(self, user_phone: str, expected_expiry_time: float):
         """
         Wait for batch_window seconds, then create a batch.
+        
+        Checks Redis before creating batch to avoid duplicates in multi-worker setup.
         """
         try:
             logger.debug(f"Timer countdown started for user {user_phone} ({self.batch_window}s)")
             await asyncio.sleep(self.batch_window)
             
+            # CRITICAL: Check if timer is still valid before creating batch
+            timer_key = self.get_timer_key(user_phone)
+            current_timer_value = self.redis_client.get(timer_key)
+            
+            if not current_timer_value:
+                # Timer was cancelled (key deleted)
+                logger.debug(f"Timer for {user_phone} was cancelled, not creating batch")
+                return
+            
+            # Check if this is still the same timer
+            current_expiry_time = float(current_timer_value)
+            if abs(current_expiry_time - expected_expiry_time) > 1:  # Allow 1s tolerance
+                # Timer was restarted by another message/worker
+                logger.debug(
+                    f"Timer for {user_phone} was restarted "
+                    f"(expected {expected_expiry_time}, current {current_expiry_time}), "
+                    "not creating batch"
+                )
+                return
+            
+            # Timer is still valid - try to create batch
             logger.info(f"Timer expired for user {user_phone}, creating batch")
-            await self._create_batch(user_phone)
+            
+            # Use a Redis lock to ensure only ONE worker creates the batch
+            batch_creation_lock_key = f"{user_phone}:lock:batch_creation"
+            try:
+                with self.redis_client.lock(
+                    batch_creation_lock_key, 
+                    timeout=10, 
+                    blocking_timeout=0.1  # Don't wait, return immediately if locked
+                ):
+                    # Double-check timer is still valid inside lock
+                    current_timer_value = self.redis_client.get(timer_key)
+                    if current_timer_value and abs(float(current_timer_value) - expected_expiry_time) <= 1:
+                        await self._create_batch(user_phone)
+                        # Delete timer key after successful batch creation
+                        self.redis_client.delete(timer_key)
+                    else:
+                        logger.debug(f"Timer changed while acquiring lock for {user_phone}")
+            except Exception as lock_error:
+                # Couldn't acquire lock - another worker is creating batch
+                logger.debug(
+                    f"Couldn't acquire batch creation lock for {user_phone}, "
+                    "another worker is likely creating the batch"
+                )
+                return
 
         except asyncio.CancelledError:
             logger.debug(f"Timer cancelled for user {user_phone}")
             raise
         except Exception as e:
             logger.error(f"Error in timer countdown for user {user_phone}: {e}", exc_info=True)
+        finally:
+            # Clean up local timer reference
+            if user_phone in self._active_timers:
+                del self._active_timers[user_phone]
 
     # ================
     # Batch Creation
@@ -367,13 +427,15 @@ class MessageQueueService:
         """
         Process a batch through ChatService.
         """
+        current_batch_key = None
         try:
             # Store batch context in Redis for wrapper methods to access
             current_batch_key = self.get_current_batch_key(batch.user_phone)
             self.redis_client.set(current_batch_key, batch.batch_id, ex=300)  # 5 min expiry
             
             logger.info(
-                f"Processing batch {batch.batch_id} for user {batch.user_phone}"
+                f"Processing batch {batch.batch_id} for user {batch.user_phone}. "
+                f"Content: {batch.concatenated_content[:100]}..."  # Log first 100 chars
             )
             
             # Import ChatService here to avoid circular import
@@ -387,11 +449,12 @@ class MessageQueueService:
                 message_type=batch.message_type
             )
             
-            # Note: cleanup happens in wrapper methods (send_message/send_configurable_buttons)
-            # If processing completes without calling any send method, cleanup here
-            if self.redis_client.exists(current_batch_key):
+            # Note: cleanup should happen in wrapper methods (send_message/send_configurable_buttons)
+            # If processing completes without calling any send method, cleanup here as fallback
+            if current_batch_key and self.redis_client.exists(current_batch_key):
                 logger.warning(
                     f"Batch {batch.batch_id} completed without sending message. "
+                    "This might indicate an error in the processing pipeline. "
                     "Cleaning up manually."
                 )
                 await self._handle_batch_cleanup(batch.batch_id, batch.user_phone, success=True)
@@ -408,112 +471,90 @@ class MessageQueueService:
     # WhatsApp Wrapper Methods (with cleanup)
     # ========================================
 
-    async def send_message(self, recipient_id: str, message: str):
+    def __getattr__(self, name: str):
         """
-        Send text message via WhatsApp and handle batch cleanup.
+        Delegate methods to WhatsAppService with automatic wrapping for send methods.
         
-        This is a wrapper around WhatsAppService.send_message() that adds
-        batch queue management logic.
+        This allows MessageQueueService to act as a transparent proxy for WhatsAppService.
+        Any method starting with 'send_' is automatically wrapped with batch cleanup logic.
+        Other methods are delegated directly without modification.
+        
+        Args:
+            name: The attribute/method name being accessed
+            
+        Returns:
+            The wrapped method if it's a send method, otherwise the original attribute
         """
-        # Get batch context from Redis
-        current_batch_key = self.get_current_batch_key(recipient_id)
-        batch_id = self.redis_client.get(current_batch_key)
-        
-        if not batch_id:
-            logger.warning(
-                f"send_message called for {recipient_id} but no batch context found. "
-                "This might be a direct call outside of batch processing."
-            )
-            # Fallback: send directly without cleanup
-            return await self.whatsapp_service.send_message(recipient_id, message)
-        
+        # Get the attribute from WhatsAppService
         try:
-            # Send via WhatsApp service
-            logger.info(
-                f"Sending message to {recipient_id} for batch {batch_id}"
-            )
-            result = await self.whatsapp_service.send_message(recipient_id, message)
-            
-            if result.success:
-                logger.info(
-                    f"Message sent successfully to {recipient_id} "
-                    f"for batch {batch_id}. Message ID: {result.message_id}"
-                )
-            else:
-                logger.error(
-                    f"Failed to send message to {recipient_id} "
-                    f"for batch {batch_id}. Error: {result.error}"
-                )
-            
-            # Handle batch cleanup
-            await self._handle_batch_cleanup(batch_id, recipient_id, result.success)
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error in send_message wrapper: {e}", exc_info=True)
-            # Cleanup even on exception
-            await self._handle_batch_cleanup(batch_id, recipient_id, success=False)
-            raise
-
-    async def send_configurable_buttons(
-        self,
-        recipient_id: str,
-        body: str,
-        buttons_config: List[Dict[str, str]],
-        header: str = None,
-        footer: str = "(Type 'Exit' anytime to end the chat)"
-    ):
-        """
-        Send button message via WhatsApp and handle batch cleanup.
-        
-        This is a wrapper around WhatsAppService.send_configurable_buttons() that adds
-        batch queue management logic.
-        """
-        # Get batch context from Redis
-        current_batch_key = self.get_current_batch_key(recipient_id)
-        batch_id = self.redis_client.get(current_batch_key)
-        
-        if not batch_id:
-            logger.warning(
-                f"send_configurable_buttons called for {recipient_id} but no batch context found. "
-                "This might be a direct call outside of batch processing."
-            )
-            # Fallback: send directly without cleanup
-            return await self.whatsapp_service.send_configurable_buttons(
-                recipient_id, body, buttons_config, header, footer
+            attr = getattr(self.whatsapp_service, name)
+        except AttributeError:
+            raise AttributeError(
+                f"'{self.__class__.__name__}' object has no attribute '{name}' "
+                f"and neither does WhatsAppService"
             )
         
-        try:
-            # Send via WhatsApp service
-            logger.info(
-                f"Sending configurable buttons to {recipient_id} for batch {batch_id}"
-            )
-            result = await self.whatsapp_service.send_configurable_buttons(
-                recipient_id, body, buttons_config, header, footer
-            )
+        # If it's not callable, just return it
+        if not callable(attr):
+            return attr
+        
+        # If it's a method that starts with 'send_', wrap it with batch cleanup
+        if name.startswith('send_'):
+            async def wrapped_send_method(*args, **kwargs):
+                # Get recipient_id - it's always the first positional argument
+                recipient_id = args[0] if args else kwargs.get('recipient_id')
+                
+                if not recipient_id:
+                    logger.error(f"{name} called without recipient_id")
+                    raise ValueError(f"{name} requires recipient_id as first argument")
+                
+                # Get batch context from Redis
+                current_batch_key = self.get_current_batch_key(recipient_id)
+                batch_id = self.redis_client.get(current_batch_key)
+                
+                if not batch_id:
+                    logger.warning(
+                        f"{name} called for {recipient_id} but no batch context found. "
+                        "Sending directly without batch cleanup. "
+                        "This is expected for messages sent outside the batch processing flow."
+                    )
+                    # Call original method directly without cleanup
+                    return await attr(*args, **kwargs)
+                
+                try:
+                    # Send via WhatsApp service
+                    logger.info(f"Calling {name} for {recipient_id} in batch {batch_id}")
+                    result = await attr(*args, **kwargs)
+                    
+                    # Log result
+                    if hasattr(result, 'success'):
+                        if result.success:
+                            logger.info(
+                                f"{name} succeeded for {recipient_id} in batch {batch_id}. "
+                                f"Message ID: {getattr(result, 'message_id', 'N/A')}"
+                            )
+                        else:
+                            logger.error(
+                                f"{name} failed for {recipient_id} in batch {batch_id}. "
+                                f"Error: {getattr(result, 'error', 'Unknown')}"
+                            )
+                    
+                    # Handle batch cleanup
+                    success = getattr(result, 'success', True)
+                    await self._handle_batch_cleanup(batch_id, recipient_id, success)
+                    
+                    return result
+                    
+                except Exception as e:
+                    logger.error(f"Error in wrapped {name}: {e}", exc_info=True)
+                    # Cleanup even on exception
+                    await self._handle_batch_cleanup(batch_id, recipient_id, success=False)
+                    raise
             
-            if result.success:
-                logger.info(
-                    f"Buttons sent successfully to {recipient_id} "
-                    f"for batch {batch_id}. Message ID: {result.message_id}"
-                )
-            else:
-                logger.error(
-                    f"Failed to send buttons to {recipient_id} "
-                    f"for batch {batch_id}. Error: {result.error}"
-                )
-            
-            # Handle batch cleanup
-            await self._handle_batch_cleanup(batch_id, recipient_id, result.success)
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error in send_configurable_buttons wrapper: {e}", exc_info=True)
-            # Cleanup even on exception
-            await self._handle_batch_cleanup(batch_id, recipient_id, success=False)
-            raise
+            return wrapped_send_method
+        
+        # For non-send methods (like format_*), return the original method as-is
+        return attr
 
     # ==================
     # Batch Cleanup
