@@ -26,14 +26,17 @@ INTENT CATEGORIES:
 4. **general_inquiry** (60%+ confidence) - User asking how things work, general questions, help, or greeting messages
    Examples: "How does this work?", "What can you do?", "What's up?", "Hello", "Hi", "Good morning", "Hey there"
 
-5. **modification_request** (80%+ confidence) - User wants to CHANGE/REPLACE existing confirmed data
-   Examples: "Change chairs to 55", "Modify the delivery date to tomorrow", "Actually make that 20 printers instead"
+5. **modification_request** (80%+ confidence) - User wants to CHANGE/REPLACE existing confirmed data OR ADD to existing order
+   Examples: "Change chairs to 55", "Modify the delivery date to tomorrow", "Actually make that 20 printers instead", "Add 5 keyboards as well"
 
    **MODIFICATION VERBS & PATTERNS:**
    - Direct modification: "change", "modify", "update", "alter", "edit"
    - Replacement: "actually", "instead", "rather", "make that", "switch to"
    - Correction: "wait", "no", "sorry", "I meant", "let me correct that"
    - Substitution: "replace with", "swap for", "use X instead of Y"
+   - **Addition to existing order: "add [X] as well", "also add [X]", "add [X] too", "[X] too", "[X] as well"**
+   - **Increment: "add [N] more [X]", "increase [X] by [N]", "[N] more [X]"**
+   - **Removal: "remove [X]", "delete [X]", "take out [X]", "don't need [X]"**
 
    **MODIFICATION EXAMPLES:**
    - "Change the quantity to 100" (direct change)
@@ -41,12 +44,19 @@ INTENT CATEGORIES:
    - "Wait, I meant tomorrow not today" (correction)
    - "Switch the delivery to our main office" (substitution)
    - "Update the specs to include 16GB RAM" (enhancement)
+   - **"Add 5 keyboards as well" (addition when order exists)** ← NEW
+   - **"Also add 10 monitors" (addition when order exists)** ← NEW
+   - **"I need 20 printers too" (addition when order exists)** ← NEW
+   - **"Add 10 more laptops" (increment when laptops exist)** ← NEW
+   - **"Remove the chairs" (removal from existing order)** ← NEW
 
    Context clues:
    - Uses modification verbs/patterns above
+   - **CRITICAL: Uses "as well", "also", "too" to add items when pending confirmations exist**
    - References existing entities ("the chairs", "that order", "the delivery date")
+   - Conversation stage is "confirming" with pending confirmations
    - NOT answering clarification questions from bot
-   - User explicitly wants to alter previously provided information
+   - User explicitly wants to alter previously provided information OR add to existing order
 
    IMPORTANT: If bot asked clarification questions for missing mandatory fields and user provides the requested info (even mentioning delivery date, location, etc.) WITHOUT modification verbs → continue with buy_something, NOT modification_request
 
@@ -168,6 +178,8 @@ You will receive conversation context including:
 
 CONTEXT-AWARE CLASSIFICATION RULES:
 - If conversation stage is "confirming" and user says "yes" → confirmation_response
+- **CRITICAL: If conversation stage is "confirming" with pending confirmations AND user says "add [X] as well"/"also add [X]"/"add [X] too" → modification_request (adding to existing order, NOT new buy_something)**
+- **CRITICAL: If context shows pending confirmations exist AND user uses "as well"/"also"/"too"/"more" with new items → modification_request (modifying existing order by adding items)**
 - **CRITICAL: If conversation stage is "optional_fields" OR context shows "Has Pending Optional Fields: True" OR "Has Pending Attachment Decision: True":**
   - User says "No" / "Skip" / "None" → confirmation_response (declining optional fields)
   - User says "Yes" and provides details → buy_something (adding optional data)
@@ -176,9 +188,9 @@ CONTEXT-AWARE CLASSIFICATION RULES:
 - If bot just asked optional questions like "Do you have any specifications?" and user answers → buy_something (not modification)
 - **CRITICAL: If bot just asked clarification questions for missing mandatory fields (delivery date, location, division, etc.) and user provides the requested information → buy_something (continue collection, NOT modification)**
 - **If user is answering clarification questions about incomplete products (filling missing mandatory fields) → buy_something (this is completing data, not modifying existing data)**
-- If user uses modification language ("change", "modify", "update", "actually") AND not answering bot's clarification/optional questions → modification_request
+- If user uses modification language ("change", "modify", "update", "actually", "remove", "delete") AND not answering bot's clarification/optional questions → modification_request
 - If user references existing entities ("the chairs", "those laptops") with modification verbs → modification_request
-- If no context exists or user introduces new items → buy_something
+- If no context exists or user introduces new items WITHOUT "as well"/"also"/"too" → buy_something
 - Consider pronoun references ("change it to", "make that") → modification_request
 - **If user says "cancel" and has ongoing workflow → cancel_workflow**
 - **If user says "exit", "quit", "bye", "goodbye" → exit_system**

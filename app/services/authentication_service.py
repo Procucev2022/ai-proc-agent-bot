@@ -1227,7 +1227,7 @@ Respond only with: "yes" or "no"
         try:
             username = self._get_username_from_users(filtered_users)
             
-            message = f"Hi {username}, please select your email address:\\n\\n"
+            message = f"Hi {username}!, please select your email address:\\n\\n"
             for i, email in enumerate(emails, 1):
                 user_type = self._get_user_type_for_email(email, filtered_users)
                 type_label = f" - {user_type}" if user_type else ""

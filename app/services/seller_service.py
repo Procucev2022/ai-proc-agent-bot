@@ -932,7 +932,7 @@ class SellerService:
         """Extract RFQ IDs from seller's message."""
         try:
             # Use AI entity extraction
-            extraction = self.openai_service.extract_entities(
+            extraction = await self.openai_service.extract_entities(
                 message=message,
                 workflow_type="rfq_status_check"
             )
@@ -951,7 +951,7 @@ class SellerService:
         """Extract plan selection from seller's message using AI."""
         try:
             # Use AI to extract plan selection
-            extraction = self.openai_service.extract_entities(
+            extraction = await self.openai_service.extract_entities(
                 message=message,
                 workflow_type="plan_selection"
             )

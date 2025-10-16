@@ -327,7 +327,7 @@ class WhatsAppService:
                                       body: str, 
                                       buttons_config: List[Dict[str, str]], 
                                       header: Optional[str] = None,
-                                      footer: str = "(Type ‘Exit’ anytime to end the chat, or type ‘Support’ to reach our support team for further assistance)") -> MessageResponse:
+                                      footer: str = "(Type ‘Exit’ anytime to end the chat)") -> MessageResponse:
         """
         Send fully configurable button message that can be used anywhere with any button configuration.
         

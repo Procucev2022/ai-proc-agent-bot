@@ -31,20 +31,22 @@ def init_database():
     global engine, SessionLocal
 
     settings = get_settings()
-    
+
     # SSL configuration handled in connection URL
     connect_args = {}
-    
+
     engine = create_engine(
         settings.get_database_url(),
         connect_args=connect_args,
-        pool_pre_ping=True,
-        pool_recycle=300,
+        pool_pre_ping=True,  # Test connections before using
+        pool_recycle=3600,  # Recycle connections after 1 hour (MySQL timeout is 8h)
         pool_size=10,
         max_overflow=20,
-        pool_timeout=60
+        pool_timeout=60,
+        echo_pool=False,  # Set to True for pool debugging
+        isolation_level="READ COMMITTED"  # See latest committed data across workers
     )
-    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
     # Create all tables
     Base.metadata.create_all(bind=engine)
@@ -113,37 +115,47 @@ def init_database():
 
 
 def get_db_session():
-    """Get database session with error handling."""
+    """
+    Get database session with error handling.
+
+    Returns a new database session. Caller is responsible for closing the session.
+    """
     global engine, SessionLocal
+
     if SessionLocal is None:
         # Initialize with SSL configuration based on database mode
         settings = get_settings()
-        
+
         # SSL configuration handled in connection URL
         connect_args = {}
-        
+
         try:
             engine = create_engine(
                 settings.get_database_url(),
                 connect_args=connect_args,
-                pool_pre_ping=True,
-                pool_recycle=300,
+                pool_pre_ping=True,  # Test connections before using
+                pool_recycle=3600,  # Recycle connections after 1 hour
                 pool_size=10,
                 max_overflow=20,
-                pool_timeout=60
+                pool_timeout=60,
+                echo_pool=False,
+                isolation_level="READ COMMITTED"  # See latest committed data across workers
             )
-            SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+            SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+            logger.info("Initialized database session factory (lazy init)")
         except Exception as e:
             logger.error(f"Database engine creation failed: {e}")
             # Import here to avoid circular imports
             from .services.global_error_handler import handle_database_error
             asyncio.create_task(handle_database_error(f"Database engine creation failed: {str(e)}"))
             raise
-        
+
     try:
+        # Return new session - caller must close it when done
         session = SessionLocal()
         # Test connection
         session.execute(text("SELECT 1"))
+        logger.debug(f"Returning database session: {id(session)}")
         return session
     except (SQLAlchemyError, DisconnectionError, SQLTimeoutError) as e:
         logger.error(f"Database connection failed: {e}")
@@ -179,8 +191,8 @@ def get_remote_db_session():
             # Create remote engine with connection pooling
             remote_engine = create_engine(
                 remote_database_url,
-                pool_pre_ping=True,
-                pool_recycle=300,
+                pool_pre_ping=True,  # Test connections before using
+                pool_recycle=3600,  # Recycle connections after 1 hour
                 pool_size=5,
                 max_overflow=10,
                 echo=settings.sql_debug
@@ -472,7 +484,16 @@ class DatabaseManager:
     def save_conversation_session(self, session_data: dict) -> ConversationSession:
         """Save or update a conversation session."""
         from sqlalchemy.exc import SQLAlchemyError, IntegrityError
-        
+        import os
+
+        worker_pid = os.getpid()
+        session_id = session_data.get('session_id', 'UNKNOWN')
+
+        # Log what we're saving
+        extracted_entities = session_data.get('extracted_entities', [])
+        workflow_state_keys = list(session_data.get('workflow_state', {}).keys()) if isinstance(session_data.get('workflow_state'), dict) else []
+        logger.info(f"[WORKER-{worker_pid}] [SESSION-SAVE] {session_id} | extracted_entities count: {len(extracted_entities)} | workflow_state keys: {workflow_state_keys}")
+
         try:
             # First, try to get existing session
             session = self.session.query(ConversationSession).filter_by(
@@ -493,6 +514,8 @@ class DatabaseManager:
                 self.session.add(session)
             
             self.session.commit()
+            # Refresh to ensure we return the latest state
+            self.session.refresh(session)
             return session
             
         except IntegrityError as e:
@@ -513,6 +536,7 @@ class DatabaseManager:
                     if key in ['workflow_state', 'conversation_history', 'extracted_entities', 'whatsapp_context', 'error_details', 'performance_metrics', 'bfs_products_searched', 'bfs_price_accepted', 'bfs_counter_offers', 'products_bid_for', 'bids_received', 'bids_accepted', 'counter_offers_made', 'counter_offers_accepted', 'rfqs_with_response']:
                         flag_modified(existing_session, key)
                 self.session.commit()
+                self.session.refresh(existing_session)
                 return existing_session
             else:
                 # Fallback: return session object without saving
@@ -536,6 +560,7 @@ class DatabaseManager:
                         if key in ['workflow_state', 'conversation_history', 'extracted_entities', 'whatsapp_context', 'error_details', 'performance_metrics', 'bfs_products_searched', 'bfs_price_accepted', 'bfs_counter_offers', 'products_bid_for', 'bids_received', 'bids_accepted', 'counter_offers_made', 'counter_offers_accepted', 'rfqs_with_response']:
                             flag_modified(existing_session, key)
                     self.session.commit()
+                    self.session.refresh(existing_session)
                     return existing_session
                 else:
                     # Return original session object to prevent data loss
@@ -548,10 +573,25 @@ class DatabaseManager:
     def get_conversation_session(self, session_id: str) -> Optional[ConversationSession]:
         """Get a conversation session by ID."""
         from sqlalchemy.exc import SQLAlchemyError
-        
+        import os
+
+        worker_pid = os.getpid()
+
         try:
+            # Force expiration of any cached objects to prevent stale data
+            self.session.expire_all()
+
             session = self.session.query(ConversationSession).filter_by(session_id=session_id).first()
-            
+
+            # Refresh the session object to ensure latest data from database
+            if session:
+                self.session.refresh(session)
+
+                # Log what we loaded
+                extracted_entities_count = len(session.extracted_entities) if session.extracted_entities else 0
+                workflow_state_keys = list(session.workflow_state.keys()) if session.workflow_state else []
+                logger.info(f"[WORKER-{worker_pid}] [SESSION-LOAD] {session_id} | extracted_entities count: {extracted_entities_count} | workflow_state keys: {workflow_state_keys}")
+
             # Fix potential JSON deserialization issues
             if session and session.workflow_state:
                 try:
@@ -559,17 +599,25 @@ class DatabaseManager:
                     if isinstance(session.workflow_state, str):
                         session.workflow_state = json.loads(session.workflow_state)
 
-                    # Debug logging for optional fields
+                    # Debug logging for optional fields - ENHANCED
                     if 'pending_optional_rfq' in session.workflow_state or 'pending_optional_combined_rfq' in session.workflow_state:
                         logger.info(f"[SESSION_LOAD_DEBUG] Loaded session {session_id} with optional fields: {list(session.workflow_state.keys())}")
+                        if 'pending_optional_combined_rfq' in session.workflow_state:
+                            optional_data = session.workflow_state['pending_optional_combined_rfq']
+                            logger.info(f"[SESSION_LOAD_DEBUG] pending_optional_combined_rfq has keys: {list(optional_data.keys()) if isinstance(optional_data, dict) else 'Not a dict'}")
+                    else:
+                        # Log when optional fields are NOT present
+                        logger.info(f"[SESSION_LOAD_DEBUG] Loaded session {session_id} WITHOUT optional fields. Keys: {list(session.workflow_state.keys())}")
 
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.error(f"Failed to deserialize workflow_state for session {session_id}: {e}")
                     # Reset to empty dict to prevent further errors
                     session.workflow_state = {"extracted_entities": []}
+            elif session:
+                logger.info(f"[SESSION_LOAD_DEBUG] Loaded session {session_id} with NO workflow_state")
 
             return session
-            
+
         except SQLAlchemyError as e:
             logger.error(f"Database error in get_conversation_session: {e}")
             self.session.rollback()

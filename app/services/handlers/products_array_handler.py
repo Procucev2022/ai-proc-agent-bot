@@ -14,7 +14,7 @@ from app.services.openai_service import OpenAIService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.utils.datetime_utils import utc_now
-from app.utils.rfq_message_formatter import format_rfq_entities_message, format_rfq_response_message, format_rfq_entities_with_global_fields
+from app.utils.rfq_message_formatter import format_rfq_response_message
 
 logger = logging.getLogger(__name__)
 
@@ -367,9 +367,18 @@ class ProductsArrayHandler:
             }
             formatted_message = format_rfq_response_message([product_info["entities"]], global_fields, optional_questions, include_optional=True)
           
-            optional_message = f"{formatted_message}\n\nYou may send the details now or reply 'No' to continue."
+            optional_message = f"{formatted_message}\n\nIf yes, please upload them now — or click on ‘Continue’ to proceed."
             
-            await self.whatsapp_service.send_message(user.phone_number, optional_message)
+            # Send message with Continue button
+            buttons_config = [
+                {"id": "continue_rfq", "title": "Continue"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                optional_message,
+                buttons_config,
+                "Optional Information"
+            )
             
             # Mark that we've asked about optional fields
             session.workflow_state["optional_fields_asked"] = True
@@ -395,11 +404,17 @@ class ProductsArrayHandler:
             "user_message": message,
             "extracted_entities": product_info["entities"]
         }, chat_summaries)
+
+        summary_response += (
+            "\n\nPlease review the above details carefully. "
+            'If everything is correct, kindly click "Confirm" to proceed with the RFQ creation. '
+            'If you wish to make any changes, click "Add or Modify."'
+        )
         
         # Send confirmation message with buttons
         buttons_config = [
             {"id": "confirm_rfq", "title": "Confirm"},
-            {"id": "no_rfq", "title": "Modify"}
+            {"id": "no_rfq", "title": "Add or Modify"}
         ]
         await self.whatsapp_service.send_configurable_buttons(
             user.phone_number,
@@ -459,9 +474,18 @@ class ProductsArrayHandler:
                 }
             formatted_message = format_rfq_response_message(all_products_entities, global_fields, optional_questions, include_optional=True)
 
-            optional_message = f"{formatted_message}\n\nYou may send the details now or reply 'No' to continue."
+            optional_message = f"{formatted_message}\n\n If yes, please upload them now — or click on ‘Continue’ to proceed."
             
-            await self.whatsapp_service.send_message(user.phone_number, optional_message)
+            # Send message with Continue button
+            buttons_config = [
+                {"id": "continue_rfq", "title": "Continue"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                optional_message,
+                buttons_config,
+                "Optional Information"
+            )
 
             # Mark that we've asked about optional fields
             session.workflow_state["optional_fields_asked"] = True

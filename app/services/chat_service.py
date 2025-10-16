@@ -63,7 +63,7 @@ from app.services.confirmation_service import ConfirmationService
 from app.services.workflow_manager import WorkflowManager, WorkflowStage, PendingFlag
 
 from app.database import SessionLocal, DatabaseManager
-from app.models import ConversationSession, WorkflowType
+from app.models import ConversationSession, WorkflowType, ConversationOutcome
 from app.schemas.user import User
 
 logger = logging.getLogger(__name__)
@@ -191,7 +191,8 @@ class ChatService:
             # Classify intent once for all message routing and tracking
             try:
                 conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
-                message_intent_result = self.intent_service.classify_intent(message_content, conversation_context)
+                # Now using async OpenAI service
+                message_intent_result = await self.intent_service.classify_intent(message_content, conversation_context)
                 intent = message_intent_result.get('intent')
                 confidence = message_intent_result.get('confidence', 0)
                 self.session_manager.add_message_to_history(session, "user", message_content, message_type, intent, confidence)
@@ -231,7 +232,7 @@ class ChatService:
                     "redirected_to_registration", "redirected_to_buyer_registration", "redirected_to_seller_registration",
                     "redirected_to_email_confirmation", "otp_sent",
                     "email_selection_requested", "registration_initiated", "data_collection_in_progress",
-                    "awaiting_confirmation", "registration_restarted", "otp_validated", "otp_invalid",
+                    "awaiting_confirmation", "registration_restarted", "otp_validated", "otp_invalid", "otp_format_invalid",
                     "domain_approved", "domain_approval_required", "email_confirmation_requested",
                     "auth_reg_switch_choice_presented", "exit_completed", "switch_authentication_started",
                     "role_switch_clarification_requested", "profile_selection_presented",
@@ -241,7 +242,7 @@ class ChatService:
                     "profile_selection_retry_presented", "role_menu_presented",
                     "redirected_to_buyer_registration", "redirected_to_seller_registration",
                     "intent_mismatch_handled", "intent_mismatch_retry_sent", "new_user_registration_presented",
-                    "buyer_options_presented"
+                    "buyer_options_presented", "single_buyer_profile_selection_presented", "profile_selection_sent"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
@@ -484,12 +485,12 @@ class ChatService:
             else:
                 result = {"status": "error", "error": f"Unknown message type: {message_type}"}
 
-            # Log OpenAI call summary for performance monitoring
-            call_summary = self.openai_service.get_call_summary(user_phone)
-            if call_summary:
-                total_calls = sum(call_summary.values())
-                call_breakdown = ", ".join([f"{call_type}: {count}" for call_type, count in call_summary.items()])
-                logger.info(f"OpenAI calls for {user_phone}: {total_calls} total ({call_breakdown})")
+            # # Log OpenAI call summary for performance monitoring
+            # call_summary = self.openai_service.get_call_summary(user_phone)
+            # if call_summary:
+            #     total_calls = sum(call_summary.values())
+            #     call_breakdown = ", ".join([f"{call_type}: {count}" for call_type, count in call_summary.items()])
+            #     logger.info(f"OpenAI calls for {user_phone}: {total_calls} total ({call_breakdown})")
 
             # Include welcome message information in the result if it was sent
             if welcome_sent:
@@ -596,7 +597,7 @@ class ChatService:
             if not intent_result:
                 # Fallback: classify intent if not provided (shouldn't happen with our optimization)
                 conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
-                intent_result = self.intent_service.classify_intent(message, conversation_context)
+                intent_result = await self.intent_service.classify_intent(message, conversation_context)
                 logger.warning(f"Had to fallback to intent classification - this shouldn't happen")
 
             logger.info(f"Intent classification result: {intent_result}")
@@ -726,6 +727,12 @@ class ChatService:
             has_pending_attachment_decision = bool(session.workflow_state.get("awaiting_attachment_decision"))
             print(
                 f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}")
+
+            # Debug logging for optional fields state
+            if has_pending_optional:
+                logger.info(f"[OPTIONAL_FIELDS_DEBUG] Session {session.session_id} has pending optional fields!")
+            else:
+                logger.info(f"[OPTIONAL_FIELDS_DEBUG] Session {session.session_id} does NOT have pending optional fields. workflow_state keys: {list(session.workflow_state.keys()) if session.workflow_state else 'None'}")
 
            
 
@@ -1506,7 +1513,7 @@ class ChatService:
             if user_role == "buyer":
                 # Buyer fallback with buttons
                 buttons_config = [
-                    {"id": "create_rfq", "title": "Create new  RFQ"},
+                    {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "search_bfs", "title": "Search Stocks"}
                 ]
@@ -1727,11 +1734,23 @@ class ChatService:
         # Handle modify button by simulating "modify" message
         elif button_id == "no_rfq":
             return await self._process_text_message(user, session, "modify")
+        
+        # Handle continue button from optional fields
+        elif button_id == "continue_rfq":
+            return await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
 
         # Check if this is a confirmation button response
         elif button_id == "confirm_rfq":
             # Route to confirmation handler
-            return await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
+            result = await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
+
+            # Save session after confirmation handling to persist any session clearing
+            # This ensures that when RFQ is successfully created, the cleared workflow_state
+            # is saved to the database so the next request starts fresh
+            await self.session_manager.save_session(session)
+            logger.info(f"Session saved after confirmation button handling for {user.phone_number}")
+
+            return result
 
         # Check if this is an email confirmation button response during authentication
         elif button_id in ["confirm_email", "reject_email"]:
@@ -2107,7 +2126,7 @@ class ChatService:
             candidate_ids = {str(r.get("rfq_id")) for r in candidate_rfqs if r.get("rfq_id") is not None}
 
             # Use existing AI extraction pipeline to parse RFQ IDs from free text
-            extraction = self.openai_service.extract_entities(message=message, workflow_type="rfq_status_check")
+            extraction = await self.openai_service.extract_entities(message=message, workflow_type="rfq_status_check")
             extracted_ids = extraction.get("rfq_id") or []
 
             # Normalize and filter to candidates
@@ -2599,9 +2618,8 @@ class ChatService:
             ]
 
             # Skip OTP-like messages and auth/registration flow responses
-            # BUT ONLY FOR TRACKING - these messages still need to be processed by auth orchestrator
             if self._is_auth_flow_response(message_content, intent, session):
-                logger.info(f"Not tracking auth/registration flow response (but will still process): '{str(message_content)[:50]}...' with intent: {intent}")
+                logger.info(f"Skipping auth/registration flow response: '{str(message_content)[:50]}...' with intent: {intent}")
                 return
 
             # Skip account selection responses during role switch

@@ -25,7 +25,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-from openai import OpenAI
+from openai import AsyncOpenAI
 from openai import APIError, APITimeoutError, RateLimitError, APIConnectionError
 from app.config import get_settings
 from app.tools.interaction_logger import get_interaction_logger
@@ -46,7 +46,7 @@ class OpenAIService:
     def __init__(self):
         """Initialize OpenAI service with configuration."""
         self.settings = get_settings()
-        self.client = OpenAI(
+        self.client = AsyncOpenAI(
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             base_url=os.getenv("AZURE_OPENAI_ENDPOINT"),
             default_query={"api-version": "preview"},
@@ -204,7 +204,7 @@ class OpenAIService:
         return False
         
     @log_service_method("openai_service")
-    def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
+    async def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
         """
         Classify user intent using OpenAI function calling with conversation context awareness.
         
@@ -304,7 +304,7 @@ class OpenAIService:
             # Track this OpenAI call
             self._track_openai_call("intent_classification")
 
-            response = self.client.responses.create(
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=input_messages,
                 instructions=self._load_prompt("intent_classification", "_get_intent_system_prompt"),
@@ -358,7 +358,7 @@ class OpenAIService:
             logger.error(f"OpenAI API error in intent classification: {error_msg}")
             
             # Send WhatsApp notification
-            asyncio.create_task(self._notify_openai_error("API Error", error_msg, "classify_intent"))
+            await self._notify_openai_error("API Error", error_msg, "classify_intent")
             
             # Log error
             self.interaction_logger.log_error(
@@ -372,9 +372,9 @@ class OpenAIService:
             return self._get_fallback_intent_response(error_msg)
         except Exception as e:
             error_msg = str(e)
-            
+
             # Send WhatsApp notification for unexpected errors
-            asyncio.create_task(self._notify_openai_error("Unexpected Error", error_msg, "classify_intent"))
+            await self._notify_openai_error("Unexpected Error", error_msg, "classify_intent")
             
             # Log error
             self.interaction_logger.log_error(
@@ -388,7 +388,7 @@ class OpenAIService:
             return self._get_fallback_intent_response(error_msg)
         
     @log_service_method("openai_service")
-    def extract_entities(self, message: str, workflow_type: str = "product_search") -> Dict[str, Any]:
+    async def extract_entities(self, message: str, workflow_type: str = "product_search") -> Dict[str, Any]:
         """
         Extract structured entities from user message using OpenAI.
         
@@ -442,7 +442,7 @@ class OpenAIService:
             # Track this OpenAI call
             self._track_openai_call("entity_extraction")
 
-            response = self.client.responses.create(
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": message}],
                 instructions=self._load_prompt(prompt_category, prompt_name, current_year=current_year),
@@ -573,9 +573,9 @@ class OpenAIService:
             
             # Log API error
             logger.error(f"OpenAI API error in entity extraction: {error_msg}")
-            
+
             # Send WhatsApp notification
-            asyncio.create_task(self._notify_openai_error("API Error", error_msg, "extract_entities"))
+            await self._notify_openai_error("API Error", error_msg, "extract_entities")
             
             # Log error
             self.interaction_logger.log_error(
@@ -589,9 +589,9 @@ class OpenAIService:
             return {"products": [], "completeness": 0, "missing_fields": [], "confidence": 0, "next_questions": [], "success": False}
         except Exception as e:
             error_msg = str(e)
-            
+
             # Send WhatsApp notification for unexpected errors
-            asyncio.create_task(self._notify_openai_error("Unexpected Error", error_msg, "extract_entities"))
+            await self._notify_openai_error("Unexpected Error", error_msg, "extract_entities")
             
             # Log error
             self.interaction_logger.log_error(
@@ -605,7 +605,7 @@ class OpenAIService:
             return {"products": [], "completeness": 0, "missing_fields": [], "confidence": 0, "next_questions": [], "success": False}
         
     @log_service_method("openai_service")
-    def extract_entities_with_summary_context(self, message: str, chat_summaries: List[Dict], workflow_type: str = "rfq_creation", existing_products: List[Dict] = None) -> Dict[str, Any]:
+    async def extract_entities_with_summary_context(self, message: str, chat_summaries: List[Dict], workflow_type: str = "rfq_creation", existing_products: List[Dict] = None) -> Dict[str, Any]:
         """
         Extract entities from current message while resolving references to previous conversations.
         
@@ -650,7 +650,7 @@ class OpenAIService:
             # Track this OpenAI call
             self._track_openai_call("entity_extraction_with_summaries")
 
-            response = self.client.responses.create(
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": message}],
                 instructions=prompt_content,
@@ -711,7 +711,7 @@ class OpenAIService:
             return {"products": [], "resolved_references": [], "confidence": 0, "success": False}
         
     @log_service_method("openai_service")
-    def analyze_reference_context(self, message: str) -> Dict[str, Any]:
+    async def analyze_reference_context(self, message: str) -> Dict[str, Any]:
         """
         Analyze if a message contains references to previous conversations.
         
@@ -742,7 +742,7 @@ class OpenAIService:
             # Track this OpenAI call
             self._track_openai_call("reference_detection")
 
-            response = self.client.responses.create(
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": message}],
                 instructions=prompt_content,
@@ -805,7 +805,7 @@ class OpenAIService:
             return {"has_references": False, "confidence": 0, "reference_types": [], "detected_phrases": [], "reasoning": f"Analysis failed: {error_msg}", "success": False}
         
     @log_service_method("openai_service")
-    def analyze_intent_switch_response(self, message: str, pending_switch_context: Dict[str, Any]) -> Dict[str, Any]:
+    async def analyze_intent_switch_response(self, message: str, pending_switch_context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Analyze user's response to intent switch choice using OpenAI.
         
@@ -846,7 +846,7 @@ Analyze their response to determine their true choice.
             # Track this OpenAI call
             self._track_openai_call("intent_switch_analysis")
 
-            response = self.client.responses.create(
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": context_text}],
                 instructions=self._load_prompt("intent_switch", "_get_intent_switch_analysis_prompt"),
@@ -920,7 +920,7 @@ Analyze their response to determine their true choice.
             }
         
     @log_service_method("openai_service")
-    def merge_resolved_references_with_entities(self, products: List[Dict], resolved_references: List[Dict], original_message: str) -> Dict[str, Any]:
+    async def merge_resolved_references_with_entities(self, products: List[Dict], resolved_references: List[Dict], original_message: str) -> Dict[str, Any]:
         """
         Use AI to intelligently merge resolved references into product entities.
         
@@ -955,8 +955,8 @@ Analyze their response to determine their true choice.
                 products=products_text,
                 resolved_references=references_text
             )
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": original_message}],
                 instructions=prompt_content,
@@ -1015,7 +1015,7 @@ Analyze their response to determine their true choice.
             logger.error(f"Reference merging failed: {error_msg}")
             return {"success": False, "updated_products": products, "merge_actions": [], "error": error_msg}
         
-    def generate_response(self, context: dict, query_results: list = None, prompt_file: str = None) -> str:
+    async def generate_response(self, context: dict, query_results: list = None, prompt_file: str = None) -> str:
         """
         Generate contextual response based on query results.
         
@@ -1041,8 +1041,8 @@ Analyze their response to determine their true choice.
                 if query_results:
                     prompt += f"Search results: {json.dumps(query_results)}\n\n"
                 prompt += "Generate an appropriate response for the user based on their context and any available results."
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=self._build_messages_with_history(context, prompt),
                 instructions=self._load_prompt("response_generation", "_get_response_system_prompt")
@@ -1065,7 +1065,7 @@ Analyze their response to determine their true choice.
             logger.error(f"Response generation failed: {str(e)}")
             return self._get_fallback_response(context, query_results or [])
 
-    def generate_rfq_status_response(self, context: dict) -> str:
+    async def generate_rfq_status_response(self, context: dict) -> str:
         """
             Generate contextual response for RFQ status check.
 
@@ -1083,7 +1083,7 @@ Analyze their response to determine their true choice.
             prompt = f"User context: {json.dumps(context)}\n\n"
             prompt += "Generate an appropriate response for the user based on their context and any available results."
 
-            response = self.client.responses.create(
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=self._build_messages_with_history(context, prompt),
                 instructions=self._load_prompt("response_generation", "_get_rfq_status_response_prompt")
@@ -1095,7 +1095,7 @@ Analyze their response to determine their true choice.
             logger.error(f"Response generation failed: {str(e)}")
             return self._get_fallback_response(context,[])
 
-    def generate_seller_intent(self, context: dict) -> str:
+    async def generate_seller_intent(self, context: dict) -> str:
         """
              Generate contextual seller intent response.
 
@@ -1122,7 +1122,7 @@ Analyze their response to determine their true choice.
             with open(self.tools_dir / tool_file, 'r') as f:
                 merge_tool = json.load(f)
 
-            response = self.client.responses.create(
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
                 tools=[merge_tool],
@@ -1141,7 +1141,7 @@ Analyze their response to determine their true choice.
             logger.error(f"Response generation failed: {str(e)}")
             return self._get_fallback_response(context, [])
 
-    def generate_seller_rfq_overview_response(self, context: dict) -> str:
+    async def generate_seller_rfq_overview_response(self, context: dict) -> str:
         """
             Generate contextual response for seller RFQ overview flow.
 
@@ -1160,7 +1160,7 @@ Analyze their response to determine their true choice.
             prompt = f"User context: {json.dumps(context)}\n\n"
             prompt += "Generate an appropriate response for the user based on their context and any available results."
 
-            response = self.client.responses.create(
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=self._build_messages_with_history(context, prompt),
                 instructions=self._load_prompt("response_generation", "_get_seller_rfq_overview_prompt")
@@ -1210,7 +1210,7 @@ Analyze their response to determine their true choice.
             # Return a fallback prompt
             return "Generate an appropriate response for the seller based on the current workflow state and context."
 
-    def validate_field_value(self, field_name: str, value: str, context: dict) -> Dict[str, Any]:
+    async def validate_field_value(self, field_name: str, value: str, context: dict) -> Dict[str, Any]:
         """
         Validate RFQ field value using OpenAI for complex validation.
         
@@ -1233,8 +1233,8 @@ Analyze their response to determine their true choice.
             prompt = f"Validate the field '{field_name}' with value '{value}'"
             if context:
                 prompt += f" with context: {json.dumps(context)}"
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
                 instructions=self._load_prompt("validation", "field_validation_system_prompt"),
@@ -1300,7 +1300,7 @@ Analyze their response to determine their true choice.
         """Fallback response when OpenAI is unavailable."""
         return "There seems to be a technical issue at the moment. Our team is working on it. Please try again later. For urgent requirements, contact support@procucev.com. We apologize for the inconvenience."
     
-    def generate_contextual_response(self, context: dict, base_questions: list = None, conversation_stage: str = "collecting") -> str:
+    async def generate_contextual_response(self, context: dict, base_questions: list = None, conversation_stage: str = "collecting") -> str:
         """
         Generate contextual response for conversation flow using function calling.
         
@@ -1338,8 +1338,8 @@ Analyze their response to determine their true choice.
             
             if base_questions:
                 prompt += f"Questions from data model: {base_questions}\n"
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=self._build_messages_with_history(context, prompt),
                 instructions=self._load_prompt("response_generation", "_get_contextual_response_system_prompt", conversation_stage=conversation_stage),
@@ -1389,7 +1389,7 @@ Analyze their response to determine their true choice.
             else:
                 return "Could you provide more details to help me assist you?"
     
-    def generate_completion_response(self, rfq_data: dict, context: dict) -> str:
+    async def generate_completion_response(self, rfq_data: dict, context: dict) -> str:
         """
         Generate RFQ completion response with summary using function calling.
         
@@ -1414,8 +1414,8 @@ Analyze their response to determine their true choice.
             prompt = f"Generate RFQ completion response:\n\n"
             prompt += f"RFQ Data: {json.dumps(rfq_data)}\n"
             prompt += f"User context: {context.get('user_message', '')}\n"
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=self._build_messages_with_history(context, prompt),
                 instructions=self._load_prompt("response_generation", "_get_completion_response_system_prompt"),
@@ -1459,7 +1459,7 @@ Analyze their response to determine their true choice.
             logger.error(f"Completion response generation failed: {str(e)}")
             return "RFQ completed. Processing request."
     
-    def generate_clarification_response(self, questions: list, completeness: float, context: dict) -> str:
+    async def generate_clarification_response(self, questions: list, completeness: float, context: dict) -> str:
         """
         Generate clarification response when multiple questions needed using function calling.
         
@@ -1491,8 +1491,8 @@ Analyze their response to determine their true choice.
 
             if context.get('extracted_entities'):
                 prompt += f"Current entities: {json.dumps(context['extracted_entities'])}\n"
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=self._build_messages_with_history(context, prompt),
                 instructions=self._load_prompt("response_generation", "_get_clarification_response_system_prompt"),
@@ -1540,7 +1540,7 @@ Analyze their response to determine their true choice.
             return f"I need a few more details:\n\n{questions_text}"
     
     @log_service_method("openai_service")
-    def detect_excel_header_row(self, sample_rows: List[List]) -> Dict[str, Any]:
+    async def detect_excel_header_row(self, sample_rows: List[List]) -> Dict[str, Any]:
         """
         Detect header row in Excel data using OpenAI.
         
@@ -1564,8 +1564,8 @@ Analyze their response to determine their true choice.
                 rows_text += f"Row {i}: {row_str}\n"
             
             prompt = f"Analyze these Excel rows to detect the header row:\n\n{rows_text}"
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
                 instructions=self._load_prompt("excel_analysis", "_get_excel_header_detection_prompt"),
@@ -1597,7 +1597,7 @@ Analyze their response to determine their true choice.
             return {"header_row_index": 0, "confidence": 30, "reasoning": f"Error: {str(e)}", "success": False}
     
     @log_service_method("openai_service")
-    def select_division(self, extracted_data: dict) -> Dict[str, Any]:
+    async def select_division(self, extracted_data: dict) -> Dict[str, Any]:
         """
         Select the most relevant division from predefined list based on extracted RFQ data.
         
@@ -1622,8 +1622,8 @@ Analyze their response to determine their true choice.
             
             Consider product descriptions, specifications, quantities, and any other relevant information to determine which division this procurement request should be assigned to.
             """
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
                 instructions=self._load_prompt("division_selection", "_get_division_selection_prompt"),
@@ -1688,7 +1688,7 @@ Analyze their response to determine their true choice.
             }
     
     @log_service_method("openai_service")
-    def generate_session_summary(self, session_data: Dict[str, Any]) -> str:
+    async def generate_session_summary(self, session_data: Dict[str, Any]) -> str:
         """
         Generate session summary using OpenAI.
         
@@ -1722,8 +1722,8 @@ Analyze their response to determine their true choice.
                     prompt += f"{sender}: {content}\n"
             
             prompt += "\n\nCreate a brief, clear summary of what the user wanted and what was accomplished."
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
                 instructions=self._load_prompt("session_summary", "_get_session_summary_system_prompt")
@@ -1736,7 +1736,7 @@ Analyze their response to determine their true choice.
             return "Session completed"
 
     @log_service_method("openai_service") 
-    def map_excel_columns(self, headers: List[str]) -> Dict[str, Any]:
+    async def map_excel_columns(self, headers: List[str]) -> Dict[str, Any]:
         """
         Map Excel column headers to standard RFQ format using OpenAI.
         
@@ -1765,8 +1765,8 @@ Analyze their response to determine their true choice.
             
             Find the best matches for each target column.
             """
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
                 instructions=self._load_prompt("excel_analysis", "_get_excel_column_mapping_prompt"),
@@ -1802,7 +1802,7 @@ Analyze their response to determine their true choice.
             return {"column_mapping": {}, "confidence": 20, "unmapped_headers": headers, "reasoning": f"Error: {str(e)}", "success": False}
 
     @log_service_method("openai_service")
-    def categorize_with_similar_items(self, item_description: str, similar_items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    async def categorize_with_similar_items(self, item_description: str, similar_items: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Categorize an RFQ item using similar items from vector search.
         
@@ -1839,8 +1839,8 @@ Top similar items from database (ranked by similarity):
 
 Determine the best category for the input item based on the similar items and their categories.
 """
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
                 instructions=self._load_prompt("auto_categorization", "_get_auto_categorization_system_prompt"),
@@ -1932,7 +1932,7 @@ Determine the best category for the input item based on the similar items and th
             }
 
     @log_service_method("openai_service")
-    def generate_3_level_categorization(
+    async def generate_3_level_categorization(
         self, 
         item_description: str, 
         similar_items: List[Dict[str, Any]], 
@@ -1969,8 +1969,8 @@ Determine the best category for the input item based on the similar items and th
                 context_text += "\nSimilar items for context:\n"
                 for i, item in enumerate(similar_items[:3], 1):  # Use top 3 similar items
                     context_text += f"{i}. \"{item.get('item', '')}\" -> {item.get('category', '')} (similarity: {item.get('similarity_score', 0):.2f})\n"
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": context_text}],
                 instructions=self._load_prompt("learning_categorization", "_generate_3_level_category"),
@@ -2019,7 +2019,7 @@ Determine the best category for the input item based on the similar items and th
             }
 
     @log_service_method("openai_service")
-    def validate_learning_category(
+    async def validate_learning_category(
         self, 
         level_1: str, 
         level_2: str, 
@@ -2053,8 +2053,8 @@ Determine the best category for the input item based on the similar items and th
             
             Check if this categorization makes logical sense and is appropriately specific.
             """
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": validation_text}],
                 instructions=self._load_prompt("learning_categorization", "_validate_learning_category"),
@@ -2091,7 +2091,7 @@ Determine the best category for the input item based on the similar items and th
             }
 
     @log_service_method("openai_service")
-    def map_seller_category_to_existing_learning(
+    async def map_seller_category_to_existing_learning(
         self, 
         seller_category: str, 
         existing_categories: List[Dict[str, Any]],
@@ -2134,8 +2134,8 @@ Determine the best category for the input item based on the similar items and th
             for i, cat in enumerate(existing_categories, 1):
                 category_path = f"{cat['level_1_category']} > {cat['level_2_category']} > {cat['level_3_category']}"
                 context_text += f"{i}. {category_path} (ID: {cat['id']})\n"
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": context_text}],
                 instructions=self._load_prompt("seller_mapping", "_map_seller_to_existing_categories"),
@@ -2197,7 +2197,7 @@ Determine the best category for the input item based on the similar items and th
             }
     
     @log_service_method("openai_service")
-    def select_best_sellers(self, item_description: str, candidate_sellers: List[Dict[str, Any]], max_sellers: int = 10) -> Dict[str, Any]:
+    async def select_best_sellers(self, item_description: str, candidate_sellers: List[Dict[str, Any]], max_sellers: int = 10) -> Dict[str, Any]:
         """
         Use OpenAI to select and rank the best sellers from candidates for a specific item.
         
@@ -2241,8 +2241,8 @@ Determine the best category for the input item based on the similar items and th
                 context_text += f"   Location: {seller.get('location', {}).get('city', 'Unknown')}, {seller.get('location', {}).get('state', 'Unknown')}\n\n"
             
             context_text += f"\nSelect up to {max_sellers} sellers, ranked from best to worst match."
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": context_text}],
                 instructions=self._load_prompt("seller_selection", "_get_seller_selection_prompt", max_sellers=max_sellers),
@@ -2329,7 +2329,7 @@ Determine the best category for the input item based on the similar items and th
 
 
     @log_service_method("openai_service")
-    def generate_rfq_confirmation(self, rfq_data: dict, context: dict) -> str:
+    async def generate_rfq_confirmation(self, rfq_data: dict, context: dict) -> str:
         """
         Generate well-structured RFQ confirmation message with proper formatting.
         
@@ -2376,8 +2376,8 @@ Determine the best category for the input item based on the similar items and th
             
             if context.get("user_message"):
                 context_text += f"User Message: {context['user_message']}\n"
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": context_text}],
                 instructions=self._load_prompt("response_generation", "_get_rfq_confirmation_system_prompt"),
@@ -2439,12 +2439,12 @@ Determine the best category for the input item based on the similar items and th
                 return str(obj)
 
     @log_service_method("openai_service")
-    def generate_opt_out_confirmation(self, seller_name: str) -> str:
+    async def generate_opt_out_confirmation(self, seller_name: str) -> str:
         """Generate opt-out confirmation message for sellers."""
         try:
             prompt = f"Generate a brief WhatsApp message confirming that seller '{seller_name}' has been opted out of RFQ notifications. Include how to opt back in (reply 'opt-in'). Keep friendly, under 50 words."
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
                 instructions="You are a helpful assistant generating confirmation messages for sellers who opt out of notifications. Be brief, clear, and professional."
@@ -2457,13 +2457,13 @@ Determine the best category for the input item based on the similar items and th
             return f"Hi {seller_name}, you're now opted out of RFQ notifications. To opt back in, reply 'opt-in'."
     
     @log_service_method("openai_service")
-    def generate_opt_in_confirmation(self, seller_name: str, categories: list) -> str:
+    async def generate_opt_in_confirmation(self, seller_name: str, categories: list) -> str:
         """Generate opt-in confirmation message for sellers."""
         try:
             categories_text = ', '.join(categories) if categories else 'your business categories'
             prompt = f"Generate a brief WhatsApp welcome back message for seller '{seller_name}' who opted in for RFQ notifications. Mention their categories: {categories_text}. Include how to opt out (reply 'opt-out'). Keep friendly, under 60 words."
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
                 instructions="You are a helpful assistant generating welcome back messages for sellers who opt in to notifications. Be brief, clear, and professional."
@@ -2476,7 +2476,7 @@ Determine the best category for the input item based on the similar items and th
             return f"Hi {seller_name}, welcome back! You'll receive RFQ notifications for {categories_text}. To opt out, reply 'opt-out'."
     
     @log_service_method("openai_service")
-    def validate_delivery_date(self, raw_date_input: str, extracted_date: str = None) -> Dict[str, Any]:
+    async def validate_delivery_date(self, raw_date_input: str, extracted_date: str = None) -> Dict[str, Any]:
         """Validate delivery date with business rules using OpenAI.
         
         Args:
@@ -2507,8 +2507,8 @@ Determine the best category for the input item based on the similar items and th
             
             Apply validation rules and provide normalized result.
             """
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
                 instructions=self._load_prompt("date_validation", "_get_date_validation_prompt", current_year=current_date.year, current_date=current_date_str, current_month=current_date.month),
@@ -2634,7 +2634,7 @@ Determine the best category for the input item based on the similar items and th
 
 
     @log_service_method("openai_service")
-    def detect_opt_out_intent(self, message: str) -> Dict[str, Any]:
+    async def detect_opt_out_intent(self, message: str) -> Dict[str, Any]:
         """Detect opt-out/opt-in intent in seller messages using function calling."""
         start_time = time.time()
         
@@ -2642,8 +2642,8 @@ Determine the best category for the input item based on the similar items and th
             # Load opt-out intent detection tool
             with open(self.tools_dir / "opt_out_intent_detection.json", 'r') as f:
                 intent_tool = json.load(f)
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": message}],
                 instructions=self._load_prompt("opt_out_detection", "_get_opt_out_detection_prompt"),
@@ -2676,13 +2676,13 @@ Determine the best category for the input item based on the similar items and th
             return {"intent": "none", "confidence": 20, "reasoning": f"Error: {str(e)}", "detected_phrases": [], "success": False}
 
     @log_service_method("openai_service")
-    def generate_permission_request(self, seller_name: str, categories: list) -> str:
+    async def generate_permission_request(self, seller_name: str, categories: list) -> str:
         """Generate permission request message for new sellers."""
         try:
             categories_text = ', '.join(categories) if categories else 'your business categories'
             prompt = f"Generate a brief WhatsApp message asking seller '{seller_name}' for permission to send RFQ notifications. Mention their categories: {categories_text}. Ask them to reply 'yes' or 'no'. Keep friendly, under 70 words."
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
                 instructions="You are a helpful assistant generating permission request messages for new sellers. Be brief, clear, and professional."
@@ -2723,7 +2723,7 @@ Determine the best category for the input item based on the similar items and th
             return {"intent": "unclear", "confidence": 0, "success": False}
     
     @log_service_method("openai_service")
-    def extract_registration_entities(self, message: str, conversation_context: str = "", user_type: str = "buyer", existing_entities: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def extract_registration_entities(self, message: str, conversation_context: str = "", user_type: str = "buyer", existing_entities: Dict[str, Any] = None) -> Dict[str, Any]:
         """Extract registration entities using proper tools and prompts like RFQ creation."""
         start_time = time.time()
         
@@ -2748,8 +2748,8 @@ Determine the best category for the input item based on the similar items and th
             if existing_entities:
                 context_text += f"Already collected: {json.dumps(existing_entities, indent=2)}\n\n"
             context_text += "Extract new information from the message and merge with existing data."
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": context_text}],
                 instructions=self._load_prompt("registration", prompt_file),
@@ -2809,8 +2809,8 @@ Determine if user is:
 - giving unclear/invalid response (invalid)
             
 If multiple emails and user selected a number, include selection."""
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
                 instructions=self._load_prompt("email_confirmation", "email_confirmation_parsing"),
@@ -2831,7 +2831,7 @@ If multiple emails and user selected a number, include selection."""
             return {"success": False}
 
     @log_service_method("openai_service")
-    def handle_contextual_interaction(self, message: str, conversation_history: dict, 
+    async def handle_contextual_interaction(self, message: str, conversation_history: dict,
                                     workflow_state: dict, extracted_entities: list) -> Dict[str, Any]:
         """
         Handle complex contextual interactions with comprehensive session management.
@@ -2863,8 +2863,8 @@ If multiple emails and user selected a number, include selection."""
             context_text = self._build_contextual_analysis_prompt(
                 message, conversation_history, workflow_state, extracted_entities
             )
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": context_text}],
                 instructions=self._load_prompt("contextual_interaction", "_handle_contextual_interaction_prompt"),
@@ -2937,7 +2937,7 @@ If multiple emails and user selected a number, include selection."""
                 "error": str(e)
             }
     
-    def _build_contextual_analysis_prompt(self, message: str, conversation_history: dict, 
+    async def _build_contextual_analysis_prompt(self, message: str, conversation_history: dict,
                                         workflow_state: dict, extracted_entities: list) -> str:
         """Build comprehensive context prompt for AI analysis."""
         
@@ -2998,8 +2998,8 @@ If multiple emails and user selected a number, include selection."""
             prompt_path = os.path.join(self.prompts_dir, "confirmation_response_classification.txt")
             with open(prompt_path, 'r', encoding='utf-8') as f:
                 instructions = f.read()
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": user_message}],
                 instructions=instructions
@@ -3013,7 +3013,7 @@ If multiple emails and user selected a number, include selection."""
             return "unclear"
     
     @log_service_method("openai_service")
-    def detect_registration_type(self, message: str) -> Dict[str, Any]:
+    async def detect_registration_type(self, message: str) -> Dict[str, Any]:
         """
         Detect registration type from user message using OpenAI function calling.
         
@@ -3032,8 +3032,8 @@ If multiple emails and user selected a number, include selection."""
                 tool_def = json.load(f)
             
             user_prompt = f"User message: '{message}'"
-            
-            response = self.client.responses.create(
+
+            response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": user_prompt}],
                 instructions=system_prompt,

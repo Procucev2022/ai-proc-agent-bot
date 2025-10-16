@@ -1,20 +1,33 @@
 {
     "type": "function",
     "name": "extract_modification_values",
-    "description": "Extract ONLY the new modification values from user message. Do NOT extract existing values or copy over current data. Focus only on what the user explicitly wants to change.",
+    "description": "Extract modification operations from user message. Analyze the user's intent and identify which existing products to modify, add new products, or remove products. You will be provided with all existing products - use this context to make intelligent decisions.",
     "parameters": {
         "type": "object",
         "properties": {
             "modifications": {
                 "type": "array",
-                "description": "Array of modification values extracted from the message - ONLY new values provided by user",
+                "description": "Array of modification operations to perform on existing products",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "field_type": {
+                        "operation_type": {
                             "type": "string",
-                            "enum": ["delivery_location", "quantity", "delivery_date", "description", "division", "brand", "project_desc", "unit_of_measures", "remarks"],
-                            "description": "Type of field being modified"
+                            "enum": ["modify", "add", "remove"],
+                            "description": "Type of operation: 'modify' updates an existing product, 'add' creates a new product, 'remove' deletes an existing product"
+                        },
+                        "target_product_index": {
+                            "type": ["number", "null"],
+                            "description": "Index of the existing product to modify or remove (0-based). Required for 'modify' and 'remove' operations. Null for 'add' operations. Use product context provided to determine the correct index."
+                        },
+                        "target_product_description": {
+                            "type": ["string", "null"],
+                            "description": "Description of the product being targeted (for logging and validation). Helps verify the correct product is being modified."
+                        },
+                        "field_type": {
+                            "type": ["string", "null"],
+                            "enum": ["delivery_location", "quantity", "delivery_date", "description", "division", "brand", "project_desc", "unit_of_measures", "remarks", null],
+                            "description": "Primary field being modified. Null for 'remove' operations or when modifying multiple fields."
                         },
                         "new_project_desc": {
                             "type": ["string", "null"],
@@ -59,19 +72,23 @@
                         "new_remarks": {
                             "type": ["string", "null"],
                             "description": "NEW remarks - only if user provided new remarks"
+                        },
+                        "reasoning": {
+                            "type": ["string", "null"],
+                            "description": "Brief explanation of why this operation was chosen and which product is being targeted"
                         }
                     },
-                    "required": ["field_type", "new_project_desc", "new_description", "new_quantity", "new_unit_of_measures", "new_delivery_date", "new_division", "new_brand", "new_state", "new_city", "new_pincode", "new_remarks"],
+                    "required": ["operation_type", "target_product_index", "target_product_description", "field_type", "new_project_desc", "new_description", "new_quantity", "new_unit_of_measures", "new_delivery_date", "new_division", "new_brand", "new_state", "new_city", "new_pincode", "new_remarks", "reasoning"],
                     "additionalProperties": false
                 }
             },
             "has_new_values": {
                 "type": "boolean",
-                "description": "True if user provided actual new values, False if only expressed modification intent without new values"
+                "description": "True if user provided actual new values or clear add/remove intent, False if only expressed vague modification intent"
             },
             "modification_intent": {
                 "type": ["string", "null"],
-                "description": "What the user wants to modify (e.g., 'delivery address', 'quantity') even if no new values provided"
+                "description": "What the user wants to modify (e.g., 'delivery address', 'quantity', 'add new product', 'remove product') even if no new values provided"
             },
             "confidence": {
                 "type": "number",
