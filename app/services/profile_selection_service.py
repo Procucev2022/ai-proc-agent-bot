@@ -206,7 +206,7 @@ class ProfileSelectionService:
             
             # Get user's name from the first available profile
             user_name = self._extract_user_name(profiles)
-            greeting = f"👋 Hi there!"
+            greeting = "👋 Hi there!"
             
             # Case: Only buyer profile exists
             if buyer_profiles and not seller_profiles:
