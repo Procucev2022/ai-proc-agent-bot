@@ -42,20 +42,43 @@ class SellerService:
     - Proper workflow state management
     """
 
-    def __init__(self):
+    def __init__(self, whatsapp_service=None, session_manager=None):
+        """
+        Initialize SellerService.
+        
+        Args:
+            whatsapp_service: Either MessageQueueService (batched) or WhatsAppService (direct).
+                If None, creates direct WhatsAppService for backward compatibility.
+            session_manager: Optional SessionManagementService instance. If provided, uses it directly.
+                If None, creates new instance with whatsapp_service.
+        """
         self.db_manager = DatabaseManager()
         self.chat_summary_service = ChatSummaryService()
         self.daily_summary_service = DailySummaryService()
-        self.whatsapp_service = WhatsAppService()
+        
+        if whatsapp_service:
+            self.whatsapp_service = whatsapp_service
+        else:
+            self.whatsapp_service = WhatsAppService()
+            logger.warning("SellerService initialized without whatsapp_service - using direct WhatsAppService")
+        
         self.seller_api_service = SellerAPIService()
         self.settings = get_settings()
         self.openai_service = OpenAIService()
-        self.rfq_status_service = RFQStatusService()
+        
+        # RFQStatusService needs whatsapp_service too
+        self.rfq_status_service = RFQStatusService(whatsapp_service=self.whatsapp_service)
+        
         self.response_helpers = ResponseHelpers(self.openai_service)
-        self.session_manager = SessionManagementService(
-            self.db_manager, self.whatsapp_service,
-            self.chat_summary_service, self.daily_summary_service
-        )
+        
+        # Use provided session_manager or create new one with whatsapp_service
+        if session_manager:
+            self.session_manager = session_manager
+        else:
+            self.session_manager = SessionManagementService(
+                self.db_manager, self.whatsapp_service,
+                self.chat_summary_service, self.daily_summary_service
+            )
 
     async def handle_seller_workflow(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """

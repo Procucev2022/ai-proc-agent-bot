@@ -30,10 +30,12 @@ from app.config import get_settings
 from app.services.chat_service import ChatService
 from app.services.cancel_service import CancelService
 from app.services.session_management_service import SessionManagementService
+from app.services.message_queue_service import MessageQueueService 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-chat_service = ChatService()
+# chat_service = ChatService()
+message_queue_service = MessageQueueService()  # Instantiate message_queue service
 
 # Set up WhatsApp webhook payload logger
 webhook_payload_logger = logging.getLogger("whatsapp_webhook")
@@ -110,8 +112,8 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
             logger.warning("No processable data in webhook")
             return JSONResponse(content={"status": "ok"})
         
-        # Process message in background to avoid timeout
-        background_tasks.add_task(process_message_async, webhook_data)
+        # Enqueue message to message queue service instead of direct processing
+        background_tasks.add_task(enqueue_message_async, webhook_data)
         
         # Return success immediately
         return JSONResponse(content={"status": "ok"})
@@ -309,101 +311,86 @@ def parse_json_webhook(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return data
 
 
-async def process_message_async(webhook_data: Dict[str, Any]):
+async def enqueue_message_async(webhook_data: Dict[str, Any]):
     """
-    Process incoming message asynchronously.
-
-    Routes the message through the chat service for processing.
+    Enqueue incoming message to the message queue service.
+    
+    This replaces direct processing and allows batching of messages.
     """
     from_number = None
     try:
-        logger.info(f"Processing message: {webhook_data}")
+        logger.info(f"Enqueueing message: {webhook_data}")
 
-        # Extract message details
-        message_type = webhook_data.get("type", "text")
-        from_number = webhook_data.get("from")
-        content = webhook_data.get("content")
-
-        if not from_number or not content:
-            logger.warning("Missing required message data")
-            return
-
-        # Handle document messages specifically
-        if message_type.lower() == "document":
-            await process_document_message(webhook_data)
-        else:
-            # Process regular messages through chat service
-            await chat_service.process_message(
-                user_phone=from_number,
-                message_content=content,
-                message_type=message_type
-            )
+        # Enqueue the message - the service will handle batching and processing
+        await message_queue_service.enqueue_message(webhook_data)
 
     except Exception as e:
-        logger.error(f"Error in async message processing: {e}", exc_info=True)
+        logger.error(f"Error enqueueing message: {e}", exc_info=True)
 
+        # Extract user phone for error handling
+        from_number = webhook_data.get("from")
+        
         # Clear workflow state and notify user of technical error
         if from_number:
             try:
                 await handle_technical_error_with_cancel(
                     user_phone=from_number,
-                    error_message=f"Message processing error: {str(e)}",
-                    error_type="Message Processing Error"
+                    error_message=f"Message enqueueing error: {str(e)}",
+                    error_type="Message Queue Error"
                 )
             except Exception as cancel_error:
-                logger.error(f"Failed to handle technical error in async processing: {cancel_error}")
+                logger.error(f"Failed to handle technical error in async enqueueing: {cancel_error}")
 
+# async def process_document_message(webhook_data: Dict[str, Any]):
+#     """
+#     Process document message for Excel file uploads.
 
-async def process_document_message(webhook_data: Dict[str, Any]):
-    """
-    Process document message for Excel file uploads.
+#     Handles Excel file validation, processing, and routing to chat service.
+#     """
+#     try:
+#         from_number = webhook_data.get("from")
+#         content = webhook_data.get("content")
 
-    Handles Excel file validation, processing, and routing to chat service.
-    """
-    try:
-        from_number = webhook_data.get("from")
-        content = webhook_data.get("content")
+#         if not isinstance(content, dict):
+#             logger.warning("Document message content is not a dictionary")
+#             return
 
-        if not isinstance(content, dict):
-            logger.warning("Document message content is not a dictionary")
-            return
+#         # Extract document information
+#         document_info = content.get("document", {})
+#         if not document_info:
+#             logger.warning("No document information found in message")
+#             return
 
-        # Extract document information
-        document_info = content.get("document", {})
-        if not document_info:
-            logger.warning("No document information found in message")
-            return
+#         file_url = document_info.get("link")
+#         filename = document_info.get("filename", "")
 
-        file_url = document_info.get("link")
-        filename = document_info.get("filename", "")
+#         if not file_url:
+#             logger.warning("No file URL found in document message")
+#             return
 
-        if not file_url:
-            logger.warning("No file URL found in document message")
-            return
+#         logger.info(f"Processing document upload: {filename} from {from_number}")
 
-        logger.info(f"Processing document upload: {filename} from {from_number}")
+#         # Check if it's an Excel file
+#         excel_extensions = ['.xlsx', '.xls', '.xlsm']
+#         is_excel = any(filename.lower().endswith(ext) for ext in excel_extensions)
 
-        # Check if it's an Excel file
-        excel_extensions = ['.xlsx', '.xls', '.xlsm']
-        is_excel = any(filename.lower().endswith(ext) for ext in excel_extensions)
+#         if is_excel:
+#             # Process as Excel file through chat service
+#             await chat_service.process_message(
+#                 user_phone=from_number,
+#                 message_content=content,
+#                 message_type="excel_upload"
+#             )
+#         else:
+#             # Handle non-Excel documents
+#             await chat_service.process_message(
+#                 user_phone=from_number,
+#                 message_content=f"Received document: {filename}",
+#                 message_type="document"
+#             )
 
-        if is_excel:
-            # Process as Excel file through chat service
-            await chat_service.process_message(
-                user_phone=from_number,
-                message_content=content,
-                message_type="excel_upload"
-            )
-        else:
-            # Handle non-Excel documents
-            await chat_service.process_message(
-                user_phone=from_number,
-                message_content=f"Received document: {filename}",
-                message_type="document"
-            )
-
-    except Exception as e:
-        logger.error(f"Error processing document message: {e}")
+#     except Exception as e:
+#         logger.error(f"Error processing document message: {e}")
 
 
 async def handle_technical_error_with_cancel(user_phone: str, error_message: str, error_type: str = "Technical Error"):
@@ -423,9 +410,26 @@ async def handle_technical_error_with_cancel(user_phone: str, error_message: str
     try:
         logger.error(f"{error_type} for user {user_phone}: {error_message}")
 
-        # Initialize services
-        session_manager = SessionManagementService()
-        cancel_service = CancelService(session_manager=session_manager)
+        # Initialize services for error handling
+        # Use direct WhatsAppService since this is an error scenario outside normal batch flow
+        from app.services.whatsapp_service import WhatsAppService
+        from app.services.chat_summary_service import ChatSummaryService
+        from app.services.daily_summary_service import DailySummaryService
+        from app.database import DatabaseManager
+        
+        whatsapp_service = WhatsAppService()
+        db_manager = DatabaseManager()
+        chat_summary_service = ChatSummaryService()
+        daily_summary_service = DailySummaryService()
+        
+        session_manager = SessionManagementService(
+            db_manager, whatsapp_service,
+            chat_summary_service, daily_summary_service
+        )
+        cancel_service = CancelService(
+            whatsapp_service=whatsapp_service,
+            session_manager=session_manager
+        )
 
         # Get user's current session
         session = await session_manager.get_conversation_context(user_phone)
@@ -436,9 +440,6 @@ async def handle_technical_error_with_cancel(user_phone: str, error_message: str
             await cancel_service._clear_workflow_state(session)
 
         # Send user-friendly error message
-        from app.services.whatsapp_service import WhatsAppService
-        whatsapp_service = WhatsAppService()
-
         error_notification = (
             "Due to a technical error, your request could not be processed. "
             "Your current session has been cleared. Please try again later or contact support if the issue persists."
