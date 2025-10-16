@@ -203,14 +203,15 @@ class EntityService:
         # Get existing pending confirmation data
         workflow_state = context.get("workflow_state", {})
         
-        # Get pending products from any workflow state (confirmations, optional fields, or incomplete products)
+        # Get pending products from any workflow state (confirmations, optional fields, incomplete products, or complete products)
         pending_combined = workflow_state.get("pending_combined_rfq")
         pending_single = workflow_state.get("pending_rfq")
         pending_optional_combined = workflow_state.get("pending_optional_combined_rfq")
         pending_optional_single = workflow_state.get("pending_optional_rfq")
         incomplete_products = workflow_state.get("incomplete_products")
+        complete_products = workflow_state.get("complete_products", [])
         extracted_entities = workflow_state.get("extracted_entities", [])
-        
+
         if pending_combined:
             pending_products = pending_combined.get("products", [])
         elif pending_single:
@@ -221,6 +222,9 @@ class EntityService:
             pending_products = [pending_optional_single]
         elif incomplete_products:
             pending_products = incomplete_products
+        elif complete_products:
+            # Use complete_products if no pending products found
+            pending_products = complete_products
         elif extracted_entities:
             # Convert extracted_entities to proper format
             if isinstance(extracted_entities, list) and extracted_entities:
@@ -274,24 +278,23 @@ class EntityService:
             modifications = response.get("modifications", [])
             
             if has_new_values and modifications:
-                print(f"EntityService: User provided new values, applying {len(modifications)} modifications")
-                # Convert modifications to products format for existing logic
-                converted_products = self._convert_modifications_to_products_format(modifications)
-                # Convert modifications to products format for existing logic
-                converted_products = self._convert_modifications_to_products_format(modifications)
-                # Validate dates in converted products
-                validated_products, has_date_validation_error = await self._validate_dates_in_products(converted_products, message)
+                print(f"EntityService: User provided new values, applying {len(modifications)} modification operations")
+                # Apply modifications directly - they contain operation_type, target_product_index, and new values
+                modified_products = self._apply_modifications_to_existing_products(
+                    pending_products, modifications, message
+                )
+                # Validate dates in final products
+                validated_products, has_date_validation_error = await self._validate_dates_in_products(modified_products, message)
                 # Auto-fill city and state from pincode
                 validated_products = await self._auto_fill_location_from_pincode(validated_products)
-                modified_products = self._apply_modifications_to_existing_products(
-                    pending_products, validated_products, message
-                )
-                print(f"EntityService: Applied modifications, returning {len(modified_products)} updated products")
+
+                print(f"EntityService: Applied modifications, returning {len(validated_products)} updated products")
                 return {
-                    "products": modified_products,
+                    "products": validated_products,
                     "confidence": response.get("confidence", 0),
                     "success": True,
-                    "is_modification": True
+                    "is_modification": True,
+                    "date_validation_error": has_date_validation_error
                 }
             else:
                 print(f"EntityService: Modification intent detected but no new values provided")
@@ -351,22 +354,57 @@ class EntityService:
             }
     
     def _format_existing_products_for_prompt(self, pending_products: list) -> str:
-        """Format existing products for modification prompt context."""
+        """Format existing products for modification prompt context with index numbers."""
         formatted = []
         for i, product_info in enumerate(pending_products):
             entities = product_info.get("entities", {})
-            description = entities.get("description", f"Product {i+1}")
+            description = entities.get("description", f"Product {i}")
             quantity = entities.get("quantity", "unknown")
             division = entities.get("division", "unknown")
             delivery_date = entities.get("deliveryDate", "unknown")
-            formatted.append(f"- {description}: {quantity} units for {division}, delivery: {delivery_date}")
+            project_desc = entities.get("projectDesc", "")
+            brand = entities.get("brand", "")
+            city = entities.get("city", "")
+            state = entities.get("state", "")
+            pincode = entities.get("pincode", "")
+
+            # Build comprehensive product details
+            details = f"Index {i}: {description} (Quantity: {quantity}"
+            if division != "unknown":
+                details += f", Division: {division}"
+            if delivery_date != "unknown":
+                details += f", Delivery: {delivery_date}"
+            if project_desc:
+                details += f", Project: {project_desc}"
+            if brand:
+                details += f", Brand: {brand}"
+            if city or state or pincode:
+                location = ", ".join(filter(None, [city, state, pincode]))
+                details += f", Location: {location}"
+            details += ")"
+
+            formatted.append(details)
         return "\n".join(formatted)
     
     def _apply_modifications_to_existing_products(self, existing_products: list, modifications: list, original_message: str) -> list:
-        """Apply modification details to existing products and return updated product list."""
-        print(f"EntityService: Applying {len(modifications)} modifications to {len(existing_products)} existing products")
-        
-        # Create a copy of existing products to modify
+        """
+        Apply modification operations to existing products based on AI's analysis.
+
+        This method trusts the AI's determination of:
+        - operation_type: "modify", "add", or "remove"
+        - target_product_index: which product to operate on
+
+        Args:
+            existing_products: List of existing product info dicts with "entities" key
+            modifications: List of modification operations from AI
+            original_message: Original user message (for logging)
+
+        Returns:
+            Updated list of product entities
+        """
+        print(f"EntityService: Applying {len(modifications)} modification operations to {len(existing_products)} existing products")
+
+        # Create a copy of existing products to work with
         updated_products = []
         for product_info in existing_products:
             # Extract entities from the product info structure
@@ -375,119 +413,182 @@ class EntityService:
             else:
                 # If it's already an entity dict, use it directly
                 product_copy = product_info.copy()
-            
+
             # Clear any existing date validation errors when starting modifications
             if "date_validation_error" in product_copy:
                 del product_copy["date_validation_error"]
                 print(f"EntityService: Cleared existing date validation error from product")
-            
-            updated_products.append(product_copy)
-        
-        # Apply each modification
-        for modification in modifications:
-            print(f"EntityService: Processing modification: {modification}")
-            
-            # Find which existing product this modification applies to
-            target_product_index = self._find_matching_product(updated_products, modification, original_message)
-            
-            if target_product_index is not None:
-                print(f"EntityService: Updating product {target_product_index}: {updated_products[target_product_index].get('description', 'Unknown')}")
-                # Update the matching product with modification data
-                for key, value in modification.items():
-                    if value is not None:  # Only update non-null values
-                        updated_products[target_product_index][key] = value
-                        print(f"  Updated {key}: {value}")
-            else:
-                print(f"EntityService: No matching product found for modification, treating as new product")
-                # If no match found, add as new product (shouldn't happen in modification context)
-                updated_products.append(modification)
-        
-        return updated_products
-    
-    def _find_matching_product(self, existing_products: list, modification: dict, original_message: str) -> int:
-        """Find which existing product the modification applies to."""
-        modification_description = modification.get("description", "").lower()
-        message_lower = original_message.lower()
-        
-        print(f"EntityService: Looking for product matching '{modification_description}' in message '{original_message}'")
-        
-        # Try to match by description
-        for i, product in enumerate(existing_products):
-            product_description = product.get("description", "").lower()
-            
-            # Direct description match
-            if modification_description and product_description and modification_description in product_description:
-                print(f"  Found match by description: {product_description}")
-                return i
-            
-            # Reverse match - product description in modification
-            if modification_description and product_description and product_description in modification_description:
-                print(f"  Found reverse match by description: {product_description}")
-                return i
-            
-            # Message contains product description (e.g., "change chairs to 53")
-            if product_description and product_description in message_lower:
-                print(f"  Found match by message content: {product_description}")
-                return i
-        
-        # If no description match, try by category or other fields
-        for i, product in enumerate(existing_products):
-            category = product.get("category", "").lower()
-            if modification_description and category and (modification_description in category or category in modification_description):
-                print(f"  Found match by category: {category}")
-                return i
-        
-        # For modification requests, if no specific match found and we have only one product,
-        # default to updating that product (common case for delivery address changes, etc.)
-        if len(existing_products) == 1:
-            print(f"  No specific match found, but only one product exists - defaulting to update product 0")
-            return 0
-        
-        print(f"  No matching product found")
-        return None
 
-    def _convert_modifications_to_products_format(self, modifications: list) -> list:
-        """
-        Convert the new modification format to the old products format for compatibility.
-        
-        Args:
-            modifications: List of modification objects from new format
-            
-        Returns:
-            List of product-like objects compatible with existing logic
-        """
-        converted_products = []
-        
+            updated_products.append(product_copy)
+
+        # Extract common fields from existing products to inherit for new products
+        common_fields = self._extract_common_fields_from_products(updated_products)
+        if common_fields:
+            print(f"EntityService: Extracted common fields for inheritance: {list(common_fields.keys())}")
+
+        # Track indices to remove (process after all modifications)
+        indices_to_remove = set()
+
+        # Track global field modifications (apply to all products)
+        global_field_updates = {}
+
+        # Apply each modification operation
         for modification in modifications:
-            product = {}
-            
-            # Map new field names to old field names
-            field_mapping = {
-                "new_project_desc": "projectDesc",
-                "new_description": "description", 
-                "new_quantity": "quantity",
-                "new_unit_of_measures": "unitofMeasures",
-                "new_delivery_date": "deliveryDate",
-                "new_division": "division",
-                "new_brand": "brand",
-                "new_state": "state",
-                "new_city": "city", 
-                "new_pincode": "pincode",
-                "new_remarks": "remarks"
-            }
-            
-            # Convert fields
-            for new_field, old_field in field_mapping.items():
-                value = modification.get(new_field)
+            operation_type = modification.get("operation_type")
+            target_index = modification.get("target_product_index")
+            target_desc = modification.get("target_product_description", "unknown")
+            reasoning = modification.get("reasoning", "")
+
+            print(f"EntityService: Operation '{operation_type}' on product index {target_index} ({target_desc})")
+            if reasoning:
+                print(f"  Reasoning: {reasoning}")
+
+            if operation_type == "modify":
+                # MODIFY: Update an existing product
+                if target_index is None:
+                    print(f"  ERROR: 'modify' operation requires target_product_index, skipping")
+                    continue
+
+                if target_index < 0 or target_index >= len(updated_products):
+                    print(f"  ERROR: Invalid target_product_index {target_index}, skipping")
+                    continue
+
+                # Apply the modification to the target product
+                print(f"  Modifying product at index {target_index}: {updated_products[target_index].get('description', 'Unknown')}")
+                for key, value in modification.items():
+                    # Skip metadata fields
+                    if key in ["operation_type", "target_product_index", "target_product_description", "field_type", "reasoning"]:
+                        continue
+
+                    # Map new_* fields to actual field names
+                    actual_key = key.replace("new_", "") if key.startswith("new_") else key
+
+                    # Handle special field name mappings
+                    if actual_key == "unit_of_measures":
+                        actual_key = "unitofMeasures"
+                    elif actual_key == "delivery_date":
+                        actual_key = "deliveryDate"
+                    elif actual_key == "project_desc":
+                        actual_key = "projectDesc"
+
+                    if value is not None:  # Only update non-null values
+                        updated_products[target_index][actual_key] = value
+                        print(f"    Updated {actual_key}: {value}")
+
+                        # Track global field updates (delivery date/location changes)
+                        if actual_key in ["deliveryDate", "city", "state", "pincode"]:
+                            if actual_key not in global_field_updates:
+                                global_field_updates[actual_key] = value
+
+            elif operation_type == "add":
+                # ADD: Create a new product and inherit common fields
+                print(f"  Adding new product: {target_desc}")
+                new_product = {}
+
+                # First, inherit common fields from existing products
+                if common_fields:
+                    for field_name, field_value in common_fields.items():
+                        new_product[field_name] = field_value
+                        print(f"    Inherited {field_name}: {field_value}")
+
+                # Then, apply explicitly provided fields from modification
+                for key, value in modification.items():
+                    # Skip metadata fields
+                    if key in ["operation_type", "target_product_index", "target_product_description", "field_type", "reasoning"]:
+                        continue
+
+                    # Map new_* fields to actual field names
+                    actual_key = key.replace("new_", "") if key.startswith("new_") else key
+
+                    # Handle special field name mappings
+                    if actual_key == "unit_of_measures":
+                        actual_key = "unitofMeasures"
+                    elif actual_key == "delivery_date":
+                        actual_key = "deliveryDate"
+                    elif actual_key == "project_desc":
+                        actual_key = "projectDesc"
+
+                    if value is not None:
+                        new_product[actual_key] = value
+                        print(f"    Set {actual_key}: {value}")
+
+                        # Track global field updates
+                        if actual_key in ["deliveryDate", "city", "state", "pincode"]:
+                            global_field_updates[actual_key] = value
+
+                if new_product:  # Only add if we have some fields
+                    updated_products.append(new_product)
+                    print(f"  Successfully added new product at index {len(updated_products) - 1}")
+                else:
+                    print(f"  WARNING: No fields provided for new product, skipping")
+
+            elif operation_type == "remove":
+                # REMOVE: Delete an existing product
+                if target_index is None:
+                    print(f"  ERROR: 'remove' operation requires target_product_index, skipping")
+                    continue
+
+                if target_index < 0 or target_index >= len(updated_products):
+                    print(f"  ERROR: Invalid target_product_index {target_index}, skipping")
+                    continue
+
+                # Mark for removal (we'll remove after processing all operations)
+                indices_to_remove.add(target_index)
+                print(f"  Marked product at index {target_index} for removal: {updated_products[target_index].get('description', 'Unknown')}")
+
+            else:
+                print(f"  ERROR: Unknown operation_type '{operation_type}', skipping")
+
+        # Remove products marked for deletion (in reverse order to preserve indices)
+        if indices_to_remove:
+            print(f"EntityService: Removing {len(indices_to_remove)} products")
+            for index in sorted(indices_to_remove, reverse=True):
+                removed_product = updated_products.pop(index)
+                print(f"  Removed product at index {index}: {removed_product.get('description', 'Unknown')}")
+
+        # Apply global field updates to ALL products
+        if global_field_updates:
+            print(f"EntityService: Applying global field updates to all {len(updated_products)} products: {list(global_field_updates.keys())}")
+            for product in updated_products:
+                for field_name, field_value in global_field_updates.items():
+                    product[field_name] = field_value
+                    print(f"  Updated {product.get('description', 'Unknown')}.{field_name}: {field_value}")
+
+        print(f"EntityService: Final product count: {len(updated_products)}")
+        return updated_products
+
+    def _extract_common_fields_from_products(self, products: list) -> dict:
+        """
+        Extract common fields (delivery location, date) from existing products to inherit for new products.
+
+        Args:
+            products: List of product entities
+
+        Returns:
+            Dict of common fields that are shared across all products
+        """
+        if not products:
+            return {}
+
+        # Fields that should be inherited by new products
+        inheritable_fields = ["deliveryDate", "city", "state", "pincode", "unitofMeasures"]
+
+        common_fields = {}
+
+        # For each inheritable field, check if it's common across all products
+        for field_name in inheritable_fields:
+            # Get all values for this field from products
+            values = []
+            for product in products:
+                value = product.get(field_name)
                 if value is not None:
-                    product[old_field] = value
-                    print(f"EntityService: Converting {new_field} -> {old_field}: {value}")
-            
-            if product:  # Only add if we have some fields
-                converted_products.append(product)
-        
-        print(f"EntityService: Converted {len(modifications)} modifications to {len(converted_products)} products")
-        return converted_products
+                    values.append(value)
+
+            # If all products have the same value for this field, consider it common
+            if values and all(v == values[0] for v in values):
+                common_fields[field_name] = values[0]
+
+        return common_fields
 
     async def _validate_dates_in_products(self, products: list, original_message: str) -> tuple:
         """Validate delivery dates in products list.
