@@ -11,4 +11,4 @@ Generate a warm, professional message that:
 3. Includes the email options
 4. Is concise and clear
 
-Example format: "Hi there! Could you please confirm your email address to proceed to the next step?"
+Example format: "Hi {username}! Could you please confirm your email address to proceed to the next step?"

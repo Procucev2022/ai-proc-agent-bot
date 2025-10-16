@@ -1734,6 +1734,10 @@ class ChatService:
         # Handle modify button by simulating "modify" message
         elif button_id == "no_rfq":
             return await self._process_text_message(user, session, "modify")
+        
+        # Handle continue button from optional fields
+        elif button_id == "continue_rfq":
+            return await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
 
         # Check if this is a confirmation button response
         elif button_id == "confirm_rfq":
