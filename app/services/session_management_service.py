@@ -143,7 +143,7 @@ class SessionManagementService:
             if await SessionHelpers.should_send_expiration_message(session):    
                 await self.whatsapp_service.send_message(
                     user_phone,
-                    "Welcome Back!"
+                    "Welcome back! Kindly wait while I verify your profile to proceed."
                 )
 
                 

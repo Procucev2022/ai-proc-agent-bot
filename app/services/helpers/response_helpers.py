@@ -7,7 +7,7 @@ extracted from the main ChatService class for better organization.
 
 import logging
 from typing import Dict, Any, List, Union
-from app.utils.rfq_message_formatter import format_simple_missing_fields_message, format_rfq_response_message
+from app.utils.rfq_message_formatter import format_rfq_response_message
 
 logger = logging.getLogger(__name__)
 
@@ -678,7 +678,7 @@ class ResponseHelpers:
             return result
         except Exception as e:
             logger.error(f"Error formatting RFQ entities message: {e}")
-            return format_simple_missing_fields_message(missing_fields)
+            return format_rfq_response_message([], {}, missing_fields)
 
     def _extract_date_validation_errors(self, context: dict) -> list:
         """Extract date validation error messages from context."""

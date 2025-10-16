@@ -367,7 +367,7 @@ class ProductsArrayHandler:
             }
             formatted_message = format_rfq_response_message([product_info["entities"]], global_fields, optional_questions, include_optional=True)
           
-            optional_message = f"{formatted_message}\n\nYou may send the details now or reply 'No' to continue."
+            optional_message = f"{formatted_message}\n\nIf yes please go ahead and upload now or click on ‘Continue’ to move ahead"
             
             await self.whatsapp_service.send_message(user.phone_number, optional_message)
             
@@ -459,7 +459,7 @@ class ProductsArrayHandler:
                 }
             formatted_message = format_rfq_response_message(all_products_entities, global_fields, optional_questions, include_optional=True)
 
-            optional_message = f"{formatted_message}\n\nYou may send the details now or reply 'No' to continue."
+            optional_message = f"{formatted_message}\n\nIf yes please go ahead and upload now or click on ‘Continue’ to move ahead"
             
             await self.whatsapp_service.send_message(user.phone_number, optional_message)
 

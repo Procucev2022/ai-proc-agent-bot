@@ -206,7 +206,7 @@ class ProfileSelectionService:
             
             # Get user's name from the first available profile
             user_name = self._extract_user_name(profiles)
-            greeting =  "👋 Hi there!"
+            greeting = "👋 Hi there!"
             
             # Case: Only buyer profile exists
             if buyer_profiles and not seller_profiles:
@@ -995,7 +995,14 @@ class ProfileSelectionService:
 
             # Show role-specific menu with buttons
             if role == 'buyer':
-                menu_message = f"👋 Hi there! Let's continue with your Buyer profile ({email})."
+                # Get name from user_data fullName field
+                user_data = profile.get('user_data', {})
+                name = user_data.get('fullName')
+                if name:
+                    name = name.title()
+                else:
+                    name = 'there'
+                menu_message = f" Let's continue with your Buyer profile ({email})."
                 header = "What would you like to do today?"
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
@@ -1006,7 +1013,11 @@ class ProfileSelectionService:
                 # Get name from user_data fullName field
                 user_data = profile.get('user_data', {})
                 name = user_data.get('fullName')
-                menu_message = f"👋 Hi there! You're now using your Seller profile ({email})."
+                if name:
+                    name = name.title()
+                else:
+                    name = 'there'
+                menu_message = f" You're now using your Seller profile ({email})."
                 header = "What would you like to do today?"
                 buttons_config = [
                     {"id": "rfq_status", "title": "Check RFQs Status"},
