@@ -117,12 +117,15 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
         
         # Route message based on type - text messages go to queue, others process directly
         message_type = webhook_data.get("type", "")
+        logger.info(f"[ROUTING] message_type='{message_type}', checking if == 'text': {message_type == 'text'}")
         
         if message_type == "text":
             # Enqueue text messages for batched processing
+            logger.info(f"[ROUTING] Enqueueing text message for {webhook_data.get('from')}")
             background_tasks.add_task(enqueue_message_async, webhook_data)
         else:
             # Process non-text messages (excel, image, document, interactive) directly
+            logger.info(f"[ROUTING] Processing non-text message type='{message_type}' for {webhook_data.get('from')}")
             background_tasks.add_task(process_message_async, webhook_data)
         
         # Return success immediately
