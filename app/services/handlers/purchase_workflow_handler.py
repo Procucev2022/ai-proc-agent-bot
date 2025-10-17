@@ -148,13 +148,7 @@ class PurchaseWorkflowHandler:
         else:
             clarification_questions = "What would you like to change it to?"
 
-        response = await self.response_helpers.generate_clarification_response(
-            clarification_questions, 
-            completeness=50,
-            context=modification_context
-        )
-        
-        await self.whatsapp_service.send_message(user.phone_number, response)
+        await self.whatsapp_service.send_message(user.phone_number, clarification_questions)
         
         return {
             "status": "modification_clarification_sent",

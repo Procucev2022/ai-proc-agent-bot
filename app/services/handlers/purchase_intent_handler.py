@@ -190,18 +190,8 @@ class PurchaseIntentHandler:
         else:
             clarification_questions = "What would you like to change it to?"
 
+        await self.whatsapp_service.send_message(user.phone_number, clarification_questions)
 
-
-        response = await self.response_helpers.generate_clarification_response(
-            clarification_questions, 
-            completeness=50,  # We know what they want to change, just need the value
-            context=modification_context,
-            chat_summaries=chat_summaries
-        )
-
-
-        
-        await self.whatsapp_service.send_message(user.phone_number, response)
         await self.session_manager.save_session(session, WorkflowType.rfq_creation)
         
         return {
