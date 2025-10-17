@@ -129,18 +129,9 @@ class ExcelHelpers:
     @staticmethod
     def should_complete_immediately(completeness: int, items: List[Dict]) -> bool:
         """Determine if Excel data is complete enough for immediate RFQ creation."""
-        if completeness < 80:
-            return False
-        
-        # Check if all items have ALL required fields for GMT API
-        required_fields = ['ItemDescription', 'Specification', 'Uom', 'Quantity']
-        
-        for item in items:
-            for field in required_fields:
-                if not item.get(field, '').strip():
-                    return False
-        
-        return True
+        # Always redirect to multiple entity flow for better user experience
+        # This allows collecting delivery date and location through conversation
+        return False
     
     @staticmethod
     def create_excel_validation_schema_from_items(items: List[Dict]) -> ExcelValidationSchema:
@@ -231,44 +222,40 @@ class ExcelHelpers:
                         item_num = missing.split("Item ")[1].split(":")[0]
                         missing_by_field[field_name].append(item_num)
                 
-                # Create a simple, direct message
+                # Create a simple, direct message with specific examples
                 message_parts = []
-                for field, items in missing_by_field.items():
-                    message_parts.append(f"Your Excel file '{filename}' is missing the {field} column.")
-                    message_parts.append(f"Add a {field} column with details like:\n")
-                    
-                    # Add examples based on field type
+                for field, item_nums in missing_by_field.items():
                     if field == 'Specification':
-                        message_parts.append('"Intel i7, 16GB RAM"')
-                        message_parts.append('"Ergonomic, Adjustable"\n')
+                        message_parts.append(f"Please add a 'Specification' column with technical details like:")
+                        message_parts.append('"Intel i7, 16GB RAM" or "Ergonomic, Adjustable"')
                     elif field == 'ItemDescription':
-                        message_parts.append('"Laptop"')
-                        message_parts.append('"Office Chair"\n')
+                        message_parts.append(f"Please add an 'ItemDescription' column with product names like:")
+                        message_parts.append('"Laptop" or "Office Chair"')
                     elif field == 'Uom':
-                        message_parts.append('"pcs"')
-                        message_parts.append('"kg"\n')
+                        message_parts.append(f"Please add a 'Uom' column with units like:")
+                        message_parts.append('"pcs", "kg", "meters"')
                     elif field == 'Quantity':
-                        message_parts.append('"10"')
-                        message_parts.append('"5"\n')
+                        message_parts.append(f"Please add a 'Quantity' column with numbers like:")
+                        message_parts.append('"10", "5", "2"')
                     else:
-                        message_parts.append(f'"{field} details"\n')
+                        message_parts.append(f"Please add a '{field}' column with appropriate details")
                 
-                message_parts.append("Then resend the file.")
+                message_parts.append("\nThen upload the updated file.")
                 
                 # Return as a single instruction
                 return ["\n".join(message_parts)]
             
             # Fallback for other errors
-            return [f"Your Excel file '{filename}' has some issues. Please fix them and upload again."]
+            return [f"Your Excel file '{filename}' has some missing required fields. Please add them and upload again."]
         
         # If only warnings (like empty fields), provide guidance
         if validation_result.get('warnings'):
-            instructions.append(f"Your Excel file '{filename}' has some warnings:")
+            instructions.append(f"Your Excel file '{filename}' has some empty fields:")
             for warning in validation_result['warnings'][:3]:  # Show first 3 warnings
                 instructions.append(f"• {warning}")
             
-            instructions.append("You can fix these issues and re-upload, or proceed with the current file.")
+            instructions.append("Please fill in the missing data and re-upload the file.")
             return instructions
         
         # File appears complete
-        return [f"Your Excel file '{filename}' appears to be complete for processing."]
+        return [f"Your Excel file '{filename}' looks good! I'll process it now."]

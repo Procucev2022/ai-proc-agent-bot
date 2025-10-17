@@ -62,6 +62,11 @@ class SummarizationHelpers:
             # Convert sender to OpenAI role format
             role = "assistant" if sender == "assistant" else "user"
 
+            # Check if message is a coroutine before storing
+            if hasattr(message, '__await__'):
+                logger.error(f"[CONVERSATION-HISTORY] Cannot store coroutine in conversation history: {message}")
+                return
+            
             # Add to OpenAI-native message format
             session.conversation_history["openai_messages"].append({
                 "role": role,
@@ -100,10 +105,14 @@ class SummarizationHelpers:
                 content_preview = "image attachment"
             elif isinstance(message, str):
                 content_preview = message[:100] + ('...' if len(message) > 100 else '')
+            elif hasattr(message, '__await__'):  # Check if it's a coroutine
+                logger.error(f"[CONVERSATION-HISTORY] Attempted to store coroutine in conversation history: {message}")
+                content_preview = "[COROUTINE ERROR - NOT STORED]"
+                return  # Don't store coroutines
             else:
                 content_preview = str(message)[:100] + ('...' if len(str(message)) > 100 else '')
 
-            logger.info(f"Stored message {message_count}: {role} -> {content_preview}")
+            logger.info(f"[CONVERSATION-HISTORY] Stored message {message_count}: {role} -> {content_preview}")
 
             # Keep only last 50 messages to avoid database bloat
             if message_count > 50:
