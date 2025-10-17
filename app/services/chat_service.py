@@ -1064,13 +1064,25 @@ class ChatService:
                 await self.session_manager.send_and_track_message(user.phone_number, registration_response, session)
                 return {"status": "handled", "response": "registration_required"}
 
-            # Extract document information
+            # Extract document information - handle both formats
             if not isinstance(content, dict):
                 raise ValueError("Invalid Excel upload content format")
 
-            document_info = content.get("document", {})
-            file_url = document_info.get("link")
-            filename = document_info.get("filename", "")
+            if "document" in content:
+                # Standard WhatsApp format
+                document_info = content["document"]
+                file_url = document_info.get("link")
+                filename = document_info.get("filename", "")
+            else:
+                # ICS format - direct content structure
+                media_id = content.get("id")
+                filename = content.get("filename", "")
+                
+                if media_id:
+                    # Construct download URL from media ID
+                    file_url = f"https://download.sendmsg.in/whatsapp-mediadownloader/{media_id}"
+                else:
+                    file_url = None
 
             if not file_url:
                 error_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'file_access_error'}
