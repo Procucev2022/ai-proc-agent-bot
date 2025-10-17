@@ -368,14 +368,22 @@ async def process_document_message(webhook_data: Dict[str, Any]):
             logger.warning("Document message content is not a dictionary")
             return
 
-        # Extract document information
-        document_info = content.get("document", {})
-        if not document_info:
-            logger.warning("No document information found in message")
-            return
-
-        file_url = document_info.get("link")
-        filename = document_info.get("filename", "")
+        # Extract document information - handle both formats
+        if "document" in content:
+            # Standard WhatsApp format
+            document_info = content["document"]
+            file_url = document_info.get("link")
+            filename = document_info.get("filename", "")
+        else:
+            # ICS format - direct content structure
+            media_id = content.get("id")
+            filename = content.get("filename", "")
+            
+            if media_id:
+                # Construct download URL from media ID
+                file_url = f"https://download.sendmsg.in/whatsapp-mediadownloader/{media_id}"
+            else:
+                file_url = None
 
         if not file_url:
             logger.warning("No file URL found in document message")
