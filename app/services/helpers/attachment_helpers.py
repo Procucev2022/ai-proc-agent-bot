@@ -303,6 +303,9 @@ class AttachmentHelpers:
                     session.workflow_state["extracted_entities"][0]["attachments"].append(attachment)
                     approved_count += 1
 
+            # Clear pending_attachments after moving them to approved
+            session.workflow_state["pending_attachments"] = []
+
             logger.info(f"Approved {approved_count} attachments in session - total attachments now: {len(session.workflow_state['extracted_entities'][0]['attachments'])}")
             return True
             
