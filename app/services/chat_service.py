@@ -1474,8 +1474,8 @@ class ChatService:
             elif user_role == "seller":
                 # Seller fallback with buttons
                 buttons_config = [
-                    {"id": "rfq_status", "title": "🔍 Show RFQ status"},
-                    {"id": "get_support", "title": "💬 Get Support Info"}
+                    {"id": "rfq_status", "title": "Check RFQ status"},
+                    {"id": "get_support", "title": "Get Support Info"}
                 ]
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
