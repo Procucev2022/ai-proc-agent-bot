@@ -516,7 +516,7 @@ class ResponseHelpers:
             questions_text = "\n".join(f"• {q}" for q in all_questions)
             
             if completeness > 0:
-                return questions
+                return f"Please provide the following:\n\n{questions_text}"
             else:
                 return f"Please provide the following:\n\n{questions_text}"
 
