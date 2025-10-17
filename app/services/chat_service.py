@@ -1749,7 +1749,15 @@ class ChatService:
         
         # Handle continue button from optional fields
         elif button_id == "continue_rfq":
-            return await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
+            result = await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
+
+            # CRITICAL: Save session after continue button to persist pending_rfq/pending_combined_rfq
+            # The confirmation handler moves from pending_optional_* to pending_* but doesn't save
+            # Without this save, the next "Confirm" click will fail because pending_rfq won't exist
+            await self.session_manager.save_session(session)
+            logger.info(f"Session saved after continue button handling for {user.phone_number}")
+
+            return result
 
         # Check if this is a confirmation button response
         elif button_id == "confirm_rfq":
