@@ -134,7 +134,7 @@ class PurchaseWorkflowHandler:
             )
 
             # Build final clarification message with helpful examples
-            clarification_questions = [(
+            clarification_questions = (
                 f"{summary_message}\n\n"
                 "If you feel you need to modify any details or if you missed adding any item, you can do it now.\n\n"
                 "Here are a few examples you can follow:\n\n"
@@ -143,10 +143,10 @@ class PurchaseWorkflowHandler:
                 "• To change the quantity of an item:  Change laptops to 20\n"
                 "• To change the delivery date:  Change delivery date to 30 Dec\n"
                 "• To change the delivery location:  Change delivery location to 411005"
-            )]
+            )
 
         else:
-            clarification_questions = ["What would you like to change it to?"]
+            clarification_questions = "What would you like to change it to?"
 
         response = await self.response_helpers.generate_clarification_response(
             clarification_questions, 
