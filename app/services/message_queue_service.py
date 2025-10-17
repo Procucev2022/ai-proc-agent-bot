@@ -184,10 +184,13 @@ class MessageQueueService:
                 if message_type == "text":
                     content = webhook_data.get("text", {}).get("body", "")
                 elif message_type == "image":
-                    content = webhook_data.get("image", {}).get("caption", "[Image]")
+                    content = ""
+                    logger.warning("Image message received; no content extracted. Something went wrong in webhook.")
                 elif message_type == "document":
+                    logger.warning("Document message received; no content extracted. Something went wrong in webhook.")
                     content = ""
                 else:
+                    logger.warning(f"Unsupported message type '{message_type}'; no content extracted. Something went wrong in webhook.")
                     content = ""
 
             # Create Message object
