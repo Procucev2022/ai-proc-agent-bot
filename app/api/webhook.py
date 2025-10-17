@@ -30,10 +30,11 @@ from app.config import get_settings
 from app.services.chat_service import ChatService
 from app.services.cancel_service import CancelService
 from app.services.session_management_service import SessionManagementService
+from app.services.message_queue_service import MessageQueueService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-chat_service = ChatService()
+message_queue_service = MessageQueueService()  # Instantiate message_queue service
 
 # Set up WhatsApp webhook payload logger
 webhook_payload_logger = logging.getLogger("whatsapp_webhook")
@@ -114,8 +115,18 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
             logger.warning("No processable data in webhook")
             return JSONResponse(content={"status": "ok"})
         
-        # Process message in background to avoid timeout
-        background_tasks.add_task(process_message_async, webhook_data)
+        # Route message based on type - text messages go to queue, others process directly
+        message_type = webhook_data.get("type", "")
+        logger.info(f"[ROUTING] message_type='{message_type}', checking if == 'text': {message_type == 'text'}")
+        
+        if message_type == "text":
+            # Enqueue text messages for batched processing
+            logger.info(f"[ROUTING] Enqueueing text message for {webhook_data.get('from')}")
+            background_tasks.add_task(enqueue_message_async, webhook_data)
+        else:
+            # Process non-text messages (excel, image, document, interactive) directly
+            logger.info(f"[ROUTING] Processing non-text message type='{message_type}' for {webhook_data.get('from')}")
+            background_tasks.add_task(process_message_async, webhook_data)
         
         # Return success immediately
         return JSONResponse(content={"status": "ok"})
@@ -318,16 +329,48 @@ def parse_json_webhook(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return data
 
 
+async def enqueue_message_async(webhook_data: Dict[str, Any]):
+    """
+    Enqueue incoming text message to the message queue service.
+    
+    This replaces direct processing and allows batching of text messages.
+    """
+    from_number = None
+    try:
+        logger.info(f"Enqueueing text message: {webhook_data}")
+
+        # Enqueue the message - the service will handle batching and processing
+        await message_queue_service.enqueue_message(webhook_data)
+
+    except Exception as e:
+        logger.error(f"Error enqueueing message: {e}", exc_info=True)
+
+        # Extract user phone for error handling
+        from_number = webhook_data.get("from")
+        
+        # Clear workflow state and notify user of technical error
+        if from_number:
+            try:
+                await handle_technical_error_with_cancel(
+                    user_phone=from_number,
+                    error_message=f"Message enqueueing error: {str(e)}",
+                    error_type="Message Queue Error"
+                )
+            except Exception as cancel_error:
+                logger.error(f"Failed to handle technical error in async enqueueing: {cancel_error}")
+
+
 async def process_message_async(webhook_data: Dict[str, Any]):
     """
-    Process incoming message asynchronously.
+    Process incoming non-text message asynchronously (excel, image, document, interactive).
 
-    Routes the message through the chat service for processing.
+    Routes the message directly through the chat service for immediate processing.
+    This is used for messages that cannot be batched (file uploads, interactive buttons).
     """
     from_number = None
     try:
         processing_start_time = datetime.now()
-        logger.info(f"Processing message: {webhook_data}")
+        logger.info(f"Processing non-text message directly: {webhook_data}")
         logger.info(f"Background task started at: {processing_start_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
         # Extract message details
@@ -339,11 +382,15 @@ async def process_message_async(webhook_data: Dict[str, Any]):
             logger.warning("Missing required message data")
             return
 
+        # Initialize chat service with message_queue_service for non-text messages
+        from app.services.chat_service import ChatService
+        chat_service = ChatService(message_queue_service)
+
         # Handle document messages specifically
         if message_type.lower() == "document":
-            await process_document_message(webhook_data)
+            await process_document_message(webhook_data, chat_service)
         else:
-            # Process regular messages through chat service
+            # Process other non-text messages (image, interactive, etc.) through chat service
             await chat_service.process_message(
                 user_phone=from_number,
                 message_content=content,
@@ -365,7 +412,7 @@ async def process_message_async(webhook_data: Dict[str, Any]):
                 logger.error(f"Failed to handle technical error in async processing: {cancel_error}")
 
 
-async def process_document_message(webhook_data: Dict[str, Any]):
+async def process_document_message(webhook_data: Dict[str, Any], chat_service):
     """
     Process document message for Excel file uploads.
 
