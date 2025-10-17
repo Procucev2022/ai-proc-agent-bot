@@ -130,6 +130,27 @@ class ConfirmationHandler:
     async def _handle_rfq_acceptance(self, user: User, session: ConversationSession,
                                    message: str) -> Dict[str, Any]:
         """Handle RFQ acceptance and submission."""
+        # Debug: Log current workflow state
+        logger.info(f"RFQ acceptance - workflow_state keys: {list(session.workflow_state.keys())}")
+        logger.info(f"Has pending_combined_rfq: {bool(session.workflow_state.get('pending_combined_rfq'))}")
+        logger.info(f"Has pending_rfq: {bool(session.workflow_state.get('pending_rfq'))}")
+        logger.info(f"Has pending_optional_combined_rfq: {bool(session.workflow_state.get('pending_optional_combined_rfq'))}")
+        logger.info(f"Has pending_optional_rfq: {bool(session.workflow_state.get('pending_optional_rfq'))}")
+
+        # Check if user is still in optional fields phase - move to confirmation automatically
+        if session.workflow_state.get("pending_optional_combined_rfq"):
+            logger.warning(f"User clicked Confirm while in optional fields phase (combined) - auto-moving to confirmation")
+            combined_data = session.workflow_state["pending_optional_combined_rfq"]
+            session.workflow_state["pending_combined_rfq"] = combined_data
+            del session.workflow_state["pending_optional_combined_rfq"]
+            logger.info(f"Moved to confirmation phase - pending_combined_rfq now set")
+        elif session.workflow_state.get("pending_optional_rfq"):
+            logger.warning(f"User clicked Confirm while in optional fields phase (single) - auto-moving to confirmation")
+            product_info = session.workflow_state["pending_optional_rfq"]
+            session.workflow_state["pending_rfq"] = product_info
+            del session.workflow_state["pending_optional_rfq"]
+            logger.info(f"Moved to confirmation phase - pending_rfq now set")
+
         # Handle combined RFQ or single RFQ confirmations
 
         logger.info(f"pending combined rfq:{session.workflow_state.get("pending_combined_rfq")}")
@@ -138,11 +159,11 @@ class ConfirmationHandler:
             # Combined RFQ format (single RFQ with multiple items)
             combined_data = session.workflow_state["pending_combined_rfq"]
             combined_schema = RFQValidationSchema(**combined_data["combined_schema"])
-            
+
             gmt_result = await self._submit_rfq_to_backend(combined_schema, user)
             rfq_results = [gmt_result]
             successful_count = 1 if gmt_result.get("success") else 0
-                    
+
         elif session.workflow_state.get("pending_rfq"):
             # Single RFQ format
             product_info = session.workflow_state["pending_rfq"]
@@ -164,7 +185,7 @@ class ConfirmationHandler:
             rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(entities, None)
 
             logger.info(f"rfq_schema:{rfq_schema}")
-            
+
             gmt_result = await self._submit_rfq_to_backend(rfq_schema, user)
             logger.info(f"gmt_result:{gmt_result}")
             rfq_results = [gmt_result]
@@ -172,7 +193,7 @@ class ConfirmationHandler:
             successful_count = 1 if gmt_result.get("success") else 0
             logger.info(f"success count:{successful_count}")
         else:
-            logger.info("going with 0 rfq")
+            logger.error(f"No pending RFQ found! workflow_state keys: {list(session.workflow_state.keys())}")
             rfq_results = []
             successful_count = 0
         
@@ -233,8 +254,9 @@ class ConfirmationHandler:
             session.workflow_state = {}
             logger.info(f"Cleared workflow_type and workflow_state after successful RFQ creation")
         else:
-            session.workflow_state = {"extracted_entities": []}
-            logger.warning(f"RFQ creation failed, keeping workflow_type intact")
+            # DON'T clear workflow_state when RFQ creation fails!
+            # Keep pending_rfq/pending_combined_rfq so we can debug or retry
+            logger.warning(f"RFQ creation failed, keeping workflow_state intact for debugging/retry")
 
         return {"status": "multiple_rfqs_created", "successful_count": successful_count}
     
