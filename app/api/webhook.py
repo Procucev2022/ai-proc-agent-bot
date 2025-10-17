@@ -275,15 +275,18 @@ def parse_user_response_callback(data: Dict[str, Any]) -> Optional[Dict[str, Any
                 webhook_payload_logger.info(f"Message ID: {mid}")
                 webhook_payload_logger.debug(f"Full Content: {message_data['content']}")
 
-                # Log file details for document/image
-                if reply_type.upper() in ["IMAGE", "DOCUMENT"]:
+                # Log file details for document/image/video
+                # According to ICS V3.1 documentation, the structure is flat: {"mime_type": "...", "id": "...", "filename": "..."}
+                if reply_type.upper() in ["IMAGE", "DOCUMENT", "VIDEO"]:
                     content_obj = message_data['content']
-                    media_key = "image" if reply_type.upper() == "IMAGE" else "document"
-                    if isinstance(content_obj, dict) and media_key in content_obj:
-                        media_info = content_obj[media_key]
-                        webhook_payload_logger.info(f"File URL: {media_info.get('link', 'N/A')}")
-                        webhook_payload_logger.info(f"Filename: {media_info.get('filename', 'N/A')}")
-                        webhook_payload_logger.info(f"MIME Type: {media_info.get('mime_type', 'N/A')}")
+                    if isinstance(content_obj, dict):
+                        media_id = content_obj.get('id', 'N/A')
+                        mime_type = content_obj.get('mime_type', 'N/A')
+                        filename = content_obj.get('filename', 'N/A')  # Only present for DOCUMENT
+                        webhook_payload_logger.info(f"Media ID: {media_id}")
+                        webhook_payload_logger.info(f"MIME Type: {mime_type}")
+                        webhook_payload_logger.info(f"Filename: {filename}")
+                        webhook_payload_logger.info(f"Download URL: https://download.sendmsg.in/whatsapp-mediadownloader/{media_id}")
 
                 webhook_payload_logger.info("="*80)
 
