@@ -103,29 +103,31 @@ class ConfirmationHandler:
     async def handle_optional_fields_response(self, user: User, session: ConversationSession,
                                             message: str) -> Dict[str, Any]:
         """Handle optional field responses using confirmation service."""
-        # Use confirmation service to parse user response
-        confirmation_result = await self.confirmation_service.parse_confirmation(message)
-
-        logger.info(f"confirmation result of optional field response is :{confirmation_result}")
-        
-        if confirmation_result == "no":
-            # User wants to skip optional fields, proceed to confirmation
+        #TODO: use ai based but from where can i use context to determine the response
+        if any(keyword in message.lower() for keyword in [
+            # Generic skip words
+            "no", "nope", "nah", "not now", "none", "nothing",
+            # Skip intent
+            "skip", "skip it", "skip this", "skip for now",
+            "don’t want", "don't want", "do not want",
+            "not required", "not needed", "no need", "no thanks",
+            # Proceed / continue intents
+            "proceed", "continue", "next", "go ahead", "move ahead",
+            "go next", "carry on", "let's go", "lets go",
+            "ok continue", "okay continue", "ok proceed", "okay proceed",
+            "continue to process", "continue to proceed", "proceed ahead",
+            # Confirmation style responses
+            "yes proceed", "yes continue", "yeah proceed", "yep continue",
+            # Short positive words with intent to move on
+            "ok", "okay", "alright", "fine", "sure", "done", "ready"
+        ]):
             logger.info(f"Confirmation service detected skip request from {user.phone_number}")
             return await self._proceed_to_confirmation_from_optional(user, session, message)
-        elif confirmation_result == "yes":
-            # User wants to provide optional information
+        else:
             logger.info(f"Confirmation service detected user wants to provide optional info from {user.phone_number}")
             return await self._merge_optional_fields_and_confirm(user, session, message)
-        
-        # Fallback to keyword-based detection if confirmation service couldn't parse
-        if any(keyword in message.lower() for keyword in ["no", "skip", "proceed", "continue", "next"]):
-            # User wants to skip optional fields, proceed to confirmation
-            return await self._proceed_to_confirmation_from_optional(user, session, message)
-        else:
-            # User provided optional information, merge it with existing product and proceed to confirmation
-            return await self._merge_optional_fields_and_confirm(user, session, message)
-    
-    async def _handle_rfq_acceptance(self, user: User, session: ConversationSession, 
+
+    async def _handle_rfq_acceptance(self, user: User, session: ConversationSession,
                                    message: str) -> Dict[str, Any]:
         """Handle RFQ acceptance and submission."""
         # Handle combined RFQ or single RFQ confirmations
