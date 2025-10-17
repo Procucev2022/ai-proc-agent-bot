@@ -131,6 +131,9 @@ class ConfirmationHandler:
                                    message: str) -> Dict[str, Any]:
         """Handle RFQ acceptance and submission."""
         # Handle combined RFQ or single RFQ confirmations
+
+        logger.info(f"pending combined rfq:{session.workflow_state.get("pending_combined_rfq")}")
+        logger.info(f"pending combined rfq:{session.workflow_state.get("pending_rfq")}")
         if session.workflow_state.get("pending_combined_rfq"):
             # Combined RFQ format (single RFQ with multiple items)
             combined_data = session.workflow_state["pending_combined_rfq"]
