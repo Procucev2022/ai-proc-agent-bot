@@ -172,6 +172,7 @@ class ConfirmationHandler:
             successful_count = 1 if gmt_result.get("success") else 0
             logger.info(f"success count:{successful_count}")
         else:
+            logger.info("going with 0 rfq")
             rfq_results = []
             successful_count = 0
         
@@ -200,6 +201,7 @@ class ConfirmationHandler:
         # Mark session as completed
         from app.models import ConversationOutcome
         session.outcome = ConversationOutcome.completed
+        logger.info(f"session outcome is:{session.outcome}")
         session.completed_at = utc_now().replace(tzinfo=None)
         
         # Update core tracking fields (user type, categories, RFQ IDs)
@@ -207,9 +209,12 @@ class ConfirmationHandler:
         for result in rfq_results:
             if result.get("success") and result.get("rfq_id"):
                 rfq_ids.append(result["rfq_id"])
+
+        logger.info(f"rfqids:{rfq_ids}")
         
         if rfq_ids:
             session.rfq_ids = rfq_ids
+            logger.info(f"session.rfq_ids is:{rfq_ids}")
             # Set user type as buyer (since they're creating RFQs)
             from app.models import UserType
             session.user_type = UserType.buyer
@@ -219,6 +224,8 @@ class ConfirmationHandler:
         
         # Clear session AFTER summarization data is captured
         # Only clear workflow if RFQ creation was successful
+
+        logger.info(f"successful count is :{successful_count}")
         if successful_count > 0:
             from app.models import ConversationOutcome
             session.outcome = ConversationOutcome.completed
