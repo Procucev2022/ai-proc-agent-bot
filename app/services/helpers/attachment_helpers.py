@@ -44,7 +44,12 @@ if not whatsapp_payload_logger.handlers:
 
 class AttachmentHelpers:
     """Helper methods for attachment processing."""
-    
+
+    # Maximum number of attachments allowed per RFQ
+    MAX_ATTACHMENTS_PER_RFQ = 4
+    # Maximum file size in bytes (1MB)
+    MAX_FILE_SIZE_BYTES = 1 * 1024 * 1024  # 1MB
+
     @staticmethod
     async def download_and_encode_attachment(file_url: str, filename: str = None, mime_type: str = None) -> Dict[str, Any]:
         """
@@ -116,14 +121,15 @@ class AttachmentHelpers:
                         whatsapp_payload_logger.debug(f"Base64 Preview (first 200 chars): {file_content_b64[:200]}...")
                         whatsapp_payload_logger.debug(f"Full Payload Structure: {{'file_name': '{filename}', 'file_type': '{mime_type}', 'file_size': {len(file_data)}}}")
 
-                        # Validate file size (limit to 10MB)
-                        if len(file_data) > 10 * 1024 * 1024:  # 10MB
-                            logger.warning(f"File size exceeds 10MB limit: {len(file_data)} bytes")
-                            whatsapp_payload_logger.warning(f"File size exceeds 10MB limit: {len(file_data)} bytes")
+                        # Validate file size (limit to 1MB)
+                        if len(file_data) > AttachmentHelpers.MAX_FILE_SIZE_BYTES:
+                            size_in_mb = len(file_data) / (1024 * 1024)
+                            logger.warning(f"File size exceeds 1MB limit: {len(file_data)} bytes ({size_in_mb:.2f}MB)")
+                            whatsapp_payload_logger.warning(f"File size exceeds 1MB limit: {len(file_data)} bytes ({size_in_mb:.2f}MB)")
                             whatsapp_payload_logger.info("="*80)
                             return {
                                 "success": False,
-                                "error": "File size exceeds 10MB limit"
+                                "error": f"File size ({size_in_mb:.2f}MB) exceeds 1MB limit. Please upload a smaller file."
                             }
 
                         logger.info(f"Successfully downloaded and encoded attachment: {filename} ({len(file_data)} bytes)")
@@ -187,30 +193,57 @@ class AttachmentHelpers:
             }
     
     @staticmethod
-    def add_attachment_to_session(session, attachment_data: Dict[str, Any]) -> bool:
+    def add_attachment_to_session(session, attachment_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Add attachment to session workflow state.
-        
+
         Args:
             session: ConversationSession object
             attachment_data: Attachment data dictionary
-            
+
         Returns:
-            True if successful, False otherwise
+            Dict with success status and optional error message
         """
         try:
             if "pending_attachments" not in session.workflow_state:
                 session.workflow_state["pending_attachments"] = []
-            
+
+            # Count total attachments (pending + already approved)
+            pending_count = len(session.workflow_state["pending_attachments"])
+
+            # Count approved attachments
+            approved_count = 0
+            if session.workflow_state.get("extracted_entities"):
+                for entity in session.workflow_state["extracted_entities"]:
+                    if isinstance(entity, dict) and entity.get("attachments"):
+                        approved_count += len(entity.get("attachments", []))
+
+            total_count = pending_count + approved_count
+
+            # Check if limit is exceeded
+            if total_count >= AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ:
+                logger.warning(f"Attachment limit reached: {total_count}/{AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ}")
+                return {
+                    "success": False,
+                    "error": f"Maximum {AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ} attachments allowed per RFQ. You've already added {total_count} file(s)."
+                }
+
             session.workflow_state["pending_attachments"].append(attachment_data)
             session.workflow_state["awaiting_attachment_decision"] = True
-            
-            logger.info(f"Added attachment to session: {attachment_data.get('file_name')}")
-            return True
-            
+
+            logger.info(f"Added attachment to session: {attachment_data.get('file_name')} ({total_count + 1}/{AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ})")
+            return {
+                "success": True,
+                "count": total_count + 1,
+                "max": AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ
+            }
+
         except Exception as e:
             logger.error(f"Error adding attachment to session: {e}")
-            return False
+            return {
+                "success": False,
+                "error": f"Failed to add attachment: {str(e)}"
+            }
     
     @staticmethod
     def approve_pending_attachment(session, attachment_filename: str = None) -> bool:

@@ -108,20 +108,28 @@ class ImageMessageProcessor:
                 return await self._handle_download_error(user, download_result["error"])
             
             # Add attachment to session using helper
-            attachment_added = AttachmentHelpers.add_attachment_to_session(
+            add_result = AttachmentHelpers.add_attachment_to_session(
                 session, download_result["attachment"]
             )
-            
-            if not attachment_added:
-                return await self._handle_save_error(user)
-            
+
+            # Check if limit was exceeded or other error occurred
+            if not add_result["success"]:
+                error_message = add_result.get("error", "Failed to add attachment")
+                await self.whatsapp_service.send_message(user.phone_number, error_message)
+                return {"status": "error", "response": "attachment_add_failed"}
+
             filename = download_result["attachment"]["file_name"]
-            
+
             # Auto-approve the attachment
             AttachmentHelpers.approve_pending_attachment(session)
-            
-            # Acknowledge the attachment
-            await self.whatsapp_service.send_message(user.phone_number, f"Thanks! I've added your image '{filename}' to your RFQ.")
+
+            # Acknowledge the attachment with count
+            count = add_result.get("count", 1)
+            max_count = add_result.get("max", 4)
+            await self.whatsapp_service.send_message(
+                user.phone_number,
+                f"Thanks! I've added your image '{filename}' to your RFQ. ({count}/{max_count} attachments)"
+            )
             
             # Return appropriate status based on current workflow state
             return await self._determine_next_step(user, session, filename)
@@ -225,40 +233,14 @@ class ImageMessageProcessor:
     
     async def _proceed_from_optional_to_confirmation(self, user: User, session: ConversationSession, filename: str) -> Dict[str, Any]:
         """Proceed from optional fields phase to confirmation."""
-        from app.services.helpers.chat_service_helpers import ChatServiceHelpers
-        
-        if session.workflow_state.get("pending_optional_rfq"):
-            # Single product
-            product_info = session.workflow_state["pending_optional_rfq"]
-            rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_info["entities"], None)
-            
-            # Generate confirmation message
-            chat_summaries = []  # Could load from chat summary service if needed
-            summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
-                "user_message": f"User added attachment {filename}",
-                "extracted_entities": product_info["entities"]
-            }, chat_summaries)
-            await self.whatsapp_service.send_message(user.phone_number, summary_response)
-            
-            # Move to confirmation state
-            session.workflow_state["pending_rfq"] = product_info
-            del session.workflow_state["pending_optional_rfq"]
-            
-        elif session.workflow_state.get("pending_optional_combined_rfq"):
-            # Combined RFQ with multiple items
-            combined_data = session.workflow_state["pending_optional_combined_rfq"]
-            combined_schema = RFQValidationSchema(**combined_data["combined_schema"])
-            
-            chat_summaries = []
-            summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(
-                combined_schema,
-                {"user_message": f"User added attachment {filename}"}, 
-                chat_summaries
-            )
-            await self.whatsapp_service.send_message(user.phone_number, summary_response)
-            
-            # Move to confirmation state
-            session.workflow_state["pending_combined_rfq"] = combined_data
-            del session.workflow_state["pending_optional_combined_rfq"]
-        
+        from app.services.handlers.confirmation_handler import ConfirmationHandler
+
+        # Delegate to confirmation handler to avoid duplicating button logic
+        confirmation_handler = ConfirmationHandler(self.whatsapp_service, self.response_helpers)
+        result = await confirmation_handler._proceed_to_confirmation_from_optional(
+            user,
+            session,
+            f"User added attachment {filename}"
+        )
+
         return {"status": "handled", "response": "attachment_added_proceeded_to_confirmation"}
