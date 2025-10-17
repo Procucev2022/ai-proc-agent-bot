@@ -1103,6 +1103,10 @@ class EntityService:
                     clean_pincode = str(pincode).strip()
                     if not clean_pincode.isdigit() or len(clean_pincode) != 6:
                         print(f"EntityService: Invalid pincode format: {pincode}")
+                        updated_product["pincode_validation_error"] = f"Invalid pincode format: {pincode}. Please enter a valid 6-digit pincode."
+                        updated_product["pincode"] = None
+                        updated_product["city"] = None
+                        updated_product["state"] = None
                         updated_products.append(updated_product)
                         continue
                     

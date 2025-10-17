@@ -13,6 +13,7 @@ from app.services.whatsapp_service import WhatsAppService
 from app.services.workflow_manager import WorkflowManager
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.utils.datetime_utils import utc_now
+from app.utils.rfq_message_formatter import format_rfq_response_message
 
 logger = logging.getLogger(__name__)
 
@@ -151,17 +152,46 @@ class PurchaseIntentHandler:
             "user_message": message,
             "modification_context": True
         }
-        
-        # Generate AI-powered clarification response
-        clarification_questions = ["What would you like to change it to?"]
-        response = await self.response_helpers.generate_clarification_response(
-            clarification_questions, 
-            completeness=50,  # We know what they want to change, just need the value
-            context=modification_context,
-            chat_summaries=chat_summaries
-        )
-        
-        await self.whatsapp_service.send_message(user.phone_number, response)
+
+
+
+        # --- Generate AI-powered clarification response for modification context ---
+        existing_products = modification_context.get("existing_products", [])
+        if existing_products:
+            entities = existing_products[0].get("entities", {})
+            global_fields = {
+                "deliveryDate": entities.get("deliveryDate"),
+                "city": entities.get("city"),
+                "state": entities.get("state"),
+                "pincode": entities.get("pincode")
+            }
+
+            # Generate formatted summary from extracted entities + global fields
+            # format_rfq_response_message expects a list of entities, not a single entity
+            summary_message = format_rfq_response_message(
+                extracted_entities=[entities],  # Wrap in list
+                global_fields=global_fields,
+                missing_fields=[]
+            )
+
+
+            # Build final clarification message with helpful examples
+            clarification_questions = (
+                f"{summary_message}\n\n"
+                "If you feel you need to modify any details or if you missed adding any item, you can do it now.\n\n"
+                "Here are a few examples you can follow:\n\n"
+                "• To add an item you missed:  Add 10 motors\n"
+                "• To remove an item you added:  Remove Desktop\n"
+                "• To change the quantity of an item:  Change laptops to 20\n"
+                "• To change the delivery date:  Change delivery date to 30 Dec\n"
+                "• To change the delivery location:  Change delivery location to 411005"
+            )
+
+        else:
+            clarification_questions = "What would you like to change it to?"
+
+        await self.whatsapp_service.send_message(user.phone_number, clarification_questions)
+
         await self.session_manager.save_session(session, WorkflowType.rfq_creation)
         
         return {

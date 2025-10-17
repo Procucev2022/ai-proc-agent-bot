@@ -103,41 +103,67 @@ class ConfirmationHandler:
     async def handle_optional_fields_response(self, user: User, session: ConversationSession,
                                             message: str) -> Dict[str, Any]:
         """Handle optional field responses using confirmation service."""
-        # Use confirmation service to parse user response
-        confirmation_result = await self.confirmation_service.parse_confirmation(message)
-
-        logger.info(f"confirmation result of optional field response is :{confirmation_result}")
-        
-        if confirmation_result == "no":
-            # User wants to skip optional fields, proceed to confirmation
+        #TODO: use ai based but from where can i use context to determine the response
+        if any(keyword in message.lower() for keyword in [
+            # Generic skip words
+            "no", "nope", "nah", "not now", "none", "nothing",
+            # Skip intent
+            "skip", "skip it", "skip this", "skip for now",
+            "don’t want", "don't want", "do not want",
+            "not required", "not needed", "no need", "no thanks",
+            # Proceed / continue intents
+            "proceed", "continue", "next", "go ahead", "move ahead",
+            "go next", "carry on", "let's go", "lets go",
+            "ok continue", "okay continue", "ok proceed", "okay proceed",
+            "continue to process", "continue to proceed", "proceed ahead",
+            # Confirmation style responses
+            "yes proceed", "yes continue", "yeah proceed", "yep continue",
+            # Short positive words with intent to move on
+            "ok", "okay", "alright", "fine", "sure", "done", "ready"
+        ]):
             logger.info(f"Confirmation service detected skip request from {user.phone_number}")
             return await self._proceed_to_confirmation_from_optional(user, session, message)
-        elif confirmation_result == "yes":
-            # User wants to provide optional information
+        else:
             logger.info(f"Confirmation service detected user wants to provide optional info from {user.phone_number}")
             return await self._merge_optional_fields_and_confirm(user, session, message)
-        
-        # Fallback to keyword-based detection if confirmation service couldn't parse
-        if any(keyword in message.lower() for keyword in ["no", "skip", "proceed", "continue", "next"]):
-            # User wants to skip optional fields, proceed to confirmation
-            return await self._proceed_to_confirmation_from_optional(user, session, message)
-        else:
-            # User provided optional information, merge it with existing product and proceed to confirmation
-            return await self._merge_optional_fields_and_confirm(user, session, message)
-    
-    async def _handle_rfq_acceptance(self, user: User, session: ConversationSession, 
+
+    async def _handle_rfq_acceptance(self, user: User, session: ConversationSession,
                                    message: str) -> Dict[str, Any]:
         """Handle RFQ acceptance and submission."""
+        # Debug: Log current workflow state
+        logger.info(f"RFQ acceptance - workflow_state keys: {list(session.workflow_state.keys())}")
+        logger.info(f"Has pending_combined_rfq: {bool(session.workflow_state.get('pending_combined_rfq'))}")
+        logger.info(f"Has pending_rfq: {bool(session.workflow_state.get('pending_rfq'))}")
+        logger.info(f"Has pending_optional_combined_rfq: {bool(session.workflow_state.get('pending_optional_combined_rfq'))}")
+        logger.info(f"Has pending_optional_rfq: {bool(session.workflow_state.get('pending_optional_rfq'))}")
+
+        # Check if user is still in optional fields phase - move to confirmation automatically
+        if session.workflow_state.get("pending_optional_combined_rfq"):
+            logger.warning(f"User clicked Confirm while in optional fields phase (combined) - auto-moving to confirmation")
+            combined_data = session.workflow_state["pending_optional_combined_rfq"]
+            session.workflow_state["pending_combined_rfq"] = combined_data
+            del session.workflow_state["pending_optional_combined_rfq"]
+            logger.info(f"Moved to confirmation phase - pending_combined_rfq now set")
+        elif session.workflow_state.get("pending_optional_rfq"):
+            logger.warning(f"User clicked Confirm while in optional fields phase (single) - auto-moving to confirmation")
+            product_info = session.workflow_state["pending_optional_rfq"]
+            session.workflow_state["pending_rfq"] = product_info
+            del session.workflow_state["pending_optional_rfq"]
+            logger.info(f"Moved to confirmation phase - pending_rfq now set")
+
         # Handle combined RFQ or single RFQ confirmations
+
+        logger.info(f"pending combined rfq:{session.workflow_state.get("pending_combined_rfq")}")
+        logger.info(f"pending combined rfq:{session.workflow_state.get("pending_rfq")}")
         if session.workflow_state.get("pending_combined_rfq"):
             # Combined RFQ format (single RFQ with multiple items)
             combined_data = session.workflow_state["pending_combined_rfq"]
             combined_schema = RFQValidationSchema(**combined_data["combined_schema"])
-            
+
             gmt_result = await self._submit_rfq_to_backend(combined_schema, user)
             rfq_results = [gmt_result]
             successful_count = 1 if gmt_result.get("success") else 0
-                    
+
         elif session.workflow_state.get("pending_rfq"):
             # Single RFQ format
             product_info = session.workflow_state["pending_rfq"]
@@ -157,11 +183,17 @@ class ConfirmationHandler:
             # Always rebuild from entities to ensure attachments are included
             # (schema_data might be stale and not include recently added attachments)
             rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(entities, None)
-            
+
+            logger.info(f"rfq_schema:{rfq_schema}")
+
             gmt_result = await self._submit_rfq_to_backend(rfq_schema, user)
+            logger.info(f"gmt_result:{gmt_result}")
             rfq_results = [gmt_result]
+            logger.info(f"rfq results:{rfq_results}")
             successful_count = 1 if gmt_result.get("success") else 0
+            logger.info(f"success count:{successful_count}")
         else:
+            logger.error(f"No pending RFQ found! workflow_state keys: {list(session.workflow_state.keys())}")
             rfq_results = []
             successful_count = 0
         
@@ -190,6 +222,7 @@ class ConfirmationHandler:
         # Mark session as completed
         from app.models import ConversationOutcome
         session.outcome = ConversationOutcome.completed
+        logger.info(f"session outcome is:{session.outcome}")
         session.completed_at = utc_now().replace(tzinfo=None)
         
         # Update core tracking fields (user type, categories, RFQ IDs)
@@ -197,9 +230,12 @@ class ConfirmationHandler:
         for result in rfq_results:
             if result.get("success") and result.get("rfq_id"):
                 rfq_ids.append(result["rfq_id"])
+
+        logger.info(f"rfqids:{rfq_ids}")
         
         if rfq_ids:
             session.rfq_ids = rfq_ids
+            logger.info(f"session.rfq_ids is:{rfq_ids}")
             # Set user type as buyer (since they're creating RFQs)
             from app.models import UserType
             session.user_type = UserType.buyer
@@ -209,6 +245,8 @@ class ConfirmationHandler:
         
         # Clear session AFTER summarization data is captured
         # Only clear workflow if RFQ creation was successful
+
+        logger.info(f"successful count is :{successful_count}")
         if successful_count > 0:
             from app.models import ConversationOutcome
             session.outcome = ConversationOutcome.completed
@@ -216,8 +254,9 @@ class ConfirmationHandler:
             session.workflow_state = {}
             logger.info(f"Cleared workflow_type and workflow_state after successful RFQ creation")
         else:
-            session.workflow_state = {"extracted_entities": []}
-            logger.warning(f"RFQ creation failed, keeping workflow_type intact")
+            # DON'T clear workflow_state when RFQ creation fails!
+            # Keep pending_rfq/pending_combined_rfq so we can debug or retry
+            logger.warning(f"RFQ creation failed, keeping workflow_state intact for debugging/retry")
 
         return {"status": "multiple_rfqs_created", "successful_count": successful_count}
     
@@ -371,7 +410,7 @@ class ConfirmationHandler:
             }
             
             # Submit to backend via GMT API
-            logger.info(f"Creating RFQ with user_id={user.id}, org_id={user.org_id}")
+            logger.info(f"Creating RFQ with user_id={user.id}, org_id={user.org_id}, rfq_data={rfq_data}")
             result = await rfq_service.create_rfq(rfq_data, user_id=user.id, org_id=user.org_id)
             
             # Log the GMT API response for debugging

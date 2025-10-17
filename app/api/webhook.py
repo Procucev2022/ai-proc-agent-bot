@@ -94,15 +94,19 @@ async def verify_webhook(
 async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
     """
     Process incoming WhatsApp messages.
-    
+
     This endpoint receives webhook calls from WhatsApp containing
     user messages, processes them through the chat service, and
     returns appropriate responses.
     """
     try:
+        # Log server receipt time immediately
+        server_receipt_time = datetime.now()
+        logger.info(f"Message received on server at: {server_receipt_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+
         body = await request.body()
         logger.debug(f"Received webhook payload: {body.decode()}")
-        
+
         # Parse webhook data
         webhook_data = await parse_webhook_data(request)
         
@@ -234,8 +238,10 @@ def parse_user_response_callback(data: Dict[str, Any]) -> Optional[Dict[str, Any
         mid = data.get("mid")
         smsgid = data.get("smsgid")
 
-        # Log received data for debugging
+        # Log received data for debugging with timestamp comparison
+        server_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
         logger.info(f"Parsing ICS webhook - Type: {reply_type}, From: {customer_number}, Message: {reply_message[:50] if reply_message else 'None'}...")
+        logger.info(f"Message timestamp from ICS: {timestamp}, Server processing time: {server_time}")
 
         # Check essential fields - only customer_number and reply_message are mandatory
         if not customer_number:
@@ -320,7 +326,9 @@ async def process_message_async(webhook_data: Dict[str, Any]):
     """
     from_number = None
     try:
+        processing_start_time = datetime.now()
         logger.info(f"Processing message: {webhook_data}")
+        logger.info(f"Background task started at: {processing_start_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
         # Extract message details
         message_type = webhook_data.get("type", "text")
