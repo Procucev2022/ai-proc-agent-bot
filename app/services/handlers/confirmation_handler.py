@@ -159,10 +159,15 @@ class ConfirmationHandler:
             # Always rebuild from entities to ensure attachments are included
             # (schema_data might be stale and not include recently added attachments)
             rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(entities, None)
+
+            logger.info(f"rfq_schema:{rfq_schema}")
             
             gmt_result = await self._submit_rfq_to_backend(rfq_schema, user)
+            logger.info(f"gmt_result:{gmt_result}")
             rfq_results = [gmt_result]
+            logger.info(f"rfq results:{rfq_results}")
             successful_count = 1 if gmt_result.get("success") else 0
+            logger.info(f"success count:{successful_count}")
         else:
             rfq_results = []
             successful_count = 0
@@ -373,7 +378,7 @@ class ConfirmationHandler:
             }
             
             # Submit to backend via GMT API
-            logger.info(f"Creating RFQ with user_id={user.id}, org_id={user.org_id}")
+            logger.info(f"Creating RFQ with user_id={user.id}, org_id={user.org_id}, rfq_data={rfq_data}")
             result = await rfq_service.create_rfq(rfq_data, user_id=user.id, org_id=user.org_id)
             
             # Log the GMT API response for debugging
