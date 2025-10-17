@@ -366,6 +366,7 @@ class MessageQueueService:
         already_sent = await self.redis_client.exists(ack_sent_key)
         
         if already_sent:
+            logger.debug(f"[ACK_CHECK] Already sent acknowledgment to {user_phone}, skipping")
             return False
         
         # Check if system is busy
@@ -382,6 +383,12 @@ class MessageQueueService:
         # - Batches waiting in outgoing, OR
         # - Multiple messages in incoming (current message + at least 1 more)
         is_busy = is_processing or outgoing_count > 0 or incoming_count > 1
+        
+        logger.info(
+            f"[ACK_CHECK] User {user_phone} - is_processing={is_processing}, "
+            f"incoming_count={incoming_count}, outgoing_count={outgoing_count}, "
+            f"is_busy={is_busy}, will_send_ack={is_busy}"
+        )
         
         return is_busy
 
@@ -409,13 +416,15 @@ class MessageQueueService:
                 already_sent = await self.redis_client.exists(ack_sent_key)
                 
                 if already_sent:
-                    logger.debug(f"Acknowledgment already sent to {user_phone}, skipping")
+                    logger.info(f"[ACK_SEND] Acknowledgment already sent to {user_phone}, skipping (double-check inside lock)")
                     return
                 
                 # Set flag BEFORE sending (optimistic approach)
                 # If send fails, worst case is user doesn't get ack unnecessarily
                 # Better than sending duplicate acknowledgments
                 await self.redis_client.set(ack_sent_key, "1", ex=300)
+                
+                logger.info(f"[ACK_SEND] Set acknowledgment flag for {user_phone}, preparing to send")
                 
                 # Add '+' prefix for WhatsApp API format
                 recipient_id = f"+{user_phone}" if not user_phone.startswith('+') else user_phone
@@ -426,7 +435,7 @@ class MessageQueueService:
                     message="Your message has been received. You can send more messages, they will be processed."
                 )
                 
-                logger.info(f"Sent processing acknowledgment to {user_phone}")
+                logger.info(f"[ACK_SEND] Successfully sent processing acknowledgment to {user_phone}")
         
         except Exception as e:
             # Don't fail enqueue process on acknowledgment failure
@@ -444,16 +453,32 @@ class MessageQueueService:
         Create a batch from incoming messages and add to outgoing queue.
         
         Flow:
-        1. Acquire batch lock
-        2. Get all messages from incoming queue (sorted by timestamp)
-        3. Clear incoming queue
-        4. Concatenate message contents
-        5. Generate batch_id
-        6. Create Batch object
-        7. Add to outgoing queue
-        8. Check if we should start processing
-        9. Release batch lock
+        1. Check if user is currently processing (prevent batch creation during processing)
+        2. Acquire batch lock
+        3. Get all messages from incoming queue (sorted by timestamp)
+        4. Clear incoming queue
+        5. Concatenate message contents
+        6. Generate batch_id
+        7. Create Batch object
+        8. Add to outgoing queue
+        9. Check if we should start processing
+        10. Release batch lock
         """
+        # CRITICAL: Check if user is currently processing before creating batch
+        # This ensures sequential batch processing and prevents session state divergence
+        processing_key = self.get_processing_key(user_phone)
+        is_processing = await self.redis_client.exists(processing_key)
+        
+        if is_processing:
+            logger.info(
+                f"[BATCH_CREATE] User {user_phone} is currently processing. "
+                f"Rescheduling timer to prevent overlapping batches."
+            )
+            await self._schedule_timer(user_phone)
+            return
+        
+        logger.info(f"[BATCH_CREATE] Starting batch creation for user {user_phone}")
+        
         batch_lock_key = self.get_batch_lock_key(user_phone)
         batch_lock = self.redis_client.lock(batch_lock_key, timeout=10, blocking_timeout=10)
 
@@ -464,8 +489,12 @@ class MessageQueueService:
             message_data_list = await self.redis_client.zrange(incoming_key, 0, -1)
 
             if not message_data_list:
-                logger.info(f"No messages in incoming queue for user {user_phone}")
+                logger.info(f"[BATCH_CREATE] No messages in incoming queue for user {user_phone}")
                 return
+            
+            logger.info(
+                f"[BATCH_CREATE] Found {len(message_data_list)} messages in incoming queue for user {user_phone}"
+            )
 
             # Parse messages
             messages: List[Message] = []
@@ -479,7 +508,7 @@ class MessageQueueService:
 
             if not messages:
                 logger.warning(
-                    "Incoming queue for user %s contained only unparsable messages; skipping batch",
+                    "[BATCH_CREATE] Incoming queue for user %s contained only unparsable messages; skipping batch",
                     user_phone,
                 )
                 await self.redis_client.delete(incoming_key)
@@ -487,6 +516,11 @@ class MessageQueueService:
 
             # Clear incoming queue
             await self.redis_client.delete(incoming_key)
+            
+            logger.info(
+                f"[BATCH_CREATE] Cleared incoming queue for user {user_phone}. "
+                f"Parsed {len(messages)} messages successfully."
+            )
 
             # Concatenate content
             concatenated_content = "\n".join([msg.content for msg in messages])
@@ -514,7 +548,8 @@ class MessageQueueService:
             await self.redis_client.rpush(outgoing_key, batch_json)
 
             logger.info(
-                f"Batch {batch_id} created with {len(messages)} messages for user {user_phone}"
+                f"[BATCH_CREATE] Batch {batch_id} created with {len(messages)} messages for user {user_phone}. "
+                f"Content preview: {concatenated_content[:100]}..."
             )
 
             # Clear timer key if this creation matches the timer we claimed
@@ -528,10 +563,13 @@ class MessageQueueService:
 
                 if current_timer is None or abs(current_timer - expected_expiry) <= 1:
                     await self.redis_client.delete(timer_key)
+                    logger.debug(f"[BATCH_CREATE] Cleared timer key for user {user_phone}")
             else:
                 await self.redis_client.delete(timer_key)
+                logger.debug(f"[BATCH_CREATE] Cleared timer key for user {user_phone}")
 
         # Check if we should start processing (outside the lock)
+        logger.info(f"[BATCH_CREATE] Checking if processing should start for user {user_phone}")
         await self._check_and_start_processing(user_phone)
 
     async def _check_and_start_processing(self, user_phone: str):
@@ -547,8 +585,9 @@ class MessageQueueService:
         currently_processing = await self.redis_client.get(processing_key)
 
         if currently_processing:
-            logger.debug(
-                f"User {user_phone} already processing batch {currently_processing}"
+            logger.info(
+                f"[START_PROCESSING] User {user_phone} already processing batch {currently_processing}. "
+                f"New batch will wait in queue."
             )
             return
 
@@ -556,7 +595,7 @@ class MessageQueueService:
         batch_json = await self.redis_client.lpop(outgoing_key)
 
         if not batch_json:
-            logger.debug(f"No batches in outgoing queue for user {user_phone}")
+            logger.debug(f"[START_PROCESSING] No batches in outgoing queue for user {user_phone}")
             return
 
         # Parse batch
@@ -576,7 +615,10 @@ class MessageQueueService:
         processing_payload_key = self.get_processing_payload_key(user_phone)
         await self.redis_client.set(processing_payload_key, batch_json, ex=300)
 
-        logger.info(f"Starting processing for batch {batch.batch_id}")
+        logger.info(
+            f"[START_PROCESSING] Starting processing for batch {batch.batch_id}. "
+            f"Set processing_key={batch.batch_id}"
+        )
 
         # Start supervised processing task
         self._register_processing_task(batch)
@@ -812,7 +854,21 @@ class MessageQueueService:
         incoming_count = await self.redis_client.zcard(incoming_key)
         outgoing_count = await self.redis_client.llen(outgoing_key)
         
-        return incoming_count > 0 or outgoing_count > 0
+        should_suppress = incoming_count > 0 or outgoing_count > 0
+        
+        if should_suppress:
+            logger.info(
+                f"[SUPPRESS_CHECK] User {user_phone} has newer messages. "
+                f"incoming_count={incoming_count}, outgoing_count={outgoing_count}. "
+                f"Will suppress current response."
+            )
+        else:
+            logger.debug(
+                f"[SUPPRESS_CHECK] User {user_phone} has no newer messages. "
+                f"Will send current response."
+            )
+        
+        return should_suppress
 
     def _create_mock_result(self):
         """
@@ -895,6 +951,11 @@ class MessageQueueService:
             # Trigger next batch processing if available
             await self._check_and_start_processing(user_phone)
             
+            logger.info(
+                f"[CLEANUP] Batch cleanup completed for {batch_id}. "
+                f"Checked for next batch to process."
+            )
+            
             # Clear acknowledgment flag if queues are now empty
             incoming_key = self.get_incoming_key(user_phone)
             outgoing_key = self.get_outgoing_key(user_phone)
@@ -907,7 +968,10 @@ class MessageQueueService:
             if incoming_count == 0 and outgoing_count == 0 and not is_processing:
                 ack_sent_key = self.get_ack_sent_key(user_phone)
                 await self.redis_client.delete(ack_sent_key)
-                logger.debug(f"Cleared acknowledgment flag for {user_phone} - queues are now empty")
+                logger.info(
+                    f"[CLEANUP] Cleared acknowledgment flag for {user_phone} - "
+                    f"all queues are now empty (incoming={incoming_count}, outgoing={outgoing_count}, processing={is_processing})"
+                )
         
         except Exception as e:
             logger.error(f"Error in batch cleanup for {batch_id}: {e}", exc_info=True)
