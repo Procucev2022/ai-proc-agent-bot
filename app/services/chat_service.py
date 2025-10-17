@@ -78,7 +78,7 @@ class ChatService:
     and response generation for the complete chat experience.
     """
 
-    def __init__(self, message_queue_service: MessageQueueService):
+    def __init__(self, message_queue_service: MessageQueueService = None):
         
         # Use message_queue_service if provided, otherwise use WhatsAppService directly
         self.message_queue_service = message_queue_service
@@ -90,7 +90,7 @@ class ChatService:
             # Fallback to direct WhatsApp service (for non-queued scenarios)
             from app.services.whatsapp_service import WhatsAppService
             self.whatsapp_service = WhatsAppService()
-            logger.info("ChatService initialized with direct WhatsAppService")
+            logger.info("ChatService initialized with direct WhatsAppService (fallback)")
 
         self.intent_service = IntentService()
         self.entity_service = EntityService()
