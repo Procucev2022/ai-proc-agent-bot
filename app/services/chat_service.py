@@ -61,6 +61,7 @@ from app.services.cancel_service import CancelService
 from app.tools.confirmation_tool import ConfirmationTool
 from app.services.confirmation_service import ConfirmationService
 from app.services.workflow_manager import WorkflowManager, WorkflowStage, PendingFlag
+from app.services.message_queue_service import MessageQueueService
 
 from app.database import SessionLocal, DatabaseManager
 from app.models import ConversationSession, WorkflowType, ConversationOutcome
@@ -77,14 +78,25 @@ class ChatService:
     and response generation for the complete chat experience.
     """
 
-    def __init__(self):
+    def __init__(self, message_queue_service: MessageQueueService):
+        
+        # Use message_queue_service if provided, otherwise use WhatsAppService directly
+        self.message_queue_service = message_queue_service
+        if message_queue_service:
+            # When message queue is available, it wraps WhatsApp functionality
+            self.whatsapp_service = message_queue_service
+            logger.info("ChatService initialized with MessageQueueService wrapper")
+        else:
+            # Fallback to direct WhatsApp service (for non-queued scenarios)
+            from app.services.whatsapp_service import WhatsAppService
+            self.whatsapp_service = WhatsAppService()
+            logger.info("ChatService initialized with direct WhatsAppService")
+
         self.intent_service = IntentService()
         self.entity_service = EntityService()
         self.vendor_service = VendorService()
-        self.seller_service = SellerService()
         self.rfq_service = RFQService()
-        self.rfq_status_service = RFQStatusService()
-        self.whatsapp_service = WhatsAppService()
+        
         self.openai_service = OpenAIService()
         self.db_manager = DatabaseManager()
         self.response_helpers = ResponseHelpers(self.openai_service)
@@ -97,6 +109,10 @@ class ChatService:
             self.db_manager, self.whatsapp_service,
             self.chat_summary_service, self.daily_summary_service
         )
+        
+        # Initialize services that depend on whatsapp_service and session_manager
+        self.seller_service = SellerService(self.whatsapp_service, self.session_manager)
+        self.rfq_status_service = RFQStatusService(self.whatsapp_service, self.session_manager)
         
         # Initialize confirmation service and tools
 
