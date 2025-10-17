@@ -364,7 +364,7 @@ class ProfileSelectionService:
             else:
                 # Multiple buyer profiles - show selection
                 message_parts = [
-                    "I understand you want to buy items. Please choose which Buyer profile you'd like to continue with:"
+                    "I understand you want to buy items. Please choose which Buyer profile you'd like to continue with:\n\n"
                 ]
 
                 profile_options = []
@@ -435,7 +435,7 @@ class ProfileSelectionService:
             else:
                 # Multiple seller profiles - show selection
                 message_parts = [
-                    "I understand you want to sell items. Please choose which Seller profile you'd like to continue with:"
+                    "I understand you want to sell items. Please choose which Seller profile you'd like to continue with:\n\n"
                 ]
 
                 profile_options = []
@@ -496,7 +496,7 @@ class ProfileSelectionService:
             message_parts = [
                 "I understand you'd like to check an RFQ status.",
                 "",
-                "Please choose which profile you'd like to use:"
+                "Please choose which profile you'd like to use:\n\n"
             ]
 
             profile_options = []
@@ -537,7 +537,7 @@ class ProfileSelectionService:
         """Handle Case 5: Invalid or Ambiguous Start Message."""
         try:
             message_parts = [
-                "Hi there! I can help you with:",
+                "Hi there! I can help you with:\n\n",
                 "• 🛒 Buying items (Raise or Check RFQs)",
                 "• 💼 Selling items (Respond to RFQs)",
                 "",
