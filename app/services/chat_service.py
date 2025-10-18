@@ -1141,9 +1141,12 @@ class ChatService:
             # Validate Excel file
             validation_service = ExcelValidationService()
             validation_result = await validation_service.validate_excel_file_from_url(file_url, filename)
+            
+            logger.info(f"[EXCEL-VALIDATION] Validation result: {validation_result}")
 
             if not validation_result.get('valid'):
                 validation_error = validation_result.get('error', 'Invalid Excel file')
+                logger.error(f"[EXCEL-VALIDATION] Validation failed: {validation_error}")
                 error_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'validation_failed',
                                  'error': validation_error}
                 error_response = await self.response_helpers.generate_contextual_response(
@@ -1185,97 +1188,44 @@ class ChatService:
             completeness = excel_context['completeness']
             items = processing_result.get('items', [])
 
-            if ExcelHelpers.should_complete_immediately(completeness, items):
+            # Always redirect to multiple RFQ flow for Excel uploads with valid items
+            if items and len(items) > 0:
+                logger.info(f"[EXCEL-REDIRECT] Redirecting {len(items)} Excel items to multiple RFQ creation flow")
+                # Set workflow type for RFQ creation
+                WorkflowManager.set_workflow_type(session, WorkflowType.rfq_creation, caller='excel_upload_complete')
                 return await self._handle_complete_excel(user, session, processing_result)
             else:
                 return await self._handle_incomplete_excel(user, session, excel_context)
 
         except Exception as e:
             logger.error(f"Error processing Excel upload: {e}")
-            await self.whatsapp_service.send_message(
-                user.phone_number,
-                "Sorry, I encountered an error processing your Excel file. Please try again."
-            )
+            error_message = "Sorry, I encountered an error processing your Excel file. Please try uploading again or provide the details through text."
+            await self.session_manager.send_and_track_message(user.phone_number, error_message, session)
             return {"status": "error", "response": str(e)}
 
     async def _handle_complete_excel(self, user: User, session: ConversationSession, processing_result: Dict) -> Dict[
         str, Any]:
-        """Handle complete Excel files that can create RFQ immediately."""
+        """Handle complete Excel files by converting to products array and using existing multiple RFQ flow."""
         try:
-            # Generate processing response using OpenAI
-            context = {
-                'excel_data': processing_result,
-                'workflow_type': 'excel_rfq_upload',
-                'conversation_stage': 'excel_processing',
-                'total_items': processing_result.get('total_items', 0),
-                'filename': processing_result.get('filename', '')
-            }
-
-            processing_response = await self.response_helpers.generate_contextual_response(
-                context,
-                [f"Processing {processing_result.get('total_items', 0)} items from Excel file"],
-                "excel_processing"
+            # Convert Excel items to products array format for existing multiple RFQ flow
+            products = self._convert_excel_items_to_products_array(processing_result['items'])
+            
+            logger.info(f"[EXCEL-TO-MULTIPLE-RFQ] Converted {len(processing_result['items'])} Excel items to {len(products)} products for multiple RFQ flow")
+            
+            # Clear any existing workflow state to start fresh with multiple RFQ flow
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state.pop('incomplete_products', None)
+            session.workflow_state.pop('complete_products', None)
+            session.workflow_state.pop('excel_data', None)
+            
+            # Send acknowledgment message first
+            success_message = f"✅ Successfully extracted {len(products)} items from your Excel file!\n\nProcessing your RFQ..."
+            await self.session_manager.send_and_track_message(user.phone_number, success_message, session)
+            
+            # Use existing products array handler for multiple RFQ creation
+            return await self.products_array_handler.handle_products_array(
+                user, session, f"Excel upload: {processing_result['filename']}", products
             )
-
-            await self.whatsapp_service.send_message(user.phone_number, processing_response)
-
-            # Validate items before creating template
-            validation_result = processing_result.get('validation_result', {})
-            if not validation_result.get('valid', False):
-                # Items don't meet GMT API requirements
-                error_msg = "Excel file doesn't meet GMT API requirements:\n"
-                for error in validation_result.get('errors', []):
-                    error_msg += f"• {error}\n"
-                for warning in validation_result.get('warnings', []):
-                    error_msg += f"• {warning}\n"
-
-                error_response = await self.response_helpers.generate_contextual_response(
-                    {**context, 'error': error_msg},
-                    ["Please check your Excel file format and try again."],
-                    "error"
-                )
-                await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
-                return {"status": "failed", "error": error_msg}
-
-            # Create GMT template and submit
-            processing_service = ExcelProcessingService(self.openai_service)
-            template_bytes = processing_service.create_standard_template(processing_result['items'])
-            api_data = processing_service.encode_for_api(template_bytes, processing_result['filename'])
-
-            # Submit to GMT API
-            rfq_service = RFQAPIService()
-            gmt_result = await rfq_service.bulk_upload_rfq(api_data)
-
-            if gmt_result.get('success'):
-                # Generate completion response using OpenAI
-                rfq_data = {
-                    'items': processing_result['items'],
-                    'filename': processing_result['filename'],
-                    'total_items': processing_result['total_items']
-                }
-
-                completion_response = self.openai_service.generate_completion_response(rfq_data, context)
-                await self.session_manager.send_and_track_message(user.phone_number, completion_response, session)
-
-                session.outcome = ConversationOutcome.completed
-                session.completed_at = utc_now().replace(tzinfo=None)
-
-                # Generate enhanced session summary (non-blocking)
-                await self._handle_session_completion_enhanced(session)
-
-                await self._save_session(session, WorkflowType.rfq_submitted)
-
-                return {"status": "completed", "response": "rfq_created"}
-            else:
-                # GMT API failed, fall back to conversation completion
-                error_context = {**context, 'error': gmt_result.get('error', 'Unknown error')}
-                error_response = await self.response_helpers.generate_contextual_response(
-                    error_context,
-                    ["There was an issue creating the RFQ. Let me help you complete it through conversation."],
-                    "error_recovery"
-                )
-                await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
-                return await self._handle_incomplete_excel(user, session, {"excel_data": processing_result})
 
         except Exception as e:
             logger.error(f"Error handling complete Excel: {e}")
@@ -1287,6 +1237,50 @@ class ChatService:
             )
             await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
             return await self._handle_incomplete_excel(user, session, {"excel_data": processing_result})
+    
+    def _convert_excel_items_to_products_array(self, excel_items: List[Dict]) -> List[Dict]:
+        """Convert Excel items to products array format for existing multiple RFQ flow."""
+        products = []
+        
+        for i, item in enumerate(excel_items, 1):
+            # Map Excel columns to entity format expected by products array handler
+            product_entity = {
+                'description': item.get('ItemDescription', ''),
+                'projectDesc': item.get('Specification', ''),
+                'quantity': item.get('Quantity', ''),
+                'uom': item.get('Uom', 'pcs'),
+                'remarks': item.get('Remarks', ''),
+                # Add default values for required fields that Excel doesn't have
+                'deliveryDate': None,
+                'state': None,
+                'city': None,
+                'pincode': None,
+                'division': None
+            }
+            
+            # Clean up empty values but keep structure for validation
+            cleaned_entity = {}
+            for k, v in product_entity.items():
+                if v is not None and str(v).strip():
+                    # Keep quantity as string but ensure it's valid
+                    if k == 'quantity':
+                        try:
+                            # Validate it's a valid number but keep as string
+                            float(str(v).strip())
+                            cleaned_entity[k] = str(v).strip()
+                        except ValueError:
+                            cleaned_entity[k] = None
+                    else:
+                        cleaned_entity[k] = str(v).strip()
+                else:
+                    cleaned_entity[k] = None  # Keep None for missing required fields
+            
+            products.append(cleaned_entity)
+            logger.info(f"[EXCEL-CONVERSION] Item {i}: {item.get('ItemDescription', 'Unknown')} -> {cleaned_entity}")
+            
+        logger.info(f"[EXCEL-CONVERSION] Successfully converted {len(excel_items)} Excel items to products array")
+        logger.info(f"[EXCEL-CONVERSION] Sample product: {products[0] if products else 'None'}")
+        return products
 
     async def _handle_incomplete_excel(self, user: User, session: ConversationSession, excel_context: Dict) -> Dict[
         str, Any]:
@@ -1310,7 +1304,7 @@ class ChatService:
             }
 
             # Generate clarification response using OpenAI with reupload instructions
-            clarification_response = self.openai_service.generate_clarification_response(
+            clarification_response = await self.openai_service.generate_clarification_response(
                 instructions,
                 excel_context.get('completeness', 0),
                 context
@@ -1323,6 +1317,13 @@ class ChatService:
             session.workflow_state['stage'] = 'excel_reupload_required'
             session.workflow_state['pending_excel_reupload'] = True
             session.workflow_state['last_excel_issues'] = missing_fields
+            await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+
+            return {"status": "excel_reupload_required", "response": "excel_reupload_instructions_sent"}
+
+        except Exception as e:
+            logger.error(f"Error handling incomplete Excel: {e}")
+            raisession.workflow_state['last_excel_issues'] = missing_fields
             await self.session_manager.save_session(session, WorkflowType.rfq_creation)
 
             return {"status": "excel_reupload_required", "response": "excel_reupload_instructions_sent"}
