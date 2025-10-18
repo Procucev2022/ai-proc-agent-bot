@@ -67,70 +67,40 @@ class VerificationCheckService:
             if verification_status in ["PENDING_EMAIL_VERIFICATION", "EMAIL_VERIFICATION_FAILED"]:
                 logger.info(f"Blocking access - verification status: {verification_status}")
                 
-                # FIXED: Automatically trigger OTP sending when email verification is required
-                if email:
-                    logger.info(f"Automatically triggering OTP for email verification: {email}")
+                # First refresh user data to check if status was recently updated
+                logger.info(f"Refreshing user data to check for updated verification status")
+                refresh_result = await self.refresh_user_verification_status(user_phone, max_retries=1)
+                
+                if refresh_result.get("success") and refresh_result.get("data"):
+                    refreshed_data = refresh_result["data"][0] if refresh_result["data"] else {}
+                    refreshed_status = refreshed_data.get("verificationStatus", verification_status)
                     
-                    # Create a mock session for OTP service
-                    class MockSession:
-                        def __init__(self):
-                            self.workflow_state = {}
-                    
-                    mock_session = MockSession()
-                    
-                    try:
-                        # Send OTP automatically (OTP service handles the WhatsApp message)
-                        otp_result = await self.otp_service.send_otp(user_phone, email, mock_session)
-                        
-                        if otp_result.get("status") == "otp_sent":
-                            logger.info(f"OTP sent successfully to {email}")
-                            return {
-                                "verification_required": True,
-                                "otp_sent": True,
-                                "redirect_info": {
-                                    "flow": "email_verification",
-                                    "reason": verification_status,
-                                    "email": email
-                                }
-                            }
-                        else:
-                            logger.error(f"Failed to send OTP: {otp_result}")
-                            # Import support notification service for OTP failures
-                            
-                            support_service = SupportNotificationService()
-                            await support_service.notify_otp_validation_failure(email)
-                            
-                            return {
-                                "verification_required": True,
-                                "otp_sent": False,
-                                "redirect_info": {
-                                    "flow": "email_verification",
-                                    "reason": verification_status,
-                                    "message": f"Email verification required for {email}. Please contact support if you don't receive the OTP.",
-                                    "email": email
-                                }
-                            }
-                    except Exception as e:
-                        logger.error(f"Error sending OTP: {e}")
+                    if refreshed_status == "EMAIL_VERIFIED":
+                        logger.info(f"User status updated to EMAIL_VERIFIED after refresh - continuing verification")
+                        user_dict.update(refreshed_data)
+                        verification_status = refreshed_status
+                    else:
+                        logger.info(f"Status still {refreshed_status} after refresh - requiring verification")
                         return {
                             "verification_required": True,
                             "otp_sent": False,
                             "redirect_info": {
                                 "flow": "email_verification",
                                 "reason": verification_status,
-                                "message": f"Email verification required. There was an issue sending the OTP. Please contact support.",
+                                "message": f"Email verification required for {email}.",
                                 "email": email
                             }
                         }
                 else:
-                    logger.warning(f"No email found for user - cannot send OTP")
+                    logger.warning(f"Failed to refresh user data - requiring verification")
                     return {
                         "verification_required": True,
                         "otp_sent": False,
                         "redirect_info": {
                             "flow": "email_verification",
                             "reason": verification_status,
-                            "message": "Email verification required but no email address found. Please contact support."
+                            "message": f"Email verification required for {email}.",
+                            "email": email
                         }
                     }
             
@@ -143,26 +113,8 @@ class VerificationCheckService:
                         # Check domain approval for buyers (skip API if already approved)
                         domain_result = await self._check_domain_approval(user_id, approved)
                         if domain_result.get("approved"):
-                            # Domain approved - refresh user data to get updated approved flag
-                            logger.info(f"Domain approved for buyer {user_id}, refreshing user data")
-                            refresh_result = await self.refresh_user_verification_status(user_phone)
-                            
-                            if refresh_result.get("success"):
-                                fresh_data = refresh_result.get("data", [])
-                                if fresh_data:
-                                    fresh_user_data = fresh_data[0] if isinstance(fresh_data, list) else fresh_data
-                                    fresh_approved = fresh_user_data.get("approved")
-                                    logger.info(f"Fresh user data - approved: {fresh_approved}")
-                                    
-                                    if fresh_approved is True:
-                                        logger.info(f"Access granted - buyer with domain approved and fresh approved=True")
-                                        return {"access_granted": True, "user_data": fresh_user_data}
-                                    else:
-                                        logger.info(f"Domain approved but approved flag still False, allowing access anyway")
-                                        return {"access_granted": True, "user_data": fresh_user_data}
-                            
-                            # If refresh fails but domain is approved, allow access with current data
-                            logger.info(f"Access granted - buyer with domain approved (refresh failed)")
+                            # User is already EMAIL_VERIFIED and domain approved - grant access immediately
+                            logger.info(f"Access granted - buyer with EMAIL_VERIFIED status and domain approved")
                             return {"access_granted": True, "user_data": user_dict}
                         else:
                             logger.info(f"Blocking access - buyer domain check failed: {domain_result}")
@@ -243,7 +195,7 @@ class VerificationCheckService:
                 }
             }
     
-    async def refresh_user_verification_status(self, user_phone: str, max_retries: int = 3) -> Dict[str, Any]:
+    async def refresh_user_verification_status(self, user_phone: str, max_retries: int = 1) -> Dict[str, Any]:
         """
         Refresh user data from API to get updated verification status.
         
@@ -262,21 +214,15 @@ class VerificationCheckService:
                 logger.warning(f"Failed to refresh user data for {user_phone}, attempt {retry_count}/{max_retries}")
                 
                 if retry_count < max_retries:
-                    # Wait before retry (exponential backoff)
+                    # Wait before retry (shorter delay)
                     import asyncio
-                    await asyncio.sleep(2 ** retry_count)
+                    await asyncio.sleep(0.5)
             
-            # Max retries exceeded - redirect to support
-            logger.error(f"Max retries ({max_retries}) exceeded for user {user_phone} - redirecting to support")
-            await self.whatsapp_service.send_message(
-                user_phone, 
-                "We're experiencing technical difficulties. Please contact our support team for assistance."
-            )
+            # Max retries exceeded - return failure
+            logger.error(f"Max retries ({max_retries}) exceeded for user {user_phone}")
             return {
                 "success": False, 
-                "message": "Max retries exceeded", 
-                "redirect_to_support": True,
-                "exit_flow": True
+                "message": "Max retries exceeded"
             }
             
         except Exception as e:
