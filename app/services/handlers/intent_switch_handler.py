@@ -204,7 +204,7 @@ class IntentSwitchHandler:
         
         # Use OpenAI to analyze user's intent switch response
         try:
-            analysis_result = self.openai_service.analyze_intent_switch_response(
+            analysis_result = await self.openai_service.analyze_intent_switch_response(
                 message=message,
                 pending_switch_context=pending_switch
             )
