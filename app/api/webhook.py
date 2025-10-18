@@ -382,20 +382,23 @@ async def process_message_async(webhook_data: Dict[str, Any]):
             logger.warning("Missing required message data")
             return
 
-        # Initialize chat service with message_queue_service for non-text messages
+        # Initialize chat service with message_queue_service and db_session for non-text messages
         from app.services.chat_service import ChatService
-        chat_service = ChatService(message_queue_service)
+        from app.database import get_db_session_context
 
-        # Handle document messages specifically
-        if message_type.lower() == "document":
-            await process_document_message(webhook_data, chat_service)
-        else:
-            # Process other non-text messages (image, interactive, etc.) through chat service
-            await chat_service.process_message(
-                user_phone=from_number,
-                message_content=content,
-                message_type=message_type
-            )
+        with get_db_session_context() as db:
+            chat_service = ChatService(db_session=db)
+
+            # Handle document messages specifically
+            if message_type.lower() == "document":
+                await process_document_message(webhook_data, chat_service)
+            else:
+                # Process other non-text messages (image, interactive, etc.) through chat service
+                await chat_service.process_message(
+                    user_phone=from_number,
+                    message_content=content,
+                    message_type=message_type
+                )
 
     except Exception as e:
         logger.error(f"Error in async message processing: {e}", exc_info=True)
