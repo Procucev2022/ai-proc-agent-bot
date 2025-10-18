@@ -303,9 +303,9 @@ class ChatService:
                     await self.session_manager.save_session(session, workflow_type)
                     logger.info(f"CHAT_SERVICE: 🔄 Authentication flow in progress - status: {auth_status}")
                     return auth_result
-                elif auth_status == "redirected_to_support" or auth_status == "redirect_to_support" :
-                    # Max OTP retries exceeded or other support-requiring scenario
-                    logger.info(f"Redirect to support requested - calling exit service for {user_phone}")
+                elif auth_status in ["redirected_to_support", "redirect_to_support", "user_exited"]:
+                    # Max OTP retries exceeded, user exited, or other support-requiring scenario
+                    logger.info(f"Redirect to support or user exit requested - calling exit service for {user_phone}")
                     exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
                     await self.session_manager.save_session(session, WorkflowType.user_exit)
                     return exit_result
@@ -586,8 +586,21 @@ class ChatService:
     async def _process_text_message(self, user: User, session: ConversationSession, message: str, message_intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """Process text message through intent classification and routing."""
         try:
-            # Check if user needs registration
-            if not user.is_registered:
+            # Check if user needs registration - handle both User object and dict
+            if isinstance(user, dict):
+                # User is a dict (from validate_token returning dict with verification_required)
+                if user.get("verification_required"):
+                    return {"status": "verification_required", "verification_info": user.get("verification_info", {})}
+                # Convert dict to User object if possible
+                try:
+                    from app.schemas.user import User as UserSchema
+                    user = UserSchema.from_mixed_data(user)
+                except Exception as e:
+                    logger.error(f"Failed to convert user dict to User object: {e}")
+                    return {"status": "error", "error": "Invalid user data"}
+            
+            # Now check registration status
+            if hasattr(user, 'is_registered') and not user.is_registered:
                 return await self._handle_registration_workflow(user, message)
 
             logger.info(f"user  phone number {user.phone_number}")
@@ -1374,75 +1387,74 @@ class ChatService:
         try:
             context = ChatServiceHelpers.build_context("general_inquiry", message)
 
-            # Detect if we should show buttons
-            show_buttons = intent_result and intent_result.get('context_analysis', {}).get('show_buttons', False)
+           
 
             # Determine user role
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
 
-            if show_buttons:
+            # if show_buttons:
                 # ✅ Role-based button configuration
-                if user_role == "buyer":
-                    buttons_config = [
-                        {"id": "create_rfq", "title": "Create new RFQ"},
-                        {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "search_bfs", "title": "Search Stocks"}
-                    ]
-                    header = "What can I assist you with today?"
-                
-                elif user_role == "seller":
-                    buttons_config = [
-                        {"id": "rfq_status", "title": "Check RFQ status"},
-                        {"id": "get_support", "title": "Get Support Info"}
-                    ]
-                    header = "What would you like to do today?"
-                
+            if user_role == "buyer":
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
+                ]
+                header = "What can I assist you with today?"
 
-                else:
-                    # Unknown role → check if we can determine role from user object
-                    if hasattr(user, 'role') and user.role:
-                        actual_role = user.role.value if hasattr(user.role, 'value') else user.role
-                        if actual_role == "buyer":
-                            buttons_config = [
-                                {"id": "create_rfq", "title": "Create new RFQ"},
-                                {"id": "rfq_status", "title": "Check RFQ Status"},
-                                {"id": "search_bfs", "title": "Search Stocks"}
-                            ]
-                        elif actual_role == "seller":
-                            buttons_config = [
-                                {"id": "rfq_status", "title": "Check RFQs Status"},
-                                {"id": "contact_support", "title": "Contact Support"}
-                            ]
-                        else:
-                            buttons_config = [
-                                {"id": "create_rfq", "title": "Create new RFQ"},
-                                {"id": "rfq_status", "title": "Check RFQ Status"},
-                                {"id": "search_bfs", "title": "Search Stocks"}
-                            ]
+            elif user_role == "seller":
+                buttons_config = [
+                    {"id": "rfq_status", "title": "Check RFQ status"},
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+                header = "What would you like to do today?"
+
+
+            else:
+                # Unknown role → check if we can determine role from user object
+                if hasattr(user, 'role') and user.role:
+                    actual_role = user.role.value if hasattr(user.role, 'value') else user.role
+                    if actual_role == "buyer":
+                        buttons_config = [
+                            {"id": "create_rfq", "title": "Create new RFQ"},
+                            {"id": "rfq_status", "title": "Check RFQ Status"},
+                            {"id": "search_bfs", "title": "Search Stocks"}
+                        ]
+                    elif actual_role == "seller":
+                        buttons_config = [
+                            {"id": "rfq_status", "title": "Check RFQs Status"},
+                            {"id": "contact_support", "title": "Contact Support"}
+                        ]
                     else:
                         buttons_config = [
                             {"id": "create_rfq", "title": "Create new RFQ"},
                             {"id": "rfq_status", "title": "Check RFQ Status"},
                             {"id": "search_bfs", "title": "Search Stocks"}
                         ]
-                    header = "How can I help you with your procurement needs today?"
+                else:
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                header = "How can I help you with your procurement needs today?"
 
-                # ✅ Send interactive buttons
-                await self.whatsapp_service.send_configurable_buttons(
-                    user.phone_number,
-                    message,
-                    buttons_config,
-                    header
-                )
+            # ✅ Send interactive buttons
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                message,
+                buttons_config,
+                header
+            )
 
-            else:
-                # ✅ Regular contextual reply (no buttons)
-                await self._send_contextual_response(
-                    user.phone_number,
-                    context,
-                    ["How can I help you with your procurement needs today?"],
-                    "general_inquiry"
-                )
+            # else:
+            #     # ✅ Regular contextual reply (no buttons)
+            #     await self._send_contextual_response(
+            #         user.phone_number,
+            #         context,
+            #         ["How can I help you with your procurement needs today?"],
+            #         "general_inquiry"
+            #     )
 
             return {"status": "general_inquiry_handled"}
 
