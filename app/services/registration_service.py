@@ -249,20 +249,13 @@ class RegistrationService:
                                              session: ConversationSession) -> Dict[str, Any]:
         """Handle user confirmation response from buttons or keywords."""
         try:
-            # Check for exit keywords first before processing confirmation
-            message_text = message_content if isinstance(message_content, str) else str(message_content)
-            if message_text.lower().strip() in ["exit", "quit", "stop", "cancel"]:
+            # Check for exit commands first
+            if await self._check_exit_command(message_content):
                 logger.info(f"Exit keyword detected during registration confirmation: '{message_content}'")
-                from app.services.exit_service import ExitService
-                exit_service = ExitService(self.whatsapp_service, self.authentication_service, self.session_manager)
-                return await exit_service.handle_exit_intent(user_phone, session)
+                return await self._handle_registration_exit(user_phone, session)
             
             user_type = session.workflow_state.get("user_type", "buyer")
             entities = session.workflow_state.get("registration_entities", {})
-            
-            # Check for exit commands first
-            if await self._check_exit_command(message_content):
-                return await self._handle_registration_exit(user_phone, session)
             
             # Check for button responses first
             button_response = self._parse_button_response(message_content)
@@ -340,7 +333,7 @@ class RegistrationService:
             # Extract button ID from interactive message structure
             button_reply = message_content.get("button_reply", {})
             button_id = button_reply.get("id", "")
-            if button_id:
+            if button_id and isinstance(button_id, str):
                 message_lower = button_id.lower().strip()
             else:
                 return None
@@ -638,9 +631,20 @@ class RegistrationService:
             logger.error(f"Support redirect error: {e}")
             return {"status": "error", "error": "Failed to redirect to support"}
     
-    async def _check_exit_command(self, message_content: str) -> bool:
+    async def _check_exit_command(self, message_content) -> bool:
         """Check if user wants to exit registration."""
-        return message_content.lower().strip() in ["exit", "quit", "stop", "cancel"]
+        # Handle both string and dictionary inputs
+        if isinstance(message_content, dict):
+            # For interactive messages, check button ID
+            button_reply = message_content.get("button_reply", {})
+            button_id = button_reply.get("id", "")
+            if button_id:
+                return button_id.lower().strip() in ["exit", "quit", "stop", "cancel"]
+            return False
+        elif isinstance(message_content, str):
+            return message_content.lower().strip() in ["exit", "quit", "stop", "cancel"]
+        else:
+            return False
     
     async def _handle_registration_exit(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
         """Handle exit during registration."""
