@@ -1387,8 +1387,7 @@ class ChatService:
         try:
             context = ChatServiceHelpers.build_context("general_inquiry", message)
 
-            logger.info(f"intent_result:{intent_result}, context_analysis:{intent_result.get('context_analysis')}")
-            logger.info(f"show buttons in handle general inquiry:{show_buttons}")
+           
 
             # Determine user role
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
