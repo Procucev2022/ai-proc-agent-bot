@@ -42,20 +42,29 @@ class SellerService:
     - Proper workflow state management
     """
 
-    def __init__(self):
+    def __init__(self, whatsapp_service: WhatsAppService = None, 
+                 session_manager: SessionManagementService = None):
+        # Use provided whatsapp_service or create new instance as fallback
+        self.whatsapp_service = whatsapp_service or WhatsAppService()
+        
         self.db_manager = DatabaseManager()
         self.chat_summary_service = ChatSummaryService()
         self.daily_summary_service = DailySummaryService()
-        self.whatsapp_service = WhatsAppService()
+        
+        # Use provided session_manager or create new instance as fallback
+        if session_manager:
+            self.session_manager = session_manager
+        else:
+            self.session_manager = SessionManagementService(
+                self.db_manager, self.whatsapp_service,
+                self.chat_summary_service, self.daily_summary_service
+            )
+        
         self.seller_api_service = SellerAPIService()
         self.settings = get_settings()
         self.openai_service = OpenAIService()
-        self.rfq_status_service = RFQStatusService()
+        self.rfq_status_service = RFQStatusService(self.whatsapp_service, self.session_manager)
         self.response_helpers = ResponseHelpers(self.openai_service)
-        self.session_manager = SessionManagementService(
-            self.db_manager, self.whatsapp_service,
-            self.chat_summary_service, self.daily_summary_service
-        )
 
     async def handle_seller_workflow(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """

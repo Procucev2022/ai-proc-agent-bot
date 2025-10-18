@@ -56,7 +56,7 @@ class RFQService:
             workflow_type="rfq_status_check"
         )
 
-        print("enitiy result", entity_result)
+        print("entity result", entity_result)
         rfq_ids = entity_result.get("rfq_id", [])
 
         # Limit to only 5 RFQ IDs if there are more
