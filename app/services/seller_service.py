@@ -42,12 +42,21 @@ class SellerService:
     - Proper workflow state management
     """
 
-    def __init__(self, whatsapp_service: WhatsAppService = None, 
-                 session_manager: SessionManagementService = None):
+    def __init__(self, whatsapp_service: WhatsAppService = None,
+                 session_manager: SessionManagementService = None,
+                 db_session=None):
+        """
+        Initialize SellerService with optional dependencies.
+
+        Args:
+            whatsapp_service: WhatsApp service instance (optional).
+            session_manager: Session management service instance (optional).
+            db_session: Database session (optional). If provided, will be passed to DatabaseManager.
+        """
         # Use provided whatsapp_service or create new instance as fallback
         self.whatsapp_service = whatsapp_service or WhatsAppService()
-        
-        self.db_manager = DatabaseManager()
+
+        self.db_manager = DatabaseManager(session=db_session)
         self.chat_summary_service = ChatSummaryService()
         self.daily_summary_service = DailySummaryService()
         
@@ -63,7 +72,11 @@ class SellerService:
         self.seller_api_service = SellerAPIService()
         self.settings = get_settings()
         self.openai_service = OpenAIService()
-        self.rfq_status_service = RFQStatusService(self.whatsapp_service, self.session_manager)
+        self.rfq_status_service = RFQStatusService(
+            whatsapp_service=self.whatsapp_service,
+            session_manager=self.session_manager,
+            db_session=db_session
+        )
         self.response_helpers = ResponseHelpers(self.openai_service)
 
     async def handle_seller_workflow(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:

@@ -174,8 +174,8 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # Include API routers
 app.include_router(webhook_router, prefix="/webhook", tags=["webhook"])
 
-# Initialize chat service
-chat_service = ChatService()
+# Don't create global ChatService - create per-request with proper session management
+# chat_service = ChatService()  # REMOVED: Causes database connection leaks
 
 # Pydantic models for chat API
 from typing import Union
@@ -235,11 +235,17 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
         # Check if message contains image data (from UI image upload)
         if isinstance(content, dict) and "image" in content:
             message_type = "image"
-        
-        # Process message through ChatService with mocked WhatsApp (same as terminal test)
+
+        # Create ChatService per-request with proper session management
+        from app.database import get_db_session_context
         from unittest.mock import patch
-        with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message):
-            chat_result = await chat_service.process_message(chat_message.phone, content, message_type)
+
+        with get_db_session_context() as db:
+            chat_service = ChatService(db_session=db)
+
+            # Process message through ChatService with mocked WhatsApp (same as terminal test)
+            with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message):
+                chat_result = await chat_service.process_message(chat_message.phone, content, message_type)
         
         return {
             "success": True,
@@ -297,7 +303,7 @@ async def upload_excel_file(
         
         # Mock the validation service to use direct content
         from app.services.excel_validation_service import ExcelValidationService
-        
+
         async def mock_validate(self, file_url, filename):
             return {
                 'valid': True,
@@ -306,13 +312,19 @@ async def upload_excel_file(
                 'size': len(file_content),
                 'format': 'xlsx'
             }
-        
-        # Process through ChatService with mocked services
+
+        # Create ChatService per-request with proper session management
+        from app.database import get_db_session_context
         from unittest.mock import patch
-        with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message), \
-             patch.object(ExcelValidationService, 'validate_excel_file_from_url', mock_validate):
-            
-            chat_result = await chat_service.process_message(phone, document_content, "excel_upload")
+
+        with get_db_session_context() as db:
+            chat_service = ChatService(db_session=db)
+
+            # Process through ChatService with mocked services
+            with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message), \
+                 patch.object(ExcelValidationService, 'validate_excel_file_from_url', mock_validate):
+
+                chat_result = await chat_service.process_message(phone, document_content, "excel_upload")
         
         return {
             "success": True,

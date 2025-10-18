@@ -8,6 +8,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import SQLAlchemyError, DisconnectionError, TimeoutError as SQLTimeoutError
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List
+from contextlib import contextmanager
 import json
 import logging
 import asyncio
@@ -24,6 +25,73 @@ SessionLocal = None
 # Remote database connection for item categorization
 remote_engine = None
 RemoteSessionLocal = None
+
+
+def _log_pool_status(context: str = ""):
+    """
+    Internal helper to log current connection pool status.
+
+    Args:
+        context: Context description for the log message (e.g., "after creating session")
+    """
+    global engine
+
+    if not engine or not hasattr(engine, 'pool'):
+        return
+
+    try:
+        pool = engine.pool
+        checked_out = pool.checkedout()
+        checked_in = pool.checkedin()
+        total_size = pool.size()
+        overflow = pool.overflow()
+
+        # Debug: Check pool type and attributes
+        pool_type = type(pool).__name__
+
+        # SQLAlchemy overflow() returns: current_overflow - max_overflow
+        # For QueuePool, this means:
+        # - Negative values indicate unused overflow capacity
+        # - Positive values indicate active overflow connections beyond pool_size
+        # So: overflow = -8 means we have 8 overflow slots unused (out of max_overflow=20)
+        #     This actually means: max_overflow(20) - current_overflow(12) = 8 available overflow slots
+        #     Wait, that's wrong. Let me check the actual calculation:
+        #     overflow() returns: len(self._overflow) which is the current number of overflow connections
+        #     But in our case it's negative, which suggests it's returning overflow_used - max_overflow
+
+        # Calculate actual available: pool_size - checked_out + overflow_available
+        # If overflow is negative, it means we have overflow capacity available
+        # The true available connections = (pool_size - checked_out) + overflow_capacity_used
+        actual_available = total_size - checked_out
+
+        logger.info(
+            f"[DB-POOL] {context} | "
+            f"Type: {pool_type} | "
+            f"InUse: {checked_out} | "
+            f"InPool: {checked_in} | "
+            f"PoolSize: {total_size} | "
+            f"Overflow: {overflow} | "
+            f"Available: {actual_available} | "
+            f"Status: {'⚠️ DEPLETED' if checked_in == 0 and checked_out >= total_size else '✓ OK'}"
+        )
+    except Exception as e:
+        logger.debug(f"Failed to get pool status: {e}")
+
+
+def log_connection_pool_status(context: str = "manual check"):
+    """
+    Public function to log current connection pool status.
+
+    Can be called from anywhere in the application to monitor database connections.
+
+    Args:
+        context: Context description for the log message
+
+    Example:
+        from app.database import log_connection_pool_status
+        log_connection_pool_status("before processing batch")
+    """
+    _log_pool_status(context)
 
 
 def init_database():
@@ -50,6 +118,10 @@ def init_database():
 
     # Create all tables
     Base.metadata.create_all(bind=engine)
+
+    # Log initial pool status
+    logger.info("Database engine initialized successfully")
+    _log_pool_status("after init_database engine creation")
 
     # Add sample data
     db = SessionLocal()
@@ -112,6 +184,7 @@ def init_database():
             db.commit()
     finally:
         db.close()
+        _log_pool_status("after init_database completion")
 
 
 def get_db_session():
@@ -155,6 +228,10 @@ def get_db_session():
         session = SessionLocal()
         # Test connection
         session.execute(text("SELECT 1"))
+
+        # Log connection pool status
+        _log_pool_status("after creating session")
+
         logger.debug(f"Returning database session: {id(session)}")
         return session
     except (SQLAlchemyError, DisconnectionError, SQLTimeoutError) as e:
@@ -169,6 +246,33 @@ def get_db_session():
         from .services.global_error_handler import handle_database_error
         asyncio.create_task(handle_database_error(f"Unexpected database error: {str(e)}"))
         raise
+
+
+@contextmanager
+def get_db_session_context():
+    """
+    Context manager for database sessions - ensures proper cleanup.
+
+    Usage:
+        with get_db_session_context() as db:
+            # use db session
+            result = db.query(Model).all()
+        # session automatically closed when exiting 'with' block
+
+    This prevents database connection leaks by ensuring sessions are always closed.
+    """
+    session = get_db_session()
+    try:
+        yield session
+        session.commit()  # Auto-commit on successful completion
+    except Exception as e:
+        session.rollback()  # Rollback on error
+        logger.error(f"Database session error, rolling back: {e}")
+        raise
+    finally:
+        session.close()  # Always close session
+        logger.debug(f"Closed database session: {id(session)}")
+        _log_pool_status("after closing session")
 
 
 def get_remote_db_session():
@@ -350,10 +454,75 @@ class DatabaseManager:
 
     Provides utilities for database maintenance, monitoring,
     and administrative operations.
+
+    Usage:
+        # Option 1: Context manager (recommended - auto cleanup)
+        with DatabaseManager() as db_manager:
+            db_manager.cleanup_expired_sessions()
+
+        # Option 2: Manual cleanup
+        db_manager = DatabaseManager()
+        try:
+            db_manager.cleanup_expired_sessions()
+        finally:
+            db_manager.close()
+
+        # Option 3: Share existing session (no auto-close)
+        with get_db_session_context() as db:
+            db_manager = DatabaseManager(session=db)
+            db_manager.cleanup_expired_sessions()
+            # Session closed by context manager
     """
 
     def __init__(self, session=None):
+        """
+        Initialize DatabaseManager.
+
+        Args:
+            session: Optional database session. If not provided, creates a new one.
+                    When session is provided, DatabaseManager will NOT close it.
+                    When session is None, DatabaseManager creates and owns the session,
+                    and MUST close it via close() or context manager.
+        """
+        self._owns_session = session is None
         self.session = session or get_db_session()
+
+        if self._owns_session:
+            logger.debug(f"DatabaseManager created and owns session: {id(self.session)}")
+        else:
+            logger.debug(f"DatabaseManager using provided session: {id(self.session)}")
+
+    def close(self):
+        """
+        Close the database session if we own it.
+
+        This should be called when done using DatabaseManager to prevent
+        connection leaks. Alternatively, use DatabaseManager as a context manager.
+        """
+        if self._owns_session and self.session:
+            try:
+                self.session.close()
+                logger.debug(f"DatabaseManager closed owned session: {id(self.session)}")
+                _log_pool_status("after DatabaseManager.close()")
+            except Exception as e:
+                logger.error(f"Error closing DatabaseManager session: {e}")
+            finally:
+                self.session = None
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensures session is closed."""
+        self.close()
+        return False  # Don't suppress exceptions
+
+    def __del__(self):
+        """Destructor - cleanup session if still open."""
+        if self._owns_session and self.session:
+            logger.warning(f"DatabaseManager being garbage collected with unclosed session: {id(self.session)}. Use context manager or call close() explicitly.")
+            self.close()
 
     def get_connection_pool_status(self):
         """

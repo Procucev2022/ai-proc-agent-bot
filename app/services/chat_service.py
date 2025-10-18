@@ -63,9 +63,10 @@ from app.services.confirmation_service import ConfirmationService
 from app.services.workflow_manager import WorkflowManager, WorkflowStage, PendingFlag
 from app.services.message_queue_service import MessageQueueService
 
-from app.database import SessionLocal, DatabaseManager
+from app.database import SessionLocal, DatabaseManager, get_db_session, get_db_session_context
 from app.models import ConversationSession, WorkflowType, ConversationOutcome
 from app.schemas.user import User
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +79,25 @@ class ChatService:
     and response generation for the complete chat experience.
     """
 
-    def __init__(self, message_queue_service: MessageQueueService = None):
-        
-        # Use message_queue_service if provided, otherwise use WhatsAppService directly
+    def __init__(self, db_session: Session = None, message_queue_service: MessageQueueService = None):
+        """
+        Initialize ChatService with a shared database session.
+
+        Args:
+            db_session: Database session (optional for now, will be required in future).
+                       When provided, prevents connection leaks by sharing session across services.
+                       Should be provided by the caller using get_db_session_context().
+            message_queue_service: Optional MessageQueueService for batching.
+
+        Note:
+            For production use, always provide db_session to prevent connection leaks.
+            Backward compatibility: If not provided, services will create their own sessions
+            (may cause connection leaks at high traffic).
+        """
+        self.db_session = db_session
         self.message_queue_service = message_queue_service
+
+        # Use message_queue_service if provided, otherwise use WhatsAppService directly
         if message_queue_service:
             # When message queue is available, it wraps WhatsApp functionality
             self.whatsapp_service = message_queue_service
@@ -92,17 +108,21 @@ class ChatService:
             self.whatsapp_service = WhatsAppService()
             logger.info("ChatService initialized with direct WhatsAppService (fallback)")
 
+        # Initialize services that don't need database sessions
         self.intent_service = IntentService()
         self.entity_service = EntityService()
-        self.vendor_service = VendorService()
-        self.rfq_service = RFQService()
-        
         self.openai_service = OpenAIService()
-        self.db_manager = DatabaseManager()
         self.response_helpers = ResponseHelpers(self.openai_service)
-        self.chat_summary_service = ChatSummaryService()
+
+        # Initialize services that need database sessions
+        self.chat_summary_service = ChatSummaryService(db_session=db_session)
         self.daily_summary_service = DailySummaryService()
-        self.rfq_background_service = RFQBackgroundService()
+
+        # Now all services use the same session (either provided or created)
+        self.db_manager = DatabaseManager(session=db_session)
+        self.vendor_service = VendorService(db_session=db_session)
+        self.rfq_service = RFQService()
+        self.rfq_background_service = RFQBackgroundService(db_session=db_session)
         
         # Initialize extracted services first
         self.session_manager = SessionManagementService(
@@ -111,8 +131,16 @@ class ChatService:
         )
         
         # Initialize services that depend on whatsapp_service and session_manager
-        self.seller_service = SellerService(self.whatsapp_service, self.session_manager)
-        self.rfq_status_service = RFQStatusService(self.whatsapp_service, self.session_manager)
+        self.seller_service = SellerService(
+            whatsapp_service=self.whatsapp_service,
+            session_manager=self.session_manager,
+            db_session=db_session
+        )
+        self.rfq_status_service = RFQStatusService(
+            whatsapp_service=self.whatsapp_service,
+            session_manager=self.session_manager,
+            db_session=db_session
+        )
         
         # Initialize confirmation service and tools
 

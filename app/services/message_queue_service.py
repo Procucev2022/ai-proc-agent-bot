@@ -432,7 +432,7 @@ class MessageQueueService:
                 # Send directly via WhatsAppService (not through wrapper)
                 await self.whatsapp_service.send_message(
                     recipient_id=recipient_id,
-                    message="Your message has been received. You can send more messages, they will be processed."
+                    message="Got it, Please wait while we process your request, we will be back shortly"
                 )
                 
                 logger.info(f"[ACK_SEND] Successfully sent processing acknowledgment to {user_phone}")
@@ -687,14 +687,18 @@ class MessageQueueService:
             
             # Import ChatService here to avoid circular import
             from app.services.chat_service import ChatService
-            chat_service = ChatService(message_queue_service=self)
-            
-            # Process through ChatService
-            await chat_service.process_message(
-                user_phone=batch.user_phone,
-                message_content=batch.concatenated_content,
-                message_type=batch.message_type
-            )
+            from app.database import get_db_session_context
+
+            # Use context manager for proper session cleanup
+            with get_db_session_context() as db:
+                chat_service = ChatService(db_session=db, message_queue_service=self)
+
+                # Process through ChatService
+                await chat_service.process_message(
+                    user_phone=batch.user_phone,
+                    message_content=batch.concatenated_content,
+                    message_type=batch.message_type
+                )
             
             # Note: cleanup should happen in wrapper methods (send_message/send_configurable_buttons)
             # If processing completes without calling any send method, cleanup here as fallback

@@ -2949,7 +2949,7 @@ If multiple emails and user selected a number, include selection."""
                 "error": str(e)
             }
     
-    async def _build_contextual_analysis_prompt(self, message: str, conversation_history: dict,
+    def _build_contextual_analysis_prompt(self, message: str, conversation_history: dict,
                                         workflow_state: dict, extracted_entities: list) -> str:
         """Build comprehensive context prompt for AI analysis."""
         
