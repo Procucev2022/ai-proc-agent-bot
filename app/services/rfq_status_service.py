@@ -23,13 +23,22 @@ class RFQStatusService:
     """Dedicated service for handling RFQ status inquiries."""
 
     def __init__(self, whatsapp_service: WhatsAppService = None,
-                 session_manager: SessionManagementService = None):
+                 session_manager: SessionManagementService = None,
+                 db_session=None):
+        """
+        Initialize RFQStatusService.
+
+        Args:
+            whatsapp_service: WhatsApp service instance (optional).
+            session_manager: Session management service instance (optional).
+            db_session: Database session (optional). If provided, will be passed to DatabaseManager.
+        """
         self.rfq_service = RFQService()
-        
+
         # Use provided whatsapp_service or create new instance as fallback
         self.whatsapp_service = whatsapp_service or WhatsAppService()
-        
-        self.db_manager = DatabaseManager()
+
+        self.db_manager = DatabaseManager(session=db_session)
         self.chat_summary_service = ChatSummaryService()
         self.daily_summary_service = DailySummaryService()
         

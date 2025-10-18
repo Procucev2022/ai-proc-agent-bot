@@ -6,19 +6,28 @@ import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
-from app.database import get_db_session
+from app.database import get_db_session, get_db_session_context
 from app.models import ConversationSession, ChatSummary
 from app.services.openai_service import OpenAIService
 from app.config import get_settings
 from app.utils.logging_utils import log_service_method
 from app.services.helpers.summarization_helpers import SummarizationHelpers
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
 class ChatSummaryService:
     """Simple service for generating and storing chat session summaries."""
-    
-    def __init__(self):
+
+    def __init__(self, db_session: Session = None):
+        """
+        Initialize ChatSummaryService.
+
+        Args:
+            db_session: Optional database session to share across operations.
+                       If not provided, will create sessions as needed (may cause connection leaks).
+        """
+        self.db_session = db_session
         self.openai_service = OpenAIService()
         self.settings = get_settings()
         
@@ -113,13 +122,14 @@ class ChatSummaryService:
     async def load_user_context(self, user_id: str) -> List[Dict[str, Any]]:
         """Load recent summaries for user context."""
         try:
-            with get_db_session() as db:
-                summaries = db.query(ChatSummary)\
+            # Use shared session if available, otherwise create one
+            if self.db_session:
+                summaries = self.db_session.query(ChatSummary)\
                     .filter(ChatSummary.external_user_id == user_id)\
                     .order_by(ChatSummary.created_at.desc())\
                     .limit(self.settings.max_chat_summaries_for_context)\
                     .all()
-                
+
                 return [
                     {
                         'summary': s.ai_generated_summary,
@@ -130,7 +140,26 @@ class ChatSummaryService:
                     }
                     for s in summaries
                 ]
-                
+            else:
+                # Fallback to creating session (backward compatibility)
+                with get_db_session_context() as db:
+                    summaries = db.query(ChatSummary)\
+                        .filter(ChatSummary.external_user_id == user_id)\
+                        .order_by(ChatSummary.created_at.desc())\
+                        .limit(self.settings.max_chat_summaries_for_context)\
+                        .all()
+
+                    return [
+                        {
+                            'summary': s.ai_generated_summary,
+                            'entities': s.extracted_entities,
+                            'rfq_ids': s.rfq_ids,
+                            'outcome': s.session_outcome,
+                            'date': s.created_at.strftime('%Y-%m-%d')
+                        }
+                        for s in summaries
+                    ]
+
         except Exception as e:
             logger.error(f"Error loading context for {user_id}: {e}")
             return []
