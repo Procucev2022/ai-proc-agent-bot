@@ -70,10 +70,11 @@ class OTPService:
             logger.info(f"OTP_SERVICE: API response: {response}")
             
             if response.get("statusCode") in ["1001", "200"] or response.get("status") == "Success":
-                # Clear OTP state on success
-                session.workflow_state.pop("otp_email", None)
+                # IMPORTANT: Don't clear otp_email or selected_user here!
+                # The authentication_service needs these values after OTP validation succeeds
+                # Only clear retry count since validation succeeded
                 session.workflow_state.pop("otp_retry_count", None)
-                
+
                 # REMOVED: Don't send message here - let the calling service handle the message
                 # This prevents duplicate "Email verified successfully!" messages
                 logger.info(f"OTP_SERVICE: OTP validation successful for {user_phone}")
