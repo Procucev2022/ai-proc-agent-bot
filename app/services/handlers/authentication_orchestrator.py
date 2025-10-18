@@ -135,7 +135,7 @@ class AuthenticationOrchestrator:
                 )
             
             # Step 6: Use profile selection service for clear intents
-            if intent in ["buy_something", "sell_something", "rfq_status_check", "general_inquiry"]:
+            if intent in ["buy_something", "sell_something", "rfq_status_check", "general_inquiry", "register_account"]:
                 logger.info(f"Using profile selection service for intent: {intent} ({confidence}%)")
                 return await self.profile_selection_service.handle_profile_selection(
                     user_phone, message_content, session, intent_result
@@ -325,9 +325,9 @@ class AuthenticationOrchestrator:
                     user_phone, message_content, session
                 )
             
-            # Check for profile selection response
+            # Check for profile selection response - HIGHEST PRIORITY after OTP
             if session.workflow_state.get("profile_selection_stage"):
-                logger.info(f"Handling profile selection response")
+                logger.info(f"Handling profile selection response for stage: {session.workflow_state.get('profile_selection_stage')}")
                 return await self.profile_selection_service.handle_profile_selection_response(
                     user_phone, message_content, session
                 )

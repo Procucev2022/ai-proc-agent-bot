@@ -250,7 +250,8 @@ class RegistrationService:
         """Handle user confirmation response from buttons or keywords."""
         try:
             # Check for exit keywords first before processing confirmation
-            if message_content.lower().strip() in ["exit", "quit", "stop", "cancel"]:
+            message_text = message_content if isinstance(message_content, str) else str(message_content)
+            if message_text.lower().strip() in ["exit", "quit", "stop", "cancel"]:
                 logger.info(f"Exit keyword detected during registration confirmation: '{message_content}'")
                 from app.services.exit_service import ExitService
                 exit_service = ExitService(self.whatsapp_service, self.authentication_service, self.session_manager)

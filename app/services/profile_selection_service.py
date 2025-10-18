@@ -69,6 +69,18 @@ class ProfileSelectionService:
                 elif registration_intent == 'seller':
                     return await self._redirect_to_seller_registration(user_phone, session, message)
             
+            # Also check if intent is register_account and handle accordingly
+            if intent == 'register_account':
+                # Try to detect specific registration type from message
+                detected_type = await self._detect_registration_intent(message)
+                if detected_type == 'buyer':
+                    return await self._redirect_to_buyer_registration(user_phone, session, message)
+                elif detected_type == 'seller':
+                    return await self._redirect_to_seller_registration(user_phone, session, message)
+                else:
+                    # If no specific type detected, show registration options
+                    return await self._handle_no_profiles_found(user_phone, intent, session)
+            
             # Get user profiles from cache or API
             profiles_result = await self._get_user_profiles(user_phone, message, session)
             
@@ -117,6 +129,10 @@ class ProfileSelectionService:
             if session.workflow_state.get('profile_selection_stage') == 'intent_mismatch':
                 return await self._handle_intent_mismatch_response(user_phone, message, session)
             
+            # CRITICAL FIX: Check if we're in new_user_registration stage and handle directly
+            if session.workflow_state.get('profile_selection_stage') == 'new_user_registration':
+                return await self._handle_new_user_registration_response(user_phone, message, session)
+            
             # Check if user is requesting specific role filter (buyer/seller)
             role_filter_result = await self._check_role_filter_request(user_phone, message, session)
             if role_filter_result:
@@ -130,12 +146,16 @@ class ProfileSelectionService:
                 return {"status": "restart_profile_selection"}
 
             # Parse user selection
+            logger.info(f"Parsing profile selection for message: '{message}' with options: {profile_options}")
             selected_profile = await self._parse_profile_selection(message, profile_options)
+            logger.info(f"Parsed selection result: {selected_profile}")
 
             if selected_profile:
+                logger.info(f"Processing selected profile: {selected_profile}")
                 return await self._process_selected_profile(user_phone, selected_profile, session)
             else:
                 # Invalid selection - show options again
+                logger.warning(f"Invalid selection for message: '{message}', showing retry")
                 return await self._show_profile_selection_retry(user_phone, profile_options, session)
 
         except Exception as e:
@@ -766,7 +786,17 @@ class ProfileSelectionService:
                 'register me', 'sign me up', 'create account'
             ]
             
-            # Check for registration intent first
+            # Try number parsing first (most reliable)
+            try:
+                selection_num = int(message)
+                for option in profile_options:
+                    if option.get('number') == selection_num:
+                        logger.info(f"Enhanced parsing matched number {selection_num} to option: {option}")
+                        return option
+            except ValueError:
+                pass
+            
+            # Check for registration intent
             registration_type = await self._detect_registration_intent(message)
             if registration_type:
                 logger.info(f"Enhanced parsing detected registration intent: {registration_type}")
@@ -789,15 +819,6 @@ class ProfileSelectionService:
                     for option in profile_options:
                         if 'profile' in option:
                             return option
-
-            # Try number parsing
-            try:
-                selection_num = int(message)
-                for option in profile_options:
-                    if option.get('number') == selection_num:
-                        return option
-            except ValueError:
-                pass
 
             # Use AI analysis if phrases not found
             if hasattr(self, 'user_selection_tool') and self.user_selection_tool:
@@ -1289,22 +1310,25 @@ class ProfileSelectionService:
             buyer_phrases = [
                 'register me as buyer', 'register as buyer', 'register me as a buyer',
                 'sign me up as buyer', 'sign up as buyer', 'create buyer account',
-                'i want to register as buyer', 'register buyer account', 'add me as buyer'
+                'i want to register as buyer', 'register buyer account', 'add me as buyer',
+                'buyer', 'buy', '1', 'one', 'first'
             ]
             
             seller_phrases = [
                 'register me as seller', 'register as seller', 'register me as a seller',
                 'sign me up as seller', 'sign up as seller', 'create seller account',
-                'i want to register as seller', 'register seller account', 'add me as seller'
+                'i want to register as seller', 'register seller account', 'add me as seller',
+                'seller', 'sell', '2', 'two', 'second'
             ]
             
+            # Check for exact matches first
             for phrase in buyer_phrases:
-                if phrase in message_lower:
+                if phrase == message_lower or phrase in message_lower:
                     logger.info(f"Fallback: Matched buyer phrase '{phrase}' in message '{message}'")
                     return 'buyer'
             
             for phrase in seller_phrases:
-                if phrase in message_lower:
+                if phrase == message_lower or phrase in message_lower:
                     logger.info(f"Fallback: Matched seller phrase '{phrase}' in message '{message}'")
                     return 'seller'
             
@@ -1429,6 +1453,57 @@ class ProfileSelectionService:
             
         except Exception as e:
             logger.error(f"Error handling intent mismatch response for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def _handle_new_user_registration_response(self, user_phone: str, message: str,
+                                                   session: ConversationSession) -> Dict[str, Any]:
+        """Handle user response to new user registration options."""
+        try:
+            profile_options = session.workflow_state.get('profile_options', [])
+            
+            if not profile_options:
+                logger.error(f"No profile options found for new user registration response from {user_phone}")
+                return {"status": "restart_profile_selection"}
+            
+            # Parse user selection
+            selected_option = await self._parse_profile_selection(message, profile_options)
+            
+            if selected_option:
+                action = selected_option.get('action')
+                
+                if action == 'register_buyer':
+                    logger.info(f"User selected register as buyer from new user registration")
+                    # Clear profile selection state
+                    session.workflow_state.pop('profile_selection_stage', None)
+                    session.workflow_state.pop('profile_options', None)
+                    return await self._redirect_to_buyer_registration(user_phone, session, message)
+                    
+                elif action == 'register_seller':
+                    logger.info(f"User selected register as seller from new user registration")
+                    # Clear profile selection state
+                    session.workflow_state.pop('profile_selection_stage', None)
+                    session.workflow_state.pop('profile_options', None)
+                    return await self._redirect_to_seller_registration(user_phone, session, message)
+                    
+                elif action == 'exit':
+                    return await self._handle_exit_action(user_phone, session)
+            
+            # Invalid selection - show options again
+            retry_message = (
+                "Please select a valid option:\n\n"
+                "1. Register as Buyer\n"
+                "2. Register as Seller\n"
+                "3. Exit\n\n"
+                "Reply with the number corresponding to your choice."
+            )
+            await self.whatsapp_service.send_message(user_phone, retry_message)
+            
+            return {
+                "status": "new_user_registration_retry_sent"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling new user registration response for {user_phone}: {e}")
             return {"status": "error", "error": str(e)}
     
     async def _handle_exit_action(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:

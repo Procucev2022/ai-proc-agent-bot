@@ -303,9 +303,9 @@ class ChatService:
                     await self.session_manager.save_session(session, workflow_type)
                     logger.info(f"CHAT_SERVICE: 🔄 Authentication flow in progress - status: {auth_status}")
                     return auth_result
-                elif auth_status == "redirected_to_support" or auth_status == "redirect_to_support" :
-                    # Max OTP retries exceeded or other support-requiring scenario
-                    logger.info(f"Redirect to support requested - calling exit service for {user_phone}")
+                elif auth_status in ["redirected_to_support", "redirect_to_support", "user_exited"]:
+                    # Max OTP retries exceeded, user exited, or other support-requiring scenario
+                    logger.info(f"Redirect to support or user exit requested - calling exit service for {user_phone}")
                     exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
                     await self.session_manager.save_session(session, WorkflowType.user_exit)
                     return exit_result
