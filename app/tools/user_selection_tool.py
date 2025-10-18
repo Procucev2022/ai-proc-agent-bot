@@ -35,6 +35,14 @@ class UserSelectionTool:
             Analysis result with selected option, confidence, reasoning, and registration detection
         """
         try:
+            # Handle case where user_input might be a dict (button reply)
+            if isinstance(user_input, dict):
+                # Extract text from button reply or convert to string
+                if 'button_reply' in user_input:
+                    user_input = user_input['button_reply'].get('title', str(user_input))
+                else:
+                    user_input = str(user_input)
+            
             # First try rule-based matching for common patterns
             rule_result = self._rule_based_analysis(user_input, profile_options)
             
@@ -129,6 +137,9 @@ class UserSelectionTool:
     
     def _rule_based_analysis(self, user_input: str, profile_options: List[Dict]) -> Dict[str, Any]:
         """Rule-based analysis for common selection patterns."""
+        # Ensure user_input is a string
+        if not isinstance(user_input, str):
+            user_input = str(user_input)
         user_input = user_input.strip().lower()
         
         # Direct number matching

@@ -54,6 +54,13 @@ class ProfileSelectionService:
             
             logger.info(f"Profile selection for {user_phone}: intent={intent}, confidence={confidence}")
             
+            # Handle case where message might be a dict (button reply)
+            if isinstance(message, dict):
+                if 'button_reply' in message:
+                    message = message['button_reply'].get('title', str(message))
+                else:
+                    message = str(message)
+            
             # Check for explicit registration intent first
             registration_intent = await self._detect_registration_intent(message)
             if registration_intent:
@@ -1274,6 +1281,9 @@ class ProfileSelectionService:
                     return register_type
             
             # Fallback to simple phrase matching
+            # Ensure message is a string
+            if not isinstance(message, str):
+                message = str(message)
             message_lower = message.lower().strip()
             
             buyer_phrases = [
