@@ -26,6 +26,7 @@ class ExcelValidationService:
     """
     
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+    MAX_ROWS = 50  # Maximum allowed rows
     SUPPORTED_EXTENSIONS = {'.xlsx', '.xls', '.xlsm'}
     EXCEL_MAGIC_NUMBERS = {
         b'PK\x03\x04': 'xlsx',  # ZIP format (XLSX)
@@ -78,6 +79,11 @@ class ExcelValidationService:
             readability_validation = await self._validate_excel_readability(file_content, filename)
             if not readability_validation['valid']:
                 return readability_validation
+            
+            # Step 6: Validate row count and merged cells
+            structure_validation = await self._validate_excel_structure(file_content)
+            if not structure_validation['valid']:
+                return structure_validation
             
             # Success - return validated content
             return {
@@ -193,4 +199,76 @@ class ExcelValidationService:
                 'valid': False,
                 'error': "Failed to validate Excel file readability.",
                 'error_type': 'readability_error'
+            }
+    
+    async def _validate_excel_structure(self, content: bytes) -> Dict[str, Any]:
+        """Validate Excel structure: row count and merged cells."""
+        try:
+            file_obj = io.BytesIO(content)
+            
+            # Use openpyxl for structure validation
+            try:
+                workbook = load_workbook(file_obj, read_only=False)
+                worksheet = workbook.active
+                
+                # Check 1: Count only filled rows (rows with actual data)
+                filled_rows = 0
+                for row in worksheet.iter_rows():
+                    # Check if row has any non-empty cells
+                    if any(cell.value is not None and str(cell.value).strip() != '' for cell in row):
+                        filled_rows += 1
+                
+                logger.info(f"[EXCEL-STRUCTURE] Excel has {filled_rows} filled rows (out of {worksheet.max_row} total), max allowed: {self.MAX_ROWS}")
+                if filled_rows > self.MAX_ROWS:
+                    workbook.close()
+                    logger.error(f"[EXCEL-STRUCTURE] Too many filled rows: {filled_rows} > {self.MAX_ROWS}")
+                    return {
+                        'valid': False,
+                        'error': f"Your Excel file contains {filled_rows} rows with data, but only 50 rows are allowed per upload. Please reduce to 50 rows and reupload.",
+                        'error_type': 'too_many_rows'
+                    }
+                
+                # Check 2: Merged cells validation
+                merged_ranges = list(worksheet.merged_cells.ranges)
+                logger.info(f"[EXCEL-STRUCTURE] Found {len(merged_ranges)} merged cell ranges")
+                if merged_ranges:
+                    workbook.close()
+                    logger.error(f"[EXCEL-STRUCTURE] Merged cells found: {merged_ranges}")
+                    return {
+                        'valid': False,
+                        'error': "Your Excel file contains merged cells. Please unmerge all cells and reupload.",
+                        'error_type': 'merged_cells_found'
+                    }
+                
+                workbook.close()
+                return {'valid': True}
+                
+            except Exception as openpyxl_error:
+                # Fallback: Try with pandas for basic row count check
+                file_obj.seek(0)
+                try:
+                    df = pd.read_excel(file_obj, sheet_name=0)
+                    # Remove completely empty rows
+                    df_cleaned = df.dropna(how='all')
+                    filled_rows = len(df_cleaned)
+                    logger.info(f"[EXCEL-STRUCTURE-FALLBACK] Pandas found {filled_rows} filled rows, max allowed: {self.MAX_ROWS}")
+                    if filled_rows > self.MAX_ROWS:
+                        logger.error(f"[EXCEL-STRUCTURE-FALLBACK] Too many filled rows: {filled_rows} > {self.MAX_ROWS}")
+                        return {
+                            'valid': False,
+                            'error': f"Your Excel file contains {filled_rows} rows with data, but only 50 rows are allowed per upload. Please reduce to 50 rows and reupload.",
+                            'error_type': 'too_many_rows'
+                        }
+                    # Can't check merged cells with pandas, so assume valid
+                    return {'valid': True}
+                except Exception:
+                    # If both methods fail, return the original error
+                    raise openpyxl_error
+                
+        except Exception as e:
+            logger.error(f"Error validating Excel structure: {e}")
+            return {
+                'valid': False,
+                'error': "Failed to validate Excel file structure.",
+                'error_type': 'structure_validation_error'
             }

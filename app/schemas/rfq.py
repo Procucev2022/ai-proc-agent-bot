@@ -28,6 +28,12 @@ class RFQItemSchema(BaseModel):
     
     @validator('quantity')
     def validate_quantity(cls, v):
+        # Convert string to float if needed
+        if isinstance(v, str):
+            try:
+                v = float(v)
+            except ValueError:
+                raise ValueError('Quantity must be a valid number')
         if v <= 0:
             raise ValueError('Quantity must be greater than 0')
         return v
@@ -336,8 +342,17 @@ class RFQValidationSchema(BaseModel):
             for i, item in enumerate(self.items):
                 if not item.get("description"):
                     missing.append(f"item_{i}_description")
-                if not item.get("quantity") or item.get("quantity") <= 0:
+                quantity = item.get("quantity")
+                if not quantity:
                     missing.append(f"item_{i}_quantity")
+                else:
+                    # Convert to float for comparison if it's a string
+                    try:
+                        quantity_val = float(quantity) if isinstance(quantity, str) else quantity
+                        if quantity_val <= 0:
+                            missing.append(f"item_{i}_quantity")
+                    except (ValueError, TypeError):
+                        missing.append(f"item_{i}_quantity")
         
         if not self.delivery_locations:
             missing.append("delivery_locations")

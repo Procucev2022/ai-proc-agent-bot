@@ -28,9 +28,15 @@ class WhatsAppWebhookService:
     for conversation management and response generation.
     """
     
-    def __init__(self):
-        """Initialize the WhatsApp webhook service."""
-        self.chat_service = ChatService()
+    def __init__(self, db_session=None):
+        """
+        Initialize the WhatsApp webhook service.
+
+        Args:
+            db_session: Optional database session to share with ChatService.
+                       If not provided, ChatService will create its own (may leak connections).
+        """
+        self.chat_service = ChatService(db_session=db_session)
         self.opt_out_service = OptOutService()
     
     async def process_webhook(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
