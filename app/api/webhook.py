@@ -387,7 +387,7 @@ async def process_message_async(webhook_data: Dict[str, Any]):
         from app.database import get_db_session_context
 
         with get_db_session_context() as db:
-            chat_service = ChatService(db_session=db, message_queue_service=message_queue_service)
+            chat_service = ChatService(db_session=db)
 
             # Handle document messages specifically
             if message_type.lower() == "document":

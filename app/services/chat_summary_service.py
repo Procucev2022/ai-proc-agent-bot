@@ -93,7 +93,7 @@ class ChatSummaryService:
             logger.info(f"  - Conversation history length: {len(openai_messages)}")
 
             # Call OpenAI service for summary generation
-            summary_text = self.openai_service.generate_session_summary(session_data)
+            summary_text = await self.openai_service.generate_session_summary(session_data)
 
             # Store summary
             with get_db_session() as db:
