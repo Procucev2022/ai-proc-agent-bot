@@ -432,7 +432,7 @@ class MessageQueueService:
                 # Send directly via WhatsAppService (not through wrapper)
                 await self.whatsapp_service.send_message(
                     recipient_id=recipient_id,
-                    message="Your message has been received. You can send more messages, they will be processed."
+                    message="Got it, Please wait while we process your request, we will be back shortly"
                 )
                 
                 logger.info(f"[ACK_SEND] Successfully sent processing acknowledgment to {user_phone}")
