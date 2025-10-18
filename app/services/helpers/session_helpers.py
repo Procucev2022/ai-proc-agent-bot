@@ -32,7 +32,7 @@ class SessionHelpers:
         last_activity = getattr(session, 'last_activity_at', None) or session.created_at
         
         timeout_minutes = get_settings().session_timeout_minutes
-        timeout_hours = timeout_minutes / 60.0
+        timeout_hours = timeout_minutes / 60
         session_expired, last_activity_utc, expired_threshold_utc = is_expired(last_activity, timeout_hours)
         
         if session_expired:
