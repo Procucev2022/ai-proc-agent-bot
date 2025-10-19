@@ -26,6 +26,7 @@ from app.redis_db import get_auth_redis_service
 from app.services.support_notification_service import SupportNotificationService
 from app.services.domain_check_service import DomainCheckService
 from app.services.otp_service import OTPService
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,9 @@ class RegistrationService:
         self.domain_check_service = DomainCheckService(self.openai_service, self.whatsapp_service, self.session_manager)
         self.authentication_helpers = AuthenticationHelpers()
         self.otp_service = OTPService(self.register_api_service, self.whatsapp_service, self.support_notification_service)
+        # Import here to avoid circular imports
+        from app.procucev_apis.auth_apis import AuthAPIService
+        self.auth_api_service = AuthAPIService()
     
     async def initiate_registration(self, user_phone: str, session: ConversationSession,
                                   user_type: str, message: str = "") -> Dict[str, Any]:
@@ -400,23 +404,34 @@ class RegistrationService:
                 result = await self.register_api_service.register_seller(registration_data)
             
             if result.get("statusCode") in ["1001", "200"] or result.get("status") == "Success":
-                # Registration successful - extract user_id from response and store it
+                # Registration successful - extract user_id and org_id from response and store them
                 logger.info(f"{user_type.title()} registration API successful, continuing to OTP flow")
                 
-                # Extract user_id from API response if available
+                # Extract user_id and org_id from API response if available
                 user_id = None
+                org_id = None
                 if result.get("data") and isinstance(result["data"], dict):
                     user_id = result["data"].get("userId") or result["data"].get("id")
+                    org_id = result["data"].get("orgId")
                 elif result.get("type") and isinstance(result["type"], dict):
                     user_id = result["type"].get("userId") or result["type"].get("id")
+                    org_id = result["type"].get("orgId")
                 
-                # Store user_id in entities for domain check
+                # Store user_id and org_id in entities for later use
                 if user_id:
                     entities["user_id"] = user_id
-                    session.workflow_state["registration_entities"] = entities
                     logger.info(f"Stored user_id {user_id} for domain check")
                 else:
                     logger.warning(f"No user_id found in registration response: {result}")
+                
+                if org_id:
+                    entities["org_id"] = org_id
+                    logger.info(f"Stored org_id {org_id} for RFQ creation")
+                else:
+                    logger.warning(f"No org_id found in registration response: {result}")
+                
+                # Update session with both user_id and org_id
+                session.workflow_state["registration_entities"] = entities
                 
                 return {
                     "status": "registration_completed",
@@ -471,13 +486,32 @@ class RegistrationService:
                 
                 logger.info(f"REGISTRATION_SERVICE: OTP valid for {user_type} {user_phone}, proceeding with registration completion")
                 
-                # Store user session token after successful registration
-                session_stored = await self._store_user_session_after_registration(user_phone, entities, user_type)
+                # Fetch complete user data from API after successful registration and OTP validation
+                logger.info(f"REGISTRATION_SERVICE: Fetching complete user data from API for {user_phone}")
+                auth_response = await self.auth_api_service.authenticate_user(user_phone)
                 
-                if session_stored:
-                    logger.info(f"REGISTRATION_SERVICE: User session stored successfully for {user_type} {user_phone}")
+                if auth_response.get("success") and auth_response.get("data"):
+                    # Use the fresh API data which includes org_id
+                    fresh_user_data = auth_response["data"][0] if auth_response["data"] else {}
+                    logger.info(f"REGISTRATION_SERVICE: Fresh user data retrieved with org_id: {fresh_user_data.get('orgId')}")
+                    
+                    # Store user session with complete API data
+                    user_obj = User.from_api_response(fresh_user_data)
+                    session_stored = await self.store_user_session(user_phone, user_obj)
+                    
+                    if session_stored:
+                        logger.info(f"REGISTRATION_SERVICE: User session stored successfully for {user_type} {user_phone} with org_id: {user_obj.org_id}")
+                    else:
+                        logger.error(f"REGISTRATION_SERVICE: Failed to store user session for {user_type} {user_phone}")
                 else:
-                    logger.error(f"REGISTRATION_SERVICE: Failed to store user session for {user_type} {user_phone}")
+                    logger.warning(f"REGISTRATION_SERVICE: Failed to fetch fresh user data, using registration entities")
+                    # Fallback to original method
+                    session_stored = await self._store_user_session_after_registration(user_phone, entities, user_type)
+                    
+                    if session_stored:
+                        logger.info(f"REGISTRATION_SERVICE: User session stored successfully for {user_type} {user_phone} (fallback)")
+                    else:
+                        logger.error(f"REGISTRATION_SERVICE: Failed to store user session for {user_type} {user_phone}")
                 
                 if user_type == "buyer":
                     logger.info(f"REGISTRATION_SERVICE: Processing buyer registration completion for {user_phone}")
@@ -574,12 +608,37 @@ class RegistrationService:
             logger.error(f"REGISTRATION_SERVICE: Registration OTP validation error for {user_phone}: {e}")
             return await self._redirect_to_support(user_phone, "otp_validation_error", str(e), session)
 
+    async def store_user_session(self, user_phone: str, user_details: User) -> bool:
+        """Store user session data in Redis."""
+        try:
+            # Normalize phone number (remove + prefix for consistent Redis keys)
+            normalized_phone = user_phone.lstrip('+')
+            session_data = user_details.dict()
+            session_data["authenticated_at"] = datetime.now().isoformat()
+
+            # Token expires after 1 hour of inactivity
+            success = await self.auth_redis_service.store(normalized_phone, session_data, expiry_seconds=3600)  # 1 hour
+
+            if success:
+                logger.info(f"Session stored successfully for user {normalized_phone} (ID: {user_details.id}, org_id: {user_details.org_id})")
+            else:
+                logger.error(f"Failed to store session in Redis for user {normalized_phone}")
+
+            return success
+        except Exception as e:
+            logger.error(f"Session storage error for {user_phone}: {e}")
+            return False
+    
     async def _store_user_session_after_registration(self, user_phone: str, entities: Dict, user_type: str) -> bool:
         """Store user session token after successful registration."""
         try:
-            # Create User from registration data
+            # Get the actual user_id and org_id from the registration API response if available
+            user_id = entities.get("user_id") or f"reg_{user_phone}_{int(utc_now().timestamp())}"
+            org_id = entities.get("org_id")  # This should be set from registration API response
+            
+            # Create User from registration data with proper org_id
             user_details = User(
-                id=f"reg_{user_phone}_{int(utc_now().timestamp())}",  # Generate unique ID
+                id=user_id,
                 name=entities.get("name") or entities.get("full_name", ""),
                 email=entities.get("email", ""),
                 phone_number=user_phone,
@@ -587,7 +646,8 @@ class RegistrationService:
                 role=user_type,
                 is_registered=True,
                 company_name=entities.get("company_name", ""),
-                unique_id=f"reg_{user_phone}"
+                unique_id=f"reg_{user_phone}",
+                org_id=org_id  # Include org_id from registration response
             )
             
             # Store session data in Redis
@@ -598,7 +658,7 @@ class RegistrationService:
             success = await self.auth_redis_service.store(user_phone, session_data, expiry_seconds=86400)  # 24 hours
             
             if success:
-                logger.info(f"User session stored successfully for {user_phone} after registration")
+                logger.info(f"User session stored successfully for {user_phone} after registration with org_id={org_id}")
             else:
                 logger.error(f"Failed to store user session for {user_phone} after registration")
             

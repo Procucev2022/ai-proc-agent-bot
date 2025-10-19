@@ -74,10 +74,15 @@ class AuthenticationService:
                 verification_check = await self.verification_check_service.check_and_enforce_verification(user_phone, user_data)
                 
                 if verification_check.get("access_granted"):
-                    # Save user details in global context
-                    user_context.set(normalized_phone, {"user_details": user_data})
+                    # Use the updated user data from verification check instead of stale data
+                    updated_user_data = verification_check.get("user_data", user_data)
+                    # Convert to User object to ensure proper field mapping
+                    user_obj = User.from_mixed_data(updated_user_data)
+                    user_dict = user_obj.dict()
+                    # Save user details in global context with updated data
+                    user_context.set(normalized_phone, {"user_details": user_dict})
                     logger.info(f"Token validated and main flow access granted for user {normalized_phone}")
-                    return user_data
+                    return user_dict  # Return dict instead of User object
                 else:
                     # Verification required - refresh user data and retry
                     logger.info(f"Verification required for user {normalized_phone}, refreshing user data")
@@ -97,11 +102,16 @@ class AuthenticationService:
                             fresh_check = await self.verification_check_service.check_and_enforce_verification(user_phone, fresh_user_data)
                             
                             if fresh_check.get("access_granted"):
+                                # Use the updated user data from fresh verification check
+                                updated_fresh_data = fresh_check.get("user_data", fresh_user_data)
                                 # Update cached data and grant access
-                                await self.auth_redis_service.store(normalized_phone, fresh_user_data, expiry_seconds=3600)
-                                user_context.set(normalized_phone, {"user_details": fresh_user_data})
+                                await self.auth_redis_service.store(normalized_phone, updated_fresh_data, expiry_seconds=3600)
+                                # Convert to User object to ensure proper field mapping
+                                user_obj = User.from_mixed_data(updated_fresh_data)
+                                user_dict = user_obj.dict()
+                                user_context.set(normalized_phone, {"user_details": user_dict})
                                 logger.info(f"Fresh verification check passed for user {normalized_phone}")
-                                return fresh_user_data
+                                return user_dict  # Return dict instead of raw data
                     
                     # Still requires verification - return verification info
                     logger.info(f"Token valid but verification still required for user {normalized_phone}")
@@ -861,10 +871,12 @@ Return only the selected email address or "none" if no clear selection.
                 updated_user["verificationStatus"] = "EMAIL_VERIFIED"
                 
                 logger.info(f"OTP validated successfully, updating Redis cache for {user_phone}")
+                logger.info(f"Updated user data includes org_id: {updated_user.get('orgId')}")
                 
                 # Create User object and store in both auth Redis and user cache
                 user_obj = User.from_mixed_data(updated_user)
                 normalized_phone = user_phone.lstrip('+')
+                logger.info(f"User object created with org_id: {user_obj.org_id}")
                 
                 # Store in auth Redis
                 auth_stored = await self.auth_redis_service.store(normalized_phone, user_obj.dict(), expiry_seconds=3600)
