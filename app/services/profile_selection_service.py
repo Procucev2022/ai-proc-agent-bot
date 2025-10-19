@@ -357,10 +357,13 @@ class ProfileSelectionService:
             if len(buyer_profiles) == 1:
                 # Single buyer profile - show selection options
                 profile = buyer_profiles[0]
-                
+
                 message_parts = [
-                    "👋 Hi there! I understand you want to buy items. Please choose:"
+                    "👋 Hi there! I understand you want to buy items. ",
+                    "",
+                    "Please choose which profile you'd like to use:"
                 ]
+
                 
                 profile_options = [
                     {
@@ -377,6 +380,10 @@ class ProfileSelectionService:
                 
                 message_parts.append(f" 1. {profile['email']} — Buyer")
                 message_parts.append(f" 2. Register a new Buyer account")
+                message_parts.extend([
+                    "",
+                    "Reply with the number corresponding to your account to continue."
+                ])
                 
                 # Store context in session
                 session.workflow_state = session.workflow_state or {}
@@ -396,8 +403,12 @@ class ProfileSelectionService:
             else:
                 # Multiple buyer profiles - show selection
                 message_parts = [
-                    "👋 Hi there! I understand you want to buy items. Please choose which Buyer profile you'd like to continue with:\n"
+                    "👋 Hi there! I understand you want to buy items. ",
+                    "",
+                    "Please choose which profile you'd like to use:"
                 ]
+
+
 
                 profile_options = []
                 option_num = 1
@@ -418,6 +429,11 @@ class ProfileSelectionService:
                     "action": "register_buyer",
                     "display": "Register a new Buyer account"
                 })
+
+                message_parts.extend([
+                    "",
+                    "Reply with the number corresponding to your account to continue."
+                ])
 
                 # Store context in session
                 session.workflow_state = session.workflow_state or {}
@@ -528,7 +544,7 @@ class ProfileSelectionService:
             message_parts = [
                 "👋 Hi there! I understand you'd like to check an RFQ status.",
                 "",
-                "Please choose which profile you'd like to use:\n\n"
+                "Please choose which profile you'd like to use:\n"
             ]
 
             profile_options = []
@@ -1205,7 +1221,7 @@ class ProfileSelectionService:
         """Show profile selection options again after invalid selection."""
         try:
             message_parts = [
-                "I didn't understand your selection. Please choose from the options below:"
+                "I didn't understand your selection.\n Please choose from the options below:\n"
             ]
             
             for option in profile_options:
