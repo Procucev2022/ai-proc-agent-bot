@@ -192,12 +192,14 @@ class AuthenticationService:
                 }
 
             # If no cache, make API call
+            logger.info(f"Making API call to authenticate user {user_phone}")
             auth_response = await self.auth_api_service.authenticate_user(user_phone)
-            logger.info(f"Auth API service response: {auth_response}")
+            logger.info(f"Auth API service response for {user_phone}: {auth_response}")
 
             if auth_response.get("success"):
                 raw_response = auth_response.get("data", [])
                 if raw_response:
+                    logger.info(f"Found {len(raw_response)} user records for {user_phone}")
                     # Cache the raw API response for future use
                     await self.user_cache_service.store_user_data(user_phone, raw_response)
 
@@ -208,7 +210,10 @@ class AuthenticationService:
                         "detected_intent": intent
                     }
                 else:
+                    logger.info(f"API returned success but no user data for {user_phone}")
                     return {"success": False, "message": "User details not found"}
+            else:
+                logger.info(f"API authentication failed for {user_phone}: {auth_response.get('message', 'Unknown error')}")
 
             return auth_response
 

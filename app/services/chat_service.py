@@ -506,6 +506,13 @@ class ChatService:
                 elif auth_status == "verification_required":
                     # Handle verification required status
                     logger.info(f"Verification required for {user_phone}")
+                    
+                    # Send verification message to user
+                    redirect_info = auth_result.get("redirect_info", {})
+                    verification_message = redirect_info.get("message", "Email verification is required to continue.")
+                    
+                    await self.whatsapp_service.send_message(user_phone, verification_message)
+                    
                     await self.session_manager.save_session(session, WorkflowType.authentication)
                     return auth_result
                 else:
@@ -1405,14 +1412,14 @@ class ChatService:
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "search_bfs", "title": "Search Stocks"}
                 ]
-                header = "What can I assist you with today?"
+                header = f"Hi {user.name}! What can I assist you with today?"
 
             elif user_role == "seller":
                 buttons_config = [
                     {"id": "rfq_status", "title": "Check RFQ status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
-                header = "What would you like to do today?"
+                header = f"Hi {user.name}! What would you like to do today?"
 
 
             else:
@@ -1542,7 +1549,7 @@ class ChatService:
                 ]
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
-                    "What would you like to do today?",
+                    f"Hi {user.name}! What would you like to do today?",
                     buttons_config,
                     "Please choose an option:"
                 )
