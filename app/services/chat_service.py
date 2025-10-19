@@ -1440,7 +1440,7 @@ class ChatService:
                         {"id": "search_bfs", "title": "Search Stocks"}
                     ]
                 header = "How can I help you with your procurement needs today?"
-            message=""
+            
 
             # ✅ Send interactive buttons
             await self.whatsapp_service.send_configurable_buttons(
