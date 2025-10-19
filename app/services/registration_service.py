@@ -671,8 +671,8 @@ class RegistrationService:
             session_data = user_details.dict()
             session_data["authenticated_at"] = datetime.now().isoformat()
 
-            # Token expires after 1 hour of inactivity
-            success = await self.auth_redis_service.store(normalized_phone, session_data, expiry_seconds=3600)  # 1 hour
+            # Token expires after 12 hours of inactivity
+            success = await self.auth_redis_service.store(normalized_phone, session_data, expiry_seconds=43200)  # 12 hours
 
             if success:
                 logger.info(f"Session stored successfully for user {normalized_phone} (ID: {user_details.id}, org_id: {user_details.org_id})")

@@ -21,7 +21,7 @@ class UserCacheService:
     def __init__(self):
         self.redis_service = get_redis_service()
 
-    async def store_user_data(self, phone_number: str, user_data: List[Dict], expiry_seconds: int = 3600) -> bool:
+    async def store_user_data(self, phone_number: str, user_data: List[Dict], expiry_seconds: int = 43200) -> bool:
         """
         Store user data in Redis cache.
         Preserves meaningful message if it exists.
@@ -29,7 +29,7 @@ class UserCacheService:
         Args:
             phone_number: User's phone number (cache key)
             user_data: List of user dictionaries from API response
-            expiry_seconds: Cache expiry time (defaults to 1 hour)
+            expiry_seconds: Cache expiry time (defaults to 12 hours)
         """
         try:
             cache_key = self._get_cache_key(phone_number)
@@ -160,7 +160,7 @@ class UserCacheService:
                         "meaningful_message_cached_at": meaningful_cached_at,
                         "cached_at": datetime.now().isoformat()
                     }
-                    await self.redis_service.set(cache_key, new_cache, ex=3600)
+                    await self.redis_service.set(cache_key, new_cache, ex=43200)
                     logger.info(f"Preserved meaningful message after clearing user data for {phone_number}")
 
                 return True
@@ -186,7 +186,7 @@ class UserCacheService:
             logger.error(f"Error checking cache existence for {phone_number}: {e}")
             return False
 
-    async def refresh_cache_expiry(self, phone_number: str, expiry_seconds: int = 3600) -> bool:
+    async def refresh_cache_expiry(self, phone_number: str, expiry_seconds: int = 43200) -> bool:
         """
         Refresh cache expiry time (extend TTL).
 
@@ -238,8 +238,8 @@ class UserCacheService:
             cache_data["meaningful_intent_result"] = intent_result
             cache_data["meaningful_message_cached_at"] = datetime.now().isoformat()
 
-            # Store with same expiry as user data (1 hour)
-            success = await self.redis_service.set(cache_key, cache_data, ex=3600)
+            # Store with same expiry as user data (12 hours)
+            success = await self.redis_service.set(cache_key, cache_data, ex=43200)
 
             if success:
                 logger.info(f"Cached meaningful message for {phone_number}: '{str(message)[:50]}...'")
@@ -302,7 +302,7 @@ class UserCacheService:
                 cache_data.pop("meaningful_message_cached_at", None)
 
                 # Update cache
-                success = await self.redis_service.set(cache_key, cache_data, ex=3600)
+                success = await self.redis_service.set(cache_key, cache_data, ex=43200)
 
                 if success:
                     logger.info(f"Cleared meaningful message from cache for {phone_number}")

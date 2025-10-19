@@ -69,7 +69,7 @@ class Settings:
         
         # Redis configuration
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        self.redis_expiry_seconds = int(os.getenv("REDIS_EXPIRY_SECONDS", "3600"))  # 1 hour default for token inactivity
+        self.redis_expiry_seconds = int(os.getenv("REDIS_EXPIRY_SECONDS", "43200"))  # 12 hours default for token inactivity
         
         # Security configuration
         self.secret_key = os.getenv("SECRET_KEY")

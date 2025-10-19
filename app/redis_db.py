@@ -152,7 +152,7 @@ class AuthRedisService(BaseRedisService):
         if await self.exists(key):
             try:
                 await self.init_client()
-                return await self.client.expire(key, 3600)  # Reset to 1 hour
+                return await self.client.expire(key, 43200)  # Reset to 12 hours
             except Exception as e:
                 logger.error(f"Redis token refresh error for key {key}: {e}")
                 return False
