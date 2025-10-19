@@ -527,14 +527,46 @@ class RegistrationService:
                         
                         if domain_result.get("approved"):
                             logger.info(f"REGISTRATION_SERVICE: ✅ OTP SUCCESS + DOMAIN APPROVED for {user_phone} -> Registration successful")
-                            # Domain approved - redirect to main flow without messages
-                            return {
-                                "status": "registration_completed",
-                                "user_type": "buyer",
-                                "redirect_to_main_flow": True,
-                                "approved": True,
-                                "registration_flow_complete": False
-                            }
+                            
+                            # Check for stored intent to determine next action
+                            stored_intent_result = session.workflow_state.get("current_intent_result", {})
+                            intent = stored_intent_result.get("intent", "general_inquiry")
+                            
+                            if intent == "buy_something":
+                                # Show buying options with buttons
+                                buying_message = (
+                                    f"Got it, you'd like to buy items!\n"
+                                    f"Let's continue with your Buyer profile ({entities.get('email', 'your profile')}).\n"
+                                    f"What would you like to do?"
+                                )
+                                buttons_config = [
+                                    {"id": "create_rfq", "title": "Create new RFQ"},
+                                    {"id": "search_bfs", "title": "Search Stocks"}
+                                ]
+                                
+                                await self.whatsapp_service.send_configurable_buttons(
+                                    user_phone,
+                                    buying_message,
+                                    buttons_config
+                                )
+                                
+                                return {
+                                    "status": "buyer_options_presented",
+                                    "user_type": "buyer",
+                                    "email": entities.get('email')
+                                }
+                            else:
+                                # Show neutral greeting with profile selection
+                                await self._handle_neutral_greeting(user_phone, [{
+                                    'email': entities.get('email', 'your profile'),
+                                    'role': 'buyer'
+                                }], session)
+                                
+                                return {
+                                    "status": "profile_selection_sent",
+                                    "profiles_count": 1,
+                                    "selection_type": "neutral_greeting"
+                                }
                         else:
                             logger.info(f"REGISTRATION_SERVICE: ❌ OTP SUCCESS + DOMAIN FAILED for {user_phone} -> Registration success contact support")
                             # Domain not approved - send pending message
@@ -579,22 +611,45 @@ class RegistrationService:
                     logger.info(f"REGISTRATION_SERVICE: ✅ OTP SUCCESS for SELLER {user_phone} -> Registration successful")
                     # Sellers: Email verified successfully, proceed to main flow
                     
-                    # Send success message only
-                    final_success_message = "Registration successful! You can proceed."
+                    # Check for stored intent to determine next action
+                    stored_intent_result = session.workflow_state.get("current_intent_result", {})
+                    intent = stored_intent_result.get("intent", "general_inquiry")
                     
-                    if self.session_manager:
-                        await self.session_manager.send_and_track_message(user_phone, final_success_message, session)
+                    if intent == "sell_something":
+                        # Show seller options
+                        selling_message = (
+                            f"Got it, you'd like to sell items!\n"
+                            f"Let's continue with your Seller profile ({entities.get('email', 'your profile')}).\n"
+                            f"What would you like to do?"
+                        )
+                        buttons_config = [
+                            {"id": "rfq_status", "title": "Check RFQ Status"},
+                            {"id": "get_support", "title": "Get Support Info"}
+                        ]
+                        
+                        await self.whatsapp_service.send_configurable_buttons(
+                            user_phone,
+                            selling_message,
+                            buttons_config
+                        )
+                        
+                        return {
+                            "status": "seller_options_presented",
+                            "user_type": "seller",
+                            "email": entities.get('email')
+                        }
                     else:
-                        await self.whatsapp_service.send_message(user_phone, final_success_message)
-                    
-                    # Sellers don't need domain approval - redirect to main flow
-                    return {
-                        "status": "registration_completed",
-                        "user_type": "seller",
-                        "redirect_to_main_flow": True,
-                        "approved": True,
-                        "registration_flow_complete": False
-                    }
+                        # Show neutral greeting with profile selection
+                        await self._handle_neutral_greeting(user_phone, [{
+                            'email': entities.get('email', 'your profile'),
+                            'role': 'seller'
+                        }], session)
+                        
+                        return {
+                            "status": "profile_selection_sent",
+                            "profiles_count": 1,
+                            "selection_type": "neutral_greeting"
+                        }
             
             # Handle OTP service redirect to support
             elif otp_result.get("status") == "redirect_to_support":
@@ -711,3 +766,129 @@ class RegistrationService:
         from app.services.exit_service import ExitService
         exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
         return await exit_service.handle_exit_intent(user_phone, session)
+    
+    async def _handle_neutral_greeting(self, user_phone: str, profiles: List[Dict],
+                                     session: ConversationSession) -> Dict[str, Any]:
+        """Handle Case 1: Neutral/Greeting Start."""
+        try:
+            # Group profiles by role
+            buyer_profiles = [p for p in profiles if p.get('role') == 'buyer']
+            seller_profiles = [p for p in profiles if p.get('role') == 'seller']
+            
+            # Get user's name and determine greeting
+            if len(profiles) == 1:
+                user_name = self._extract_user_name(profiles)
+                greeting = f"👋 Hi {user_name}!"
+            else:
+                greeting = "👋 Hi there!"
+            
+            # Case: Only buyer profile exists
+            if buyer_profiles and not seller_profiles:
+                profile = buyer_profiles[0]
+                message_parts = [
+                    greeting,
+                    "I can help you with Buying (creating/checking RFQs) ",
+                    "",
+                    "Please select your profile to continue:",
+                    f" 1. {profile['email']} — Buyer",
+                    "  2. Add or Register a new profile",
+                    "",
+                    "Reply with the number corresponding to your account to continue."
+                ]
+                
+                profile_options = [
+                    {"number": 1, "profile": profile, "display": f"{profile['email']} — Buyer"},
+                    {"number": 2, "action": "register_new", "display": "Add or Register a new profile"}
+                ]
+            
+            # Case: Only seller profile exists
+            elif seller_profiles and not buyer_profiles:
+                profile = seller_profiles[0]
+                message_parts = [
+                    greeting,
+                    "I can help you with Selling (responding to buyer requests).",
+                    "",
+                    "Please select your profile to continue:",
+                    f" 1. {profile['email']} — Seller",
+                    "  2. Add or Register a new profile",
+                    "",
+                    "Reply with the number corresponding to your account to continue."
+                ]
+                
+                profile_options = [
+                    {"number": 1, "profile": profile, "display": f"{profile['email']} — Seller"},
+                    {"number": 2, "action": "register_new", "display": " Add or Register a new profile"}
+                ]
+            
+            # Case: Both buyer and seller profiles exist
+            else:
+                message_parts = [
+                    greeting,
+                    "I can help you with both Buying (creating/checking RFQs) and Selling (responding to buyer requests).",
+                    "",
+                    "Please select your profile to continue:"
+                ]
+                
+                profile_options = []
+                option_num = 1
+                
+                # Add buyer profiles
+                for profile in buyer_profiles:
+                    message_parts.append(f" {option_num}. {profile['email']} — Buyer")
+                    profile_options.append({
+                        "number": option_num,
+                        "profile": profile,
+                        "display": f"{profile['email']} — Buyer"
+                    })
+                    option_num += 1
+                
+                # Add seller profiles
+                for profile in seller_profiles:
+                    message_parts.append(f" {option_num}. {profile['email']} — Seller")
+                    profile_options.append({
+                        "number": option_num,
+                        "profile": profile,
+                        "display": f"{profile['email']} — Seller"
+                    })
+                    option_num += 1
+                
+                # Add registration option
+                message_parts.append(f" {option_num}. Add or Register a new profile")
+                profile_options.append({
+                    "number": option_num,
+                    "action": "register_new",
+                    "display": "Add or Register a new profile"
+                })
+                
+                message_parts.extend([
+                    "",
+                    "Reply with the number corresponding to your account to continue."
+                ])
+            
+            # Store in session for later reference
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state['profile_options'] = profile_options
+            session.workflow_state['profile_selection_stage'] = 'neutral_greeting'
+            
+            # Send profile selection message
+            full_message = "\n".join(message_parts)
+            await self.whatsapp_service.send_message(user_phone, full_message)
+            
+            return {
+                "status": "profile_selection_sent",
+                "profiles_count": len(profiles),
+                "selection_type": "neutral_greeting"
+            }
+        except Exception as e:
+            logger.error(f"Error handling neutral greeting for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    def _extract_user_name(self, profiles: List[Dict]) -> str:
+        """Extract user name from profiles."""
+        for profile in profiles:
+            name = profile.get('fullName') or profile.get('name')
+            if name:
+                # Extract first name only
+                first_name = name.strip().split()[0]
+                return first_name.title()
+        return "there"
