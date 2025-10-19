@@ -772,6 +772,7 @@ class RegistrationService:
         """Handle Case 1: Neutral/Greeting Start."""
         try:
             # Group profiles by role
+            logger.info(f"profiles:{profiles}")
             buyer_profiles = [p for p in profiles if p.get('role') == 'buyer']
             seller_profiles = [p for p in profiles if p.get('role') == 'seller']
             
@@ -845,7 +846,7 @@ class RegistrationService:
             return {"status": "error", "error": str(e)}
     
     def _extract_user_name(self, profiles: List[Dict]) -> str:
-        """Extract user name from profiles and format as Piiyya from piiyya soni."""
+        """Extract user name from profiles """
         if len(profiles) == 1:
             profile = profiles[0]
             name = profile.get('fullName') or profile.get('name')
