@@ -511,7 +511,7 @@ class ChatService:
                     redirect_info = auth_result.get("redirect_info", {})
                     verification_message = redirect_info.get("message", "Email verification is required to continue.")
                     
-                    await self.whatsapp_service.send_message(user_phone, verification_message)
+                    # await self.whatsapp_service.send_message(user_phone, verification_message)
                     
                     await self.session_manager.save_session(session, WorkflowType.authentication)
                     return auth_result
