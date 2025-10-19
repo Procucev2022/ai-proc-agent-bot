@@ -89,9 +89,11 @@ class VerificationCheckService:
                         approved = refreshed_approved  # Update approved flag from fresh data
                     else:
                         logger.info(f"Status still {refreshed_status} after refresh - requiring verification")
+                        # FIXED: Automatically send OTP when email verification is required
+                        otp_result = await self._send_verification_otp(user_phone, email)
                         return {
                             "verification_required": True,
-                            "otp_sent": False,
+                            "otp_sent": otp_result.get("status") == "otp_sent",
                             "redirect_info": {
                                 "flow": "email_verification",
                                 "reason": verification_status,
@@ -101,9 +103,11 @@ class VerificationCheckService:
                         }
                 else:
                     logger.warning(f"Failed to refresh user data - requiring verification")
+                    # FIXED: Automatically send OTP when email verification is required
+                    otp_result = await self._send_verification_otp(user_phone, email)
                     return {
                         "verification_required": True,
-                        "otp_sent": False,
+                        "otp_sent": otp_result.get("status") == "otp_sent",
                         "redirect_info": {
                             "flow": "email_verification",
                             "reason": verification_status,
@@ -238,8 +242,11 @@ class VerificationCheckService:
             
             # Step 3: Unknown/invalid verification status - require verification
             logger.warning(f"Unknown verification status: {verification_status} - requiring verification")
+            # FIXED: Automatically send OTP for unknown verification status
+            otp_result = await self._send_verification_otp(user_phone, email or 'your email')
             return {
                 "verification_required": True,
+                "otp_sent": otp_result.get("status") == "otp_sent",
                 "redirect_info": {
                     "flow": "email_verification",
                     "reason": "unknown_status",
@@ -269,8 +276,11 @@ class VerificationCheckService:
                 email = 'your email'
                 full_name = 'Hi'
             
+            # FIXED: Automatically send OTP for verification check errors
+            otp_result = await self._send_verification_otp(user_phone, email)
             return {
                 "verification_required": True,
+                "otp_sent": otp_result.get("status") == "otp_sent",
                 "redirect_info": {
                     "flow": "email_verification",
                     "reason": "verification_check_error",
@@ -311,6 +321,27 @@ class VerificationCheckService:
         except Exception as e:
             logger.error(f"Error refreshing user data: {e}")
             return {"success": False, "message": str(e)}
+    
+    async def _send_verification_otp(self, user_phone: str, email: str) -> Dict[str, Any]:
+        """Send OTP for email verification."""
+        try:
+            if not email or email == 'your email':
+                logger.warning(f"Cannot send OTP - invalid email: {email}")
+                return {"status": "otp_send_failed", "reason": "invalid_email"}
+            
+            logger.info(f"Sending verification OTP to {email} for user {user_phone}")
+            # Create a minimal session for OTP sending
+            from app.models import ConversationSession
+            temp_session = ConversationSession()
+            temp_session.workflow_state = {}
+            
+            otp_result = await self.otp_service.send_otp(user_phone, email, temp_session)
+            logger.info(f"OTP send result: {otp_result}")
+            return otp_result
+            
+        except Exception as e:
+            logger.error(f"Error sending verification OTP: {e}")
+            return {"status": "otp_send_failed", "reason": str(e)}
     
     async def _check_domain_approval(self, user_id: str, current_approved_status: bool = None) -> Dict[str, Any]:
         """Check user domain approval - only call API if not already approved."""

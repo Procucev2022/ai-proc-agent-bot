@@ -286,7 +286,8 @@ class ChatService:
                     "profile_selection_retry_presented", "role_menu_presented",
                     "redirected_to_buyer_registration", "redirected_to_seller_registration",
                     "intent_mismatch_handled", "intent_mismatch_retry_sent", "new_user_registration_presented",
-                    "buyer_options_presented", "single_buyer_profile_selection_presented", "profile_selection_sent"
+                    "buyer_options_presented", "single_buyer_profile_selection_presented", "profile_selection_sent",
+                    "registration_type_clarification_sent"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
@@ -511,7 +512,7 @@ class ChatService:
                     redirect_info = auth_result.get("redirect_info", {})
                     verification_message = redirect_info.get("message", "Email verification is required to continue.")
                     
-                    await self.whatsapp_service.send_message(user_phone, verification_message)
+                    # await self.whatsapp_service.send_message(user_phone, verification_message)
                     
                     await self.session_manager.save_session(session, WorkflowType.authentication)
                     return auth_result
@@ -1402,25 +1403,27 @@ class ChatService:
 
             logger.info(f"continue with user profile:{user.email}, name:{user.name}, user role:{user_role}")
 
-
-
-            # if show_buttons:
-                # ✅ Role-based button configuration
+            # Role-based button configuration
             if user_role == "buyer":
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "search_bfs", "title": "Search Stocks"}
                 ]
-                header = f"Hi {user.name}! What can I assist you with today?"
+                profile_message = f"Let's continue with your buyer profile ({user.email})"
+                # Extract first name and capitalize first letter
+                first_name = user.name.split()[0].capitalize() if user.name else "there"
+                header = f"Hi {first_name}! What can I assist you with today?"
 
             elif user_role == "seller":
                 buttons_config = [
                     {"id": "rfq_status", "title": "Check RFQ status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
-                header = f"Hi {user.name}! What would you like to do today?"
-
+                profile_message = f"Let's continue with your seller account ({user.email})"
+                # Extract first name and capitalize first letter
+                first_name = user.name.split()[0].capitalize() if user.name else "there"
+                header = f"Hi {first_name}! What would you like to do today?"
 
             else:
                 # Unknown role → check if we can determine role from user object
@@ -1432,30 +1435,41 @@ class ChatService:
                             {"id": "rfq_status", "title": "Check RFQ Status"},
                             {"id": "search_bfs", "title": "Search Stocks"}
                         ]
+                        profile_message = f"Let's continue with your buyer profile ({user.email})"
+                        # Extract first name and capitalize first letter
+                        first_name = user.name.split()[0].capitalize() if user.name else "there"
+                        header = f"Hi {first_name}! What can I assist you with today?"
                     elif actual_role == "seller":
                         buttons_config = [
                             {"id": "rfq_status", "title": "Check RFQs Status"},
                             {"id": "contact_support", "title": "Contact Support"}
                         ]
+                        profile_message = f"Let's continue with your seller account ({user.email})"
+                        # Extract first name and capitalize first letter
+                        first_name = user.name.split()[0].capitalize() if user.name else "there"
+                        header = f"Hi {first_name}! What would you like to do today?"
                     else:
                         buttons_config = [
                             {"id": "create_rfq", "title": "Create new RFQ"},
                             {"id": "rfq_status", "title": "Check RFQ Status"},
                             {"id": "search_bfs", "title": "Search Stocks"}
                         ]
+                        profile_message = "How can I help you with your procurement needs today?"
+                        header = "Please choose an option:"
                 else:
                     buttons_config = [
                         {"id": "create_rfq", "title": "Create new RFQ"},
                         {"id": "rfq_status", "title": "Check RFQ Status"},
                         {"id": "search_bfs", "title": "Search Stocks"}
                     ]
-                header = "How can I help you with your procurement needs today?"
+                    profile_message = "How can I help you with your procurement needs today?"
+                    header = "Please choose an option:"
 
 
             # ✅ Send interactive buttons
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
-                message,
+                profile_message,
                 buttons_config,
                 header
             )

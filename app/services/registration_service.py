@@ -772,6 +772,7 @@ class RegistrationService:
         """Handle Case 1: Neutral/Greeting Start."""
         try:
             # Group profiles by role
+            logger.info(f"profiles:{profiles}")
             buyer_profiles = [p for p in profiles if p.get('role') == 'buyer']
             seller_profiles = [p for p in profiles if p.get('role') == 'seller']
             
@@ -783,88 +784,48 @@ class RegistrationService:
             else:
                 greeting = "👋 Hi there!"
             
-            # Case: Only buyer profile exists
-            if buyer_profiles and not seller_profiles:
-                profile = buyer_profiles[0]
-                message_parts = [
-                    greeting,
-                    "I can assist you with both Buying (creating or checking RFQs) and Selling (responding to buyer requests)",
-                    "",
-                    "Please select your profile to continue:",
-                    f" 1. {profile['email']} — Buyer",
-                    "  2. Add or Register a new profile",
-                    "",
-                    "Reply with the number corresponding to your account to continue."
-                ]
-                
-                profile_options = [
-                    {"number": 1, "profile": profile, "display": f"{profile['email']} — Buyer"},
-                    {"number": 2, "action": "register_new", "display": "Add or Register a new profile"}
-                ]
+            message_parts = [
+                greeting,
+                "I can help you with both Buying (creating/checking RFQs) and Selling (responding to buyer requests).",
+                "",
+                "Please select your profile to continue:"
+            ]
             
-            # Case: Only seller profile exists
-            elif seller_profiles and not buyer_profiles:
-                profile = seller_profiles[0]
-                message_parts = [
-                    greeting,
-                    "I can assist you with both Selling (responding to buyer requests) or Buying (creating or checking RFQs)",
-                    "",
-                    "Please select your profile to continue:",
-                    f" 1. {profile['email']} — Seller",
-                    "  2. Add or Register a new profile",
-                    "",
-                    "Reply with the number corresponding to your account to continue."
-                ]
-                
-                profile_options = [
-                    {"number": 1, "profile": profile, "display": f"{profile['email']} — Seller"},
-                    {"number": 2, "action": "register_new", "display": " Add or Register a new profile"}
-                ]
+            profile_options = []
+            option_num = 1
             
-            # Case: Both buyer and seller profiles exist
-            else:
-                message_parts = [
-                    greeting,
-                    "I can help you with both Buying (creating/checking RFQs) and Selling (responding to buyer requests).",
-                    "",
-                    "Please select your profile to continue:"
-                ]
-                
-                profile_options = []
-                option_num = 1
-                
-                # Add buyer profiles
-                for profile in buyer_profiles:
-                    message_parts.append(f" {option_num}. {profile['email']} — Buyer")
-                    profile_options.append({
-                        "number": option_num,
-                        "profile": profile,
-                        "display": f"{profile['email']} — Buyer"
-                    })
-                    option_num += 1
-                
-                # Add seller profiles
-                for profile in seller_profiles:
-                    message_parts.append(f" {option_num}. {profile['email']} — Seller")
-                    profile_options.append({
-                        "number": option_num,
-                        "profile": profile,
-                        "display": f"{profile['email']} — Seller"
-                    })
-                    option_num += 1
-                
-                # Add registration option
-                message_parts.append(f" {option_num}. Add or Register a new profile")
+            # Add all buyer profiles
+            for profile in buyer_profiles:
+                message_parts.append(f" {option_num}. {profile['email']} — Buyer")
                 profile_options.append({
                     "number": option_num,
-                    "action": "register_new",
-                    "display": "Add or Register a new profile"
+                    "profile": profile,
+                    "display": f"{profile['email']} — Buyer"
                 })
-                
-                message_parts.extend([
-                    "",
-                    "Reply with the number corresponding to your account to continue."
-                ])
+                option_num += 1
+            
+            # Add all seller profiles
+            for profile in seller_profiles:
+                message_parts.append(f" {option_num}. {profile['email']} — Seller")
+                profile_options.append({
+                    "number": option_num,
+                    "profile": profile,
+                    "display": f"{profile['email']} — Seller"
+                })
+                option_num += 1
+            
+            # Add registration option
+            message_parts.append(f" {option_num}. Add or Register a new profile")
+            profile_options.append({
+                "number": option_num,
+                "action": "register_new",
+                "display": "Add or Register a new profile"
+            })
+            
+            message_parts.extend([
+                "",
+                "Reply with the number corresponding to your account to continue."
+            ])
             
             # Store in session for later reference
             session.workflow_state = session.workflow_state or {}
@@ -885,11 +846,12 @@ class RegistrationService:
             return {"status": "error", "error": str(e)}
     
     def _extract_user_name(self, profiles: List[Dict]) -> str:
-        """Extract user name from profiles."""
-        for profile in profiles:
+        """Extract user name from profiles """
+        if len(profiles) == 1:
+            profile = profiles[0]
             name = profile.get('fullName') or profile.get('name')
             if name:
-                # Extract first name only
+                # Extract first name only and capitalize first letter
                 first_name = name.strip().split()[0]
-                return first_name.title()
+                return first_name.capitalize()
         return "there"
