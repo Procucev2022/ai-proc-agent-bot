@@ -30,28 +30,24 @@ class AuthAPIService:
         Handles API responses with statusCode: 200 (success), 204 (no user found), 500 (error)
         """
         try:
-            logger.info("Api call to authenticate user")
-    
             logger.info(f"Making API call to authenticate user: {phone_number}")
             endpoint = f"/partialvendor/getUsersByPhoneNumber/{phone_number}"
+            logger.info(f"API endpoint: {endpoint}")
             response_data = await self.api_client.get(endpoint, api_title="authenticate_user")
-            logger.info(f"API response for phone {phone_number}: {response_data}")
+            logger.info(f"Raw API response for phone {phone_number}: {response_data}")
 
-            status_code = response_data.get("statusCode")
-            status = response_data.get("status")
-            
-            if status_code == "200" and status == "Success":
-                users_data = response_data.get("data", {}).get("users", [])
-                users = [APIUserSchema(**user) for user in users_data]
-                
+            # Check if response has success field (new format)
             if response_data.get("success") and isinstance(response_data.get("data"), dict):
                 raw_users = response_data["data"].get("users", [])
+                logger.info(f"Found {len(raw_users)} users in new format response for {phone_number}")
 
                 if not raw_users:
+                    logger.info(f"No users found in new format response for {phone_number}")
                     return {"success": False, "error": "User not found", "is_registered": False}
 
                 # Normalize using schema
                 users: List[APIUserSchema] = [APIUserSchema(**user) for user in raw_users]
+                logger.info(f"Successfully normalized {len(users)} users for {phone_number}")
 
                 return {
                     "success": True,
@@ -60,13 +56,37 @@ class AuthAPIService:
                     "data": [u.dict() for u in users],
                 }
             
+            # Handle legacy format with statusCode
+            status_code = response_data.get("statusCode")
+            status = response_data.get("status")
+            
+            if status_code == "200" and status == "Success":
+                users_data = response_data.get("data", {}).get("users", [])
+                logger.info(f"Found {len(users_data)} users in legacy format response for {phone_number}")
+                
+                if not users_data:
+                    logger.info(f"No users found in legacy format response for {phone_number}")
+                    return {"success": False, "error": "User not found", "is_registered": False}
+                    
+                users = [APIUserSchema(**user) for user in users_data]
+                logger.info(f"Successfully normalized {len(users)} users from legacy format for {phone_number}")
+                
+                return {
+                    "success": True,
+                    "message": response_data.get("message", "Users fetched successfully"),
+                    "status_code": 200,
+                    "data": [u.dict() for u in users],
+                }
+            
             elif status_code == "204":
+                logger.info(f"API returned 204 (No Content) for {phone_number}")
                 return {
                     "success": False,
                     "message": response_data.get("message", f"No user found with phone number: {phone_number}"),
                     "status_code": 204,
                 }
-            else : # status_code == "500" or any other unexpected status code
+            else: # status_code == "500" or any other unexpected status code
+                logger.warning(f"API returned unexpected status {status_code} for {phone_number}: {response_data}")
                 return {
                     "success": False,
                     "message": response_data.get("message", "Error fetching user details"),

@@ -778,6 +778,7 @@ class RegistrationService:
             # Get user's name and determine greeting
             if len(profiles) == 1:
                 user_name = self._extract_user_name(profiles)
+                logger.info(f"user name is:{user_name}")
                 greeting = f"👋 Hi {user_name}!"
             else:
                 greeting = "👋 Hi there!"
