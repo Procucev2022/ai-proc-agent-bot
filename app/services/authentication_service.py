@@ -105,7 +105,7 @@ class AuthenticationService:
                                 # Use the updated user data from fresh verification check
                                 updated_fresh_data = fresh_check.get("user_data", fresh_user_data)
                                 # Update cached data and grant access
-                                await self.auth_redis_service.store(normalized_phone, updated_fresh_data, expiry_seconds=3600)
+                                await self.auth_redis_service.store(normalized_phone, updated_fresh_data, expiry_seconds=43200)
                                 # Convert to User object to ensure proper field mapping
                                 user_obj = User.from_mixed_data(updated_fresh_data)
                                 user_dict = user_obj.dict()
@@ -132,13 +132,13 @@ class AuthenticationService:
             session_data = user_details.dict()
             session_data["authenticated_at"] = datetime.now().isoformat()
 
-            # Token expires after 1 hour of inactivity
-            success = await self.auth_redis_service.store(normalized_phone, session_data, expiry_seconds=3600)  # 1 hour
+            # Token expires after 12 hours of inactivity
+            success = await self.auth_redis_service.store(normalized_phone, session_data, expiry_seconds=43200)  # 12 hours
 
             if success:
                 logger.info(f"Session stored successfully for user {normalized_phone} (ID: {user_details.id})")
                 # Refresh cache expiry to match session expiry
-                await self.user_cache_service.refresh_cache_expiry(normalized_phone, 3600)
+                await self.user_cache_service.refresh_cache_expiry(normalized_phone, 43200)
             else:
                 logger.error(f"Failed to store session in Redis for user {normalized_phone}")
 
@@ -884,12 +884,12 @@ Return only the selected email address or "none" if no clear selection.
                 logger.info(f"User object created with org_id: {user_obj.org_id}")
                 
                 # Store in auth Redis
-                auth_stored = await self.auth_redis_service.store(normalized_phone, user_obj.dict(), expiry_seconds=3600)
-                
+                auth_stored = await self.auth_redis_service.store(normalized_phone, user_obj.dict(), expiry_seconds=43200)
+
                 # Update user cache with verified status
                 from app.services.user_cache_service import get_user_cache_service
                 user_cache_service = get_user_cache_service()
-                cache_stored = await user_cache_service.store_user_data(user_phone, [updated_user], expiry_seconds=3600)
+                cache_stored = await user_cache_service.store_user_data(user_phone, [updated_user], expiry_seconds=43200)
                 
                 if auth_stored and cache_stored:
                     logger.info(f"Successfully updated Redis cache with verified status for {user_phone}")
