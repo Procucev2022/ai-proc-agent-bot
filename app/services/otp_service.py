@@ -40,7 +40,7 @@ class OTPService:
 
                 await self.whatsapp_service.send_message(
                     user_phone,
-                    f"OTP sent to {email}.\nPlease verify your email to continue for today."
+                    f"OTP sent to {email}.\nPlease provide the OTP sent on your email to continue for today."
                 )
 
                 logger.info(f"OTP_SERVICE: OTP sent successfully to {email}")

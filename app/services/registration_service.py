@@ -788,7 +788,7 @@ class RegistrationService:
                 profile = buyer_profiles[0]
                 message_parts = [
                     greeting,
-                    "I can help you with Buying (creating/checking RFQs) ",
+                    "I can assist you with both Buying (creating or checking RFQs) and Selling (responding to buyer requests)",
                     "",
                     "Please select your profile to continue:",
                     f" 1. {profile['email']} — Buyer",
@@ -807,7 +807,7 @@ class RegistrationService:
                 profile = seller_profiles[0]
                 message_parts = [
                     greeting,
-                    "I can help you with Selling (responding to buyer requests).",
+                    "I can assist you with both Selling (responding to buyer requests) or Buying (creating or checking RFQs)",
                     "",
                     "Please select your profile to continue:",
                     f" 1. {profile['email']} — Seller",
