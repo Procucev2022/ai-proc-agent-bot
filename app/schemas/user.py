@@ -181,16 +181,26 @@ class User(BaseModel):
         # Debug logging to see raw API data
         import logging
         logger = logging.getLogger(__name__)
+        
+        # Ensure we're working with a dict
+        if not isinstance(api_data, dict):
+            if hasattr(api_data, 'dict'):
+                api_data = api_data.dict()
+            elif hasattr(api_data, '__dict__'):
+                api_data = api_data.__dict__
+            else:
+                raise ValueError("api_data must be a dictionary or have dict() method")
+        
         logger.info(f"Creating User from API data: {api_data}")
 
         # Determine role
-        match api_data.get("selfClient"):
-            case True:
-                role = UserRole.BUYER
-            case False:
-                role = UserRole.SELLER
-            case _:
-                role = UserRole.UNKNOWN
+        self_client_value = api_data.get("selfClient")
+        if self_client_value is True:
+            role = UserRole.BUYER
+        elif self_client_value is False:
+            role = UserRole.SELLER
+        else:
+            role = UserRole.UNKNOWN
 
         # Handle both 'id' and 'userId' fields for Redis compatibility
         user_id = str(api_data.get("id") or api_data.get("userId", ""))
@@ -221,8 +231,25 @@ class User(BaseModel):
         )
 
     @classmethod
-    def from_mixed_data(cls, data: dict) -> "User":
+    def from_mixed_data(cls, data) -> "User":
         """Create User from either API response or User dict format."""
+        # Handle None or empty data
+        if not data:
+            raise ValueError("Cannot create User from empty data")
+        
+        # If it's already a User object, return it
+        if isinstance(data, cls):
+            return data
+            
+        # Convert to dict if it's an object with dict method or __dict__
+        if not isinstance(data, dict):
+            if hasattr(data, 'dict'):
+                data = data.dict()
+            elif hasattr(data, '__dict__'):
+                data = data.__dict__
+            else:
+                raise ValueError("Cannot convert data to dictionary format")
+            
         # Check if it's already in User format (has 'name', 'email' fields)
         if 'name' in data and 'email' in data:
             # Set is_registered to True by default

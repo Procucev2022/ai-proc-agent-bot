@@ -88,9 +88,18 @@ class AuthenticationOrchestrator:
             else:
                 # Step 1: Token validation (normal flow)
                 user_details = await self.authentication_service.validate_token(user_phone)
-                if user_details and user_details.is_registered:
-                    logger.info(f"Token valid - User authenticated: {user_details.id}")
-                    return user_details
+                if user_details:
+                    # Check if it's a dict with verification_required or a valid user dict
+                    if isinstance(user_details, dict):
+                        if user_details.get("verification_required"):
+                            # User needs verification - continue to auth flow
+                            logger.info(f"Token valid but verification required for {user_phone}")
+                        elif user_details.get("is_registered"):
+                            # User is authenticated and registered
+                            logger.info(f"Token valid - User authenticated: {user_details.get('id')}")
+                            # Convert dict to User object for return
+                            from app.schemas.user import User
+                            return User.from_mixed_data(user_details)
                 # If token expired, continue to check for active workflows
 
 

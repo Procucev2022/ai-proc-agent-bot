@@ -1392,6 +1392,8 @@ class ChatService:
             # Determine user role
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
 
+
+
             # if show_buttons:
                 # ✅ Role-based button configuration
             if user_role == "buyer":
@@ -1438,6 +1440,7 @@ class ChatService:
                         {"id": "search_bfs", "title": "Search Stocks"}
                     ]
                 header = "How can I help you with your procurement needs today?"
+            message=""
 
             # ✅ Send interactive buttons
             await self.whatsapp_service.send_configurable_buttons(
