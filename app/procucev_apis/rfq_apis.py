@@ -189,18 +189,41 @@ class RFQAPIService:
         """Transform our internal RFQ format to GMT API format."""
         logger.info(f"transform_rfq_to_gmt_format: {rfq_data}")
         
-        rfq_item = {
-            "brand": rfq_data.get("preferred_brand", "Generic"),
-            "unitofMeasures": rfq_data.get("unit_of_measure", "pcs"),
-            "quantity": rfq_data.get("quantity", 1),
-            "description": rfq_data.get("product_name", "Product"),
-            "category": None,
-            "createdBy": None,
-            "createdTS": datetime.now().strftime('%Y-%m-%dT%H:%M:%S.000Z'),
-            "itemcode": None,
-            "serialNo": 1001,
-            "remarks": rfq_data.get("specifications", "N/A")
-        }
+        # Handle multiple items from schema (combined RFQ)
+        rfq_items = []
+        items = rfq_data.get("items", [])
+        
+        if items and isinstance(items, list):
+            # Multiple items case - create rfq_item for each
+            for i, item in enumerate(items):
+                rfq_item = {
+                    "brand": item.get("brand", rfq_data.get("preferred_brand", "Generic")),
+                    "unitofMeasures": item.get("unit_of_measures", "pcs"),
+                    "quantity": str(item.get("quantity", 1)),
+                    "description": item.get("description", f"Item {i+1}"),
+                    "category": None,
+                    "createdBy": None,
+                    "createdTS": datetime.now().strftime('%Y-%m-%dT%H:%M:%S.000Z'),
+                    "itemcode": None,
+                    "serialNo": 1001 + i,
+                    "remarks": item.get("remarks", item.get("description", "N/A"))
+                }
+                rfq_items.append(rfq_item)
+        else:
+            # Single item case (legacy compatibility)
+            rfq_item = {
+                "brand": rfq_data.get("preferred_brand", "Generic"),
+                "unitofMeasures": rfq_data.get("unit_of_measure", "pcs"),
+                "quantity": rfq_data.get("quantity", 1),
+                "description": rfq_data.get("product_name", "Product"),
+                "category": None,
+                "createdBy": None,
+                "createdTS": datetime.now().strftime('%Y-%m-%dT%H:%M:%S.000Z'),
+                "itemcode": None,
+                "serialNo": 1001,
+                "remarks": rfq_data.get("specifications", "N/A")
+            }
+            rfq_items.append(rfq_item)
         
         delivery_location = {
             "state": rfq_data.get("delivery_state", "Karnataka"),
@@ -253,7 +276,7 @@ class RFQAPIService:
             "procurementFlag": True,
             "sourceType": rfq_data.get("sourceType", "W"),
             "org": {"id": org_id},
-            "rfqItem": [rfq_item],
+            "rfqItem": rfq_items,
             "vendors": [],
             "clientdeliverylocationrfq": [delivery_location],
             "remarks": rfq_data.get("remarks", "Created via AI Procurement WhatsApp Bot"),
