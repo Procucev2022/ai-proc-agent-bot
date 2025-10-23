@@ -1344,14 +1344,11 @@ class ChatService:
 
         except Exception as e:
             logger.error(f"Error handling incomplete Excel: {e}")
-            raisession.workflow_state['last_excel_issues'] = missing_fields
+            # Store issues in session state for retry
+            session.workflow_state['last_excel_issues'] = missing_fields
             await self.session_manager.save_session(session, WorkflowType.rfq_creation)
-
+            
             return {"status": "excel_reupload_required", "response": "excel_reupload_instructions_sent"}
-
-        except Exception as e:
-            logger.error(f"Error handling incomplete Excel: {e}")
-            raise
 
     async def _handle_registration_workflow(self, user: User, message: str) -> Dict[str, Any]:
         """Handle user registration process."""
