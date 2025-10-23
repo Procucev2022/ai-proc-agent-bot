@@ -367,6 +367,8 @@ async def process_message_async(webhook_data: Dict[str, Any]):
     Routes the message directly through the chat service for immediate processing.
     This is used for messages that cannot be batched (file uploads, interactive buttons).
     """
+    from app.utils.logging_utils import UserPhoneContext
+
     from_number = None
     try:
         processing_start_time = datetime.now()
@@ -382,23 +384,25 @@ async def process_message_async(webhook_data: Dict[str, Any]):
             logger.warning("Missing required message data")
             return
 
-        # Initialize chat service with message_queue_service and db_session for non-text messages
-        from app.services.chat_service import ChatService
-        from app.database import get_db_session_context
+        # Set phone number context for all logs in this async task
+        async with UserPhoneContext(from_number):
+            # Initialize chat service with message_queue_service and db_session for non-text messages
+            from app.services.chat_service import ChatService
+            from app.database import get_db_session_context
 
-        with get_db_session_context() as db:
-            chat_service = ChatService(db_session=db)
+            with get_db_session_context() as db:
+                chat_service = ChatService(db_session=db)
 
-            # Handle document messages specifically
-            if message_type.lower() == "document":
-                await process_document_message(webhook_data, chat_service)
-            else:
-                # Process other non-text messages (image, interactive, etc.) through chat service
-                await chat_service.process_message(
-                    user_phone=from_number,
-                    message_content=content,
-                    message_type=message_type
-                )
+                # Handle document messages specifically
+                if message_type.lower() == "document":
+                    await process_document_message(webhook_data, chat_service)
+                else:
+                    # Process other non-text messages (image, interactive, etc.) through chat service
+                    await chat_service.process_message(
+                        user_phone=from_number,
+                        message_content=content,
+                        message_type=message_type
+                    )
 
     except Exception as e:
         logger.error(f"Error in async message processing: {e}", exc_info=True)
