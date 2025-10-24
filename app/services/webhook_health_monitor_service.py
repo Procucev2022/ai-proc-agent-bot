@@ -25,6 +25,7 @@ import asyncio
 import logging
 import aiohttp
 import json
+import os
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from enum import Enum
@@ -88,12 +89,19 @@ class WebhookHealthMonitorService:
     
     Runs continuously in the background, checking API health at regular
     intervals and managing alert lifecycle through a state machine.
+    
+    Implements leader election to ensure only one instance runs when
+    multiple application workers are present.
     """
     
-    # Redis keys
+    # Redis keys for monitoring state
     STATE_KEY = "webhook:health:state"
     CALLBACK_KEY = "webhook:last_callback_time"
     HISTORY_KEY = "webhook:health:history"
+    
+    # Redis key for distributed leader election lock
+    LEADER_LOCK_KEY = "webhook:health:leader_lock"
+    LEADER_LOCK_TTL = 60  # Lock time-to-live in seconds
     
     def __init__(self):
         self.settings = get_settings()
@@ -115,11 +123,16 @@ class WebhookHealthMonitorService:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         
+        # Leader election state
+        self.worker_id = f"worker_{os.getpid()}"
+        self.is_leader = False
+        
         # HTTP session for health checks
         self._session: Optional[aiohttp.ClientSession] = None
         
         health_logger.info(
             f"WebhookHealthMonitorService initialized: "
+            f"worker_id={self.worker_id}, "
             f"check_interval={self.check_interval}s, "
             f"response_threshold={self.response_threshold}s, "
             f"timeout={self.api_timeout}s, "
@@ -141,40 +154,161 @@ class WebhookHealthMonitorService:
     
     async def start_monitoring(self):
         """
-        Start the health monitoring loop.
+        Start the health monitoring loop with leader election.
+        
+        Implements distributed leader election using Redis to ensure only
+        one worker instance performs monitoring when multiple application
+        workers are running. Non-leader workers remain in standby mode
+        and can take over if the leader fails.
         
         This method runs continuously until stop_monitoring() is called.
         It should be started as a background task during application startup.
         """
         if self._running:
-            health_logger.warning("Health monitoring already running")
+            health_logger.warning(f"{self.worker_id}: Health monitoring already running")
             return
         
         if not self.settings.webhook_health_monitoring_enabled:
-            health_logger.info("Health monitoring disabled by configuration")
+            health_logger.info(f"{self.worker_id}: Health monitoring disabled by configuration")
             return
         
         self._running = True
-        health_logger.info("Starting webhook health monitoring")
+        health_logger.info(f"{self.worker_id}: Attempting to become monitoring leader")
         
         try:
             while self._running:
-                try:
-                    await self._health_check_cycle()
-                except Exception as e:
-                    health_logger.error(f"Error in health check cycle: {e}", exc_info=True)
-                
-                # Wait for next check interval
-                await asyncio.sleep(self.check_interval)
+                if await self._try_acquire_leader_lock():
+                    if not self.is_leader:
+                        health_logger.info(f"{self.worker_id}: Acquired leader lock, starting monitoring")
+                        self.is_leader = True
+                    
+                    await self._run_as_leader()
+                else:
+                    if self.is_leader:
+                        health_logger.warning(f"{self.worker_id}: Lost leader lock, entering standby mode")
+                        self.is_leader = False
+                    
+                    await asyncio.sleep(self.check_interval)
         
         finally:
+            await self._release_leader_lock()
             await self._close_session()
-            health_logger.info("Health monitoring stopped")
+            health_logger.info(f"{self.worker_id}: Health monitoring stopped")
     
     def stop_monitoring(self):
         """Stop the health monitoring loop."""
-        health_logger.info("Stopping health monitoring")
+        health_logger.info(f"{self.worker_id}: Stopping health monitoring")
         self._running = False
+    
+    async def _try_acquire_leader_lock(self) -> bool:
+        """
+        Attempt to acquire the distributed leader lock.
+        
+        Uses Redis SET with NX (set if not exists) and EX (expiry) options
+        to implement a distributed lock. Only one worker can hold the lock
+        at any given time.
+        
+        Returns:
+            bool: True if lock was acquired or already held by this worker,
+                  False if another worker holds the lock.
+        """
+        try:
+            await self.redis.init_client()
+            
+            # Attempt to acquire lock atomically
+            lock_acquired = await self.redis.client.set(
+                self.LEADER_LOCK_KEY,
+                self.worker_id,
+                nx=True,  # Only set if key does not exist
+                ex=self.LEADER_LOCK_TTL  # Lock expires after TTL seconds
+            )
+            
+            if lock_acquired:
+                return True
+            
+            # Check if this worker already holds the lock
+            current_leader = await self.redis.get(self.LEADER_LOCK_KEY)
+            if current_leader == self.worker_id:
+                return True
+            
+            return False
+        
+        except Exception as e:
+            health_logger.error(f"{self.worker_id}: Error acquiring leader lock: {e}")
+            return False
+    
+    async def _renew_leader_lock(self) -> bool:
+        """
+        Renew the leader lock to prevent expiration.
+        
+        Should be called periodically by the leader worker to maintain
+        the lock and prevent other workers from taking over.
+        
+        Returns:
+            bool: True if lock was successfully renewed, False otherwise.
+        """
+        try:
+            await self.redis.init_client()
+            
+            # Verify this worker still holds the lock before renewing
+            current_leader = await self.redis.get(self.LEADER_LOCK_KEY)
+            if current_leader != self.worker_id:
+                health_logger.warning(
+                    f"{self.worker_id}: Cannot renew lock, "
+                    f"current leader is {current_leader}"
+                )
+                return False
+            
+            # Renew lock expiration
+            await self.redis.expire(self.LEADER_LOCK_KEY, self.LEADER_LOCK_TTL)
+            return True
+        
+        except Exception as e:
+            health_logger.error(f"{self.worker_id}: Error renewing leader lock: {e}")
+            return False
+    
+    async def _release_leader_lock(self):
+        """
+        Release the leader lock when stopping monitoring.
+        
+        Allows another worker to immediately take over leadership
+        instead of waiting for lock expiration.
+        """
+        try:
+            await self.redis.init_client()
+            
+            # Only delete lock if this worker holds it
+            current_leader = await self.redis.get(self.LEADER_LOCK_KEY)
+            if current_leader == self.worker_id:
+                await self.redis.delete(self.LEADER_LOCK_KEY)
+                health_logger.info(f"{self.worker_id}: Released leader lock")
+        
+        except Exception as e:
+            health_logger.error(f"{self.worker_id}: Error releasing leader lock: {e}")
+    
+    async def _run_as_leader(self):
+        """
+        Execute monitoring loop as the leader worker.
+        
+        Performs health checks and renews the leader lock to maintain
+        leadership. If lock renewal fails, relinquishes leadership and
+        allows another worker to take over.
+        """
+        try:
+            # Renew lock before performing health check
+            if not await self._renew_leader_lock():
+                self.is_leader = False
+                return
+            
+            # Perform health check cycle
+            await self._health_check_cycle()
+            
+            # Wait for next check interval
+            await asyncio.sleep(self.check_interval)
+        
+        except Exception as e:
+            health_logger.error(f"{self.worker_id}: Error in leader monitoring: {e}", exc_info=True)
+            self.is_leader = False
     
     async def _health_check_cycle(self):
         """Execute one complete health check cycle."""

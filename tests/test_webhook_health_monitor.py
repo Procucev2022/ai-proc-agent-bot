@@ -457,6 +457,117 @@ class TestWebhookHealthMonitor:
         delta = timedelta(hours=2, seconds=15)
         formatted = monitor._format_duration(delta)
         assert formatted == "2h 15s"
+    
+    # ===== Leader Election Tests =====
+    
+    @pytest.mark.asyncio
+    async def test_leader_lock_acquisition(self, monitor, mock_redis):
+        """Test that worker can acquire leader lock."""
+        monitor.redis = mock_redis
+        
+        # Mock successful lock acquisition
+        mock_redis.client = AsyncMock()
+        mock_redis.client.set = AsyncMock(return_value=True)
+        
+        result = await monitor._try_acquire_leader_lock()
+        
+        assert result is True
+        mock_redis.client.set.assert_called_once_with(
+            "webhook:health:leader_lock",
+            monitor.worker_id,
+            nx=True,
+            ex=60
+        )
+    
+    @pytest.mark.asyncio
+    async def test_leader_lock_already_held_by_another(self, monitor, mock_redis):
+        """Test that worker cannot acquire lock held by another worker."""
+        monitor.redis = mock_redis
+        
+        # Mock lock acquisition failure
+        mock_redis.client = AsyncMock()
+        mock_redis.client.set = AsyncMock(return_value=False)
+        mock_redis.get = AsyncMock(return_value="worker_9999")
+        
+        result = await monitor._try_acquire_leader_lock()
+        
+        assert result is False
+        assert monitor.worker_id != "worker_9999"
+    
+    @pytest.mark.asyncio
+    async def test_leader_lock_already_held_by_self(self, monitor, mock_redis):
+        """Test that worker recognizes it already holds the lock."""
+        monitor.redis = mock_redis
+        
+        # Mock lock acquisition failure but worker already holds it
+        mock_redis.client = AsyncMock()
+        mock_redis.client.set = AsyncMock(return_value=False)
+        mock_redis.get = AsyncMock(return_value=monitor.worker_id)
+        
+        result = await monitor._try_acquire_leader_lock()
+        
+        assert result is True
+    
+    @pytest.mark.asyncio
+    async def test_leader_lock_renewal(self, monitor, mock_redis):
+        """Test that leader can renew its lock."""
+        monitor.redis = mock_redis
+        monitor.is_leader = True
+        
+        # Mock successful renewal
+        mock_redis.get = AsyncMock(return_value=monitor.worker_id)
+        mock_redis.expire = AsyncMock(return_value=True)
+        
+        result = await monitor._renew_leader_lock()
+        
+        assert result is True
+        mock_redis.expire.assert_called_once_with(
+            "webhook:health:leader_lock",
+            60
+        )
+    
+    @pytest.mark.asyncio
+    async def test_leader_lock_renewal_fails_if_lost(self, monitor, mock_redis):
+        """Test that renewal fails if another worker took the lock."""
+        monitor.redis = mock_redis
+        monitor.is_leader = True
+        
+        # Mock lock now held by another worker
+        mock_redis.get = AsyncMock(return_value="worker_9999")
+        mock_redis.expire = AsyncMock()
+        
+        result = await monitor._renew_leader_lock()
+        
+        assert result is False
+        mock_redis.expire.assert_not_called()
+    
+    @pytest.mark.asyncio
+    async def test_leader_lock_release(self, monitor, mock_redis):
+        """Test that leader can release its lock."""
+        monitor.redis = mock_redis
+        monitor.is_leader = True
+        
+        # Mock successful release
+        mock_redis.get = AsyncMock(return_value=monitor.worker_id)
+        mock_redis.delete = AsyncMock(return_value=True)
+        
+        await monitor._release_leader_lock()
+        
+        mock_redis.delete.assert_called_once_with("webhook:health:leader_lock")
+    
+    @pytest.mark.asyncio
+    async def test_leader_lock_not_released_by_non_leader(self, monitor, mock_redis):
+        """Test that non-leader worker doesn't release another worker's lock."""
+        monitor.redis = mock_redis
+        monitor.is_leader = False
+        
+        # Mock lock held by another worker
+        mock_redis.get = AsyncMock(return_value="worker_9999")
+        mock_redis.delete = AsyncMock()
+        
+        await monitor._release_leader_lock()
+        
+        mock_redis.delete.assert_not_called()
 
 
 # Run tests
