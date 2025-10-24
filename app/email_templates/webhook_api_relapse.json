@@ -1,0 +1,11 @@
+{
+  "scenario_id": "webhook_api_relapse",
+  "subject": "RELAPSE: ICS WhatsApp API Failed Again",
+  "to": "{alert_recipients}",
+  "cc": "",
+  "bcc": "",
+  "body": "ALERT: The ICS WhatsApp API has failed again after showing signs of recovery.\n\nRelapse Time: {relapse_time}\nCurrent Status: {last_severity}\nError Details: {error_details}\n\nSITUATION:\n- The API briefly recovered but has failed again\n- This indicates potential intermittent issues\n- Service stability is NOT confirmed\n- Users may experience inconsistent behavior\n\nURGENT ACTIONS REQUIRED:\n1. Escalate to ICS support immediately - report intermittent failures\n2. Request detailed diagnostics from ICS operations team\n3. Consider implementing fallback communication channels\n4. Monitor closely for patterns (time-based, load-based, etc.)\n5. Prepare stakeholder communication about ongoing issues\n\nWARNING: DO NOT consider this issue resolved until consistent stability is confirmed over an extended period.\n\nThe monitoring system will continue tracking and will send updates as the situation evolves.",
+  "signature": "Regards,\nProcuCEV Monitoring System",
+  "supports_buyer": true,
+  "supports_seller": true
+}

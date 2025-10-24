@@ -201,6 +201,44 @@ class Settings:
         # Queue Configuration
         self.batch_window_seconds: int = int(os.getenv("BATCH_WINDOW_SECONDS", "3"))
 
+        # Webhook Health Monitoring Configuration
+        self.webhook_health_monitoring_enabled = os.getenv(
+            "WEBHOOK_HEALTH_MONITORING_ENABLED", "true"
+        ).lower() == "true"
+        
+        self.webhook_health_check_interval_seconds = int(
+            os.getenv("WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS", "30")
+        )
+        
+        self.webhook_api_response_threshold_seconds = float(
+            os.getenv("WEBHOOK_API_RESPONSE_THRESHOLD_SECONDS", "5.0")
+        )
+        
+        self.webhook_api_timeout_seconds = float(
+            os.getenv("WEBHOOK_API_TIMEOUT_SECONDS", "10.0")
+        )
+        
+        self.webhook_failure_grace_period_seconds = int(
+            os.getenv("WEBHOOK_FAILURE_GRACE_PERIOD_SECONDS", "60")
+        )
+        
+        self.webhook_recovery_confirmations = int(
+            os.getenv("WEBHOOK_RECOVERY_CONFIRMATIONS", "3")
+        )
+        
+        self.webhook_warning_consecutive_threshold = int(
+            os.getenv("WEBHOOK_WARNING_CONSECUTIVE_THRESHOLD", "3")
+        )
+        
+        self.webhook_alert_recipients = os.getenv(
+            "WEBHOOK_ALERT_RECIPIENTS",
+            self.support_team_email  # Reuse existing config
+        ).split(",")
+        
+        self.webhook_alert_state_ttl_seconds = int(
+            os.getenv("WEBHOOK_ALERT_STATE_TTL_SECONDS", "3600")
+        )
+
         # Validate configuration
         self.validate_config()
         
@@ -309,6 +347,40 @@ class Settings:
         # Validate support team numbers
         if self.support_team_numbers:
             self.support_team_numbers = [num.strip() for num in self.support_team_numbers if num.strip()]
+        
+        # Validate webhook health monitoring configuration
+        if self.webhook_health_monitoring_enabled:
+            # Ensure check interval is less than timeout
+            if self.webhook_health_check_interval_seconds >= self.webhook_api_timeout_seconds:
+                raise ValueError(
+                    "WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS must be less than WEBHOOK_API_TIMEOUT_SECONDS. "
+                    f"Got interval={self.webhook_health_check_interval_seconds}s, timeout={self.webhook_api_timeout_seconds}s"
+                )
+            
+            # Ensure timeout is less than grace period
+            if self.webhook_api_timeout_seconds >= self.webhook_failure_grace_period_seconds:
+                raise ValueError(
+                    "WEBHOOK_API_TIMEOUT_SECONDS must be less than WEBHOOK_FAILURE_GRACE_PERIOD_SECONDS. "
+                    f"Got timeout={self.webhook_api_timeout_seconds}s, grace_period={self.webhook_failure_grace_period_seconds}s"
+                )
+            
+            # Ensure response threshold is less than timeout
+            if self.webhook_api_response_threshold_seconds >= self.webhook_api_timeout_seconds:
+                raise ValueError(
+                    "WEBHOOK_API_RESPONSE_THRESHOLD_SECONDS must be less than WEBHOOK_API_TIMEOUT_SECONDS. "
+                    f"Got threshold={self.webhook_api_response_threshold_seconds}s, timeout={self.webhook_api_timeout_seconds}s"
+                )
+            
+            # Ensure positive values
+            if self.webhook_recovery_confirmations < 1:
+                raise ValueError("WEBHOOK_RECOVERY_CONFIRMATIONS must be at least 1")
+            
+            if self.webhook_warning_consecutive_threshold < 1:
+                raise ValueError("WEBHOOK_WARNING_CONSECUTIVE_THRESHOLD must be at least 1")
+            
+            # Ensure alert recipients are configured
+            if not self.webhook_alert_recipients or not any(r.strip() for r in self.webhook_alert_recipients):
+                raise ValueError("WEBHOOK_ALERT_RECIPIENTS must be configured when monitoring is enabled")
     
     def get_rfq_status_config(self) -> Dict[str, Any]:
         """Get configuration for RFQ status logic."""

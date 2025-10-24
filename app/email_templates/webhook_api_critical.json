@@ -1,0 +1,11 @@
+{
+  "scenario_id": "webhook_api_critical",
+  "subject": "CRITICAL: ICS WhatsApp API Not Responding",
+  "to": "{alert_recipients}",
+  "cc": "",
+  "bcc": "",
+  "body": "URGENT: The ICS WhatsApp API is currently not responding.\n\nAlert Time: {alert_time}\nDowntime Duration: {downtime_duration}\nLast Successful Check: {last_success_time}\nError Details: {error_details}\nConsecutive Failures: {consecutive_failures}\n\nACTION REQUIRED:\n1. Check ICS WhatsApp service status at https://media.sendmsg.in\n2. Verify network connectivity to ICS servers\n3. Review API credentials in environment configuration\n4. Contact ICS support if issue persists\n\nWARNING: All WhatsApp communications are currently blocked until the API is restored.",
+  "signature": "Regards,\nProcuCEV Monitoring System",
+  "supports_buyer": true,
+  "supports_seller": true
+}

@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -87,9 +88,33 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize database: {e}")
         raise
     
+    # Start webhook health monitoring
+    monitor_task = None
+    if settings.webhook_health_monitoring_enabled:
+        try:
+            from app.services.webhook_health_monitor_service import WebhookHealthMonitorService
+            monitor = WebhookHealthMonitorService()
+            monitor_task = asyncio.create_task(monitor.start_monitoring())
+            logger.info("Webhook health monitoring started")
+        except Exception as e:
+            logger.error(f"Failed to start webhook health monitoring: {e}")
+            # Continue without monitoring rather than failing startup
+    
     yield
     
     logger.info("Shutting down AI Procurement Agent application")
+    
+    # Stop health monitoring gracefully
+    if monitor_task:
+        try:
+            monitor.stop_monitoring()
+            await asyncio.wait_for(monitor_task, timeout=5.0)
+            logger.info("Webhook health monitoring stopped")
+        except asyncio.TimeoutError:
+            logger.warning("Health monitoring shutdown timeout")
+            monitor_task.cancel()
+        except Exception as e:
+            logger.error(f"Error stopping health monitoring: {e}")
     
     # Cleanup any remaining aiohttp sessions
     import aiohttp
