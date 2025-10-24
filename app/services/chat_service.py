@@ -1180,11 +1180,23 @@ class ChatService:
 
             if not processing_result.get('success'):
                 processing_error = processing_result.get('error', 'Failed to process Excel file')
+                special_char_errors = processing_result.get('special_char_errors', [])
+                
+                # Handle special character errors specifically
+                if special_char_errors:
+                    error_details = "\n".join([f"• {error}" for error in special_char_errors[:5]])  # Show max 5 errors
+                    if len(special_char_errors) > 5:
+                        error_details += f"\n• ... and {len(special_char_errors) - 5} more errors"
+                    
+                    error_message = f"❌ Excel file contains invalid special characters:\n\n{error_details}\n\nPlease remove all special characters (@, #, $, %, etc.) from your Excel file and reupload."
+                else:
+                    error_message = f"Error processing Excel: {processing_error}"
+                
                 error_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'processing_failed',
-                                 'error': processing_error}
+                                 'error': processing_error, 'special_char_errors': special_char_errors}
                 error_response = await self.response_helpers.generate_contextual_response(
                     error_context,
-                    [f"Error processing Excel: {processing_error}"],
+                    [error_message],
                     "processing_failed"
                 )
                 await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
@@ -1202,6 +1214,18 @@ class ChatService:
             completeness = excel_context['completeness']
             items = processing_result.get('items', [])
 
+            # Check for special character errors before proceeding
+            special_char_errors = processing_result.get('special_char_errors', [])
+            if special_char_errors:
+                logger.error(f"[EXCEL-REDIRECT] Blocking redirect due to {len(special_char_errors)} special character errors")
+                error_details = "\n".join([f"• {error}" for error in special_char_errors[:5]])  # Show max 5 errors
+                if len(special_char_errors) > 5:
+                    error_details += f"\n• ... and {len(special_char_errors) - 5} more errors"
+                
+                error_message = f"❌ Excel file contains invalid special characters:\n\n{error_details}\n\nPlease remove all special characters (@, #, $, %, etc.) from your Excel file and reupload."
+                await self.session_manager.send_and_track_message(user.phone_number, error_message, session)
+                return {"status": "handled", "response": "special_characters_detected"}
+            
             # Always redirect to multiple RFQ flow for Excel uploads with valid items
             if items and len(items) > 0:
                 logger.info(f"[EXCEL-REDIRECT] Redirecting {len(items)} Excel items to multiple RFQ creation flow")
@@ -1257,6 +1281,11 @@ class ChatService:
         products = []
         
         for i, item in enumerate(excel_items, 1):
+            # Skip items with special characters (they shouldn't reach here, but safety check)
+            if any(key.endswith('_has_special_chars') for key in item.keys()):
+                logger.warning(f"[EXCEL-CONVERSION] Skipping item {i} due to special characters: {item}")
+                continue
+                
             # Map Excel columns to entity format expected by products array handler
             product_entity = {
                 'description': item.get('ItemDescription', ''),

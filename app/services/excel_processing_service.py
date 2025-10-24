@@ -6,7 +6,8 @@ import logging
 import io
 import pandas as pd
 import base64
-from typing import Dict, Any, List
+import re
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -81,10 +82,10 @@ class ExcelProcessingService:
             logger.info(f"DEBUG: Excel file shape: {df.shape}")
             logger.info(f"DEBUG: First 3 rows: {df.head(3).values.tolist()}")
             
-            # Get first 5 rows for header detection
-            sample_rows = df.head(5).values.tolist()
+            # Get first 10 rows for enhanced header detection
+            sample_rows = df.head(10).values.tolist()
             
-            # Use OpenAI to detect header row
+            # Use OpenAI to detect header row with extended range
             header_result = await self.openai_service.detect_excel_header_row(sample_rows)
             header_row_index = header_result.get('header_row_index')
             
@@ -120,18 +121,35 @@ class ExcelProcessingService:
             
             # Extract items using the mapping
             logger.info(f"[EXCEL-PROCESS] Extracting items using column mapping")
-            items = self._extract_items_with_mapping(data_df, headers, column_mapping)
+            extraction_result = self._extract_items_with_mapping(data_df, headers, column_mapping)
             
+            # Check if extraction failed due to special characters
+            if not extraction_result.get('success', True):
+                logger.error(f"[EXCEL-PROCESS] Extraction failed: {extraction_result.get('error')}")
+                return {
+                    'success': False,
+                    'error': extraction_result.get('error'),
+                    'special_char_errors': extraction_result.get('special_char_errors', [])
+                }
+            
+            items = extraction_result.get('items', [])
             logger.info(f"[EXCEL-PROCESS] Extracted {len(items)} items")
             if items:
                 logger.info(f"[EXCEL-PROCESS] First item: {items[0]}")
             else:
                 logger.warning(f"[EXCEL-PROCESS] No items extracted from {filename}")
             
-            # Validate items for GMT API requirements
+            # Enhanced validation for GMT API requirements and business rules
             logger.info(f"[EXCEL-PROCESS] Validating {len(items)} items for GMT API requirements")
-            validation_result = self._validate_items_for_gmt_api(items)
+            validation_result = self._validate_items_comprehensive(items)
             logger.info(f"[EXCEL-PROCESS] Validation result: valid={validation_result.get('valid', False)}, errors={len(validation_result.get('errors', []))}, warnings={len(validation_result.get('warnings', []))}")
+            
+            # Additional business rule validation
+            business_validation = self._validate_business_rules(items)
+            if not business_validation['valid']:
+                validation_result['valid'] = False
+                validation_result['errors'].extend(business_validation['errors'])
+                validation_result['warnings'].extend(business_validation.get('warnings', []))
             
             return {
                 'success': True,
@@ -200,12 +218,13 @@ class ExcelProcessingService:
             logger.error(f"Error validating Excel file: {e}")
             return False
     
-    def _extract_items_with_mapping(self, df: pd.DataFrame, headers: List[str], column_mapping: Dict[str, str]) -> List[Dict[str, Any]]:
+    def _extract_items_with_mapping(self, df: pd.DataFrame, headers: List[str], column_mapping: Dict[str, str]) -> Dict[str, Any]:
         """Extract items using the column mapping."""
         logger.info(f"[EXCEL-EXTRACT] Starting item extraction with {len(headers)} headers and {len(column_mapping)} mappings")
         logger.info(f"[EXCEL-EXTRACT] Headers: {headers}")
         logger.info(f"[EXCEL-EXTRACT] Mappings: {column_mapping}")
         items = []
+        special_char_errors = []
         
         try:
             for index, row in df.iterrows():
@@ -226,7 +245,19 @@ class ExcelProcessingService:
                             value = row.iloc[col_index]
                             logger.debug(f"[EXCEL-EXTRACT] Extracting header '{header}' -> '{target_col}', value: '{value}'")
                             if pd.notna(value) and str(value).strip():
-                                item[target_col] = str(value).strip()
+                                # Check for special characters during extraction
+                                value_str = str(value).strip()
+                                special_chars = ['@', '#', '$', '%', '^', '&', '*', '~', '`', '|', '\\', '<', '>', '?', '/', ':', ';', '"', "'"]
+                                found_chars = [char for char in special_chars if char in value_str]
+                                
+                                if found_chars:
+                                    error_msg = f"Row {index + 2}, Column '{header}': '{value_str}' contains invalid characters: {', '.join(found_chars)}"
+                                    logger.error(f"[EXCEL-EXTRACT] SPECIAL CHARACTER DETECTED in {error_msg}")
+                                    special_char_errors.append(error_msg)
+                                    # Don't add the item with special characters
+                                    continue
+                                else:
+                                    item[target_col] = value_str
                                 has_data = True
                             else:
                                 logger.debug(f"[EXCEL-EXTRACT] Empty/NaN value for '{header}' -> '{target_col}': '{value}'")
@@ -247,16 +278,35 @@ class ExcelProcessingService:
                 else:
                     logger.debug(f"[EXCEL-EXTRACT] Skipped row {index} - no data found")
             
+            # Return error if special characters found
+            if special_char_errors:
+                logger.error(f"[EXCEL-EXTRACT] Extraction failed due to {len(special_char_errors)} special character errors")
+                return {
+                    'success': False,
+                    'items': [],
+                    'special_char_errors': special_char_errors,
+                    'error': f"Excel contains invalid special characters in {len(special_char_errors)} location(s). Please remove special characters and reupload."
+                }
+            
             logger.info(f"[EXCEL-EXTRACT] Successfully extracted {len(items)} items")
-            return items
+            return {
+                'success': True,
+                'items': items,
+                'special_char_errors': []
+            }
             
         except Exception as e:
             logger.error(f"[EXCEL-EXTRACT] Error extracting items: {e}")
             import traceback
             logger.error(f"[EXCEL-EXTRACT] Stack trace: {traceback.format_exc()}")
-            return []
+            return {
+                'success': False,
+                'items': [],
+                'special_char_errors': [],
+                'error': f"Failed to extract items: {str(e)}"
+            }
     
-    def _validate_items_for_gmt_api(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _validate_items_comprehensive(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Validate items meet GMT API requirements."""
         validation_result = {
             'valid': True,
@@ -298,6 +348,17 @@ class ExcelProcessingService:
             
             validation_result['field_explanations'] = explanations
         
+        # Enhanced data type validation
+        data_type_validation = self._validate_data_types(items)
+        if not data_type_validation['valid']:
+            validation_result['errors'].extend(data_type_validation['issues'])
+            validation_result['valid'] = False
+        
+        # Regional format detection
+        regional_formats = self._detect_regional_formats(items)
+        if regional_formats['issues']:
+            validation_result['warnings'].extend(regional_formats['issues'])
+        
         # Check for common issues
         if validation_result['missing_required_fields']:
             validation_result['errors'].extend(validation_result['missing_required_fields'])
@@ -307,6 +368,117 @@ class ExcelProcessingService:
         
         logger.info(f"DEBUG: Validation result: {validation_result}")
         return validation_result
+    
+    def _validate_business_rules(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Validate business rules and edge cases."""
+        validation_result = {
+            'valid': True,
+            'errors': [],
+            'warnings': []
+        }
+        
+        # Check for duplicate item descriptions
+        descriptions = [item.get('ItemDescription', '').strip().lower() for item in items if item.get('ItemDescription')]
+        duplicates = [desc for desc in set(descriptions) if descriptions.count(desc) > 1]
+        if duplicates:
+            validation_result['warnings'].append(f"Duplicate items found: {', '.join(duplicates[:3])}")
+        
+        # Validate quantities
+        for i, item in enumerate(items, 1):
+            qty = item.get('Quantity')
+            if qty is not None:
+                try:
+                    qty_float = float(str(qty).replace(',', ''))
+                    if qty_float <= 0:
+                        validation_result['errors'].append(f"Item {i}: Quantity must be positive (found: {qty})")
+                        validation_result['valid'] = False
+                    elif qty_float > 10000:
+                        validation_result['warnings'].append(f"Item {i}: Very large quantity ({qty_float})")
+                except (ValueError, TypeError):
+                    # Handle text quantities like "Five", "5 pieces"
+                    qty_str = str(qty).lower().strip()
+                    if any(word in qty_str for word in ['five', 'ten', 'twenty', 'hundred']):
+                        validation_result['errors'].append(f"Item {i}: Please use numeric quantities instead of text ({qty})")
+                        validation_result['valid'] = False
+            
+            # Validate UOM values
+            uom = item.get('Uom', '').lower().strip()
+            if uom in ['each', 'per item', 'item']:
+                validation_result['warnings'].append(f"Item {i}: Consider using standard UOM like 'pcs' instead of '{uom}'")
+            
+            # Check for special characters in product names
+            desc = item.get('ItemDescription', '')
+            if desc and any(char in desc for char in ['@', '#', '$', '%', '^', '&', '*']):
+                validation_result['warnings'].append(f"Item {i}: Product name contains special characters")
+        
+        return validation_result
+    
+    def _normalize_quantity(self, qty_value: Any) -> Optional[float]:
+        """Normalize quantity values handling various formats."""
+        if qty_value is None:
+            return None
+        
+        try:
+            # Handle string quantities with commas
+            if isinstance(qty_value, str):
+                qty_str = qty_value.strip().replace(',', '')
+                # Extract numeric part from strings like "5 pieces", "10 kg"
+                import re
+                numeric_match = re.search(r'\d+(?:\.\d+)?', qty_str)
+                if numeric_match:
+                    return float(numeric_match.group())
+            
+            return float(qty_value)
+        except (ValueError, TypeError):
+            return None
+    
+    def _detect_regional_formats(self, items: List[Dict]) -> Dict[str, Any]:
+        """Detect and handle regional number formats."""
+        format_info = {
+            'decimal_separator': '.',
+            'thousands_separator': ',',
+            'issues': []
+        }
+        
+        # Check for European format (comma as decimal separator)
+        for item in items[:5]:  # Check first 5 items
+            qty = str(item.get('Quantity', ''))
+            if ',' in qty and '.' not in qty:
+                # Likely European format
+                format_info['decimal_separator'] = ','
+                format_info['thousands_separator'] = '.'
+                format_info['issues'].append("European number format detected (comma as decimal)")
+                break
+        
+        return format_info
+    
+    def _validate_data_types(self, items: List[Dict]) -> Dict:
+        """Enhanced data type validation."""
+        issues = []
+        for i, item in enumerate(items, 1):
+            # Quantity validation
+            if 'Quantity' in item:
+                qty = item['Quantity']
+                if qty is not None:
+                    normalized_qty = self._normalize_quantity(qty)
+                    if normalized_qty is None:
+                        issues.append(f"Item {i}: Invalid quantity format '{qty}'")
+                    elif normalized_qty <= 0:
+                        issues.append(f"Item {i}: Quantity must be positive")
+            
+            # ItemDescription validation
+            desc = item.get('ItemDescription', '').strip()
+            if not desc:
+                issues.append(f"Item {i}: Missing item description")
+            elif len(desc) > 200:
+                issues.append(f"Item {i}: Item description too long (max 200 characters)")
+            
+            # UOM validation
+            uom = item.get('Uom', '').strip()
+            if uom and len(uom) > 20:
+                issues.append(f"Item {i}: UOM too long (max 20 characters)")
+        
+        return {"valid": len(issues) == 0, "issues": issues}
     
     def create_standard_template(self, items: List[Dict[str, Any]]) -> bytes:
         """Create standardized Excel template for GMT API."""
