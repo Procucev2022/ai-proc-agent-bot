@@ -527,8 +527,7 @@ class RegistrationService:
                         
                         if domain_result.get("approved"):
                             logger.info(f"REGISTRATION_SERVICE: ✅ OTP SUCCESS + DOMAIN APPROVED for {user_phone} -> Registration successful")
-                            message = "Your OTP has been verified successfully."
-                            await self.whatsapp_service.send_message(user_phone, message)
+                            
 
                             # Check for stored intent to determine next action
                             stored_intent_result = session.workflow_state.get("current_intent_result", {})
