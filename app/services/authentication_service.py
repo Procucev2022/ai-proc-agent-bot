@@ -676,8 +676,8 @@ Return only the selected email address or "none" if no clear selection.
                         support_message = redirect_info.get("message", "Please contact our support team for assistance.")
                         await self.whatsapp_service.send_message(user_phone, support_message)
                         
-                        # Clear session and exit
-                        await exit_service.handle_exit_intent(user_phone, session)
+                        # Clear session without sending goodbye message to avoid duplicate
+                        await self._clear_session_only(session)
                         
                         return {
                             "status": "redirected_to_support",
@@ -753,8 +753,8 @@ Return only the selected email address or "none" if no clear selection.
                         support_message = redirect_info.get("message", "Please contact our support team for assistance.")
                         await self.whatsapp_service.send_message(user_phone, support_message)
                         
-                        # Clear session and exit
-                        await exit_service.handle_exit_intent(user_phone, session)
+                        # Clear session without sending goodbye message to avoid duplicate
+                        await self._clear_session_only(session)
                         
                         return {
                             "status": "redirected_to_support",
@@ -998,10 +998,12 @@ Return only the selected email address or "none" if no clear selection.
         """Handle domain mismatch scenario."""
         try:
             message = (
-                "Registration successful—thank you! Our team will get in touch with you "
-                "shortly to complete your onboarding so that you can raise RFQs. "
-                "In the meantime please let us know if you want us to support you with anything else?"
+                "*Registration received—thank you!*\n\n"
+                "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                "Our team will get in touch shortly to complete the process, and once verified, "
+                "you’ll be able to access your account and start raising RFQs."
             )
+
             await self.whatsapp_service.send_message(user_phone, message)
             
             return {
@@ -1197,6 +1199,50 @@ Respond only with: "yes" or "no"
             return "there"
         except Exception:
             return "there"
+    
+    async def _clear_session_only(self, session: ConversationSession) -> bool:
+        """Clear session data without sending goodbye message."""
+        try:
+            if not session:
+                return True
+
+            # Clear all session state
+            from app.models import ConversationOutcome
+            session.workflow_type = None
+            session.outcome = ConversationOutcome.abandoned
+            exit_timestamp = session.workflow_state.get("last_activity_at") if session.workflow_state else None
+            
+            # Handle exit_timestamp - it might already be a string or datetime
+            if exit_timestamp:
+                if hasattr(exit_timestamp, 'isoformat'):
+                    exit_timestamp_str = exit_timestamp.isoformat()
+                else:
+                    exit_timestamp_str = str(exit_timestamp)
+            else:
+                exit_timestamp_str = None
+            
+            session.workflow_state = {
+                "exit_completed": True,
+                "exit_timestamp": exit_timestamp_str
+            }
+            session.conversation_history = {"messages": [], "metadata": []}
+            session.extracted_entities = {}
+
+            # Mark session as completed
+            from app.utils.datetime_utils import utc_now
+            session.completed_at = utc_now().replace(tzinfo=None)
+
+            # Save the cleared session
+            if self.session_manager:
+                from app.models import WorkflowType
+                await self.session_manager.save_session(session, WorkflowType.user_exit)
+            
+            logger.info(f"Session {session.session_id} cleared without goodbye message")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error clearing session data: {e}")
+            return False
     
     # ===== AI-FIRST AUTHENTICATION METHODS =====
     
