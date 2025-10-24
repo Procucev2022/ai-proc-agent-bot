@@ -527,46 +527,41 @@ class RegistrationService:
                         
                         if domain_result.get("approved"):
                             logger.info(f"REGISTRATION_SERVICE: ✅ OTP SUCCESS + DOMAIN APPROVED for {user_phone} -> Registration successful")
-                            
+                            message = "Your OTP has been verified successfully."
+                            await self.whatsapp_service.send_message(user_phone, message)
+
                             # Check for stored intent to determine next action
                             stored_intent_result = session.workflow_state.get("current_intent_result", {})
                             intent = stored_intent_result.get("intent", "general_inquiry")
+
+                            logger.info(f"intet in handle registration otp validation is :{intent}")
                             
-                            if intent == "buy_something":
-                                # Show buying options with buttons
-                                buying_message = (
-                                    f"Got it, you'd like to buy items!\n"
-                                    f"Let's continue with your Buyer profile ({entities.get('email', 'your profile')}).\n"
-                                    f"What would you like to do?"
-                                )
-                                buttons_config = [
-                                    {"id": "create_rfq", "title": "Create new RFQ"},
-                                    {"id": "search_bfs", "title": "Search Stocks"}
-                                ]
-                                
-                                await self.whatsapp_service.send_configurable_buttons(
-                                    user_phone,
-                                    buying_message,
-                                    buttons_config
-                                )
-                                
-                                return {
-                                    "status": "buyer_options_presented",
-                                    "user_type": "buyer",
-                                    "email": entities.get('email')
-                                }
-                            else:
-                                # Show neutral greeting with profile selection
-                                await self._handle_neutral_greeting(user_phone, [{
-                                    'email': entities.get('email', 'your profile'),
-                                    'role': 'buyer'
-                                }], session)
-                                
-                                return {
-                                    "status": "profile_selection_sent",
-                                    "profiles_count": 1,
-                                    "selection_type": "neutral_greeting"
-                                }
+                            # if intent == "buy_something":
+                            logger.info(f"entitiies:{entities}")
+                            # Show buying options with buttons
+                            buying_message = (
+                                f"Got it, you'd like to buy items!\n"
+                                f"Let's continue with your Buyer profile ({entities.get('email', 'your profile')}).\n"
+                            )
+                            header = f"Hi {entities.get('name', 'there')}! What would you like to do today?"
+                            buttons_config = [
+                                {"id": "create_rfq", "title": "Create new RFQ"},
+                                {"id": "rfq_status", "title": "Check RFQ Status"},
+                                {"id": "search_bfs", "title": "Search Stocks"}
+                            ]
+
+                            await self.whatsapp_service.send_configurable_buttons(
+                                user_phone,
+                                buying_message,
+                                buttons_config,
+                                header
+                            )
+
+                            return {
+                                "status": "buyer_options_presented",
+                                "user_type": "buyer",
+                                "email": entities.get('email')
+                            }
                         else:
                             logger.info(f"REGISTRATION_SERVICE: ❌ OTP SUCCESS + DOMAIN FAILED for {user_phone} -> Registration success contact support")
                             # Domain not approved - send pending message
@@ -615,41 +610,30 @@ class RegistrationService:
                     stored_intent_result = session.workflow_state.get("current_intent_result", {})
                     intent = stored_intent_result.get("intent", "general_inquiry")
                     
-                    if intent == "sell_something":
-                        # Show seller options
-                        selling_message = (
-                            f"Got it, you'd like to sell items!\n"
-                            f"Let's continue with your Seller profile ({entities.get('email', 'your profile')}).\n"
-                            f"What would you like to do?"
-                        )
-                        buttons_config = [
-                            {"id": "rfq_status", "title": "Check RFQ Status"},
-                            {"id": "get_support", "title": "Get Support Info"}
-                        ]
-                        
-                        await self.whatsapp_service.send_configurable_buttons(
-                            user_phone,
-                            selling_message,
-                            buttons_config
-                        )
-                        
-                        return {
-                            "status": "seller_options_presented",
-                            "user_type": "seller",
-                            "email": entities.get('email')
-                        }
-                    else:
-                        # Show neutral greeting with profile selection
-                        await self._handle_neutral_greeting(user_phone, [{
-                            'email': entities.get('email', 'your profile'),
-                            'role': 'seller'
-                        }], session)
-                        
-                        return {
-                            "status": "profile_selection_sent",
-                            "profiles_count": 1,
-                            "selection_type": "neutral_greeting"
-                        }
+
+                    # Show seller options
+                    selling_message = (
+                        f"Got it, you'd like to sell items!\n"
+                        f"Let's continue with your Seller profile ({entities.get('email', 'your profile')}).\n"
+                    )
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "get_support", "title": "Get Support Info"}
+                    ]
+                    header = f"Hi {entities.get('name', 'there')}! What would you like to do today?"
+
+                    await self.whatsapp_service.send_configurable_buttons(
+                        user_phone,
+                        selling_message,
+                        buttons_config,
+                        header
+                    )
+
+                    return {
+                        "status": "seller_options_presented",
+                        "user_type": "seller",
+                        "email": entities.get('email')
+                    }
             
             # Handle OTP service redirect to support
             elif otp_result.get("status") == "redirect_to_support":
