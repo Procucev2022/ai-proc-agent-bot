@@ -16,6 +16,7 @@ from app.services.openai_service import OpenAIService
 from app.procucev_apis.register_apis import RegisterAPIService
 from app.services.whatsapp_service import WhatsAppService
 from app.services.support_notification_service import SupportNotificationService
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class DomainCheckService:
         self.register_api_service = RegisterAPIService()
         self.support_notification_service = SupportNotificationService()
         self.session_manager = session_manager
+        self.tools_dir = Path(__file__).parent.parent / "tools"
     
     def normalize(self, text: str) -> str:
         """Normalize text for domain matching."""
@@ -50,16 +52,30 @@ class DomainCheckService:
             comp = self.normalize(company_name)           # "mohapai"
             logger.info(f"DOMAIN_CHECK_SERVICE: Extracted domain='{domain}', normalized_company='{comp}'")
 
+            # Skip fuzzy matching for generic domains
+            generic_domains = {'gmail', 'yahoo', 'hotmail', 'outlook', 'rediff', 'live'}
+            if domain.lower() in generic_domains:
+                logger.info(f"DOMAIN_CHECK_SERVICE: Generic domain '{domain}' detected, score=0")
+                return 0
+
             score = 0
-            if domain in comp or comp in domain:
-                score += 50
-                logger.info(f"DOMAIN_CHECK_SERVICE: Substring match found, added 50 points")
-            
-            # Fuzzy matching
-            ratio = SequenceMatcher(None, domain, comp).ratio()
-            fuzzy_points = int(ratio * 50)
-            score += fuzzy_points
-            logger.info(f"DOMAIN_CHECK_SERVICE: Fuzzy ratio={ratio:.2f}, added {fuzzy_points} points")
+            # Exact match gets high score
+            if domain.lower() == comp.lower():
+                score = 95
+                logger.info(f"DOMAIN_CHECK_SERVICE: Exact match found, score=95")
+            # Substring match
+            elif domain.lower() in comp.lower() or comp.lower() in domain.lower():
+                score = 85
+                logger.info(f"DOMAIN_CHECK_SERVICE: Substring match found, score=85")
+            else:
+                # Fuzzy matching only for non-generic domains
+                ratio = SequenceMatcher(None, domain.lower(), comp.lower()).ratio()
+                if ratio >= 0.8:  # High similarity threshold
+                    score = int(ratio * 80)  # Max 64 points from fuzzy
+                    logger.info(f"DOMAIN_CHECK_SERVICE: High fuzzy ratio={ratio:.2f}, score={score}")
+                else:
+                    score = 0
+                    logger.info(f"DOMAIN_CHECK_SERVICE: Low fuzzy ratio={ratio:.2f}, score=0")
             
             logger.info(f"DOMAIN_CHECK_SERVICE: Final fallback score: {score}")
             return score
@@ -68,39 +84,51 @@ class DomainCheckService:
             return 0
     
     async def ai_domain_match_analysis(self, email: str, company_name: str) -> Dict[str, Any]:
-        """AI-based domain matching analysis."""
+        """AI-based domain matching analysis using proper function calling."""
         logger.info(f"DOMAIN_CHECK_SERVICE: Starting AI domain analysis for email='{email}', company='{company_name}'")
         
         try:
-            logger.info(f"DOMAIN_CHECK_SERVICE: Calling OpenAI for domain analysis")
-            response = self.openai_service.generate_response(
-                context={"email": email, "company_name": company_name},
-                query_results=[],
-                prompt_file="domain_validation/domain_match_analysis"
+            # Load domain matching tool
+            with open(self.tools_dir / "domain_matching.json", 'r') as f:
+                domain_tool = json.load(f)
+            
+            # Build analysis prompt
+            prompt = f"""
+Analyze domain matching for user verification:
+
+EMAIL: "{email}"
+COMPANY NAME: "{company_name}"
+
+Determine if the email domain matches or is related to the company name.
+"""
+            
+            logger.info(f"DOMAIN_CHECK_SERVICE: Calling OpenAI function calling for domain analysis")
+            
+            response = await self.openai_service.client.responses.create(
+                model=self.openai_service.default_model,
+                input=[{"role": "user", "content": prompt}],
+                instructions=self.openai_service._load_prompt("domain_validation", "domain_match_analysis_system"),
+                tools=[domain_tool],
+                tool_choice={"type": "function", "name": "analyze_domain_match"}
             )
-            logger.info(f"DOMAIN_CHECK_SERVICE: OpenAI response received: {response}")
             
-            # Parse JSON response
-            analysis = json.loads(response.strip())
-            logger.info(f"DOMAIN_CHECK_SERVICE: Parsed AI analysis: {analysis}")
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    analysis = json.loads(function_call.arguments)
+                    logger.info(f"DOMAIN_CHECK_SERVICE: AI analysis successful: {analysis}")
+                    
+                    result = {
+                        "success": True,
+                        "analysis": analysis,
+                        "method": "ai"
+                    }
+                    return result
             
-            # Validate response structure
-            required_keys = ["score", "match_type", "confidence", "reasoning"]
-            if all(key in analysis for key in required_keys):
-                result = {
-                    "success": True,
-                    "analysis": analysis,
-                    "method": "ai"
-                }
-                logger.info(f"DOMAIN_CHECK_SERVICE: AI analysis successful: {result}")
-                return result
-            else:
-                logger.warning(f"DOMAIN_CHECK_SERVICE: Invalid AI response structure: {analysis}")
-                return {"success": False, "error": "Invalid AI response"}
+            logger.warning(f"DOMAIN_CHECK_SERVICE: No function call in AI response")
+            return {"success": False, "error": "No function call in response"}
                 
-        except json.JSONDecodeError as e:
-            logger.error(f"DOMAIN_CHECK_SERVICE: AI domain analysis JSON parsing error: {e}")
-            return {"success": False, "error": "JSON parsing failed"}
         except Exception as e:
             logger.error(f"DOMAIN_CHECK_SERVICE: AI domain analysis error: {e}")
             return {"success": False, "error": str(e)}
@@ -184,12 +212,12 @@ class DomainCheckService:
             return result
     
     async def user_approval_api_call(self, user_id: str) -> Dict[str, Any]:
-        """Call user approval API."""
-        logger.info(f"DOMAIN_CHECK_SERVICE: Calling user approval API for user_id: {user_id}")
+        """Call /rest/gmt/acceptSelfRegisterClient API for user approval."""
+        logger.info(f"DOMAIN_CHECK_SERVICE: Calling /rest/gmt/acceptSelfRegisterClient API for user_id: {user_id}")
         
         try:
             approval_response = await self.register_api_service.user_approval(user_id)
-            logger.info(f"DOMAIN_CHECK_SERVICE: API response received: {approval_response}")
+            logger.info(f"DOMAIN_CHECK_SERVICE: /rest/gmt/acceptSelfRegisterClient API response: {approval_response}")
             
             if (approval_response.get("statusCode") == "200" and 
                 approval_response.get("status") == "Success"):
@@ -199,7 +227,7 @@ class DomainCheckService:
                     "message": approval_response.get("message", "User approved successfully"),
                     "api_response": approval_response
                 }
-                logger.info(f"DOMAIN_CHECK_SERVICE: User approval successful: {result}")
+                logger.info(f"DOMAIN_CHECK_SERVICE: /rest/gmt/acceptSelfRegisterClient API call successful: {result}")
                 return result
             else:
                 result = {
@@ -208,10 +236,10 @@ class DomainCheckService:
                     "message": approval_response.get("message", "Domain approval failed"),
                     "api_response": approval_response
                 }
-                logger.warning(f"DOMAIN_CHECK_SERVICE: User approval failed: {result}")
+                logger.warning(f"DOMAIN_CHECK_SERVICE: /rest/gmt/acceptSelfRegisterClient API call failed: {result}")
                 return result
         except Exception as e:
-            logger.error(f"DOMAIN_CHECK_SERVICE: API approval error for user {user_id}: {e}")
+            logger.error(f"DOMAIN_CHECK_SERVICE: /rest/gmt/acceptSelfRegisterClient API error for user {user_id}: {e}")
             result = {
                 "approved": False,
                 "status": "error",
@@ -223,13 +251,14 @@ class DomainCheckService:
     
     async def process_user_approval(self, user_phone: str, user_id: str, 
                                   session, domain_check_result: Dict[str, Any]) -> Dict[str, Any]:
-        """Process user approval flow based on domain check results."""
+        """Process user approval flow based on AI domain check results."""
         logger.info(f"DOMAIN_CHECK_SERVICE: Processing user approval for phone={user_phone}, user_id={user_id}")
         logger.info(f"DOMAIN_CHECK_SERVICE: Domain check result: {domain_check_result}")
         
         try:
-            if domain_check_result.get("approved"):
-                logger.info(f"DOMAIN_CHECK_SERVICE: Domain approved for user {user_id}, calling approval API")
+            # Only call API if AI-based domain matching says approved=True
+            if domain_check_result.get("approved") and domain_check_result.get("method") == "ai":
+                logger.info(f"DOMAIN_CHECK_SERVICE: AI approved domain for user {user_id}, calling approval API")
                 
                 approval_result = await self.user_approval_api_call(user_id)
                 
@@ -286,10 +315,12 @@ class DomainCheckService:
                         f"API approval failed: {approval_result.get('message', 'Unknown error')}", session
                     )
             else:
-                logger.warning(f"DOMAIN_CHECK_SERVICE: Domain not approved, redirecting to support")
+                # AI says not approved OR fallback method was used - redirect to support
+                reason = "ai_domain_mismatch" if domain_check_result.get("method") == "ai" else "fallback_method_used"
+                logger.warning(f"DOMAIN_CHECK_SERVICE: {reason}, not calling API, redirecting to support")
                 return await self._redirect_to_support(
-                    user_phone, "domain_mismatch", 
-                    f"Domain mismatch: {domain_check_result.get('reasoning', 'No match found')}", session
+                    user_phone, reason, 
+                    f"Domain check failed: {domain_check_result.get('reasoning', 'No match found')}", session
                 )
                 
         except Exception as e:

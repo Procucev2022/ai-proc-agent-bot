@@ -287,7 +287,7 @@ class ChatService:
                     "redirected_to_buyer_registration", "redirected_to_seller_registration",
                     "intent_mismatch_handled", "intent_mismatch_retry_sent", "new_user_registration_presented",
                     "buyer_options_presented", "single_buyer_profile_selection_presented", "profile_selection_sent",
-                    "registration_type_clarification_sent"
+                    "registration_type_clarification_sent", "verification_failed"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
@@ -306,10 +306,16 @@ class ChatService:
                     return auth_result
                 elif auth_status in ["redirected_to_support", "redirect_to_support", "user_exited"]:
                     # Max OTP retries exceeded, user exited, or other support-requiring scenario
-                    logger.info(f"Redirect to support or user exit requested - calling exit service for {user_phone}")
-                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                    await self.session_manager.save_session(session, WorkflowType.user_exit)
-                    return exit_result
+                    # Check if exit has already been completed to avoid duplicate calls
+                    if auth_result.get("exit_completed"):
+                        logger.info(f"Exit already completed in auth flow for {user_phone}, skipping duplicate exit call")
+                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        return auth_result
+                    else:
+                        logger.info(f"Redirect to support or user exit requested - calling exit service for {user_phone}")
+                        exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        return exit_result
                 elif auth_status == "registration_completed":
                     # Registration completed - check if this is truly complete or needs further processing
                     registration_flow_complete = auth_result.get("registration_flow_complete", False)
@@ -500,10 +506,16 @@ class ChatService:
                 # Handle dict responses that weren't caught above
                 auth_status = auth_result.get("status")
                 if auth_status == "redirected_to_support" or auth_status == "redirect_to_support" :
-                    logger.info(f"Final redirect to support - calling exit service for {user_phone}")
-                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                    await self.session_manager.save_session(session, WorkflowType.user_exit)
-                    return exit_result
+                    # Check if exit has already been completed to avoid duplicate calls
+                    if auth_result.get("exit_completed"):
+                        logger.info(f"Exit already completed in auth flow for {user_phone}, skipping duplicate exit call")
+                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        return auth_result
+                    else:
+                        logger.info(f"Final redirect to support - calling exit service for {user_phone}")
+                        exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        return exit_result
                 elif auth_status == "verification_required":
                     # Handle verification required status
                     logger.info(f"Verification required for {user_phone}")
@@ -513,6 +525,25 @@ class ChatService:
                     verification_message = redirect_info.get("message", "Email verification is required to continue.")
                     
                     # await self.whatsapp_service.send_message(user_phone, verification_message)
+                    
+                    await self.session_manager.save_session(session, WorkflowType.authentication)
+                    return auth_result
+                elif auth_status == "verification_failed":
+                    # Handle verification failed status
+                    logger.info(f"Verification failed for {user_phone}")
+                    
+                    # Send verification failed message to user
+                    redirect_info = auth_result.get("redirect_info", {})
+                    pending_message = (
+                        "*Registration received—thank you!*\n\n"
+                        "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                        "Our team will get in touch shortly to complete the process, and once verified, "
+                        "you’ll be able to access your account and start raising RFQs."
+                    )
+
+                    verification_message = redirect_info.get("message", pending_message)
+                    
+                    await self.whatsapp_service.send_message(user_phone, verification_message)
                     
                     await self.session_manager.save_session(session, WorkflowType.authentication)
                     return auth_result

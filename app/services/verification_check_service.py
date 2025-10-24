@@ -141,9 +141,9 @@ class VerificationCheckService:
                                     user_dict.update(refreshed_data)
                                     return {"access_granted": True, "user_data": user_dict}
                                 elif refreshed_approved is False:
-                                    # Still not approved after refresh - call domain check API
-                                    logger.info(f"User still not approved after refresh - calling domain check API")
-                                    domain_result = await self._check_domain_approval(user_id, refreshed_approved)
+                                    # Still not approved after refresh - call AI domain check
+                                    logger.info(f"User still not approved after refresh - calling AI domain check")
+                                    domain_result = await self._check_domain_approval(user_id, refreshed_approved, refreshed_data)
                                     if domain_result.get("approved"):
                                         logger.info(f"Domain check successful - user approved, refreshing data after approval")
                                         
@@ -171,13 +171,31 @@ class VerificationCheckService:
                                             return {"access_granted": True, "user_data": user_dict}
                                     else:
                                         logger.info(f"Blocking access - buyer domain check failed: {domain_result}")
+                                        
+                                        # Send email notification to support for domain mismatch
+                                        try:
+                                            from app.services.support_notification_service import SupportNotificationService
+                                            support_service = SupportNotificationService()
+                                            full_name = refreshed_data.get("fullName", "Unknown")
+                                            email = refreshed_data.get("username") or refreshed_data.get("email", "Unknown")
+                                            notification_result = await support_service.notify_buyer_registration_not_approved(full_name, email, user_phone)
+                                            logger.info(f"Support notification sent for domain mismatch: {email}, result: {notification_result}")
+                                        except Exception as e:
+                                            logger.error(f"Failed to send support notification for domain mismatch: {e}")
+                                        
                                         return {
                                             "verification_required": True,
                                             "redirect_to_support": True,
                                             "redirect_info": {
                                                 "flow": "pending_approval",
                                                 "reason": "domain_not_approved",
-                                                "message": "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
+                                                "message": (
+                                                    "*Registration received—thank you!*\n\n"
+                                                    "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                                                    "Our team will get in touch shortly to complete the process, and once verified, "
+                                                    "you’ll be able to access your account and start raising RFQs."
+                                                ),
+
                                             }
                                         }
                                 else:
@@ -189,27 +207,49 @@ class VerificationCheckService:
                                         "redirect_info": {
                                             "flow": "pending_approval",
                                             "reason": "approval_pending",
-                                            "message": "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
+                                            "message": (
+                                                "*Registration received—thank you!*\n\n"
+                                                "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                                                "Our team will get in touch shortly to complete the process, and once verified, "
+                                                "you’ll be able to access your account and start raising RFQs."
+                                            ),
                                         }
                                     }
                             else:
                                 # Failed to refresh - use original logic with domain check
                                 logger.warning(f"Failed to refresh user data - using original approval logic")
                                 if approved is False:
-                                    domain_result = await self._check_domain_approval(user_id, approved)
+                                    domain_result = await self._check_domain_approval(user_id, approved, user_dict)
                                     if domain_result.get("approved"):
                                         logger.info(f"Domain check successful - user approved, granting access")
                                         user_dict["approved"] = True
                                         return {"access_granted": True, "user_data": user_dict}
                                     else:
                                         logger.info(f"Blocking access - buyer domain check failed: {domain_result}")
+                                        
+                                        # Send email notification to support for domain mismatch
+                                        try:
+                                            from app.services.support_notification_service import SupportNotificationService
+                                            support_service = SupportNotificationService()
+                                            full_name = user_dict.get("fullName", "Unknown")
+                                            email = user_dict.get("username") or user_dict.get("email", "Unknown")
+                                            notification_result = await support_service.notify_buyer_registration_not_approved(full_name, email, user_phone)
+                                            logger.info(f"Support notification sent for domain mismatch: {email}, result: {notification_result}")
+                                        except Exception as e:
+                                            logger.error(f"Failed to send support notification for domain mismatch: {e}")
+                                        
                                         return {
                                             "verification_required": True,
                                             "redirect_to_support": True,
                                             "redirect_info": {
                                                 "flow": "pending_approval",
                                                 "reason": "domain_not_approved",
-                                                "message": "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
+                                                "message": (
+                                                    "*Registration received—thank you!*\n\n"
+                                                    "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                                                    "Our team will get in touch shortly to complete the process, and once verified, "
+                                                    "you’ll be able to access your account and start raising RFQs."
+                                                ),
                                             }
                                         }
                                 else:
@@ -220,7 +260,12 @@ class VerificationCheckService:
                                         "redirect_info": {
                                             "flow": "pending_approval",
                                             "reason": "not_approved",
-                                            "message": "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
+                                            "message": (
+                                                "*Registration received—thank you!*\n\n"
+                                                "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                                                "Our team will get in touch shortly to complete the process, and once verified, "
+                                                "you’ll be able to access your account and start raising RFQs."
+                                            ),
                                         }
                                     }
                         else:
@@ -232,7 +277,12 @@ class VerificationCheckService:
                                 "redirect_info": {
                                     "flow": "pending_approval",
                                     "reason": "missing_user_id",
-                                    "message": "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
+                                    "message": (
+                                        "*Registration received—thank you!*\n\n"
+                                        "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                                        "Our team will get in touch shortly to complete the process, and once verified, "
+                                        "you’ll be able to access your account and start raising RFQs."
+                                    ),
                                 }
                             }
                 else:
@@ -343,12 +393,12 @@ class VerificationCheckService:
             logger.error(f"Error sending verification OTP: {e}")
             return {"status": "otp_send_failed", "reason": str(e)}
     
-    async def _check_domain_approval(self, user_id: str, current_approved_status: bool = None) -> Dict[str, Any]:
-        """Check user domain approval - only call API if not already approved."""
+    async def _check_domain_approval(self, user_id: str, current_approved_status: bool = None, user_data: Dict = None) -> Dict[str, Any]:
+        """Check user domain approval using AI-based domain matching first, then call API only if AI approves."""
         try:
             # If user is already approved, don't call the API again
             if current_approved_status is True:
-                logger.info(f"User {user_id} is already approved, skipping API call")
+                logger.info(f"User {user_id} is already approved, skipping domain check")
                 return {
                     "approved": True,
                     "status": "already_approved",
@@ -357,8 +407,49 @@ class VerificationCheckService:
             
             from app.services.domain_check_service import DomainCheckService
             domain_check_service = DomainCheckService()
-            # Only call approval API if user is not already approved
-            return await domain_check_service.user_approval_api_call(user_id)
+            
+            # Extract email and company name for AI domain matching
+            if user_data:
+                email = user_data.get("username") or user_data.get("email")
+                company_name = user_data.get("companyName") or user_data.get("company_name")
+
+                logger.info(f"email:{email}, company_name:{company_name}")
+                
+                if email and company_name:
+                    logger.info(f"Performing AI domain matching for user {user_id}: email={email}, company={company_name}")
+                    
+                    # Step 1: AI-based domain matching
+                    domain_check_result = await domain_check_service.check_domain_match(email, company_name)
+                    logger.info(f"AI domain check result: {domain_check_result}")
+                    
+                    # Step 2: Only call API if AI says approved=True and method=ai
+                    if domain_check_result.get("approved") and domain_check_result.get("method") == "ai":
+                        logger.info(f"AI approved domain match, calling /rest/gmt/acceptSelfRegisterClient API")
+                        api_result = await domain_check_service.user_approval_api_call(user_id)
+                        return api_result
+                    else:
+                        logger.info(f"AI rejected domain match or used fallback method, not calling API")
+                        return {
+                            "approved": False,
+                            "status": "ai_domain_rejected",
+                            "message": f"Domain matching failed: {domain_check_result.get('reasoning', 'AI domain check failed')}",
+                            "domain_check_result": domain_check_result
+                        }
+                else:
+                    logger.warning(f"Missing email or company name for domain check: email={email}, company={company_name}")
+                    return {
+                        "approved": False,
+                        "status": "missing_domain_data",
+                        "message": "Missing email or company name for domain verification"
+                    }
+            else:
+                logger.warning(f"No user data provided for domain check")
+                return {
+                    "approved": False,
+                    "status": "missing_user_data",
+                    "message": "User data required for domain verification"
+                }
+            
         except Exception as e:
             logger.error(f"Domain approval check error: {e}")
             return {"approved": False, "error": str(e)}

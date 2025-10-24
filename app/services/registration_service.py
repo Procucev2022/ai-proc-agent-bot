@@ -522,7 +522,7 @@ class RegistrationService:
                         logger.info(f"REGISTRATION_SERVICE: Checking domain approval for user_id: {user_id}")
                         from app.services.verification_check_service import VerificationCheckService
                         verification_service = VerificationCheckService(None, self.otp_service, self.whatsapp_service)
-                        domain_result = await verification_service._check_domain_approval(user_id)
+                        domain_result = await verification_service._check_domain_approval(user_id, None, entities)
                         logger.info(f"REGISTRATION_SERVICE: Domain check result: {domain_result}")
                         
                         if domain_result.get("approved"):
@@ -563,18 +563,28 @@ class RegistrationService:
                             }
                         else:
                             logger.info(f"REGISTRATION_SERVICE: ❌ OTP SUCCESS + DOMAIN FAILED for {user_phone} -> Registration success contact support")
-                            # Domain not approved - send pending message
-                            pending_message = "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
                             
+                            # Send email notification to support team
+                            await self.support_notification_service.notify_buyer_registration_not_approved(
+                                entities.get("name", "User"),
+                                entities.get("email", "unknown"),
+                                user_phone
+                            )
+                            
+                            # Domain not approved - send pending message
+                            pending_message = (
+                                "*Registration received—thank you!*\n\n"
+                                "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                                "Our team will get in touch shortly to complete the process, and once verified, "
+                                "you’ll be able to access your account and start raising RFQs."
+                            )
+
                             if self.session_manager:
                                 await self.session_manager.send_and_track_message(user_phone, pending_message, session)
                             else:
                                 await self.whatsapp_service.send_message(user_phone, pending_message)
                             
-                            # Exit the flow
-                            from app.services.exit_service import ExitService
-                            exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
-                            await exit_service.handle_exit_intent(user_phone, session)
+                            
                             
                             return {
                                 "status": "redirect_to_support",
@@ -583,18 +593,28 @@ class RegistrationService:
                             }
                     else:
                         logger.warning(f"REGISTRATION_SERVICE: ❌ OTP SUCCESS + NO USER_ID for {user_phone} -> Registration success contact support")
-                        # No user_id found - redirect to support
-                        pending_message = "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
                         
+                        # Send email notification to support team
+                        await self.support_notification_service.notify_buyer_registration_not_approved(
+                            entities.get("name", "User"),
+                            entities.get("email", "unknown"),
+                            user_phone
+                        )
+                        
+                        # No user_id found - redirect to support
+                        pending_message = (
+                            "*Registration received—thank you!*\n\n"
+                            "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                            "Our team will get in touch shortly to complete the process, and once verified, "
+                            "you’ll be able to access your account and start raising RFQs."
+                        )
+
                         if self.session_manager:
                             await self.session_manager.send_and_track_message(user_phone, pending_message, session)
                         else:
                             await self.whatsapp_service.send_message(user_phone, pending_message)
                         
-                        # Exit the flow
-                        from app.services.exit_service import ExitService
-                        exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
-                        await exit_service.handle_exit_intent(user_phone, session)
+
                         
                         return {
                             "status": "redirect_to_support",
