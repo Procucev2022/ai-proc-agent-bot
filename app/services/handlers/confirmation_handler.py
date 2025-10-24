@@ -395,18 +395,20 @@ class ConfirmationHandler:
             
             # Transform to format expected by GMT API service
             rfq_data = {
-                "product_name": schema_dict.get("project_desc", "Unknown Product"),
-                "quantity": schema_dict.get("items", [{}])[0].get("quantity", 1) if schema_dict.get("items") else 1,
-                "unit_of_measure": schema_dict.get("items", [{}])[0].get("unit_of_measures", "pcs") if schema_dict.get("items") else "pcs",
+                "project_desc": schema_dict.get("project_desc", "Unknown Product"),
+                "items": schema_dict.get("items", []),
                 "division": schema_dict.get("division", "Admin & IT"),
-                "specifications": schema_dict.get("items", [{}])[0].get("description", "") if schema_dict.get("items") else "",
                 "preferred_brand": schema_dict.get("preferred_brand", ""),
                 "delivery_state": schema_dict.get("delivery_locations", [{}])[0].get("state", "Karnataka") if schema_dict.get("delivery_locations") else "Karnataka",
                 "delivery_city": schema_dict.get("delivery_locations", [{}])[0].get("city", "Bangalore") if schema_dict.get("delivery_locations") else "Bangalore",
                 "delivery_pincode": schema_dict.get("delivery_locations", [{}])[0].get("pincode", "560001") if schema_dict.get("delivery_locations") else "560001",
                 "deadline": schema_dict.get("delivery_date"),
                 "remarks": schema_dict.get("remarks", "Created via AI Procurement WhatsApp Bot"),
-                "attachments": attachments  # Include attachments in the data passed to GMT API
+                "attachments": attachments,
+                "product_name": schema_dict.get("project_desc", "Unknown Product"),
+                "quantity": schema_dict.get("items", [{}])[0].get("quantity", 1) if schema_dict.get("items") else 1,
+                "unit_of_measure": schema_dict.get("items", [{}])[0].get("unit_of_measures", "pcs") if schema_dict.get("items") else "pcs",
+                "specifications": schema_dict.get("items", [{}])[0].get("description", "") if schema_dict.get("items") else ""
             }
             
             # Submit to backend via GMT API
