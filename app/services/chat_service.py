@@ -612,15 +612,8 @@ class ChatService:
                 return await self._handle_registration_workflow(user, message)
 
             logger.info(f"user  phone number {user.phone_number}")
-            
-            # Access user details from global context
-            from app.context import user_context
-            # Normalize phone number (remove + prefix for consistent Redis keys)
-            normalized_phone = user.phone_number.lstrip('+')
-            context_data = user_context.get(normalized_phone)
-            user_details = context_data.get("user_details") if context_data else None
-            if user_details:
-                logger.info(f"Processing with user details from global context: {user_details}")
+
+            logger.info(f"use details:{user.email}")
 
 
 

@@ -4,6 +4,36 @@ Message Queueing Service for messages received from webhook.
 This service handles queueing, and batch processing of user messages.
 It queues incoming messages, sorts them into batches, and processes batches sequentially to ensure
 that messages are sent in the correct order and without overwhelming the recipient.
+
+======================
+Session Management Notes
+======================
+
+Database Session Propagation (to prevent connection leaks):
+- ChatService receives db_session and passes to:
+  ✅ DatabaseManager(session=db_session)
+  ✅ VendorService(db_session=db_session)
+  ✅ RFQBackgroundService(db_session=db_session)
+  ✅ SellerService(db_session=db_session)
+  ✅ RFQStatusService(db_session=db_session)
+  ✅ ChatSummaryService(db_session=db_session)
+
+- Sub-services that accept db_session but may still leak if not properly passed:
+  ⚠️ RFQBackgroundService creates:
+     - SellerRecommendationService(self.db_session) ✅
+     - RFQIntimationService(self.db_session) ✅
+     Note: These receive the session from RFQBackgroundService, but if
+     RFQBackgroundService doesn't receive a session, it creates its own
+     with get_db_session(), which won't be closed by the context manager.
+
+- Services that always create their own sessions (designed for independent use):
+  ℹ️ DailySummaryService - uses get_db_session() internally (background job)
+  ℹ️ LearningCategorizationService - uses get_db_session() internally (background job)
+
+Recommendation: 
+- Continue to pass db_session through the entire chain
+- RFQBackgroundService properly receives and propagates session
+- Monitor connection pool metrics (see database.py log_connection_pool_status())
 """
 
 import logging
@@ -11,7 +41,7 @@ import dataclasses
 import asyncio
 import time
 import json
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from redis.asyncio import Redis
 
@@ -98,6 +128,8 @@ class MessageQueueService:
         # Scheduler/task bookkeeping
         self._scheduler_task: Optional[asyncio.Task] = None
         self._scheduler_lock: Optional[asyncio.Lock] = None
+        self._watchdog_task: Optional[asyncio.Task] = None
+        self._watchdog_lock: Optional[asyncio.Lock] = None
         self._inflight_tasks: Dict[str, asyncio.Task] = {}
 
         # Import WhatsAppService for sending messages
@@ -207,10 +239,25 @@ class MessageQueueService:
 
             # Add to incoming queue (sorted set)
             incoming_key = self.get_incoming_key(user_phone)
-            await self.redis_client.zadd(
-                incoming_key,
-                {json.dumps(message.to_dict()): timestamp}
-            )
+            
+            redis_start = time.time()
+            try:
+                await self.redis_client.zadd(
+                    incoming_key,
+                    {json.dumps(message.to_dict()): timestamp}
+                )
+                redis_duration = time.time() - redis_start
+                if redis_duration > 0.5:
+                    logger.warning(
+                        f"[REDIS-SLOW] ZADD operation took {redis_duration:.2f}s "
+                        f"for user {user_phone}"
+                    )
+            except Exception as redis_error:
+                logger.error(
+                    f"[REDIS-ERROR] Failed to add message to incoming queue: {redis_error}",
+                    exc_info=True
+                )
+                raise
 
             # Check if we should send acknowledgment (for 2nd+ messages when system is busy)
             should_send_ack = await self._should_send_acknowledgment(user_phone)
@@ -221,10 +268,22 @@ class MessageQueueService:
             # Ensure global timer scheduler is running
             await self._ensure_scheduler_task()
 
+            # Ensure watchdog is running
+            await self._ensure_watchdog_task()
+
             # Manage timer with lock
             timer_lock_key = self.get_timer_lock_key(user_phone)
             timer_lock = self.redis_client.lock(timer_lock_key, timeout=5, blocking_timeout=5)
+            
+            lock_acquire_start = time.time()
             async with timer_lock:
+                lock_acquire_duration = time.time() - lock_acquire_start
+                if lock_acquire_duration > 1:
+                    logger.warning(
+                        f"[LOCK-SLOW] Timer lock acquisition took {lock_acquire_duration:.2f}s "
+                        f"for user {user_phone}. Potential contention."
+                    )
+                
                 await self._schedule_timer(user_phone)
 
             logger.info(f"Message {message_id} enqueued successfully for user {user_phone}")
@@ -262,6 +321,137 @@ class MessageQueueService:
             if exc:
                 logger.error("Timer scheduler task failed: %s", exc, exc_info=True)
         self._scheduler_task = None
+
+    async def _ensure_watchdog_task(self):
+        """
+        Ensure the global batch watchdog is running.
+        Creates the background task lazily when the first message arrives.
+        """
+        if self._watchdog_lock is None:
+            self._watchdog_lock = asyncio.Lock()
+
+        async with self._watchdog_lock:
+            if self._watchdog_task and not self._watchdog_task.done():
+                return
+
+            loop = asyncio.get_running_loop()
+            self._watchdog_task = loop.create_task(self._watchdog_loop())
+            self._watchdog_task.add_done_callback(self._handle_watchdog_completion)
+            logger.debug("Started batch watchdog task")
+
+    def _handle_watchdog_completion(self, task: asyncio.Task):
+        """
+        Called when the watchdog task finishes. Logs the outcome and resets state
+        so the watchdog can be restarted on demand.
+        """
+        if task.cancelled():
+            logger.warning("Batch watchdog task was cancelled")
+        else:
+            exc = task.exception()
+            if exc:
+                logger.error("Batch watchdog task failed: %s", exc, exc_info=True)
+        self._watchdog_task = None
+
+    async def _watchdog_loop(self):
+        """
+        Continuously monitors batches being processed and alerts on stuck batches.
+        Runs every 30 seconds to check for batches that have been processing too long.
+        
+        This helps detect:
+        - Batches stuck due to slow external APIs (OpenAI, DB)
+        - Batches approaching the 60s TTL limit
+        - Worker crashes that left processing keys orphaned
+        """
+        backoff = 30.0  # Check every 30 seconds
+        
+        while True:
+            try:
+                await asyncio.sleep(backoff)
+                
+                # Scan for all processing keys
+                pattern = "*:processing"
+                processing_keys = []
+                
+                # Use SCAN instead of KEYS for production safety
+                cursor = 0
+                while True:
+                    cursor, keys = await self.redis_client.scan(
+                        cursor=cursor, 
+                        match=pattern, 
+                        count=100
+                    )
+                    processing_keys.extend(keys)
+                    if cursor == 0:
+                        break
+                
+                if not processing_keys:
+                    continue
+                
+                logger.debug(f"[WATCHDOG] Checking {len(processing_keys)} active batches")
+                
+                for key in processing_keys:
+                    try:
+                        # Extract user phone from key
+                        user_phone = key.replace(self.PROCESSING_KEY_SUFFIX, "")
+                        
+                        # Get batch_id and check how long it's been processing
+                        batch_id = await self.redis_client.get(key)
+                        if not batch_id:
+                            continue
+                        
+                        # Get TTL to calculate processing duration
+                        ttl = await self.redis_client.ttl(key)
+                        
+                        if ttl == -1:
+                            # Key has no expiry - this shouldn't happen with our setup
+                            logger.error(
+                                f"[WATCHDOG] Processing key has no TTL! "
+                                f"user={user_phone}, batch_id={batch_id}. "
+                                f"This indicates a code bug."
+                            )
+                            continue
+                        
+                        if ttl == -2:
+                            # Key doesn't exist - race condition, skip
+                            continue
+                        
+                        # Calculate how long the batch has been processing
+                        # TTL=60s initially, so processing_duration = 60 - ttl
+                        processing_duration = 60 - ttl
+                        
+                        # Alert at different thresholds
+                        if processing_duration >= 50:
+                            logger.critical(
+                                f"[WATCHDOG-CRITICAL] Batch approaching TTL limit! "
+                                f"user={user_phone}, batch_id={batch_id}, "
+                                f"processing_for={processing_duration}s, ttl_remaining={ttl}s. "
+                                f"Risk of parallel batch creation!"
+                            )
+                        elif processing_duration >= 40:
+                            logger.error(
+                                f"[WATCHDOG-ERROR] Batch processing very slow! "
+                                f"user={user_phone}, batch_id={batch_id}, "
+                                f"processing_for={processing_duration}s, ttl_remaining={ttl}s"
+                            )
+                        elif processing_duration >= 30:
+                            logger.warning(
+                                f"[WATCHDOG-WARNING] Batch processing slowly. "
+                                f"user={user_phone}, batch_id={batch_id}, "
+                                f"processing_for={processing_duration}s, ttl_remaining={ttl}s"
+                            )
+                    
+                    except Exception as key_error:
+                        logger.error(f"[WATCHDOG] Error checking key {key}: {key_error}")
+                        continue
+                
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error("[WATCHDOG] Watchdog loop encountered error: %s", exc, exc_info=True)
+                await asyncio.sleep(min(backoff, 30))
+            else:
+                backoff = 30.0  # Reset backoff on success
+
 
     async def _timer_scheduler_loop(self):
         """
@@ -432,7 +622,7 @@ class MessageQueueService:
                 # Send directly via WhatsAppService (not through wrapper)
                 await self.whatsapp_service.send_message(
                     recipient_id=recipient_id,
-                    message="Got it, Please wait while we process your request, we will be back shortly"
+                    message="Got it. Please wait while we process your request, we will be back shortly."
                 )
                 
                 logger.info(f"[ACK_SEND] Successfully sent processing acknowledgment to {user_phone}")
@@ -482,7 +672,15 @@ class MessageQueueService:
         batch_lock_key = self.get_batch_lock_key(user_phone)
         batch_lock = self.redis_client.lock(batch_lock_key, timeout=10, blocking_timeout=10)
 
+        lock_acquire_start = time.time()
         async with batch_lock:
+            lock_acquire_duration = time.time() - lock_acquire_start
+            if lock_acquire_duration > 2:
+                logger.warning(
+                    f"[LOCK-SLOW] Batch lock acquisition took {lock_acquire_duration:.2f}s "
+                    f"for user {user_phone}. Potential contention."
+                )
+            
             incoming_key = self.get_incoming_key(user_phone)
 
             # Get all messages (sorted by timestamp)
@@ -503,19 +701,35 @@ class MessageQueueService:
                     msg_dict = json.loads(msg_json)
                     messages.append(Message.from_dict(msg_dict))
                 except Exception as e:
-                    logger.error(f"Error parsing message during batch creation: {e}")
+                    logger.error(f"[BATCH_CREATE] Error parsing message during batch creation: {e}")
                     continue
+
+            # CRITICAL: Remove only the messages we retrieved (atomic selective removal)
+            # This prevents race condition where new messages arrive during parsing
+            # Uses ZREM to remove only the retrieved messages by their exact values,
+            # allowing any messages added during processing to remain in the queue.
+            if message_data_list:
+                removed_count = await self.redis_client.zrem(incoming_key, *message_data_list)
+                logger.info(
+                    f"[BATCH_CREATE] Removed {removed_count}/{len(message_data_list)} messages "
+                    f"from incoming queue for {user_phone}"
+                )
+                
+                # Metric tracking: detect anomalies
+                if removed_count < len(message_data_list):
+                    logger.warning(
+                        f"[BATCH_CREATE] Removed count mismatch for {user_phone}: "
+                        f"expected {len(message_data_list)}, removed {removed_count}. "
+                        f"Possible duplicate messages or concurrent removal."
+                    )
 
             if not messages:
                 logger.warning(
-                    "[BATCH_CREATE] Incoming queue for user %s contained only unparsable messages; skipping batch",
+                    "[BATCH_CREATE] Incoming queue for user %s contained only unparsable messages; "
+                    "removed them to prevent queue blocking",
                     user_phone,
                 )
-                await self.redis_client.delete(incoming_key)
                 return
-
-            # Clear incoming queue
-            await self.redis_client.delete(incoming_key)
             
             logger.info(
                 f"[BATCH_CREATE] Cleared incoming queue for user {user_phone}. "
@@ -609,11 +823,15 @@ class MessageQueueService:
             return
 
         # Mark as processing
-        await self.redis_client.set(processing_key, batch.batch_id, ex=300)  # 5 min expiry
+        await self.redis_client.set(processing_key, batch.batch_id, ex=60)  # 60s TTL
+
+        # Store processing start time for monitoring
+        processing_start_key = f"{user_phone}:processing_started_at"
+        await self.redis_client.set(processing_start_key, time.time(), ex=60)
 
         # Persist payload for safe retries if needed
         processing_payload_key = self.get_processing_payload_key(user_phone)
-        await self.redis_client.set(processing_payload_key, batch_json, ex=300)
+        await self.redis_client.set(processing_payload_key, batch_json, ex=60)  # 60s TTL
 
         logger.info(
             f"[START_PROCESSING] Starting processing for batch {batch.batch_id}. "
@@ -675,14 +893,17 @@ class MessageQueueService:
         Process a batch through ChatService.
         """
         current_batch_key = None
+        processing_start = time.time()
+        processing_start_key = f"{batch.user_phone}:processing_started_at"
+        
         try:
             # Store batch context in Redis for wrapper methods to access
             current_batch_key = self.get_current_batch_key(batch.user_phone)
-            await self.redis_client.set(current_batch_key, batch.batch_id, ex=300)  # 5 min expiry
+            await self.redis_client.set(current_batch_key, batch.batch_id, ex=60)  # 60s TTL
             
             logger.info(
-                f"Processing batch {batch.batch_id} for user {batch.user_phone}. "
-                f"Content: {batch.concatenated_content[:100]}..."  # Log first 100 chars
+                f"[BATCH_PROCESS] Starting batch {batch.batch_id} for user {batch.user_phone}. "
+                f"Message count: {batch.message_count}. Content preview: {batch.concatenated_content[:100]}..."
             )
             
             # Import ChatService here to avoid circular import
@@ -704,7 +925,7 @@ class MessageQueueService:
             # If processing completes without calling any send method, cleanup here as fallback
             if current_batch_key and await self.redis_client.exists(current_batch_key):
                 logger.warning(
-                    f"Batch {batch.batch_id} completed without sending message. "
+                    f"[BATCH_PROCESS] Batch {batch.batch_id} completed without sending message. "
                     "This might indicate an error in the processing pipeline. "
                     "Cleaning up manually."
                 )
@@ -712,11 +933,51 @@ class MessageQueueService:
 
         except Exception as e:
             logger.error(
-                f"Error processing batch {batch.batch_id}: {e}",
+                f"[BATCH_PROCESS] Error processing batch {batch.batch_id}: {e}",
                 exc_info=True
             )
             # Cleanup on error
             await self._handle_batch_cleanup(batch.batch_id, batch.user_phone, success=False)
+        
+        finally:
+            # Log batch processing duration with TTL warnings
+            duration = time.time() - processing_start
+            logger.info(
+                f"[BATCH_TIMING] Batch {batch.batch_id} for {batch.user_phone} "
+                f"completed in {duration:.2f}s"
+            )
+            
+            # Warning for slow batches (>30s is unusual)
+            if duration > 30:
+                logger.warning(
+                    f"[SLOW_BATCH] Batch {batch.batch_id} took {duration:.2f}s to process. "
+                    f"This is unusually slow. User: {batch.user_phone}, "
+                    f"message_count: {batch.message_count}"
+                )
+            
+            # Critical alert for very slow batches approaching TTL
+            if duration > 45:
+                logger.error(
+                    f"[CRITICAL_SLOW_BATCH] Batch {batch.batch_id} took {duration:.2f}s. "
+                    f"Approaching 60s TTL limit! Investigate immediately. "
+                    f"User: {batch.user_phone}. "
+                    f"Risk of parallel batch creation if TTL expires!"
+                )
+            
+            # Critical alert if batch exceeded TTL
+            if duration > 60:
+                logger.critical(
+                    f"[TTL_EXCEEDED] Batch {batch.batch_id} took {duration:.2f}s - EXCEEDED 60s TTL! "
+                    f"Processing key likely expired during execution. "
+                    f"User: {batch.user_phone}. "
+                    f"Parallel batches may have been created. Immediate investigation required!"
+                )
+            
+            # Clean up processing start time tracker
+            try:
+                await self.redis_client.delete(processing_start_key)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup processing_start_key: {cleanup_error}")
 
     # ========================================
     # WhatsApp Wrapper Methods (with cleanup)
@@ -926,7 +1187,16 @@ class MessageQueueService:
 
             try:
                 batch_lock = self.redis_client.lock(batch_lock_key, timeout=10, blocking_timeout=10)
+                
+                lock_acquire_start = time.time()
                 async with batch_lock:
+                    lock_acquire_duration = time.time() - lock_acquire_start
+                    if lock_acquire_duration > 2:
+                        logger.warning(
+                            f"[LOCK-SLOW] Cleanup lock acquisition took {lock_acquire_duration:.2f}s "
+                            f"for user {user_phone}. Potential contention."
+                        )
+                    
                     payload = await self.redis_client.get(processing_payload_key)
                     await self.redis_client.delete(processing_key)
                     await self.redis_client.delete(processing_payload_key)
@@ -987,6 +1257,214 @@ class MessageQueueService:
     # Utility Methods
     # ==================
 
+    async def audit_queue_health(self) -> Dict[str, Any]:
+        """
+        Perform comprehensive health check on all user queues.
+        
+        Detects:
+        - Stale incoming queues (messages waiting >30s without batch creation)
+        - Orphaned processing keys (no corresponding inflight task)
+        - Queues exceeding depth thresholds
+        
+        Triggers recovery for detected issues.
+        
+        Returns:
+            Dict with health status and issues found
+        """
+        health_report = {
+            "timestamp": time.time(),
+            "total_users_checked": 0,
+            "issues": [],
+            "warnings": [],
+            "healthy_queues": 0,
+            "recoveries_attempted": []
+        }
+        
+        try:
+            # Scan for all incoming queues
+            incoming_pattern = f"*{self.INCOMING_QUEUE_SUFFIX}"
+            incoming_keys = []
+            
+            cursor = 0
+            while True:
+                cursor, keys = await self.redis_client.scan(
+                    cursor=cursor,
+                    match=incoming_pattern,
+                    count=100
+                )
+                incoming_keys.extend(keys)
+                if cursor == 0:
+                    break
+            
+            health_report["total_users_checked"] = len(incoming_keys)
+            
+            for key in incoming_keys:
+                user_phone = key.replace(self.INCOMING_QUEUE_SUFFIX, "")
+                
+                # Check incoming queue depth and age
+                incoming_count = await self.redis_client.zcard(key)
+                
+                if incoming_count > 0:
+                    # Get oldest message timestamp
+                    oldest = await self.redis_client.zrange(key, 0, 0, withscores=True)
+                    if oldest:
+                        oldest_timestamp = oldest[0][1]
+                        age = time.time() - oldest_timestamp
+                        
+                        # Critical: Messages waiting >60s - attempt recovery
+                        if age > 60:
+                            health_report["issues"].append({
+                                "user": user_phone,
+                                "type": "stale_incoming_queue",
+                                "severity": "critical",
+                                "message_count": incoming_count,
+                                "oldest_age_seconds": age,
+                                "description": f"Messages stuck in incoming queue for {age:.0f}s"
+                            })
+                            logger.error(
+                                f"[HEALTH-CRITICAL] Stale incoming queue detected: "
+                                f"user={user_phone}, count={incoming_count}, age={age:.0f}s. "
+                                f"Attempting recovery..."
+                            )
+                            
+                            # Attempt recovery by forcing batch creation
+                            try:
+                                recovery_result = await self._recover_stale_queue(user_phone)
+                                health_report["recoveries_attempted"].append({
+                                    "user": user_phone,
+                                    "type": "stale_queue_recovery",
+                                    "success": recovery_result.get("success", False),
+                                    "details": recovery_result
+                                })
+                            except Exception as recovery_error:
+                                logger.error(
+                                    f"[RECOVERY-FAILED] Failed to recover stale queue for {user_phone}: {recovery_error}",
+                                    exc_info=True
+                                )
+                        
+                        # Warning: Messages waiting >30s
+                        elif age > 30:
+                            health_report["warnings"].append({
+                                "user": user_phone,
+                                "type": "slow_incoming_queue",
+                                "severity": "warning",
+                                "message_count": incoming_count,
+                                "oldest_age_seconds": age,
+                                "description": f"Messages in incoming queue for {age:.0f}s"
+                            })
+                            logger.warning(
+                                f"[HEALTH-WARNING] Slow incoming queue: "
+                                f"user={user_phone}, count={incoming_count}, age={age:.0f}s"
+                            )
+                        
+                        # Warning: Large queue depth
+                        if incoming_count > 10:
+                            health_report["warnings"].append({
+                                "user": user_phone,
+                                "type": "large_queue_depth",
+                                "severity": "warning",
+                                "message_count": incoming_count,
+                                "description": f"Incoming queue has {incoming_count} messages"
+                            })
+                
+                # Check for orphaned processing keys
+                processing_key = self.get_processing_key(user_phone)
+                is_processing = await self.redis_client.exists(processing_key)
+                
+                if is_processing:
+                    batch_id = await self.redis_client.get(processing_key)
+                    # Check if we have an inflight task for this batch
+                    if batch_id not in self._inflight_tasks:
+                        health_report["issues"].append({
+                            "user": user_phone,
+                            "type": "orphaned_processing_key",
+                            "severity": "critical",
+                            "batch_id": batch_id,
+                            "description": "Processing key exists but no inflight task found"
+                        })
+                        logger.error(
+                            f"[HEALTH-CRITICAL] Orphaned processing key detected: "
+                            f"user={user_phone}, batch_id={batch_id}. Attempting cleanup..."
+                        )
+                        
+                        # Clean up orphaned processing key
+                        try:
+                            await self._handle_batch_cleanup(batch_id, user_phone, success=False)
+                            health_report["recoveries_attempted"].append({
+                                "user": user_phone,
+                                "type": "orphaned_key_cleanup",
+                                "success": True,
+                                "batch_id": batch_id
+                            })
+                        except Exception as cleanup_error:
+                            logger.error(
+                                f"[RECOVERY-FAILED] Failed to cleanup orphaned key for {user_phone}: {cleanup_error}",
+                                exc_info=True
+                            )
+                
+                # If no issues, count as healthy
+                if incoming_count == 0 and not is_processing:
+                    health_report["healthy_queues"] += 1
+            
+            # Log summary
+            if health_report["issues"]:
+                logger.error(
+                    f"[HEALTH-AUDIT] Found {len(health_report['issues'])} critical issues, "
+                    f"{len(health_report['warnings'])} warnings across {health_report['total_users_checked']} queues. "
+                    f"Attempted {len(health_report['recoveries_attempted'])} recoveries."
+                )
+            elif health_report["warnings"]:
+                logger.warning(
+                    f"[HEALTH-AUDIT] Found {len(health_report['warnings'])} warnings "
+                    f"across {health_report['total_users_checked']} queues"
+                )
+            else:
+                logger.info(
+                    f"[HEALTH-AUDIT] All {health_report['healthy_queues']} queues healthy"
+                )
+            
+            return health_report
+            
+        except Exception as e:
+            logger.error(f"[HEALTH-AUDIT] Failed to audit queue health: {e}", exc_info=True)
+            health_report["error"] = str(e)
+            return health_report
+
+    async def _recover_stale_queue(self, user_phone: str) -> Dict[str, Any]:
+        """
+        Attempt to recover a stale incoming queue by forcing batch creation.
+        
+        This is called when messages have been sitting in the incoming queue
+        for too long without a timer triggering batch creation (likely due to
+        timer key expiry, worker crash, or session abandonment).
+        
+        Args:
+            user_phone: Phone number of user with stale queue
+            
+        Returns:
+            Dict with recovery status
+        """
+        try:
+            logger.info(f"[RECOVERY] Attempting to recover stale queue for {user_phone}")
+            
+            # Check if already processing - don't interfere
+            processing_key = self.get_processing_key(user_phone)
+            is_processing = await self.redis_client.exists(processing_key)
+            
+            if is_processing:
+                logger.info(f"[RECOVERY] User {user_phone} is already processing, skipping recovery")
+                return {"success": False, "reason": "already_processing"}
+            
+            # Force batch creation by calling _create_batch directly
+            await self._create_batch(user_phone, expected_expiry=None)
+            
+            logger.info(f"[RECOVERY] Successfully triggered batch creation for {user_phone}")
+            return {"success": True, "action": "batch_created"}
+            
+        except Exception as e:
+            logger.error(f"[RECOVERY] Failed to recover stale queue for {user_phone}: {e}", exc_info=True)
+            return {"success": False, "error": str(e)}
+
     async def get_queue_status(self, user_phone: str) -> Dict:
         """
         Get current queue status for a user.
@@ -1037,3 +1515,68 @@ class MessageQueueService:
         await self.redis_client.zrem(self.TIMER_SCHEDULE_SET, user_phone)
 
         logger.info(f"Cleaned up all queues for user {user_phone}")
+
+    async def get_health_metrics(self) -> Dict[str, Any]:
+        """
+        Get comprehensive health metrics for monitoring and alerting.
+        
+        Returns metrics on:
+        - Active users with queues
+        - Processing batches count
+        - Stale queues detection
+        - System-wide statistics
+        
+        This can be exposed via API endpoint for external monitoring.
+        """
+        try:
+            metrics = {
+                "timestamp": time.time(),
+                "system_status": "healthy",
+                "active_users": 0,
+                "processing_count": 0,
+                "pending_incoming": 0,
+                "pending_outgoing": 0,
+                "stale_queues": 0,
+                "issues": []
+            }
+            
+            # Quick health check using audit
+            health_report = await self.audit_queue_health()
+            
+            metrics["active_users"] = health_report.get("total_users_checked", 0)
+            metrics["stale_queues"] = len(health_report.get("issues", []))
+            metrics["issues"] = health_report.get("issues", [])
+            metrics["warnings"] = health_report.get("warnings", [])
+            
+            # Count processing batches
+            processing_pattern = f"*{self.PROCESSING_KEY_SUFFIX}"
+            cursor = 0
+            processing_count = 0
+            while True:
+                cursor, keys = await self.redis_client.scan(
+                    cursor=cursor,
+                    match=processing_pattern,
+                    count=100
+                )
+                processing_count += len(keys)
+                if cursor == 0:
+                    break
+            
+            metrics["processing_count"] = processing_count
+            
+            # Determine overall system status
+            if metrics["stale_queues"] > 0:
+                metrics["system_status"] = "degraded"
+            if metrics["stale_queues"] > 5:
+                metrics["system_status"] = "critical"
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Failed to get health metrics: {e}", exc_info=True)
+            return {
+                "timestamp": time.time(),
+                "system_status": "error",
+                "error": str(e)
+            }
+
