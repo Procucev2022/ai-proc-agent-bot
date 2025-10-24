@@ -350,18 +350,18 @@ class Settings:
         
         # Validate webhook health monitoring configuration
         if self.webhook_health_monitoring_enabled:
-            # Ensure check interval is less than timeout
-            if self.webhook_health_check_interval_seconds >= self.webhook_api_timeout_seconds:
+            # Ensure timeout is less than check interval (timeout must complete before next check)
+            if self.webhook_api_timeout_seconds >= self.webhook_health_check_interval_seconds:
                 raise ValueError(
-                    "WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS must be less than WEBHOOK_API_TIMEOUT_SECONDS. "
-                    f"Got interval={self.webhook_health_check_interval_seconds}s, timeout={self.webhook_api_timeout_seconds}s"
+                    "WEBHOOK_API_TIMEOUT_SECONDS must be less than WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS. "
+                    f"Got timeout={self.webhook_api_timeout_seconds}s, interval={self.webhook_health_check_interval_seconds}s"
                 )
             
-            # Ensure timeout is less than grace period
-            if self.webhook_api_timeout_seconds >= self.webhook_failure_grace_period_seconds:
+            # Ensure check interval is less than grace period (need multiple checks within grace period)
+            if self.webhook_health_check_interval_seconds >= self.webhook_failure_grace_period_seconds:
                 raise ValueError(
-                    "WEBHOOK_API_TIMEOUT_SECONDS must be less than WEBHOOK_FAILURE_GRACE_PERIOD_SECONDS. "
-                    f"Got timeout={self.webhook_api_timeout_seconds}s, grace_period={self.webhook_failure_grace_period_seconds}s"
+                    "WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS must be less than WEBHOOK_FAILURE_GRACE_PERIOD_SECONDS. "
+                    f"Got interval={self.webhook_health_check_interval_seconds}s, grace_period={self.webhook_failure_grace_period_seconds}s"
                 )
             
             # Ensure response threshold is less than timeout
