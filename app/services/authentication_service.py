@@ -67,7 +67,6 @@ class AuthenticationService:
         try:
             # Normalize phone number (remove + prefix for consistent Redis keys)
             normalized_phone = user_phone.lstrip('+')
-            logger.info(f"Token validation called for {normalized_phone}")
             user_data = await self.auth_redis_service.retrieve(normalized_phone)
             if user_data:
                 # Check verification status before granting access
@@ -81,16 +80,13 @@ class AuthenticationService:
                     user_dict = user_obj.dict()
                     # Save user details in global context with updated data
                     user_context.set(normalized_phone, {"user_details": user_dict})
-                    logger.info(f"Token validated and main flow access granted for user {normalized_phone}")
                     return user_dict  # Return dict instead of User object
                 else:
                     # Verification required - refresh user data and retry
-                    logger.info(f"Verification required for user {normalized_phone}, refreshing user data")
                     refresh_result = await self.verification_check_service.refresh_user_verification_status(user_phone)
                     
                     # Check if max retries exceeded and support redirection needed
                     if refresh_result.get("exit_flow"):
-                        logger.info(f"Max retries exceeded for user {normalized_phone} - exiting flow")
                         return False  # Exit the authentication flow
                     
                     if refresh_result.get("success"):
@@ -110,15 +106,12 @@ class AuthenticationService:
                                 user_obj = User.from_mixed_data(updated_fresh_data)
                                 user_dict = user_obj.dict()
                                 user_context.set(normalized_phone, {"user_details": user_dict})
-                                logger.info(f"Fresh verification check passed for user {normalized_phone}")
                                 return user_dict  # Return dict instead of raw data
                     
                     # Still requires verification - return verification info
-                    logger.info(f"Token valid but verification still required for user {normalized_phone}")
                     return {"verification_required": True, "verification_info": verification_check.get("redirect_info", {})}
 
             # Token expired or not found
-            logger.info(f"Token expired or not found for user {normalized_phone}")
             return False
         except Exception as e:
             logger.error(f"Authentication error for {user_phone}: {e}")
@@ -136,7 +129,6 @@ class AuthenticationService:
             success = await self.auth_redis_service.store(normalized_phone, session_data, expiry_seconds=43200)  # 12 hours
 
             if success:
-                logger.info(f"Session stored successfully for user {normalized_phone} (ID: {user_details.id})")
                 # Refresh cache expiry to match session expiry
                 await self.user_cache_service.refresh_cache_expiry(normalized_phone, 43200)
             else:
@@ -159,13 +151,8 @@ class AuthenticationService:
             # Clear cached user data (user_cache_service normalizes internally)
             cache_success = await self.user_cache_service.clear_user_data(user_phone)
 
-            if auth_success:
-                logger.info(f"User token cleared successfully for {normalized_phone}")
-            else:
+            if not auth_success:
                 logger.warning(f"Failed to clear token for {normalized_phone} or token not found")
-
-            if cache_success:
-                logger.info(f"User cache cleared successfully for {normalized_phone}")
 
             return auth_success  # Return auth token success as primary indicator
 
@@ -177,12 +164,9 @@ class AuthenticationService:
                               session: ConversationSession, intent: str = None) -> Dict[str, Any]:
         """Handles token validation failure and routes to user authentication flow."""
         try:
-            logger.info(f"Authenticating user {user_phone} with intent: {intent}")
-
             # First check if we have cached user data
             cached_data = await self.user_cache_service.get_user_data(user_phone)
             if cached_data:
-                logger.info(f"Using cached user data for {user_phone}")
                 return {
                     "success": True,
                     "response": cached_data,
@@ -192,14 +176,11 @@ class AuthenticationService:
                 }
 
             # If no cache, make API call
-            logger.info(f"Making API call to authenticate user {user_phone}")
             auth_response = await self.auth_api_service.authenticate_user(user_phone)
-            logger.info(f"Auth API service response for {user_phone}: {auth_response}")
 
             if auth_response.get("success"):
                 raw_response = auth_response.get("data", [])
                 if raw_response:
-                    logger.info(f"Found {len(raw_response)} user records for {user_phone}")
                     # Cache the raw API response for future use
                     await self.user_cache_service.store_user_data(user_phone, raw_response)
 
@@ -210,10 +191,7 @@ class AuthenticationService:
                         "detected_intent": intent
                     }
                 else:
-                    logger.info(f"API returned success but no user data for {user_phone}")
                     return {"success": False, "message": "User details not found"}
-            else:
-                logger.info(f"API authentication failed for {user_phone}: {auth_response.get('message', 'Unknown error')}")
 
             return auth_response
 
@@ -240,7 +218,6 @@ class AuthenticationService:
                 filtered_users = users
                         
             if not filtered_users:
-                logger.info(f"filter_users_by_intent: No matching users found for intent '{intent}'")
                 return {"success": False, "message": "No matching users found"}
 
             # 2. Aggregate the emails via user.username
@@ -255,8 +232,6 @@ class AuthenticationService:
                 user_dict = user.dict()
                 user_detail = User.from_api_response(user_dict)
                 user_details_list.append(user_detail)
-
-            logger.info(f"filter_users_by_intent success: filtered_users_count={len(filtered_users)}, unique_emails_count={len(unique_emails)}")
 
             return {
                 "success": True,
@@ -331,11 +306,9 @@ class AuthenticationService:
             # IMPROVEMENT 1: Skip confirmation for single email - auto-process
             if len(available_emails) == 1:
                 selected_email = available_emails[0]
-                logger.info(f"Auto-processing single email: {selected_email}")
                 return await self._process_selected_email(user_phone, session, selected_email, filtered_users)
-            
+
             # Multiple emails - request selection
-            logger.info(f"Requesting email selection from {len(available_emails)} options")
             session.workflow_state["confirmation_stage"] = "selection"
             return await self._request_email_selection_with_text(user_phone, session, available_emails, filtered_users)
                 
@@ -366,7 +339,6 @@ class AuthenticationService:
                     stored_intent = session.workflow_state.get("intent_result", {})
                     if stored_intent and stored_intent.get("intent"):
                         intent_result = stored_intent
-                        logger.info(f"Using stored intent result from session: {intent_result}")
                     else:
                         logger.warning("No intent result available during email confirmation - using default")
                         intent_result = {"intent": "general_inquiry", "confidence": 50}
@@ -374,8 +346,6 @@ class AuthenticationService:
 
                 intent = intent_result.get('intent')
                 confidence = intent_result.get('confidence', 0)
-
-                logger.info(f"Intent refinement check: {intent} ({confidence}%)")
 
                 # Skip intent refinement for rfq_status_check and other non-transactional intents
                 original_intent = session.workflow_state.get("intent_result", {}).get("intent")
