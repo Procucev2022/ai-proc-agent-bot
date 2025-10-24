@@ -350,11 +350,11 @@ class Settings:
         
         # Validate webhook health monitoring configuration
         if self.webhook_health_monitoring_enabled:
-            # Ensure timeout is less than check interval (timeout must complete before next check)
-            if self.webhook_api_timeout_seconds >= self.webhook_health_check_interval_seconds:
+            # Ensure check interval is greater than timeout (timeout must complete before next check)
+            if self.webhook_health_check_interval_seconds <= self.webhook_api_timeout_seconds:
                 raise ValueError(
-                    "WEBHOOK_API_TIMEOUT_SECONDS must be less than WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS. "
-                    f"Got timeout={self.webhook_api_timeout_seconds}s, interval={self.webhook_health_check_interval_seconds}s"
+                    "WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS must be greater than WEBHOOK_API_TIMEOUT_SECONDS. "
+                    f"Got interval={self.webhook_health_check_interval_seconds}s, timeout={self.webhook_api_timeout_seconds}s"
                 )
             
             # Ensure check interval is less than grace period (need multiple checks within grace period)

@@ -417,25 +417,25 @@ class TestWebhookHealthMonitor:
     
     # ===== Configuration Validation Tests =====
     
-    def test_config_validation_check_interval_less_than_timeout(self):
-        """Test that check interval must be less than timeout."""
+    def test_config_validation_check_interval_greater_than_timeout(self):
+        """Test that check interval must be greater than timeout."""
         with patch.dict('os.environ', {
             'WEBHOOK_HEALTH_MONITORING_ENABLED': 'true',
-            'WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS': '15',
+            'WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS': '5',
             'WEBHOOK_API_TIMEOUT_SECONDS': '10'
         }):
-            with pytest.raises(ValueError, match="WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS must be less than"):
+            with pytest.raises(ValueError, match="WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS must be greater than"):
                 from app.config import Settings
                 Settings()
     
-    def test_config_validation_timeout_less_than_grace_period(self):
-        """Test that timeout must be less than grace period."""
+    def test_config_validation_check_interval_less_than_grace_period(self):
+        """Test that check interval must be less than grace period."""
         with patch.dict('os.environ', {
             'WEBHOOK_HEALTH_MONITORING_ENABLED': 'true',
-            'WEBHOOK_API_TIMEOUT_SECONDS': '70',
+            'WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS': '70',
             'WEBHOOK_FAILURE_GRACE_PERIOD_SECONDS': '60'
         }):
-            with pytest.raises(ValueError, match="WEBHOOK_API_TIMEOUT_SECONDS must be less than"):
+            with pytest.raises(ValueError, match="WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS must be less than"):
                 from app.config import Settings
                 Settings()
     
