@@ -540,10 +540,10 @@ class RegistrationService:
                             logger.info(f"entitiies:{entities}")
                             # Show buying options with buttons
                             buying_message = (
-                                f"Got it, you'd like to buy items!\n"
-                                f"Let's continue with your Buyer profile ({entities.get('email', 'your profile')}).\n"
+                                f"Let's continue with your Buyer profile ({entities.get('email', 'your profile')}). What would you like to do today?\n"
                             )
-                            header = f"Hi {entities.get('name', 'there')}! What would you like to do today?"
+                            name = entities.get('name', 'there').split()[0].title()
+                            header = f"Hi {name}! Your OTP has been verified successfully."
                             buttons_config = [
                                 {"id": "create_rfq", "title": "Create new RFQ"},
                                 {"id": "rfq_status", "title": "Check RFQ Status"},
@@ -620,7 +620,8 @@ class RegistrationService:
                         {"id": "rfq_status", "title": "Check RFQ Status"},
                         {"id": "get_support", "title": "Get Support Info"}
                     ]
-                    header = f"Hi {entities.get('name', 'there')}! What would you like to do today?"
+                    name = entities.get('name', 'there').split()[0].title()
+                    header = f"Hi {name}! What would you like to do today?"
 
                     await self.whatsapp_service.send_configurable_buttons(
                         user_phone,
