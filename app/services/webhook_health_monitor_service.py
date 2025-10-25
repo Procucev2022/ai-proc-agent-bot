@@ -720,7 +720,7 @@ class WebhookHealthMonitorService:
                 "alert_recipients": ",".join(self.alert_recipients),
                 "relapse_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
                 "error_details": state.get("last_error", "API health degraded again"),
-                "last_severity": state["last_severity"]
+                "last_severity": state.get("last_severity", "CRITICAL")
             }
             
             health_logger.warning(f"Sending RELAPSE alert email to {self.alert_recipients}")

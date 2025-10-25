@@ -248,7 +248,8 @@ class TestWebhookHealthMonitor:
             "consecutive_failures": 0,
             "consecutive_successes": 1,  # Was recovering
             "consecutive_warnings": 0,
-            "last_error": "Connection lost again"
+            "last_error": "Connection lost again",
+            "last_severity": HealthStatus.CRITICAL.value
         }
         
         await monitor._handle_critical_status(state, MonitorState.RECOVERED)
