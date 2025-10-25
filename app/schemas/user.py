@@ -69,11 +69,11 @@ def normalize_phone_number(phone: str, default_country_code: str = "91") -> str:
 
 class BuyerRegistrationSchema(BaseModel):
     name: str = Field(..., description="Full name")
-    company_name: str = Field(..., description="Company name")
+    companyName: str = Field(..., description="Company name")
     email: str = Field(..., description="Organization email")
-    pincode: str = Field(..., description="Pincode")
+    zipCode: str = Field(..., description="Pincode")
     organizationPhonenumber: Optional[str] = Field(None, description="Phone number")
-    whatsapp: Optional[bool] = Field(None, description="WhatsApp flag")
+    whatsApp: Optional[bool] = Field(None, description="WhatsApp flag")
     source_type: str = "W"
 
     @field_validator("email")
@@ -96,23 +96,23 @@ class BuyerRegistrationSchema(BaseModel):
             raise ValueError("Invalid phone number format")
         return sanitized
 
-    @field_validator("pincode")
-    def validate_pincode(cls, v: str) -> str:
+    @field_validator("zipCode")
+    def validate_zipcode(cls, v: str) -> str:
         if not PINCODE_REGEX.match(v):
             raise ValueError("Pincode must be 6 digits")
         return v
 
 
 class SellerRegistrationSchema(BaseModel):
-    full_name: str = Field(..., description="Full name")
-    company_name: str = Field(..., description="Company name")
+    name: str = Field(..., description="Full name")
+    companyName: str = Field(..., description="Company name")
     email: str = Field(..., description="Business email")
-    location: str = Field(..., description="Location with Pincode")
-    pincode: str = Field(..., description="Pincode")
+    address: str = Field(..., description="Location")
+    zipCode: str = Field(..., description="Pincode")
     gstin: str = Field(..., description="GSTIN number")
-    products_services: str = Field(..., description="Products or Services offered")
+    details: str = Field(..., description="Products or Services offered")
     organizationPhonenumber: Optional[str] = Field(None, description="Phone number")
-    whatsapp: Optional[bool] = Field(None, description="WhatsApp flag")
+    whatsApp: Optional[bool] = Field(None, description="WhatsApp flag")
     source_type: str = "W"
 
     @field_validator("email")
@@ -135,8 +135,8 @@ class SellerRegistrationSchema(BaseModel):
             raise ValueError("Invalid phone number format")
         return sanitized
 
-    @field_validator("pincode")
-    def validate_pincode(cls, v: str) -> str:
+    @field_validator("zipCode")
+    def validate_zipcode(cls, v: str) -> str:
         if not PINCODE_REGEX.match(v):
             raise ValueError("Pincode must be 6 digits")
         return v
