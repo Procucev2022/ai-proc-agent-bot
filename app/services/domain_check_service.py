@@ -272,7 +272,22 @@ Determine if the email domain matches or is related to the company name.
                     
                     if refresh_response.get("success") and refresh_response.get("data"):
                         fresh_users = refresh_response["data"]
-                        selected_user = fresh_users[0] if isinstance(fresh_users, list) else fresh_users
+
+                        # IMPORTANT: Select the correct user by matching user_id
+                        selected_user = None
+                        if isinstance(fresh_users, list):
+                            logger.info(f"DOMAIN_CHECK_SERVICE: API returned {len(fresh_users)} user profiles")
+                            # Match by user_id to ensure we get the correct profile
+                            matching_users = [u for u in fresh_users if u.get("id") == user_id]
+                            if matching_users:
+                                selected_user = matching_users[0]
+                                logger.info(f"DOMAIN_CHECK_SERVICE: ✓ Found user by ID match: {selected_user.get('username')}")
+                            else:
+                                selected_user = fresh_users[0]
+                                logger.warning(f"DOMAIN_CHECK_SERVICE: ⚠ Could not match by user_id, using first profile")
+                        else:
+                            selected_user = fresh_users
+
                         logger.info(f"DOMAIN_CHECK_SERVICE: Fresh user data retrieved: approved={selected_user.get('approved')}")
                         
                         if selected_user.get("approved", False):

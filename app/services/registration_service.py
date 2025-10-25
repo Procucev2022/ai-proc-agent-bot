@@ -492,11 +492,52 @@ class RegistrationService:
                 
                 if auth_response.get("success") and auth_response.get("data"):
                     # Use the fresh API data which includes org_id
-                    fresh_user_data = auth_response["data"][0] if auth_response["data"] else {}
-                    logger.info(f"REGISTRATION_SERVICE: Fresh user data retrieved with org_id: {fresh_user_data.get('orgId')}")
-                    
+                    # IMPORTANT: User may have multiple profiles (buyer + seller)
+                    # We need to select the CORRECT profile that was just registered
+
+                    all_users = auth_response["data"]
+                    logger.info(f"REGISTRATION_SERVICE: API returned {len(all_users)} user profiles for {user_phone}")
+
+                    # Strategy 1: Match by user_id (most reliable if available from registration)
+                    user_id_from_registration = entities.get("user_id")
+                    fresh_user_data = None
+
+                    if user_id_from_registration:
+                        logger.info(f"REGISTRATION_SERVICE: Looking for user with ID: {user_id_from_registration}")
+                        matching_by_id = [u for u in all_users if u.get("id") == user_id_from_registration]
+                        if matching_by_id:
+                            fresh_user_data = matching_by_id[0]
+                            logger.info(f"REGISTRATION_SERVICE: ✓ Found user by ID match: {fresh_user_data.get('username')}")
+
+                    # Strategy 2: Match by registration email (fallback)
+                    if not fresh_user_data:
+                        registration_email = entities.get("email")
+                        if registration_email:
+                            logger.info(f"REGISTRATION_SERVICE: Looking for user with email: {registration_email}")
+                            matching_by_email = [u for u in all_users if u.get("username") == registration_email]
+                            if matching_by_email:
+                                fresh_user_data = matching_by_email[0]
+                                logger.info(f"REGISTRATION_SERVICE: ✓ Found user by email match: {fresh_user_data.get('username')}")
+
+                    # Strategy 3: Match by selfClient field matching user_type (fallback)
+                    if not fresh_user_data:
+                        expected_self_client = (user_type == "buyer")
+                        logger.info(f"REGISTRATION_SERVICE: Looking for user with selfClient={expected_self_client} (user_type={user_type})")
+                        matching_by_type = [u for u in all_users if u.get("selfClient") == expected_self_client]
+                        if matching_by_type:
+                            fresh_user_data = matching_by_type[0]
+                            logger.info(f"REGISTRATION_SERVICE: ✓ Found user by selfClient match: {fresh_user_data.get('username')}")
+
+                    # Final fallback: Use first user (with warning)
+                    if not fresh_user_data:
+                        fresh_user_data = all_users[0] if all_users else {}
+                        logger.warning(f"REGISTRATION_SERVICE: ⚠ Could not match user by ID/email/type, using first profile: {fresh_user_data.get('username')}")
+
+                    logger.info(f"REGISTRATION_SERVICE: Selected user profile - username: {fresh_user_data.get('username')}, selfClient: {fresh_user_data.get('selfClient')}, orgId: {fresh_user_data.get('orgId')}")
+
                     # Store user session with complete API data
                     user_obj = User.from_api_response(fresh_user_data)
+                    logger.info(f"REGISTRATION_SERVICE: Created User object - role: {user_obj.role.value}, email: {user_obj.email}")
                     session_stored = await self.store_user_session(user_phone, user_obj)
                     
                     if session_stored:
