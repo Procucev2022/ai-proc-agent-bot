@@ -36,7 +36,10 @@ class TestWebhookHealthMonitor:
     @pytest.fixture
     def monitor(self):
         """Create health monitor instance for testing."""
-        return WebhookHealthMonitorService()
+        monitor = WebhookHealthMonitorService()
+        # Set alert recipients for testing (to enable email sending in tests)
+        monitor.alert_recipients = ["test@example.com"]
+        return monitor
     
     @pytest.fixture
     def mock_redis(self):

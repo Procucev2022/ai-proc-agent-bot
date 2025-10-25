@@ -119,6 +119,13 @@ class WebhookHealthMonitorService:
         # Alert configuration
         self.alert_recipients = [email.strip() for email in self.settings.webhook_alert_recipients]
         
+        # Check if email alerts are configured
+        if not self.alert_recipients:
+            health_logger.warning(
+                "WEBHOOK_ALERT_RECIPIENTS not configured. "
+                "Health monitoring will continue but email alerts will be skipped and only logged."
+            )
+        
         # Control flags
         self._running = False
         self._task: Optional[asyncio.Task] = None
@@ -581,6 +588,15 @@ class WebhookHealthMonitorService:
     
     async def _send_critical_alert(self, state: Dict[str, Any]):
         """Send critical alert email."""
+        # Skip if no alert recipients configured
+        if not self.alert_recipients:
+            health_logger.warning(
+                "CRITICAL ALERT (email skipped - no recipients configured): "
+                f"API down for {state.get('consecutive_failures', 0)} checks, "
+                f"error: {state.get('last_error', 'Unknown')}"
+            )
+            return
+        
         try:
             # Calculate downtime
             failure_start = datetime.fromisoformat(state["failure_start_time"])
@@ -614,6 +630,15 @@ class WebhookHealthMonitorService:
     
     async def _send_warning_alert(self, state: Dict[str, Any]):
         """Send warning alert email."""
+        # Skip if no alert recipients configured
+        if not self.alert_recipients:
+            health_logger.warning(
+                "WARNING ALERT (email skipped - no recipients configured): "
+                f"Slow API response {state.get('last_latency_ms', 0)}ms, "
+                f"{state.get('consecutive_warnings', 0)} consecutive slow checks"
+            )
+            return
+        
         try:
             variables = {
                 "alert_recipients": ",".join(self.alert_recipients),
@@ -641,6 +666,14 @@ class WebhookHealthMonitorService:
     
     async def _send_recovery_notification(self, state: Dict[str, Any]):
         """Send recovery notification email."""
+        # Skip if no alert recipients configured
+        if not self.alert_recipients:
+            health_logger.info(
+                "RECOVERY NOTIFICATION (email skipped - no recipients configured): "
+                f"API recovered, response time now {state.get('last_latency_ms', 0)}ms"
+            )
+            return
+        
         try:
             # Calculate total downtime
             if state.get("failure_start_time"):
@@ -673,6 +706,15 @@ class WebhookHealthMonitorService:
     
     async def _send_relapse_alert(self, state: Dict[str, Any]):
         """Send relapse alert email."""
+        # Skip if no alert recipients configured
+        if not self.alert_recipients:
+            health_logger.warning(
+                "RELAPSE ALERT (email skipped - no recipients configured): "
+                f"API degraded again, severity: {state.get('last_severity', 'Unknown')}, "
+                f"error: {state.get('last_error', 'Unknown')}"
+            )
+            return
+        
         try:
             variables = {
                 "alert_recipients": ",".join(self.alert_recipients),
