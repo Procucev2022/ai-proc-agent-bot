@@ -282,27 +282,59 @@ class ChatService:
                     "redirected_to_buyer_registration", "redirected_to_seller_registration",
                     "intent_mismatch_handled", "intent_mismatch_retry_sent", "new_user_registration_presented",
                     "buyer_options_presented", "single_buyer_profile_selection_presented", "profile_selection_sent",
-                    "registration_type_clarification_sent"
+                    "registration_type_clarification_sent", "verification_failed"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
-                    # Save session and return - do not proceed to main flow
-                    current_workflow = WorkflowManager.get_workflow_type(session)
-                    if current_workflow == WorkflowType.registration:
-                        workflow_type = WorkflowType.registration
+                    # Special handling for buyer/seller_options_presented: preserve meaningful message
+                    if auth_status in ["buyer_options_presented", "seller_options_presented"]:
+                        # Preserve meaningful message before saving - user will respond to options next
+                        last_meaningful = session.workflow_state.get("last_meaningful_message")
+                        last_meaningful_intent = session.workflow_state.get("last_meaningful_intent_result")
+
+                        if last_meaningful and last_meaningful_intent:
+                            # Clear workflow_type to indicate auth is complete (just waiting for button response)
+                            session.workflow_type = None
+                            # Preserve only the meaningful message fields for next interaction
+                            session.workflow_state = {
+                                "last_meaningful_message": last_meaningful,
+                                "last_meaningful_intent_result": last_meaningful_intent
+                            }
+                            logger.info(f"Preserved meaningful message for post-auth interaction: '{str(last_meaningful)[:50]}...'")
+                            await self.session_manager.save_session(session, None)
+                        else:
+                            # No meaningful message to preserve, save as normal
+                            current_workflow = WorkflowManager.get_workflow_type(session)
+                            workflow_type = WorkflowType.registration if current_workflow == WorkflowType.registration else WorkflowType.authentication
+                            await self.session_manager.save_session(session, workflow_type)
                     else:
-                        workflow_type_str = auth_result.get("workflow_type", "authentication")
-                        try:
-                            workflow_type = WorkflowType(workflow_type_str)
-                        except (ValueError, KeyError):
-                            workflow_type = WorkflowType.authentication
-                    await self.session_manager.save_session(session, workflow_type)
+
+                        # Save session and return - do not proceed to main flow
+                        current_workflow = WorkflowManager.get_workflow_type(session)
+                        if current_workflow == WorkflowType.registration:
+                            workflow_type = WorkflowType.registration
+                        else:
+                            workflow_type_str = auth_result.get("workflow_type", "authentication")
+                            try:
+                                workflow_type = WorkflowType(workflow_type_str)
+                            except (ValueError, KeyError):
+                                workflow_type = WorkflowType.authentication
+                        await self.session_manager.save_session(session, workflow_type)
+                        
                     return auth_result
                 elif auth_status in ["redirected_to_support", "redirect_to_support", "user_exited"]:
                     # Max OTP retries exceeded, user exited, or other support-requiring scenario
-                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                    await self.session_manager.save_session(session, WorkflowType.user_exit)
-                    return exit_result
+                    # Check if exit has already been completed to avoid duplicate calls
+                    if auth_result.get("exit_completed"):
+                       
+                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        return auth_result
+                    else:
+                        
+                        exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        return exit_result
+
                 elif auth_status == "registration_completed":
                     # Registration completed - check if this is truly complete or needs further processing
                     registration_flow_complete = auth_result.get("registration_flow_complete", False)
@@ -380,6 +412,7 @@ class ChatService:
                         return {"status": auth_status, "message": f"{auth_status.replace('_', ' ').title()}"}
                     else:
                         return {"status": "error", "error": "Session not found after options presentation"}
+
                 elif auth_status in ["authentication_completed", "profile_selected_and_authenticated", "profile_selection_sent"]:
                     # Authentication completed - check user type before processing
                     user_type = auth_result.get("user_type")
@@ -469,10 +502,16 @@ class ChatService:
                 # Handle dict responses that weren't caught above
                 auth_status = auth_result.get("status")
                 if auth_status == "redirected_to_support" or auth_status == "redirect_to_support" :
-                    logger.info(f"Final redirect to support - calling exit service for {user_phone}")
-                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                    await self.session_manager.save_session(session, WorkflowType.user_exit)
-                    return exit_result
+                    # Check if exit has already been completed to avoid duplicate calls
+                    if auth_result.get("exit_completed"):
+                        logger.info(f"Exit already completed in auth flow for {user_phone}, skipping duplicate exit call")
+                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        return auth_result
+                    else:
+                        logger.info(f"Final redirect to support - calling exit service for {user_phone}")
+                        exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        return exit_result
                 elif auth_status == "verification_required":
                     # Handle verification required status
                     logger.info(f"Verification required for {user_phone}")
@@ -482,6 +521,25 @@ class ChatService:
                     verification_message = redirect_info.get("message", "Email verification is required to continue.")
                     
                     # await self.whatsapp_service.send_message(user_phone, verification_message)
+                    
+                    await self.session_manager.save_session(session, WorkflowType.authentication)
+                    return auth_result
+                elif auth_status == "verification_failed":
+                    # Handle verification failed status
+                    logger.info(f"Verification failed for {user_phone}")
+                    
+                    # Send verification failed message to user
+                    redirect_info = auth_result.get("redirect_info", {})
+                    pending_message = (
+                        "*Registration received—thank you!*\n\n"
+                        "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                        "Our team will get in touch shortly to complete the process, and once verified, "
+                        "you’ll be able to access your account and start raising RFQs."
+                    )
+
+                    verification_message = redirect_info.get("message", pending_message)
+                    
+                    await self.whatsapp_service.send_message(user_phone, verification_message)
                     
                     await self.session_manager.save_session(session, WorkflowType.authentication)
                     return auth_result
@@ -581,15 +639,8 @@ class ChatService:
                 return await self._handle_registration_workflow(user, message)
 
             logger.info(f"user  phone number {user.phone_number}")
-            
-            # Access user details from global context
-            from app.context import user_context
-            # Normalize phone number (remove + prefix for consistent Redis keys)
-            normalized_phone = user.phone_number.lstrip('+')
-            context_data = user_context.get(normalized_phone)
-            user_details = context_data.get("user_details") if context_data else None
-            if user_details:
-                logger.info(f"Processing with user details from global context: {user_details}")
+
+            logger.info(f"use details:{user.email}")
 
 
 
@@ -970,8 +1021,26 @@ class ChatService:
             
             # Route based on already classified intent (intent was classified earlier in the function)
             if intent == "buy_something" and confidence > 0.7:
+                # Check if we have a meaningful message preserved from auth/registration flow
+                message_to_process = message
+                intent_to_process = intent_result
+
+                if session.workflow_state:
+                    tracked_message = session.workflow_state.get("last_meaningful_message")
+                    tracked_intent = session.workflow_state.get("last_meaningful_intent_result")
+
+                    # Use meaningful message if it exists AND current message is post-auth (no active auth workflow)
+                    if tracked_message and tracked_intent and session.workflow_type not in [WorkflowType.authentication, WorkflowType.registration]:
+                        logger.info(f"Using preserved meaningful message '{str(tracked_message)[:50]}...' instead of current message '{str(message)[:50]}...'")
+                        message_to_process = tracked_message
+                        intent_to_process = tracked_intent
+
+                        # Clear the tracked message now that we're using it
+                        session.workflow_state.pop("last_meaningful_message", None)
+                        session.workflow_state.pop("last_meaningful_intent_result", None)
+
                 # Normal buy_something flow - user wants to buy with current account
-                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result,
+                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message_to_process, intent_to_process,
                                                                                  self._should_use_summary_aware_extraction)
             elif intent == "confirmation_response" and confidence > 0.7:
                 # Handle confirmation responses - these should already be handled by pending confirmations check above
@@ -1144,11 +1213,23 @@ class ChatService:
 
             if not processing_result.get('success'):
                 processing_error = processing_result.get('error', 'Failed to process Excel file')
+                special_char_errors = processing_result.get('special_char_errors', [])
+                
+                # Handle special character errors specifically
+                if special_char_errors:
+                    error_details = "\n".join([f"• {error}" for error in special_char_errors[:5]])  # Show max 5 errors
+                    if len(special_char_errors) > 5:
+                        error_details += f"\n• ... and {len(special_char_errors) - 5} more errors"
+                    
+                    error_message = f"❌ Excel file contains invalid special characters:\n\n{error_details}\n\nPlease remove all special characters (@, #, $, %, etc.) from your Excel file and reupload."
+                else:
+                    error_message = f"Error processing Excel: {processing_error}"
+                
                 error_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'processing_failed',
-                                 'error': processing_error}
+                                 'error': processing_error, 'special_char_errors': special_char_errors}
                 error_response = await self.response_helpers.generate_contextual_response(
                     error_context,
-                    [f"Error processing Excel: {processing_error}"],
+                    [error_message],
                     "processing_failed"
                 )
                 await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
@@ -1166,6 +1247,18 @@ class ChatService:
             completeness = excel_context['completeness']
             items = processing_result.get('items', [])
 
+            # Check for special character errors before proceeding
+            special_char_errors = processing_result.get('special_char_errors', [])
+            if special_char_errors:
+                logger.error(f"[EXCEL-REDIRECT] Blocking redirect due to {len(special_char_errors)} special character errors")
+                error_details = "\n".join([f"• {error}" for error in special_char_errors[:5]])  # Show max 5 errors
+                if len(special_char_errors) > 5:
+                    error_details += f"\n• ... and {len(special_char_errors) - 5} more errors"
+                
+                error_message = f"❌ Excel file contains invalid special characters:\n\n{error_details}\n\nPlease remove all special characters (@, #, $, %, etc.) from your Excel file and reupload."
+                await self.session_manager.send_and_track_message(user.phone_number, error_message, session)
+                return {"status": "handled", "response": "special_characters_detected"}
+            
             # Always redirect to multiple RFQ flow for Excel uploads with valid items
             if items and len(items) > 0:
                 logger.info(f"[EXCEL-REDIRECT] Redirecting {len(items)} Excel items to multiple RFQ creation flow")
@@ -1221,6 +1314,11 @@ class ChatService:
         products = []
         
         for i, item in enumerate(excel_items, 1):
+            # Skip items with special characters (they shouldn't reach here, but safety check)
+            if any(key.endswith('_has_special_chars') for key in item.keys()):
+                logger.warning(f"[EXCEL-CONVERSION] Skipping item {i} due to special characters: {item}")
+                continue
+                
             # Map Excel columns to entity format expected by products array handler
             product_entity = {
                 'description': item.get('ItemDescription', ''),
@@ -1717,10 +1815,27 @@ class ChatService:
         """Handle button interaction responses."""
         # Handle new menu buttons
         if button_id == "new_rfq" or button_id == "raise_rfq" or button_id == "create_rfq":
-            # Trigger RFQ creation flow
-            intent_result = {"intent": "buy_something", "confidence": 95}
+            # Check if we have a tracked meaningful message from auth/registration flow
+            workflow_state = session.workflow_state or {}
+            tracked_message = workflow_state.get("last_meaningful_message")
+            tracked_intent_result = workflow_state.get("last_meaningful_intent_result")
+
+            if tracked_message and tracked_intent_result:
+                logger.info(f"Using tracked meaningful message instead of button synthetic message: '{str(tracked_message)[:50]}...'")
+                # Clear the tracked message since we're using it
+                workflow_state.pop("last_meaningful_message", None)
+                workflow_state.pop("last_meaningful_intent_result", None)
+
+                message_to_process = tracked_message
+                intent_result = tracked_intent_result
+            else:
+                logger.info(f"No tracked meaningful message found - using default RFQ creation message")
+                message_to_process = "I want to create a new RFQ"
+                intent_result = {"intent": "buy_something", "confidence": 95}
+
+            # Trigger RFQ creation flow with the appropriate message
             return await self.purchase_intent_handler.handle_purchase_intent(
-                user, session, "I want to create a new RFQ", intent_result, 
+                user, session, message_to_process, intent_result,
                 self._should_use_summary_aware_extraction
             )
         
@@ -2683,12 +2798,28 @@ class ChatService:
                 logger.info(f"Skipping account selection response during role switch: '{str(message_content)[:50]}...'")
                 return
 
-            # Always replace with the most recent meaningful message
+            # Skip profile selection responses (e.g., "1", "2") during authentication
+            if session.workflow_state and session.workflow_state.get("profile_selection_stage"):
+                logger.info(f"Skipping profile selection response during auth: '{str(message_content)[:50]}...'")
+                return
+
+            # Check if we already have a meaningful message preserved (e.g., after options presented)
+            existing_meaningful = session.workflow_state.get("last_meaningful_message") if session.workflow_state else None
+
+            # Track meaningful messages, but preserve existing ones in post-auth state
             if intent in meaningful_intents and confidence > 50:
                 session.workflow_state = session.workflow_state or {}
-                session.workflow_state["last_meaningful_message"] = message_content
-                session.workflow_state["last_meaningful_intent_result"] = intent_result
-                logger.info(f"Tracked meaningful message: '{str(message_content)[:50]}...' with intent: {intent} (confidence: {confidence}%)")
+
+                # If we have an existing meaningful message AND no active workflow (post-auth state),
+                # preserve it instead of overwriting with the user's response to the options
+                # Note: workflow_type might be general_inquiry even when auth is complete, so also check if it's not authentication/registration
+                if existing_meaningful and session.workflow_type not in [WorkflowType.authentication, WorkflowType.registration]:
+                    logger.info(f"Preserving existing meaningful message '{str(existing_meaningful)[:50]}...' (post-auth state, ignoring '{str(message_content)[:50]}...')")
+                else:
+                    # Normal case: track the meaningful message
+                    session.workflow_state["last_meaningful_message"] = message_content
+                    session.workflow_state["last_meaningful_intent_result"] = intent_result
+                    logger.info(f"Tracked meaningful message: '{str(message_content)[:50]}...' with intent: {intent} (confidence: {confidence}%)")
 
         except Exception as e:
             logger.error(f"Error tracking meaningful message: {e}")

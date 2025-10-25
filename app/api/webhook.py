@@ -174,6 +174,11 @@ async def handle_delivery_callback(request: Request):
     Sample: ?qStatus=read&qMobile=919036149941&qMsgRef=80890044684334105532272789261449227204&qDTime=2025-09-13%2013%3A53%3A25.980895&SMSMSGID=test13sep&NOTES=NA
     """
     try:
+        # Update webhook callback timestamp for passive health monitoring
+        from app.redis_db import get_redis_service
+        redis_service = get_redis_service()
+        await redis_service.set("webhook:last_callback_time", datetime.now().isoformat())
+        
         # Parse query parameters from URL
         query_params = dict(request.query_params)
         logger.info(f"ICS delivery callback received: {query_params}")

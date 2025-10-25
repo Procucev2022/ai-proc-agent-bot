@@ -458,10 +458,53 @@ class RegistrationService:
 
                 if auth_response.get("success") and auth_response.get("data"):
                     # Use the fresh API data which includes org_id
-                    fresh_user_data = auth_response["data"][0] if auth_response["data"] else {}
+
+                    # IMPORTANT: User may have multiple profiles (buyer + seller)
+                    # We need to select the CORRECT profile that was just registered
+
+                    all_users = auth_response["data"]
+                    logger.info(f"REGISTRATION_SERVICE: API returned {len(all_users)} user profiles for {user_phone}")
+
+                    # Strategy 1: Match by user_id (most reliable if available from registration)
+                    user_id_from_registration = entities.get("user_id")
+                    fresh_user_data = None
+
+                    if user_id_from_registration:
+                        logger.info(f"REGISTRATION_SERVICE: Looking for user with ID: {user_id_from_registration}")
+                        matching_by_id = [u for u in all_users if u.get("id") == user_id_from_registration]
+                        if matching_by_id:
+                            fresh_user_data = matching_by_id[0]
+                            logger.info(f"REGISTRATION_SERVICE: ✓ Found user by ID match: {fresh_user_data.get('username')}")
+
+                    # Strategy 2: Match by registration email (fallback)
+                    if not fresh_user_data:
+                        registration_email = entities.get("email")
+                        if registration_email:
+                            logger.info(f"REGISTRATION_SERVICE: Looking for user with email: {registration_email}")
+                            matching_by_email = [u for u in all_users if u.get("username") == registration_email]
+                            if matching_by_email:
+                                fresh_user_data = matching_by_email[0]
+                                logger.info(f"REGISTRATION_SERVICE: ✓ Found user by email match: {fresh_user_data.get('username')}")
+
+                    # Strategy 3: Match by selfClient field matching user_type (fallback)
+                    if not fresh_user_data:
+                        expected_self_client = (user_type == "buyer")
+                        logger.info(f"REGISTRATION_SERVICE: Looking for user with selfClient={expected_self_client} (user_type={user_type})")
+                        matching_by_type = [u for u in all_users if u.get("selfClient") == expected_self_client]
+                        if matching_by_type:
+                            fresh_user_data = matching_by_type[0]
+                            logger.info(f"REGISTRATION_SERVICE: ✓ Found user by selfClient match: {fresh_user_data.get('username')}")
+
+                    # Final fallback: Use first user (with warning)
+                    if not fresh_user_data:
+                        fresh_user_data = all_users[0] if all_users else {}
+                        logger.warning(f"REGISTRATION_SERVICE: ⚠ Could not match user by ID/email/type, using first profile: {fresh_user_data.get('username')}")
+
+                    logger.info(f"REGISTRATION_SERVICE: Selected user profile - username: {fresh_user_data.get('username')}, selfClient: {fresh_user_data.get('selfClient')}, orgId: {fresh_user_data.get('orgId')}")
 
                     # Store user session with complete API data
                     user_obj = User.from_api_response(fresh_user_data)
+                    logger.info(f"REGISTRATION_SERVICE: Created User object - role: {user_obj.role.value}, email: {user_obj.email}")
                     session_stored = await self.store_user_session(user_phone, user_obj)
 
                     if not session_stored:
@@ -482,62 +525,70 @@ class RegistrationService:
                         verification_service = VerificationCheckService(None, self.otp_service, self.whatsapp_service)
                         domain_result = await verification_service._check_domain_approval(user_id)
 
+
                         if domain_result.get("approved"):
                             logger.info(f"Buyer registration completed for {user_phone} - domain approved")
                             
+
                             # Check for stored intent to determine next action
                             stored_intent_result = session.workflow_state.get("current_intent_result", {})
                             intent = stored_intent_result.get("intent", "general_inquiry")
+
+                            logger.info(f"intet in handle registration otp validation is :{intent}")
                             
-                            if intent == "buy_something":
-                                # Show buying options with buttons
-                                buying_message = (
-                                    f"Got it, you'd like to buy items!\n"
-                                    f"Let's continue with your Buyer profile ({entities.get('email', 'your profile')}).\n"
-                                    f"What would you like to do?"
-                                )
-                                buttons_config = [
-                                    {"id": "create_rfq", "title": "Create new RFQ"},
-                                    {"id": "search_bfs", "title": "Search Stocks"}
-                                ]
-                                
-                                await self.whatsapp_service.send_configurable_buttons(
-                                    user_phone,
-                                    buying_message,
-                                    buttons_config
-                                )
-                                
-                                return {
-                                    "status": "buyer_options_presented",
-                                    "user_type": "buyer",
-                                    "email": entities.get('email')
-                                }
-                            else:
-                                # Show neutral greeting with profile selection
-                                await self._handle_neutral_greeting(user_phone, [{
-                                    'email': entities.get('email', 'your profile'),
-                                    'role': 'buyer'
-                                }], session)
-                                
-                                return {
-                                    "status": "profile_selection_sent",
-                                    "profiles_count": 1,
-                                    "selection_type": "neutral_greeting"
-                                }
+                            # if intent == "buy_something":
+                            logger.info(f"entitiies:{entities}")
+                            # Show buying options with buttons
+                            buying_message = (
+                                f"Let's continue with your Buyer profile ({entities.get('email', 'your profile')}). What would you like to do today?\n"
+                            )
+                            name = entities.get('name', 'there').split()[0].title()
+                            header = f"Hi {name}! Your OTP has been verified successfully."
+                            buttons_config = [
+                                {"id": "create_rfq", "title": "Create new RFQ"},
+                                {"id": "rfq_status", "title": "Check RFQ Status"},
+                                {"id": "search_bfs", "title": "Search Stocks"}
+                            ]
+
+                            await self.whatsapp_service.send_configurable_buttons(
+                                user_phone,
+                                buying_message,
+                                buttons_config,
+                                header
+                            )
+
+                            return {
+                                "status": "buyer_options_presented",
+                                "user_type": "buyer",
+                                "email": entities.get('email')
+                            }
                         else:
                             logger.info(f"Buyer registration completed for {user_phone} - domain not approved, awaiting manual approval")
                             # Domain not approved - send pending message
                             pending_message = "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
+
                             
+                            # Send email notification to support team
+                            await self.support_notification_service.notify_buyer_registration_not_approved(
+                                entities.get("name", "User"),
+                                entities.get("email", "unknown"),
+                                user_phone
+                            )
+                            
+                            # Domain not approved - send pending message
+                            pending_message = (
+                                "*Registration received—thank you!*\n\n"
+                                "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                                "Our team will get in touch shortly to complete the process, and once verified, "
+                                "you’ll be able to access your account and start raising RFQs."
+                            )
+
                             if self.session_manager:
                                 await self.session_manager.send_and_track_message(user_phone, pending_message, session)
                             else:
                                 await self.whatsapp_service.send_message(user_phone, pending_message)
                             
-                            # Exit the flow
-                            from app.services.exit_service import ExitService
-                            exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
-                            await exit_service.handle_exit_intent(user_phone, session)
+                            
                             
                             return {
                                 "status": "redirect_to_support",
@@ -548,16 +599,29 @@ class RegistrationService:
                         logger.warning(f"Buyer registration completed for {user_phone} - missing user_id")
                         # No user_id found - redirect to support
                         pending_message = "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
+
                         
+                        # Send email notification to support team
+                        await self.support_notification_service.notify_buyer_registration_not_approved(
+                            entities.get("name", "User"),
+                            entities.get("email", "unknown"),
+                            user_phone
+                        )
+                        
+                        # No user_id found - redirect to support
+                        pending_message = (
+                            "*Registration received—thank you!*\n\n"
+                            "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                            "Our team will get in touch shortly to complete the process, and once verified, "
+                            "you’ll be able to access your account and start raising RFQs."
+                        )
+
                         if self.session_manager:
                             await self.session_manager.send_and_track_message(user_phone, pending_message, session)
                         else:
                             await self.whatsapp_service.send_message(user_phone, pending_message)
                         
-                        # Exit the flow
-                        from app.services.exit_service import ExitService
-                        exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
-                        await exit_service.handle_exit_intent(user_phone, session)
+
                         
                         return {
                             "status": "redirect_to_support",
@@ -572,41 +636,31 @@ class RegistrationService:
                     stored_intent_result = session.workflow_state.get("current_intent_result", {})
                     intent = stored_intent_result.get("intent", "general_inquiry")
                     
-                    if intent == "sell_something":
-                        # Show seller options
-                        selling_message = (
-                            f"Got it, you'd like to sell items!\n"
-                            f"Let's continue with your Seller profile ({entities.get('email', 'your profile')}).\n"
-                            f"What would you like to do?"
-                        )
-                        buttons_config = [
-                            {"id": "rfq_status", "title": "Check RFQ Status"},
-                            {"id": "get_support", "title": "Get Support Info"}
-                        ]
-                        
-                        await self.whatsapp_service.send_configurable_buttons(
-                            user_phone,
-                            selling_message,
-                            buttons_config
-                        )
-                        
-                        return {
-                            "status": "seller_options_presented",
-                            "user_type": "seller",
-                            "email": entities.get('email')
-                        }
-                    else:
-                        # Show neutral greeting with profile selection
-                        await self._handle_neutral_greeting(user_phone, [{
-                            'email': entities.get('email', 'your profile'),
-                            'role': 'seller'
-                        }], session)
-                        
-                        return {
-                            "status": "profile_selection_sent",
-                            "profiles_count": 1,
-                            "selection_type": "neutral_greeting"
-                        }
+
+                    # Show seller options
+                    selling_message = (
+                        f"Got it, you'd like to sell items!\n"
+                        f"Let's continue with your Seller profile ({entities.get('email', 'your profile')}).\n"
+                    )
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "get_support", "title": "Get Support Info"}
+                    ]
+                    name = entities.get('name', 'there').split()[0].title()
+                    header = f"Hi {name}! What would you like to do today?"
+
+                    await self.whatsapp_service.send_configurable_buttons(
+                        user_phone,
+                        selling_message,
+                        buttons_config,
+                        header
+                    )
+
+                    return {
+                        "status": "seller_options_presented",
+                        "user_type": "seller",
+                        "email": entities.get('email')
+                    }
             
             # Handle OTP service redirect to support
             elif otp_result.get("status") == "redirect_to_support":
