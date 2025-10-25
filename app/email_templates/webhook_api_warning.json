@@ -1,0 +1,11 @@
+{
+  "scenario_id": "webhook_api_warning",
+  "subject": "WARNING: ICS WhatsApp API Performance Degraded",
+  "to": "{alert_recipients}",
+  "cc": "",
+  "bcc": "",
+  "body": "WARNING: The ICS WhatsApp API is experiencing performance degradation.\n\nAlert Time: {alert_time}\nCurrent Response Time: {response_time}\nConsecutive Slow Checks: {consecutive_slow_checks}\nThreshold: {threshold}\n\nSYMPTOMS:\n- API responses are significantly slower than normal\n- Message delivery may be delayed\n- User experience may be impacted\n\nRECOMMENDED ACTIONS:\n1. Monitor API performance closely\n2. Check ICS service status for any announcements\n3. Prepare for potential escalation if performance worsens\n4. Review application logs for any patterns\n\nThe system will continue monitoring and will send additional alerts if the situation escalates.",
+  "signature": "Regards,\nProcuCEV Monitoring System",
+  "supports_buyer": true,
+  "supports_seller": true
+}
