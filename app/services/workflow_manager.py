@@ -159,8 +159,8 @@ class WorkflowManager:
         old_type = WorkflowManager.get_workflow_type(session)
         caller_info = caller or inspect.stack()[1].function
 
-        logger.info(f"[WORKFLOW_TRANSITION] Session {session.session_id}: "
-                   f"{old_type} → {workflow_type.value} (caller: {caller_info})")
+        logger.debug(f"[WORKFLOW_TRANSITION] Session {session.session_id}: "
+                    f"{old_type} → {workflow_type.value} (caller: {caller_info})")
 
         session.workflow_type = workflow_type
         return True

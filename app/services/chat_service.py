@@ -101,12 +101,10 @@ class ChatService:
         if message_queue_service:
             # When message queue is available, it wraps WhatsApp functionality
             self.whatsapp_service = message_queue_service
-            logger.info("ChatService initialized with MessageQueueService wrapper")
         else:
             # Fallback to direct WhatsApp service (for non-queued scenarios)
             from app.services.whatsapp_service import WhatsAppService
             self.whatsapp_service = WhatsAppService()
-            logger.info("ChatService initialized with direct WhatsAppService (fallback)")
 
         # Initialize services that don't need database sessions
         self.intent_service = IntentService()
@@ -219,7 +217,6 @@ class ChatService:
                 if message_response.success:
                     await welcome_service.mark_welcome_sent(user_phone)
                     welcome_sent = True
-                    logger.info(f"Welcome message sent to {user_phone}, continuing to process their message")
                 # Continue processing user's message instead of returning early
             
             # Get or create user session using extracted service
@@ -261,14 +258,12 @@ class ChatService:
                 if last_meaningful and last_meaningful_intent:
                     # Store in cache (survives workflow_state clears)
                     await user_cache_service.store_meaningful_message(user_phone, last_meaningful, last_meaningful_intent)
-                    logger.info(f"Preserved meaningful message in cache: '{str(last_meaningful)[:50]}...'")
 
             auth_result = await self.authentication_orchestrator_flow(user_phone, message_content, session, message_intent_result)
 
             # Check if authentication is still in progress
             if isinstance(auth_result, dict):
                 auth_status = auth_result.get("status")
-                logger.info(f"CHAT_SERVICE: Authentication result - status: {auth_status}")
                 
                 # Authentication/registration flow statuses - stay in auth loop
                 auth_in_progress_statuses = [
@@ -313,6 +308,7 @@ class ChatService:
                             workflow_type = WorkflowType.registration if current_workflow == WorkflowType.registration else WorkflowType.authentication
                             await self.session_manager.save_session(session, workflow_type)
                     else:
+
                         # Save session and return - do not proceed to main flow
                         current_workflow = WorkflowManager.get_workflow_type(session)
                         if current_workflow == WorkflowType.registration:
@@ -324,32 +320,29 @@ class ChatService:
                             except (ValueError, KeyError):
                                 workflow_type = WorkflowType.authentication
                         await self.session_manager.save_session(session, workflow_type)
-
-                    logger.info(f"CHAT_SERVICE: 🔄 Authentication flow in progress - status: {auth_status}")
+                        
                     return auth_result
                 elif auth_status in ["redirected_to_support", "redirect_to_support", "user_exited"]:
                     # Max OTP retries exceeded, user exited, or other support-requiring scenario
                     # Check if exit has already been completed to avoid duplicate calls
                     if auth_result.get("exit_completed"):
-                        logger.info(f"Exit already completed in auth flow for {user_phone}, skipping duplicate exit call")
+                       
                         await self.session_manager.save_session(session, WorkflowType.user_exit)
                         return auth_result
                     else:
-                        logger.info(f"Redirect to support or user exit requested - calling exit service for {user_phone}")
+                        
                         exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
                         await self.session_manager.save_session(session, WorkflowType.user_exit)
                         return exit_result
+
                 elif auth_status == "registration_completed":
                     # Registration completed - check if this is truly complete or needs further processing
                     registration_flow_complete = auth_result.get("registration_flow_complete", False)
                     user_type = auth_result.get("user_type", "unknown")
                     approved = auth_result.get("approved", False)
-                    
-                    logger.info(f"CHAT_SERVICE: Registration completed for {user_phone} - user_type: {user_type}, approved: {approved}, flow_complete: {registration_flow_complete}")
-                    
+
                     if registration_flow_complete:
                         # Registration is completely done - no further processing needed
-                        logger.info(f"CHAT_SERVICE: ✅ Registration flow completely finished for {user_phone}")
                         # Clear workflow completely to prevent any further processing
                         session.workflow_type = None
                         session.workflow_state = {}
@@ -360,7 +353,6 @@ class ChatService:
                     user = await self.authentication_service.validate_token(user_phone)
                     if user:
                         # Refresh user cache after successful registration to include the new account
-                        logger.info(f"Refreshing user cache after registration completion for {user_phone}")
                         try:
                             # Clear existing cache first to force fresh API call
                             from app.services.user_cache_service import get_user_cache_service
@@ -371,9 +363,7 @@ class ChatService:
                             auth_response = await self.authentication_service.user_authenticate(
                                 user_phone, "refresh_cache_post_registration", session, intent="general_inquiry"
                             )
-                            if auth_response.get("success"):
-                                logger.info(f"User cache refreshed successfully after registration for {user_phone}")
-                            else:
+                            if not auth_response.get("success"):
                                 logger.warning(f"Failed to refresh user cache after registration for {user_phone}")
                         except Exception as e:
                             logger.error(f"Error refreshing user cache after registration for {user_phone}: {e}")
@@ -382,7 +372,6 @@ class ChatService:
 
                         if user_type == "seller":
                             # Sellers: Registration is complete, don't process the OTP message further
-                            logger.info(f"Seller registration completed - registration flow finished")
                             return {"status": "registration_completed", "message": "Seller registration successful"}
                         else:
                             # Buyers: Check if approved for main flow
@@ -397,26 +386,33 @@ class ChatService:
                                 if cached_meaningful and not session.workflow_state.get("last_meaningful_message"):
                                     session.workflow_state["last_meaningful_message"] = cached_meaningful["message"]
                                     session.workflow_state["last_meaningful_intent_result"] = cached_meaningful["intent_result"]
-                                    logger.info(f"Restored meaningful message from cache after registration: {str(cached_meaningful['message'])[:50]}...")
 
                                     # Clear from cache since we've restored it
                                     await user_cache_service.clear_meaningful_message(user_phone)
-                                elif cached_meaningful:
-                                    logger.info(f"Meaningful message already exists in workflow_state, not overwriting")
-                                else:
+                                elif not cached_meaningful:
                                     logger.warning(f"No cached meaningful message to restore after registration")
 
                                 message_to_process, intent_to_process = self._get_meaningful_message_after_auth(
                                     session, message_content, message_intent_result
                                 )
-                                logger.info(f"Approved buyer registration completed - processing message: {str(message_to_process)[:50]}...")
                                 return await self._process_text_message(user, session, message_to_process, intent_to_process)
                             else:
                                 # Domain NOT approved buyers: Registration complete, no further processing
-                                logger.info(f"Unapproved buyer registration completed - awaiting manual approval")
                                 return {"status": "registration_completed", "message": "Buyer registration successful - awaiting approval"}
                     else:
                         return {"status": "error", "error": "Session not found after registration"}
+                elif auth_status in ["buyer_options_presented", "seller_options_presented"]:
+                    # Options were presented - authentication is complete, return to main flow
+                    user = await self.authentication_service.validate_token(user_phone)
+                    if user:
+                        # Clear authentication workflow state
+                        session.workflow_type = None
+                        session.workflow_state = {}
+                        await self.session_manager.save_session(session, None)
+                        return {"status": auth_status, "message": f"{auth_status.replace('_', ' ').title()}"}
+                    else:
+                        return {"status": "error", "error": "Session not found after options presentation"}
+
                 elif auth_status in ["authentication_completed", "profile_selected_and_authenticated", "profile_selection_sent"]:
                     # Authentication completed - check user type before processing
                     user_type = auth_result.get("user_type")
@@ -425,8 +421,6 @@ class ChatService:
 
                     if user_type == "seller":
                         # For sellers, process the meaningful message after authentication
-                        logger.info(f"Seller authentication completed - processing seller flow")
-                        
                         # Use original message from profile selection if available
                         message_to_process = original_message if original_message else message_content
                         intent_to_process = {"intent": original_intent, "confidence": 90} if isinstance(original_intent, str) else original_intent
@@ -437,18 +431,16 @@ class ChatService:
                         if cached_meaningful and not session.workflow_state.get("last_meaningful_message"):
                             session.workflow_state["last_meaningful_message"] = cached_meaningful["message"]
                             session.workflow_state["last_meaningful_intent_result"] = cached_meaningful["intent_result"]
-                            logger.info(f"Restored meaningful message from cache after seller authentication: {str(cached_meaningful['message'])[:50]}...")
 
                             # Clear from cache since we've restored it
                             await user_cache_service.clear_meaningful_message(user_phone)
-                            
+
                             # Use cached message if no original message from profile selection
                             if not original_message:
                                 message_to_process, intent_to_process = self._get_meaningful_message_after_auth(
                                     session, message_content, message_intent_result
                                 )
 
-                        logger.info(f"Seller authentication completed - processing message: {str(message_to_process)[:50]}...")
                         user = await self.authentication_service.validate_token(user_phone)
                         if user:
                             return await self._process_text_message(user, session, message_to_process, intent_to_process)
@@ -466,22 +458,19 @@ class ChatService:
                     if cached_meaningful and not session.workflow_state.get("last_meaningful_message"):
                         session.workflow_state["last_meaningful_message"] = cached_meaningful["message"]
                         session.workflow_state["last_meaningful_intent_result"] = cached_meaningful["intent_result"]
-                        logger.info(f"Restored meaningful message from cache after buyer authentication: {str(cached_meaningful['message'])[:50]}...")
 
                         # Clear from cache since we've restored it
                         await user_cache_service.clear_meaningful_message(user_phone)
-                        
+
                         # Use cached message if no original message from profile selection
                         if not original_message:
                             message_to_process, intent_to_process = self._get_meaningful_message_after_auth(
                                 session, message_content, message_intent_result
                             )
 
-                    logger.info(f"Buyer authentication completed - processing message: {str(message_to_process)[:50]}...")
                     user = await self.authentication_service.validate_token(user_phone)
                     if user:
                         # Ensure user cache is populated after authentication
-                        logger.info(f"Ensuring user cache is populated after authentication for {user_phone}")
                         try:
                             from app.services.user_cache_service import get_user_cache_service
                             user_cache_service = get_user_cache_service()
@@ -492,12 +481,8 @@ class ChatService:
                                 auth_response = await self.authentication_service.user_authenticate(
                                     user_phone, "refresh_cache_post_auth", session, intent="general_inquiry"
                                 )
-                                if auth_response.get("success"):
-                                    logger.info(f"User cache populated successfully after authentication for {user_phone}")
-                                else:
+                                if not auth_response.get("success"):
                                     logger.warning(f"Failed to populate user cache after authentication for {user_phone}")
-                            else:
-                                logger.info(f"User cache already exists after authentication for {user_phone}")
                         except Exception as e:
                             logger.error(f"Error ensuring user cache after authentication for {user_phone}: {e}")
                             # Continue with flow even if cache population fails
@@ -509,7 +494,7 @@ class ChatService:
             if isinstance(auth_result, User):
                 if auth_result.is_registered:
                     # User is authenticated, proceed to main flow
-                    logger.info(f"User authenticated - proceeding to main flow: {auth_result.phone_number}")
+                    pass
                 else:
                     # Invalid user but not registered, handle as general inquiry
                     return await self._process_text_message(auth_result, session, message_content, message_intent_result)
@@ -662,18 +647,15 @@ class ChatService:
             
             # Handle pending role switch confirmation FIRST
             if session.workflow_state.get("pending_role_switch"):
-                logger.info(f"Detected pending role switch for user {user.phone_number}")
                 from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
                 auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
                 result = await auth_reg_switch.handle_role_switch_response(user, session, message, self.authentication_service)
                 await self.session_manager.save_session(session, self._get_workflow_or_default(session))
-                logger.info(f"Role switch response result: {result}")
 
                 # If role switch completed with original message, process it
                 if result.get("status") == "authentication_completed" and result.get("original_message"):
                     original_msg = result["original_message"]
                     original_intent = result.get("original_intent_result")
-                    logger.info(f"Processing original message after role switch: '{str(original_msg)[:50]}...'")
 
                     # Get fresh user object after switch
                     user = await self.authentication_service.validate_token(user.phone_number)
@@ -681,8 +663,6 @@ class ChatService:
                         return await self._process_text_message(user, session, original_msg, original_intent)
 
                 return result
-            else:
-                logger.info(f"No pending role switch detected. Workflow state keys: {list(session.workflow_state.keys()) if session.workflow_state else 'None'}")
 
             # Handle pending account switch confirmation (same-role switches)
             if session.workflow_state.get("pending_account_switch"):
@@ -829,10 +809,6 @@ class ChatService:
                 f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}")
 
             # Debug logging for optional fields state
-            if has_pending_optional:
-                logger.info(f"[OPTIONAL_FIELDS_DEBUG] Session {session.session_id} has pending optional fields!")
-            else:
-                logger.info(f"[OPTIONAL_FIELDS_DEBUG] Session {session.session_id} does NOT have pending optional fields. workflow_state keys: {list(session.workflow_state.keys()) if session.workflow_state else 'None'}")
 
            
 
@@ -841,7 +817,6 @@ class ChatService:
             # Handle cancel confirmation response (when cancel_pending is true)
             cancel_pending = session.workflow_state and session.workflow_state.get("cancel_pending", False)
             if cancel_pending:
-                logger.info(f"Cancel confirmation pending - processing user response: {message}")
                 user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
 
                 # Detect confirmation from the message using confirmation service
@@ -857,14 +832,12 @@ class ChatService:
                     # User declined, save session and continue with normal flow
                     await self.session_manager.save_session(session, session.workflow_type)
                     # Don't return - let the flow continue below to re-ask pending questions
-                    logger.info("Cancellation declined - continuing with normal workflow processing")
                 else:
                     # Any other status, return the result
                     return cancel_result
 
             # Handle support requests immediately - even during active workflows
             if intent == "support" and confidence > 0.7:
-                logger.info(f"Support intent detected with {confidence}% confidence - handling immediately")
                 result = await self._handle_support_request(user, message)
                 return result
 
@@ -1840,8 +1813,6 @@ class ChatService:
     async def _handle_button_response(self, user: User, session: ConversationSession, button_id: str) -> Dict[
         str, Any]:
         """Handle button interaction responses."""
-        logger.info(f"Button response from {user.phone_number}: {button_id}")
-
         # Handle new menu buttons
         if button_id == "new_rfq" or button_id == "raise_rfq" or button_id == "create_rfq":
             # Check if we have a tracked meaningful message from auth/registration flow

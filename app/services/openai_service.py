@@ -73,7 +73,10 @@ class OpenAIService:
         self.call_counts[request_key][call_type] += 1
 
         # Log the call for immediate visibility
-        logger.info(f"OpenAI call: {call_type} for {request_key} (total: {self.call_counts[request_key][call_type]})")
+        extra = {}
+        if request_key != "global":
+            extra['phone_number'] = request_key
+        logger.info(f"OpenAI call: {call_type} for {request_key} (total: {self.call_counts[request_key][call_type]})", extra=extra)
 
     def get_call_summary(self, user_phone: str = None) -> dict:
         """Get summary of OpenAI calls for a request."""

@@ -38,11 +38,14 @@ class InteractionLogger:
         reasoning: str,
         model_used: str,
         processing_time: float = None,
-        all_scores: Dict[str, float] = None
+        all_scores: Dict[str, float] = None,
+        phone_number: str = None
     ):
         """Log intent classification interaction."""
         log_entry = {
             "timestamp": datetime.now().isoformat(),
+            "phone_number": phone_number or "N/A",
+            "source": "openai_service",
             "interaction_type": "intent_classification",
             "user_input": user_input,
             "model_used": model_used,
@@ -55,7 +58,7 @@ class InteractionLogger:
             },
             "processing_time_seconds": processing_time
         }
-        
+
         self._write_log_entry(log_entry)
     
     def log_entity_extraction(
@@ -66,11 +69,14 @@ class InteractionLogger:
         workflow_type: str,
         model_used: str,
         processing_time: float = None,
-        missing_fields: list = None
+        missing_fields: list = None,
+        phone_number: str = None
     ):
         """Log entity extraction interaction."""
         log_entry = {
             "timestamp": datetime.now().isoformat(),
+            "phone_number": phone_number or "N/A",
+            "source": "openai_service",
             "interaction_type": "entity_extraction",
             "user_input": user_input,
             "model_used": model_used,
@@ -83,7 +89,7 @@ class InteractionLogger:
             },
             "processing_time_seconds": processing_time
         }
-        
+
         self._write_log_entry(log_entry)
     
     def log_error(
@@ -91,11 +97,14 @@ class InteractionLogger:
         interaction_type: str,
         user_input: str,
         error_message: str,
-        model_used: str = None
+        model_used: str = None,
+        phone_number: str = None
     ):
         """Log failed interaction."""
         log_entry = {
             "timestamp": datetime.now().isoformat(),
+            "phone_number": phone_number or "N/A",
+            "source": "openai_service",
             "interaction_type": interaction_type,
             "user_input": user_input,
             "model_used": model_used or "unknown",
@@ -104,7 +113,7 @@ class InteractionLogger:
                 "success": False
             }
         }
-        
+
         self._write_log_entry(log_entry)
     
     def log_response_generation(
@@ -113,11 +122,14 @@ class InteractionLogger:
         generated_response: str,
         conversation_stage: str,
         model_used: str,
-        processing_time: float = None
+        processing_time: float = None,
+        phone_number: str = None
     ):
         """Log response generation interaction."""
         log_entry = {
             "timestamp": datetime.now().isoformat(),
+            "phone_number": phone_number or "N/A",
+            "source": "openai_service",
             "interaction_type": "response_generation",
             "context": context,
             "model_used": model_used,
@@ -128,7 +140,7 @@ class InteractionLogger:
             },
             "processing_time": processing_time
         }
-        
+
         self._write_log_entry(log_entry)
     
     def _write_log_entry(self, log_entry: Dict[str, Any]):

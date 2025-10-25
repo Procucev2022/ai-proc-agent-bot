@@ -33,15 +33,13 @@ from app.database import init_database
 from app.services.chat_service import ChatService
 from app.services.global_error_handler import handle_server_error
 from app.context.middleware import ContextMiddleware
+from app.utils.logging_utils import setup_basic_logging, CustomFormatter
 import gc
 
 
-# Get settings and configure logging
+# Get settings and configure logging with custom formatter
 settings = get_settings()
-logging.basicConfig(
-    level=logging.INFO if not settings.DEBUG else logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+setup_basic_logging(level="DEBUG" if settings.DEBUG else "INFO")
 logger = logging.getLogger(__name__)
 
 # Initialize rate limiter
@@ -244,59 +242,63 @@ async def chat_page(request: Request):
 @limiter.limit(settings.rate_limit_chat)
 async def process_chat_message(request: Request, chat_message: ChatMessage):
     """Process chat message through ChatService - works exactly like test_multi_turn_conversation.py"""
-    try:
-        # Store captured WhatsApp messages (same as terminal test)
-        whatsapp_messages = []
-        
-        # Mock the WhatsApp service to capture messages (same pattern as terminal test)
-        async def mock_send_message(recipient_id, message):
-            whatsapp_messages.append(message)
-            return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
-        
-        # Determine message type based on content structure
-        message_type = "text"
-        content = chat_message.message
-        
-        # Check if message contains image data (from UI image upload)
-        if isinstance(content, dict) and "image" in content:
-            message_type = "image"
+    from app.utils.logging_utils import UserPhoneContext
 
-        # Create ChatService per-request with proper session management
-        from app.database import get_db_session_context
-        from unittest.mock import patch
-
-        with get_db_session_context() as db:
-            chat_service = ChatService(db_session=db)
-
-            # Process message through ChatService with mocked WhatsApp (same as terminal test)
-            with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message):
-                chat_result = await chat_service.process_message(chat_message.phone, content, message_type)
-        
-        return {
-            "success": True,
-            "responses": whatsapp_messages,
-            "status": chat_result.get("status", "processed"),
-            "debug_info": chat_result
-        }
-        
-    except Exception as e:
-        logger.error(f"Error processing chat message: {e}")
-        
-        # Notify support team about chat processing error
+    # Set phone number context for all logs in this request
+    async with UserPhoneContext(chat_message.phone):
         try:
-            await handle_server_error(
-                error_message=f"Chat processing error: {str(e)}",
-                user_phone=chat_message.phone,
-                current_flow="Chat Processing"
-            )
-        except Exception as notify_error:
-            logger.error(f"Failed to notify support team: {notify_error}")
-        
-        return {
-            "success": False,
-            "error": str(e),
-            "responses": ["Sorry, there was an error processing your message."]
-        }
+            # Store captured WhatsApp messages (same as terminal test)
+            whatsapp_messages = []
+
+            # Mock the WhatsApp service to capture messages (same pattern as terminal test)
+            async def mock_send_message(recipient_id, message):
+                whatsapp_messages.append(message)
+                return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
+
+            # Determine message type based on content structure
+            message_type = "text"
+            content = chat_message.message
+
+            # Check if message contains image data (from UI image upload)
+            if isinstance(content, dict) and "image" in content:
+                message_type = "image"
+
+            # Create ChatService per-request with proper session management
+            from app.database import get_db_session_context
+            from unittest.mock import patch
+
+            with get_db_session_context() as db:
+                chat_service = ChatService(db_session=db)
+
+                # Process message through ChatService with mocked WhatsApp (same as terminal test)
+                with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message):
+                    chat_result = await chat_service.process_message(chat_message.phone, content, message_type)
+
+            return {
+                "success": True,
+                "responses": whatsapp_messages,
+                "status": chat_result.get("status", "processed"),
+                "debug_info": chat_result
+            }
+
+        except Exception as e:
+            logger.error(f"Error processing chat message: {e}")
+
+            # Notify support team about chat processing error
+            try:
+                await handle_server_error(
+                    error_message=f"Chat processing error: {str(e)}",
+                    user_phone=chat_message.phone,
+                    current_flow="Chat Processing"
+                )
+            except Exception as notify_error:
+                logger.error(f"Failed to notify support team: {notify_error}")
+
+            return {
+                "success": False,
+                "error": str(e),
+                "responses": ["Sorry, there was an error processing your message."]
+            }
 
 
 @app.post("/api/upload-excel")

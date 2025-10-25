@@ -6,45 +6,152 @@ import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
 from functools import wraps
+from contextvars import ContextVar
+import threading
+
+# Context variables for storing user phone number across async contexts
+_user_phone_context: ContextVar[Optional[str]] = ContextVar('user_phone', default=None)
+_thread_local = threading.local()
+
+
+class CustomFormatter(logging.Formatter):
+    """Custom formatter that includes timestamp, source, and user phone number."""
+
+    def format(self, record):
+        # Add timestamp
+        record.timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+
+        # Add source (module name)
+        record.source = record.name
+
+        # Try to get phone number from context or record
+        phone = None
+        if hasattr(record, 'phone_number'):
+            phone = record.phone_number
+        else:
+            # Try to get from context variable
+            try:
+                phone = _user_phone_context.get()
+            except:
+                pass
+
+            # Fallback to thread local
+            if not phone:
+                phone = getattr(_thread_local, 'phone_number', None)
+
+        record.phone_number = phone if phone else 'N/A'
+
+        # Format: timestamp | phone_number | source | level | message
+        return f"{record.timestamp} | {record.phone_number} | {record.source} | {record.levelname} | {record.getMessage()}"
+
+
+def set_user_phone_context(phone_number: str):
+    """Set the user phone number in the current context."""
+    _user_phone_context.set(phone_number)
+    _thread_local.phone_number = phone_number
+
+
+def clear_user_phone_context():
+    """Clear the user phone number from the current context."""
+    _user_phone_context.set(None)
+    if hasattr(_thread_local, 'phone_number'):
+        delattr(_thread_local, 'phone_number')
+
+
+def get_user_phone_context() -> Optional[str]:
+    """Get the current user phone number from context."""
+    try:
+        phone = _user_phone_context.get()
+        if phone:
+            return phone
+    except:
+        pass
+    return getattr(_thread_local, 'phone_number', None)
+
+
+class UserPhoneContext:
+    """Context manager for setting user phone number in logs."""
+
+    def __init__(self, phone_number: str):
+        self.phone_number = phone_number
+        self.token = None
+
+    def __enter__(self):
+        set_user_phone_context(self.phone_number)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        clear_user_phone_context()
+        return False
+
+    async def __aenter__(self):
+        set_user_phone_context(self.phone_number)
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        clear_user_phone_context()
+        return False
+
 
 def setup_basic_logging(level: str = "INFO"):
-    """Setup basic logging configuration."""
-    logging.basicConfig(
-        level=getattr(logging, level),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+    """Setup basic logging configuration with custom formatter."""
+    # Remove existing handlers
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
 
-def log_info(logger: logging.Logger, message: str, user_id: str = None, **kwargs):
+    # Create console handler with custom formatter
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(CustomFormatter())
+
+    # Configure root logger
+    root_logger.setLevel(getattr(logging, level))
+    root_logger.addHandler(console_handler)
+
+def log_info(logger: logging.Logger, message: str, user_id: str = None, phone_number: str = None, **kwargs):
     """Log info message with optional context."""
+    extra = {}
+    if phone_number:
+        extra['phone_number'] = phone_number
+
     if user_id or kwargs:
         context = f"[user={user_id}]" if user_id else ""
         if kwargs:
             context += f" {kwargs}"
         message = f"{message} {context}"
-    logger.info(message)
 
-def log_error(logger: logging.Logger, message: str, error: Exception = None, user_id: str = None, **kwargs):
+    logger.info(message, extra=extra)
+
+def log_error(logger: logging.Logger, message: str, error: Exception = None, user_id: str = None, phone_number: str = None, **kwargs):
     """Log error message with optional context."""
-    if user_id or kwargs:
-        context = f"[user={user_id}]" if user_id else ""
-        if kwargs:
-            context += f" {kwargs}"
-        message = f"{message} {context}"
-    
-    if error:
-        logger.error(f"{message} - Error: {str(error)}", exc_info=True)
-    else:
-        logger.error(message)
+    extra = {}
+    if phone_number:
+        extra['phone_number'] = phone_number
 
-def log_debug(logger: logging.Logger, message: str, user_id: str = None, **kwargs):
-    """Log debug message with optional context."""
     if user_id or kwargs:
         context = f"[user={user_id}]" if user_id else ""
         if kwargs:
             context += f" {kwargs}"
         message = f"{message} {context}"
-    logger.debug(message)
+
+    if error:
+        logger.error(f"{message} - Error: {str(error)}", exc_info=True, extra=extra)
+    else:
+        logger.error(message, extra=extra)
+
+def log_debug(logger: logging.Logger, message: str, user_id: str = None, phone_number: str = None, **kwargs):
+    """Log debug message with optional context."""
+    extra = {}
+    if phone_number:
+        extra['phone_number'] = phone_number
+
+    if user_id or kwargs:
+        context = f"[user={user_id}]" if user_id else ""
+        if kwargs:
+            context += f" {kwargs}"
+        message = f"{message} {context}"
+
+    logger.debug(message, extra=extra)
 
 def log_to_database(level: str, message: str, service: str = None, user_id: str = None, 
                    session_id: str = None, context: dict = None):
