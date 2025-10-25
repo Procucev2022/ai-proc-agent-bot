@@ -230,10 +230,9 @@ class Settings:
             os.getenv("WEBHOOK_WARNING_CONSECUTIVE_THRESHOLD", "3")
         )
         
-        self.webhook_alert_recipients = os.getenv(
-            "WEBHOOK_ALERT_RECIPIENTS",
-            self.support_team_email  # Reuse existing config
-        ).split(",")
+        # Webhook alert recipients - NO fallback, must be explicitly configured
+        webhook_recipients = os.getenv("WEBHOOK_ALERT_RECIPIENTS", "")
+        self.webhook_alert_recipients = self._parse_webhook_recipients(webhook_recipients)
         
         self.webhook_alert_state_ttl_seconds = int(
             os.getenv("WEBHOOK_ALERT_STATE_TTL_SECONDS", "3600")
@@ -241,6 +240,14 @@ class Settings:
 
         # Validate configuration
         self.validate_config()
+    
+    def _parse_webhook_recipients(self, recipients: str) -> list:
+        """
+        Parse a comma-separated string of webhook recipients, stripping whitespace and removing empty entries.
+        """
+        if not recipients:
+            return []
+        return [r.strip() for r in recipients.split(",") if r.strip()]
         
     def get_database_url(self) -> str:
         """Get database connection URL based on selected mode."""
@@ -378,9 +385,7 @@ class Settings:
             if self.webhook_warning_consecutive_threshold < 1:
                 raise ValueError("WEBHOOK_WARNING_CONSECUTIVE_THRESHOLD must be at least 1")
             
-            # Ensure alert recipients are configured
-            if not self.webhook_alert_recipients or not any(r.strip() for r in self.webhook_alert_recipients):
-                raise ValueError("WEBHOOK_ALERT_RECIPIENTS must be configured when monitoring is enabled")
+            # Note: webhook_alert_recipients is optional - if not configured, alerts will only be logged
     
     def get_rfq_status_config(self) -> Dict[str, Any]:
         """Get configuration for RFQ status logic."""

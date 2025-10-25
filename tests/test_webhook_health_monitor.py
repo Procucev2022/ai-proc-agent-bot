@@ -36,7 +36,10 @@ class TestWebhookHealthMonitor:
     @pytest.fixture
     def monitor(self):
         """Create health monitor instance for testing."""
-        return WebhookHealthMonitorService()
+        monitor = WebhookHealthMonitorService()
+        # Set alert recipients for testing (to enable email sending in tests)
+        monitor.alert_recipients = ["test@example.com"]
+        return monitor
     
     @pytest.fixture
     def mock_redis(self):
@@ -245,7 +248,8 @@ class TestWebhookHealthMonitor:
             "consecutive_failures": 0,
             "consecutive_successes": 1,  # Was recovering
             "consecutive_warnings": 0,
-            "last_error": "Connection lost again"
+            "last_error": "Connection lost again",
+            "last_severity": HealthStatus.CRITICAL.value
         }
         
         await monitor._handle_critical_status(state, MonitorState.RECOVERED)
