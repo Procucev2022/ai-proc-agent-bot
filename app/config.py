@@ -232,7 +232,7 @@ class Settings:
         
         # Webhook alert recipients - NO fallback, must be explicitly configured
         webhook_recipients = os.getenv("WEBHOOK_ALERT_RECIPIENTS", "")
-        self.webhook_alert_recipients = [r.strip() for r in webhook_recipients.split(",") if r.strip()] if webhook_recipients else []
+        self.webhook_alert_recipients = self._parse_webhook_recipients(webhook_recipients)
         
         self.webhook_alert_state_ttl_seconds = int(
             os.getenv("WEBHOOK_ALERT_STATE_TTL_SECONDS", "3600")
@@ -240,6 +240,14 @@ class Settings:
 
         # Validate configuration
         self.validate_config()
+    
+    def _parse_webhook_recipients(self, recipients: str) -> list:
+        """
+        Parse a comma-separated string of webhook recipients, stripping whitespace and removing empty entries.
+        """
+        if not recipients:
+            return []
+        return [r.strip() for r in recipients.split(",") if r.strip()]
         
     def get_database_url(self) -> str:
         """Get database connection URL based on selected mode."""
