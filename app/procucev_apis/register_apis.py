@@ -173,10 +173,15 @@ class RegisterAPIService:
         """
         try:
             validateOTP_url = "/rest/users/validateOtp"
+            # Ensure phone number format is consistent
+            phone_formatted = phone_number if phone_number else ""
+            if phone_formatted and not phone_formatted.startswith("+"):
+                phone_formatted = f"+{phone_formatted}"
+
             payload = {
                 "email": username,
                 "emailOtp": otp,
-                "organizationPhonenumber": f"+{phone_number}" or ""
+                "organizationPhonenumber": phone_formatted
             }
             
             response = await self.api_client.post(
