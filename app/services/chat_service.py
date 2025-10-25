@@ -291,17 +291,40 @@ class ChatService:
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
-                    # Save session and return - do not proceed to main flow
-                    current_workflow = WorkflowManager.get_workflow_type(session)
-                    if current_workflow == WorkflowType.registration:
-                        workflow_type = WorkflowType.registration
+                    # Special handling for buyer/seller_options_presented: preserve meaningful message
+                    if auth_status in ["buyer_options_presented", "seller_options_presented"]:
+                        # Preserve meaningful message before saving - user will respond to options next
+                        last_meaningful = session.workflow_state.get("last_meaningful_message")
+                        last_meaningful_intent = session.workflow_state.get("last_meaningful_intent_result")
+
+                        if last_meaningful and last_meaningful_intent:
+                            # Clear workflow_type to indicate auth is complete (just waiting for button response)
+                            session.workflow_type = None
+                            # Preserve only the meaningful message fields for next interaction
+                            session.workflow_state = {
+                                "last_meaningful_message": last_meaningful,
+                                "last_meaningful_intent_result": last_meaningful_intent
+                            }
+                            logger.info(f"Preserved meaningful message for post-auth interaction: '{str(last_meaningful)[:50]}...'")
+                            await self.session_manager.save_session(session, None)
+                        else:
+                            # No meaningful message to preserve, save as normal
+                            current_workflow = WorkflowManager.get_workflow_type(session)
+                            workflow_type = WorkflowType.registration if current_workflow == WorkflowType.registration else WorkflowType.authentication
+                            await self.session_manager.save_session(session, workflow_type)
                     else:
-                        workflow_type_str = auth_result.get("workflow_type", "authentication")
-                        try:
-                            workflow_type = WorkflowType(workflow_type_str)
-                        except (ValueError, KeyError):
-                            workflow_type = WorkflowType.authentication
-                    await self.session_manager.save_session(session, workflow_type)
+                        # Save session and return - do not proceed to main flow
+                        current_workflow = WorkflowManager.get_workflow_type(session)
+                        if current_workflow == WorkflowType.registration:
+                            workflow_type = WorkflowType.registration
+                        else:
+                            workflow_type_str = auth_result.get("workflow_type", "authentication")
+                            try:
+                                workflow_type = WorkflowType(workflow_type_str)
+                            except (ValueError, KeyError):
+                                workflow_type = WorkflowType.authentication
+                        await self.session_manager.save_session(session, workflow_type)
+
                     logger.info(f"CHAT_SERVICE: 🔄 Authentication flow in progress - status: {auth_status}")
                     return auth_result
                 elif auth_status in ["redirected_to_support", "redirect_to_support", "user_exited"]:
@@ -388,18 +411,6 @@ class ChatService:
                                 return {"status": "registration_completed", "message": "Buyer registration successful - awaiting approval"}
                     else:
                         return {"status": "error", "error": "Session not found after registration"}
-                elif auth_status in ["buyer_options_presented", "seller_options_presented"]:
-                    # Options were presented - authentication is complete, return to main flow
-                    logger.info(f"{auth_status} - authentication completed for {user_phone}")
-                    user = await self.authentication_service.validate_token(user_phone)
-                    if user:
-                        # Clear authentication workflow state
-                        session.workflow_type = None
-                        session.workflow_state = {}
-                        await self.session_manager.save_session(session, None)
-                        return {"status": auth_status, "message": f"{auth_status.replace('_', ' ').title()}"}
-                    else:
-                        return {"status": "error", "error": "Session not found after options presentation"}
                 elif auth_status in ["authentication_completed", "profile_selected_and_authenticated", "profile_selection_sent"]:
                     # Authentication completed - check user type before processing
                     user_type = auth_result.get("user_type")
@@ -1006,8 +1017,26 @@ class ChatService:
             
             # Route based on already classified intent (intent was classified earlier in the function)
             if intent == "buy_something" and confidence > 0.7:
+                # Check if we have a meaningful message preserved from auth/registration flow
+                message_to_process = message
+                intent_to_process = intent_result
+
+                if session.workflow_state:
+                    tracked_message = session.workflow_state.get("last_meaningful_message")
+                    tracked_intent = session.workflow_state.get("last_meaningful_intent_result")
+
+                    # Use meaningful message if it exists AND current message is post-auth (no active auth workflow)
+                    if tracked_message and tracked_intent and session.workflow_type not in [WorkflowType.authentication, WorkflowType.registration]:
+                        logger.info(f"Using preserved meaningful message '{str(tracked_message)[:50]}...' instead of current message '{str(message)[:50]}...'")
+                        message_to_process = tracked_message
+                        intent_to_process = tracked_intent
+
+                        # Clear the tracked message now that we're using it
+                        session.workflow_state.pop("last_meaningful_message", None)
+                        session.workflow_state.pop("last_meaningful_intent_result", None)
+
                 # Normal buy_something flow - user wants to buy with current account
-                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result,
+                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message_to_process, intent_to_process,
                                                                                  self._should_use_summary_aware_extraction)
             elif intent == "confirmation_response" and confidence > 0.7:
                 # Handle confirmation responses - these should already be handled by pending confirmations check above
@@ -1784,10 +1813,27 @@ class ChatService:
 
         # Handle new menu buttons
         if button_id == "new_rfq" or button_id == "raise_rfq" or button_id == "create_rfq":
-            # Trigger RFQ creation flow
-            intent_result = {"intent": "buy_something", "confidence": 95}
+            # Check if we have a tracked meaningful message from auth/registration flow
+            workflow_state = session.workflow_state or {}
+            tracked_message = workflow_state.get("last_meaningful_message")
+            tracked_intent_result = workflow_state.get("last_meaningful_intent_result")
+
+            if tracked_message and tracked_intent_result:
+                logger.info(f"Using tracked meaningful message instead of button synthetic message: '{str(tracked_message)[:50]}...'")
+                # Clear the tracked message since we're using it
+                workflow_state.pop("last_meaningful_message", None)
+                workflow_state.pop("last_meaningful_intent_result", None)
+
+                message_to_process = tracked_message
+                intent_result = tracked_intent_result
+            else:
+                logger.info(f"No tracked meaningful message found - using default RFQ creation message")
+                message_to_process = "I want to create a new RFQ"
+                intent_result = {"intent": "buy_something", "confidence": 95}
+
+            # Trigger RFQ creation flow with the appropriate message
             return await self.purchase_intent_handler.handle_purchase_intent(
-                user, session, "I want to create a new RFQ", intent_result, 
+                user, session, message_to_process, intent_result,
                 self._should_use_summary_aware_extraction
             )
         
@@ -2750,12 +2796,28 @@ class ChatService:
                 logger.info(f"Skipping account selection response during role switch: '{str(message_content)[:50]}...'")
                 return
 
-            # Always replace with the most recent meaningful message
+            # Skip profile selection responses (e.g., "1", "2") during authentication
+            if session.workflow_state and session.workflow_state.get("profile_selection_stage"):
+                logger.info(f"Skipping profile selection response during auth: '{str(message_content)[:50]}...'")
+                return
+
+            # Check if we already have a meaningful message preserved (e.g., after options presented)
+            existing_meaningful = session.workflow_state.get("last_meaningful_message") if session.workflow_state else None
+
+            # Track meaningful messages, but preserve existing ones in post-auth state
             if intent in meaningful_intents and confidence > 50:
                 session.workflow_state = session.workflow_state or {}
-                session.workflow_state["last_meaningful_message"] = message_content
-                session.workflow_state["last_meaningful_intent_result"] = intent_result
-                logger.info(f"Tracked meaningful message: '{str(message_content)[:50]}...' with intent: {intent} (confidence: {confidence}%)")
+
+                # If we have an existing meaningful message AND no active workflow (post-auth state),
+                # preserve it instead of overwriting with the user's response to the options
+                # Note: workflow_type might be general_inquiry even when auth is complete, so also check if it's not authentication/registration
+                if existing_meaningful and session.workflow_type not in [WorkflowType.authentication, WorkflowType.registration]:
+                    logger.info(f"Preserving existing meaningful message '{str(existing_meaningful)[:50]}...' (post-auth state, ignoring '{str(message_content)[:50]}...')")
+                else:
+                    # Normal case: track the meaningful message
+                    session.workflow_state["last_meaningful_message"] = message_content
+                    session.workflow_state["last_meaningful_intent_result"] = intent_result
+                    logger.info(f"Tracked meaningful message: '{str(message_content)[:50]}...' with intent: {intent} (confidence: {confidence}%)")
 
         except Exception as e:
             logger.error(f"Error tracking meaningful message: {e}")
