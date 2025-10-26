@@ -401,18 +401,6 @@ class ChatService:
                                 return {"status": "registration_completed", "message": "Buyer registration successful - awaiting approval"}
                     else:
                         return {"status": "error", "error": "Session not found after registration"}
-                elif auth_status in ["buyer_options_presented", "seller_options_presented"]:
-                    # Options were presented - authentication is complete, return to main flow
-                    user = await self.authentication_service.validate_token(user_phone)
-                    if user:
-                        # Clear authentication workflow state
-                        session.workflow_type = None
-                        session.workflow_state = {}
-                        await self.session_manager.save_session(session, None)
-                        return {"status": auth_status, "message": f"{auth_status.replace('_', ' ').title()}"}
-                    else:
-                        return {"status": "error", "error": "Session not found after options presentation"}
-
                 elif auth_status in ["authentication_completed", "profile_selected_and_authenticated", "profile_selection_sent"]:
                     # Authentication completed - check user type before processing
                     user_type = auth_result.get("user_type")
