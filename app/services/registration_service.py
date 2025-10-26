@@ -642,12 +642,12 @@ class RegistrationService:
                         f"Got it, you'd like to sell items!\n"
                         f"Let's continue with your Seller profile ({entities.get('email', 'your profile')}).\n"
                     )
+                    name = entities.get('name', 'there').split()[0].title()
+                    header = f"Hi {name}! Your OTP has been verified successfully."
                     buttons_config = [
                         {"id": "rfq_status", "title": "Check RFQ Status"},
                         {"id": "get_support", "title": "Get Support Info"}
                     ]
-                    name = entities.get('name', 'there').split()[0].title()
-                    header = f"Hi {name}! What would you like to do today?"
 
                     await self.whatsapp_service.send_configurable_buttons(
                         user_phone,
