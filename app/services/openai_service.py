@@ -2388,9 +2388,12 @@ Determine the best category for the input item based on the similar items and th
                     clean_rfq_data["delivery_date_display"] = str(delivery_date)
             
             context_text += f"RFQ Data: {json.dumps(clean_rfq_data, indent=2)}\n"
-            
+
             if context.get("user_message"):
                 context_text += f"User Message: {context['user_message']}\n"
+
+            # Log the exact data being sent for debugging
+            logger.info(f"RFQ confirmation input data: {json.dumps(clean_rfq_data, indent=2)}")
 
             response = await self.client.responses.create(
                 model=self.default_model,
@@ -2407,18 +2410,21 @@ Determine the best category for the input item based on the similar items and th
                 function_call = response.output[0]
                 if function_call.type == "function_call":
                     args = json.loads(function_call.arguments)
-                    
+
+                    # Log the LLM's generated summary for debugging
+                    logger.info(f"RFQ confirmation LLM output: {json.dumps(args, indent=2)}")
+
                     # Format response with proper spacing and sections
                     response_parts = []
-                    
+
                     # Summary section
                     if args.get("summary"):
                         response_parts.append(f"RFQ Summary:\n\n{args['summary']}")
-                    
+
                     # Confirmation request section
                     if args.get("confirmation_request"):
                         response_parts.append(args["confirmation_request"])
-                    
+
                     return "\n\n".join(response_parts)
             
             # Fallback response

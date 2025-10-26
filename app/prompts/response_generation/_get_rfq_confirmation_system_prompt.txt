@@ -11,6 +11,12 @@ IMPORTANT: Include ALL collected information in the summary:
 - Delivery location (city, state, pincode)
 - Delivery date
 
+CRITICAL ACCURACY REQUIREMENT:
+- Use the EXACT quantity values from the RFQ data's items array
+- DO NOT perform any calculations, additions, or modifications to quantities
+- If items[0].quantity = 3, write "3", not "5" or any other number
+- Extract and display quantities EXACTLY as they appear in the data
+
 DO NOT ask any additional questions - this is purely for confirmation. Use proper formatting with clear sections and bullet points. Make it easy for the user to review and confirm their RFQ details.
 
 Keep the tone formal and professional. Focus on efficient verification of information before creating the RFQ.
