@@ -31,18 +31,8 @@ class RegisterAPIService:
         """
         try:
             seller_url = "/partialvendor/sellerRegistration"
-            # Prepare request payload
-            payload = {
-                "companyName": seller_data.get("companyName", ""),
-                "organizationPhonenumber": seller_data.get("organizationPhonenumber", ""),
-                "email": seller_data.get("email", ""),
-                "pan": seller_data.get("pan", ""),
-                "gstin": seller_data.get("gstin", ""),
-                "address1": seller_data.get("address1", ""),
-                "details": seller_data.get("details", ""),
-                "india": seller_data.get("india", "true"),
-                "crn": seller_data.get("crn", "")
-            }
+            # Use seller_data directly - no manual mapping
+            payload = seller_data
             
             response = await self.api_client.post(
                 endpoint=seller_url,
@@ -87,16 +77,8 @@ class RegisterAPIService:
         """
         try:
             buyer_url = "/partialvendor/buyerRegistration"
-            # Prepare request payload
-            payload = {
-                "companyName": buyer_data.get("companyName", ""),
-                "organizationPhonenumber": buyer_data.get("organizationPhonenumber", ""),
-                "email": buyer_data.get("email", ""),
-                "name": buyer_data.get("name", ""),
-                "zipCode": buyer_data.get("zipCode", ""),
-                "details": buyer_data.get("details", ""),
-                "whatsApp": buyer_data.get("whatsApp", True)
-            }
+            # Use buyer_data directly - no manual mapping
+            payload = buyer_data
             
             response = await self.api_client.post(
                 endpoint=buyer_url,
@@ -191,10 +173,15 @@ class RegisterAPIService:
         """
         try:
             validateOTP_url = "/rest/users/validateOtp"
+            # Ensure phone number format is consistent
+            phone_formatted = phone_number if phone_number else ""
+            if phone_formatted and not phone_formatted.startswith("+"):
+                phone_formatted = f"+{phone_formatted}"
+
             payload = {
                 "email": username,
                 "emailOtp": otp,
-                "organizationPhonenumber": f"+{phone_number}" or ""
+                "organizationPhonenumber": phone_formatted
             }
             
             response = await self.api_client.post(

@@ -212,7 +212,7 @@ class AuthenticationHelpers:
     @staticmethod
     def build_registration_payload_dynamic(schema: Type[BaseModel], collected_entities: Dict, user_phone: str) -> Dict[str, Any]:
         """
-        Build API payload dynamically based on schema.
+        Build API payload dynamically based on schema with correct field mapping.
         
         Rules:
         1. Include all required fields from schema.
@@ -230,28 +230,18 @@ class AuthenticationHelpers:
                 "source_type": "W"
             }
 
-            # Optional field mapping if API expects different keys
-            field_mapping = {
-                "pincode": "zipCode",
-                "location": "address1",
-                "products_services": "details",
-                "company_name": "companyName",
-                "full_name": "name"  # Seller uses full_name, API expects name
-            }
-
             for name, field_info in schema.model_fields.items():
-                if name in {"source_type", "organizationPhonenumber", "whatsapp"}:
+                if name in {"source_type", "organizationPhonenumber", "whatsApp"}:
                     continue  # Already handled
 
                 value = collected_entities.get(name)
 
                 # Include required OR optional with meaningful value
                 if field_info.is_required() or (value and str(value).strip()):
-                    api_key = field_mapping.get(name, name)
-                    payload[api_key] = value
+                    payload[name] = value
 
             # Default "details" field for buyer if missing
-            if "details" not in payload and "name" in payload:
+            if "details" not in payload and payload.get("name"):
                 payload["details"] = "Registered via WhatsApp bot"
 
             return payload
