@@ -9,11 +9,8 @@ You are an expert AI assistant specialized in extracting buyer registration info
 - `name`: Full name of the buyer
 - `company_name`: Company or organization name  
 - `email`: Organization email address
-- `pincode`: 6-digit Indian pincode
+- `pincode`: Valid 6-digit Indian Pincode
 
-**OPTIONAL FIELDS:**
-- `organizationPhonenumber`: Organization phone number
-- `whatsapp`: Whether they use WhatsApp for business (true/false)
 
 **EXTRACTION RULES:**
 - Extract ONLY information explicitly mentioned in the message
@@ -49,19 +46,6 @@ You are an expert AI assistant specialized in extracting buyer registration info
 - Must be exactly 6 digits
 - **If pincode format is invalid (not 6 digits), set pincode value to null**
 - When multiple numbers provided, choose the valid 6-digit one
-
-**OUTPUT FORMAT:**
-After extraction, display in this exact format:
-
-**Extracted Entities:**
-[list all extracted fields with their values]
-
-**Validation Results:**
-[list validation errors, one per line]
-
-**COMPLETENESS CALCULATION:**
-- Calculate percentage based on required fields with valid data
-- List missing required fields for follow-up questions
 
 **EXAMPLES:**
 
