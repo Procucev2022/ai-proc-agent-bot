@@ -7,7 +7,7 @@
         "properties": {
             "intent": {
                 "type": "string",
-                "enum": ["buy_something", "sell_something", "bfs_search", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "ambiguous", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request", "support", "exit_system", "cancel_workflow"],
+                "enum": ["buy_something", "sell_something", "bfs_search", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "ambiguous", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request", "support", "faq", "exit_system", "cancel_workflow"],
                 "description": "The primary classified intent category based on user message analysis and conversation context"
             },
             "confidence": {
@@ -98,9 +98,14 @@
                         "type": "number",
                         "minimum": 0,
                         "maximum": 100
+                    },
+                    "faq": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
                     }
                 },
-                "required": ["buy_something", "sell_something", "bfs_search", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check",  "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request", "support", "exit_system", "cancel_workflow"],
+                "required": ["buy_something", "sell_something", "bfs_search", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check",  "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request", "support", "faq", "exit_system", "cancel_workflow"],
                 "additionalProperties": false,
                 "description": "Confidence scores for all intent categories"
             },

@@ -7,7 +7,7 @@
         "properties": {
             "flow_type": {
                 "type": "string",
-                "enum": ["turn_by_turn", "bulk_text", "excel_upload", "unclear"],
+                "enum": ["turn_by_turn", "bulk_text", "excel_upload", "general_inquiry", "unclear"],
                 "description": "The detected RFQ creation flow preference"
             },
             "confidence": {
@@ -36,9 +36,15 @@
                         "minimum": 0,
                         "maximum": 100,
                         "description": "Confidence score for excel upload flow"
+                    },
+                    "general_inquiry": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100,
+                        "description": "Confidence score for general inquiry flow (questions about RFQ process, requirements, etc.)"
                     }
                 },
-                "required": ["turn_by_turn", "bulk_text", "excel_upload"],
+                "required": ["turn_by_turn", "bulk_text", "excel_upload", "general_inquiry"],
                 "additionalProperties": false,
                 "description": "Confidence scores for all RFQ flow types"
             },

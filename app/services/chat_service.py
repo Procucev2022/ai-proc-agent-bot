@@ -58,6 +58,7 @@ from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
 from app.services.exit_service import ExitService
 from app.services.cancel_service import CancelService
+from app.services.faq_service import FAQService
 from app.tools.confirmation_tool import ConfirmationTool
 from app.services.confirmation_service import ConfirmationService
 from app.services.workflow_manager import WorkflowManager, WorkflowStage, PendingFlag
@@ -159,6 +160,7 @@ class ChatService:
         self.cancel_service = CancelService(
             self.whatsapp_service, self.session_manager, self.db_manager
         )
+        self.faq_service = FAQService()
         self.confirmation_handler = ConfirmationHandler(
             self.whatsapp_service, self.response_helpers
         )
@@ -259,6 +261,19 @@ class ChatService:
                     # Store in cache (survives workflow_state clears)
                     await user_cache_service.store_meaningful_message(user_phone, last_meaningful, last_meaningful_intent)
 
+
+            print("intent",intent,"message ontent", message_intent_result)
+            if intent=='faq':
+                # Handle FAQ directly without authentication for quick responses
+                faq_answer = await self.faq_service.get_faq_answer(message_content)
+                if faq_answer:
+                    full_response = f"{faq_answer}\n\nWhat can I assist you with next?"
+                    await self.whatsapp_service.send_message(user_phone, full_response)
+                    return {"status": "faq_handled", "answer_provided": True}
+                else:
+                    fallback_message = "I don't have specific information about that. For detailed assistance, please contact our support team."
+                    await self.whatsapp_service.send_message(user_phone, fallback_message)
+                    return {"status": "faq_no_answer", "answer_provided": False}
             auth_result = await self.authentication_orchestrator_flow(user_phone, message_content, session, message_intent_result)
 
             # Check if authentication is still in progress
@@ -676,7 +691,13 @@ class ChatService:
             # Update the last user message in conversation history with intent data
             self._update_last_user_message_with_intent(session, intent, confidence)
 
-            # Handle cancel workflow intent FIRST - highest priority after exit
+            # Handle FAQ requests FIRST - can interrupt any workflow (highest priority after exit)
+            if intent == "faq" and confidence > 0.6:
+                logger.info(f"FAQ intent detected with {confidence}% confidence - handling immediately (interrupting workflow)")
+                result = await self._handle_faq_request(user, message)
+                return result
+
+            # Handle cancel workflow intent - highest priority after FAQ and exit
             if intent == "cancel_workflow" and confidence > 50:
                 logger.info(f"Cancel workflow intent detected with {confidence}% confidence")
                 user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
@@ -823,6 +844,12 @@ class ChatService:
                 else:
                     # Any other status, return the result
                     return cancel_result
+
+            # Handle FAQ requests immediately - even during active workflows (highest priority after exit/cancel)
+            if intent == "faq" and confidence > 0.6:
+                logger.info(f"FAQ intent detected with {confidence}% confidence - handling immediately")
+                result = await self._handle_faq_request(user, message)
+                return result
 
             # Handle support requests immediately - even during active workflows
             if intent == "support" and confidence > 0.7:
@@ -1076,8 +1103,22 @@ class ChatService:
                 return await self._handle_seller_flow(user, session, message)
             elif intent == "account_switch" and confidence > 0.7:
                 return await self._handle_account_switch_intent(user, session, message, intent_result)
+            elif intent == "faq":
+                # Handle FAQ requests
+                logger.info(f"FAQ intent detected with {confidence}% confidence in main routing")
+                return await self._handle_faq_request(user, message)
             elif intent == "general_inquiry":
-                return await self._handle_general_inquiry(user, message, intent_result)
+                # Check if this is a general inquiry within RFQ creation workflow
+                current_workflow = WorkflowManager.get_workflow_type(session)
+                logger.info(f"General inquiry detected - current workflow: {current_workflow}")
+                if current_workflow == WorkflowType.rfq_creation:
+                    logger.info("handle rfq general inquiry")
+                    # This is a general inquiry about RFQ process - handle it within RFQ context
+                    return await self._handle_rfq_general_inquiry(user, session, message, intent_result)
+                else:
+                    logger.info("handling regular general inquiry")
+                    # Regular general inquiry
+                    return await self._handle_general_inquiry(user, message, intent_result)
             elif confidence < 0.5:
                 return await self._handle_clarification_request(user, message)
             else:
@@ -1431,103 +1472,124 @@ class ChatService:
     async def _handle_general_inquiry(
         self, user: User, message: str, intent_result: Dict[str, Any] = None
     ) -> Dict[str, Any]:
-        """Handle general inquiries using OpenAI."""
+        """Handle general inquiries and FAQ questions."""
         try:
-            context = ChatServiceHelpers.build_context("general_inquiry", message)
-            logger.info(f"intent result in handle general inquiry :{intent_result}")
+            logger.info(f"_handle_general_inquiry called for user {user.phone_number} with message: '{message[:50]}...'")
+            # First try FAQ service for potential FAQ questions
+            faq_answer = await self.faq_service.get_faq_answer(message)
 
-           
-
-            # Determine user role
+            logger.info(f"FAQ service returned: {faq_answer}")
+            
+            # Check if FAQ service found a good match (not the fallback message)
+            if faq_answer:
+                full_response = f"{faq_answer}\n\nWhat can I assist you with next?"
+                await self.whatsapp_service.send_message(user.phone_number, full_response)
+                return {"status": "faq_handled"}
+            
+            # No FAQ match, proceed with regular general inquiry handling
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
 
-            logger.info(f"continue with user profile:{user.email}, name:{user.name}, user role:{user_role}")
-
-            # Role-based button configuration
             if user_role == "buyer":
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "search_bfs", "title": "Search Stocks"}
                 ]
-                profile_message = f"Let's continue with your buyer profile ({user.email})"
-                # Extract first name and capitalize first letter
                 first_name = user.name.split()[0].capitalize() if user.name else "there"
-                header = f"Hi {first_name}! What can I assist you with today?"
-
+                profile_message = f"Hi {first_name}! What can I assist you with today?"
             elif user_role == "seller":
                 buttons_config = [
                     {"id": "rfq_status", "title": "Check RFQ status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
-                profile_message = f"Let's continue with your seller account ({user.email})"
-                # Extract first name and capitalize first letter
                 first_name = user.name.split()[0].capitalize() if user.name else "there"
-                header = f"Hi {first_name}! What would you like to do today?"
-
+                profile_message = f"Hi {first_name}! What would you like to do today?"
             else:
-                # Unknown role → check if we can determine role from user object
-                if hasattr(user, 'role') and user.role:
-                    actual_role = user.role.value if hasattr(user.role, 'value') else user.role
-                    if actual_role == "buyer":
-                        buttons_config = [
-                            {"id": "create_rfq", "title": "Create new RFQ"},
-                            {"id": "rfq_status", "title": "Check RFQ Status"},
-                            {"id": "search_bfs", "title": "Search Stocks"}
-                        ]
-                        profile_message = f"Let's continue with your buyer profile ({user.email})"
-                        # Extract first name and capitalize first letter
-                        first_name = user.name.split()[0].capitalize() if user.name else "there"
-                        header = f"Hi {first_name}! What can I assist you with today?"
-                    elif actual_role == "seller":
-                        buttons_config = [
-                            {"id": "rfq_status", "title": "Check RFQs Status"},
-                            {"id": "contact_support", "title": "Contact Support"}
-                        ]
-                        profile_message = f"Let's continue with your seller account ({user.email})"
-                        # Extract first name and capitalize first letter
-                        first_name = user.name.split()[0].capitalize() if user.name else "there"
-                        header = f"Hi {first_name}! What would you like to do today?"
-                    else:
-                        buttons_config = [
-                            {"id": "create_rfq", "title": "Create new RFQ"},
-                            {"id": "rfq_status", "title": "Check RFQ Status"},
-                            {"id": "search_bfs", "title": "Search Stocks"}
-                        ]
-                        profile_message = "How can I help you with your procurement needs today?"
-                        header = "Please choose an option:"
-                else:
-                    buttons_config = [
-                        {"id": "create_rfq", "title": "Create new RFQ"},
-                        {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "search_bfs", "title": "Search Stocks"}
-                    ]
-                    profile_message = "How can I help you with your procurement needs today?"
-                    header = "Please choose an option:"
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
+                ]
+                profile_message = "How can I help you with your procurement needs today?"
 
-
-            # ✅ Send interactive buttons
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
                 profile_message,
-                buttons_config,
-                header
+                buttons_config
             )
-
-            # else:
-            #     # ✅ Regular contextual reply (no buttons)
-            #     await self._send_contextual_response(
-            #         user.phone_number,
-            #         context,
-            #         ["How can I help you with your procurement needs today?"],
-            #         "general_inquiry"
-            #     )
 
             return {"status": "general_inquiry_handled"}
 
         except Exception as e:
             return await self._handle_error_response(e, user.phone_number, "general_inquiry",
                                                      "How can I assist you today?")
+
+    async def _handle_rfq_general_inquiry(
+        self, user: User, session: ConversationSession, message: str, intent_result: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """Handle general inquiries within RFQ creation workflow context."""
+        try:
+            logger.info("handling RFQ general inquiry")
+            
+            # First try FAQ service for RFQ-related questions
+            faq_answer = await self.faq_service.get_faq_answer(message)
+            
+            if faq_answer:
+                # Provide FAQ answer with RFQ context
+                full_response = f"{faq_answer}\n\nWould you like to continue creating your RFQ or do you have other questions?"
+                await self.whatsapp_service.send_message(user.phone_number, full_response)
+                # Keep the RFQ workflow active
+                await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+                return {"status": "rfq_faq_handled"}
+            
+            # Generate contextual response about RFQ process
+            rfq_help_message = (
+                "I'm here to help you create a Request for Quotation (RFQ). "
+                "An RFQ helps you get quotes from suppliers for the items you need.\n\n"
+                "To create an RFQ, I'll need:\n"
+                "• Product description and specifications\n"
+                "• Quantity needed\n"
+                "• Delivery date\n"
+                "• Delivery location\n\n"
+                "What specific information would you like to know about the RFQ process?"
+            )
+            
+            await self.whatsapp_service.send_message(user.phone_number, rfq_help_message)
+            
+            # Keep the RFQ workflow active
+            await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+            return {"status": "rfq_general_inquiry_handled"}
+
+        except Exception as e:
+            return await self._handle_error_response(e, user.phone_number, "rfq_general_inquiry",
+                                                     "How can I help you with your RFQ?")
+
+    async def _handle_faq_request(self, user: User, message: str) -> Dict[str, Any]:
+        """Handle FAQ requests by providing answers from FAQ service."""
+        try:
+            logger.info(f"Processing FAQ request for user {user.phone_number}: '{message[:50]}...'")
+            
+            # Get FAQ answer from FAQ service
+            faq_answer = await self.faq_service.get_faq_answer(message)
+            
+            if faq_answer:
+                # Send FAQ answer
+                full_response = f"{faq_answer}\n\nWhat can I assist you with next?"
+                await self.whatsapp_service.send_message(user.phone_number, full_response)
+                
+
+                
+
+                return {"status": "faq_handled", "answer_provided": True}
+            else:
+                # No FAQ answer found, provide fallback
+                fallback_message = "I don't have specific information about that. For detailed assistance, please contact our support team."
+                await self.whatsapp_service.send_message(user.phone_number, fallback_message)
+                return {"status": "faq_no_answer", "answer_provided": False}
+
+        except Exception as e:
+            return await self._handle_error_response(e, user.phone_number, "faq_request",
+                                                     "I'm having trouble accessing FAQ information. Please try again or contact support.")
 
     async def _handle_support_request(self, user: User, message: str) -> Dict[str, Any]:
         """Handle support requests by providing contact information and menu options."""
