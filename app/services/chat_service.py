@@ -262,7 +262,7 @@ class ChatService:
                     await user_cache_service.store_meaningful_message(user_phone, last_meaningful, last_meaningful_intent)
 
 
-            print("intent",intent,"message ontent", message_intent_result)
+
             if intent=='faq':
                 # Handle FAQ directly without authentication for quick responses
                 faq_answer = await self.faq_service.get_faq_answer(message_content)
@@ -1108,17 +1108,8 @@ class ChatService:
                 logger.info(f"FAQ intent detected with {confidence}% confidence in main routing")
                 return await self._handle_faq_request(user, message)
             elif intent == "general_inquiry":
-                # Check if this is a general inquiry within RFQ creation workflow
-                current_workflow = WorkflowManager.get_workflow_type(session)
-                logger.info(f"General inquiry detected - current workflow: {current_workflow}")
-                if current_workflow == WorkflowType.rfq_creation:
-                    logger.info("handle rfq general inquiry")
-                    # This is a general inquiry about RFQ process - handle it within RFQ context
-                    return await self._handle_rfq_general_inquiry(user, session, message, intent_result)
-                else:
-                    logger.info("handling regular general inquiry")
-                    # Regular general inquiry
-                    return await self._handle_general_inquiry(user, message, intent_result)
+                return await self._handle_general_inquiry(user, message, intent_result)
+
             elif confidence < 0.5:
                 return await self._handle_clarification_request(user, message)
             else:
@@ -1470,53 +1461,88 @@ class ChatService:
                                                      "Please tell me your name to get started")
 
     async def _handle_general_inquiry(
-        self, user: User, message: str, intent_result: Dict[str, Any] = None
+            self, user: User, message: str, intent_result: Dict[str, Any] = None
     ) -> Dict[str, Any]:
-        """Handle general inquiries and FAQ questions."""
+        """Handle general inquiries using OpenAI."""
         try:
-            logger.info(f"_handle_general_inquiry called for user {user.phone_number} with message: '{message[:50]}...'")
-            # First try FAQ service for potential FAQ questions
-            faq_answer = await self.faq_service.get_faq_answer(message)
+            context = ChatServiceHelpers.build_context("general_inquiry", message)
+            logger.info(f"intent result in handle general inquiry :{intent_result}")
 
-            logger.info(f"FAQ service returned: {faq_answer}")
-            
-            # Check if FAQ service found a good match (not the fallback message)
-            if faq_answer:
-                full_response = f"{faq_answer}\n\nWhat can I assist you with next?"
-                await self.whatsapp_service.send_message(user.phone_number, full_response)
-                return {"status": "faq_handled"}
-            
-            # No FAQ match, proceed with regular general inquiry handling
+            # Determine user role
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
 
+            logger.info(f"continue with user profile:{user.email}, name:{user.name}, user role:{user_role}")
+
+            # Role-based button configuration
             if user_role == "buyer":
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "search_bfs", "title": "Search Stocks"}
                 ]
+                profile_message = f"Let's continue with your buyer profile ({user.email})"
+                # Extract first name and capitalize first letter
                 first_name = user.name.split()[0].capitalize() if user.name else "there"
-                profile_message = f"Hi {first_name}! What can I assist you with today?"
+                header = f"Hi {first_name}! What can I assist you with today?"
+
             elif user_role == "seller":
                 buttons_config = [
                     {"id": "rfq_status", "title": "Check RFQ status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
+                profile_message = f"Let's continue with your seller account ({user.email})"
+                # Extract first name and capitalize first letter
                 first_name = user.name.split()[0].capitalize() if user.name else "there"
-                profile_message = f"Hi {first_name}! What would you like to do today?"
-            else:
-                buttons_config = [
-                    {"id": "create_rfq", "title": "Create new RFQ"},
-                    {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Stocks"}
-                ]
-                profile_message = "How can I help you with your procurement needs today?"
+                header = f"Hi {first_name}! What would you like to do today?"
 
+            else:
+                # Unknown role → check if we can determine role from user object
+                if hasattr(user, 'role') and user.role:
+                    actual_role = user.role.value if hasattr(user.role, 'value') else user.role
+                    if actual_role == "buyer":
+                        buttons_config = [
+                            {"id": "create_rfq", "title": "Create new RFQ"},
+                            {"id": "rfq_status", "title": "Check RFQ Status"},
+                            {"id": "search_bfs", "title": "Search Stocks"}
+                        ]
+                        profile_message = f"Let's continue with your buyer profile ({user.email})"
+                        # Extract first name and capitalize first letter
+                        first_name = user.name.split()[0].capitalize() if user.name else "there"
+                        header = f"Hi {first_name}! What can I assist you with today?"
+                    elif actual_role == "seller":
+                        buttons_config = [
+                            {"id": "rfq_status", "title": "Check RFQs Status"},
+                            {"id": "contact_support", "title": "Contact Support"}
+                        ]
+                        profile_message = f"Let's continue with your seller account ({user.email})"
+                        # Extract first name and capitalize first letter
+                        first_name = user.name.split()[0].capitalize() if user.name else "there"
+                        header = f"Hi {first_name}! What would you like to do today?"
+                    else:
+                        buttons_config = [
+                            {"id": "create_rfq", "title": "Create new RFQ"},
+                            {"id": "rfq_status", "title": "Check RFQ Status"},
+                            {"id": "search_bfs", "title": "Search Stocks"}
+                        ]
+                        profile_message = "How can I help you with your procurement needs today?"
+                        header = "Please choose an option:"
+                else:
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                    profile_message = "How can I help you with your procurement needs today?"
+                    header = "Please choose an option:"
+
+            # ✅ Send interactive buttons
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
                 profile_message,
-                buttons_config
+                buttons_config,
+                header
             )
+
 
             return {"status": "general_inquiry_handled"}
 
