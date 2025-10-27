@@ -7,7 +7,7 @@ ChatService class for better organization.
 
 from datetime import datetime, timedelta
 from app.config import get_settings
-from app.models import ConversationSession
+from app.models import ConversationSession, WorkflowType
 from app.utils.datetime_utils import utc_now, utc_from_naive, is_expired, format_utc_display
 import logging
 from typing import Dict, Any
@@ -150,16 +150,30 @@ class SessionHelpers:
 
         current_utc = utc_now()
 
+        # Preserve profile selection state to prevent infinite loops during authentication
+        preserved_state = {}
+        if session.workflow_state:
+            if 'profile_selection_stage' in session.workflow_state:
+                preserved_state['profile_selection_stage'] = session.workflow_state['profile_selection_stage']
+            if 'profile_options' in session.workflow_state:
+                preserved_state['profile_options'] = session.workflow_state['profile_options']
+
         # COMPLETELY RESET workflow_state - DO NOT preserve any old data
         # This prevents old RFQ items from appearing after session timeout
         session.workflow_state = {
             'extracted_entities': [],
             'last_activity_at': current_utc.isoformat(),
-            'session_refreshed': current_utc.isoformat()
+            'session_refreshed': current_utc.isoformat(),
+            **preserved_state  # Restore profile selection state if it existed
         }
 
         # Reset session for fresh start but keep the same ID
-        session.workflow_type = None
+        # But preserve authentication workflow if user is in profile selection
+        if session.workflow_type == WorkflowType.authentication and preserved_state:
+            # Keep authentication workflow active if profile selection was in progress
+            pass
+        else:
+            session.workflow_type = None
         session.outcome = None
         session.conversation_history = {"openai_messages": [], "metadata": []}
         session.extracted_entities = {}
