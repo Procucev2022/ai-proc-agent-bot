@@ -30,8 +30,7 @@
                     },
                     "gstin": {
                         "type": ["string", "null"],
-                        "description": "GSTIN number"
-                    },
+                        "description": "GSTIN number - must be exactly 15 characters" },
                     "products_services": {
                         "type": ["string", "null"],
                         "description": "Products or services offered"
