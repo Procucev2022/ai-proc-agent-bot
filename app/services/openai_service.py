@@ -414,15 +414,23 @@ class OpenAIService:
                 "rfq_creation": "rfq_creation", 
                 "modification_request": "modification",  # Use dedicated modification extraction tool
                 "product_search": "product_search",
-                "rfq_status_check": "rfq_status"
+                "rfq_status_check": "rfq_status",
+                "registration_buyer": "registration_buyer",
+                "registration_seller": "registration_seller"
             }
             
             mapped_workflow = workflow_mapping.get(workflow_type, workflow_type)
             
-            # Load appropriate tool (entity extraction or modification extraction)
+            # Load appropriate tool (entity extraction, modification extraction, or registration extraction)
             if mapped_workflow == "modification":
                 tool_file = "modification_extraction.json"
                 tool_function_name = "extract_modification_values"
+            elif mapped_workflow == "registration_buyer":
+                tool_file = "entity_extraction_registration_buyer.json"
+                tool_function_name = "extract_buyer_registration_entities"
+            elif mapped_workflow == "registration_seller":
+                tool_file = "entity_extraction_registration_seller.json"
+                tool_function_name = "extract_seller_registration_entities"
             else:
                 tool_file = f"entity_extraction_{mapped_workflow}.json"
                 tool_function_name = "extract_entities"
@@ -434,6 +442,9 @@ class OpenAIService:
             if mapped_workflow == "modification":
                 prompt_category = "modification_extraction"
                 prompt_name = "_get_modification_system_prompt"
+            elif mapped_workflow in ["registration_buyer", "registration_seller"]:
+                prompt_category = "entity_extraction"
+                prompt_name = f"_get_entity_system_prompt_{mapped_workflow}"
             else:
                 prompt_category = "entity_extraction"
                 prompt_name = f"_get_entity_system_prompt_{mapped_workflow}"
@@ -497,7 +508,16 @@ class OpenAIService:
                             "confidence": args.get("confidence", 0),
                             "success": True
                         }
-
+                    elif mapped_workflow in ["registration_buyer", "registration_seller"]:
+                        # Registration extraction format
+                        print(f"OpenAI: Using registration format for {mapped_workflow}")
+                        result = {
+                            "entities": args.get("entities", {}),
+                            "completeness": args.get("completeness", 0),
+                            "missing_fields": args.get("missing_fields", []),
+                            "confidence": args.get("confidence", 0),
+                            "success": True
+                        }
                     else:
                         # Backward compatibility for old single entity format
                         print(f"OpenAI: Using OLD single entity format")
@@ -2745,7 +2765,7 @@ Determine the best category for the input item based on the similar items and th
     
     @log_service_method("openai_service")
     async def extract_registration_entities(self, message: str, conversation_context: str = "", user_type: str = "buyer", existing_entities: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Extract registration entities using proper tools and prompts like RFQ creation."""
+        """Extract registration entities using proper tools and prompts with validation."""
         start_time = time.time()
         
         try:
@@ -2768,7 +2788,7 @@ Determine the best category for the input item based on the similar items and th
                 context_text += f"Conversation context: {conversation_context}\n\n"
             if existing_entities:
                 context_text += f"Already collected: {json.dumps(existing_entities, indent=2)}\n\n"
-            context_text += "Extract new information from the message and merge with existing data."
+            context_text += "Extract and validate new information from the message. Set invalid fields to null."
 
             response = await self.client.responses.create(
                 model=self.default_model,
@@ -2786,12 +2806,12 @@ Determine the best category for the input item based on the similar items and th
                     args = json.loads(function_call.arguments)
                     
                     result = {
-                        "entities": args.get("entities", {}),
-                        "completeness": args.get("completeness", 0),
-                        "missing_fields": args.get("missing_fields", []),
+                        "entities": validated_entities,
+                        "completeness": completeness,
+                        "missing_fields": missing_fields,
                         "confidence": args.get("confidence", 0),
                         "success": True,
-                        "extracted_fields": list(args.get("entities", {}).keys())
+                        "extracted_fields": [k for k, v in validated_entities.items() if v is not None]
                     }
                     
                     # Log successful extraction

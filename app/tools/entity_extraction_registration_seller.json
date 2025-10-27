@@ -8,35 +8,36 @@
             "entities": {
                 "type": "object",
                 "properties": {
-                    "full_name": {
+                    "name": {
                         "type": ["string", "null"],
                         "description": "Full name of the seller"
                     },
-                    "company_name": {
+                    "companyName": {
                         "type": ["string", "null"],
                         "description": "Company or organization name"
                     },
                     "email": {
                         "type": ["string", "null"],
-                        "description": "Organization email address"
+                        "description": "Business email address"
                     },
-                    "location": {
+                    "address": {
                         "type": ["string", "null"],
-                        "description": "Company location (city, state)"
+                        "description": "Company location/address"
                     },
-                    "pincode": {
+                    "zipCode": {
                         "type": ["string", "null"],
                         "description": "6-digit pincode"
                     },
                     "gstin": {
                         "type": ["string", "null"],
-                        "description": "GSTIN number - must be exactly 15 characters" },
-                    "products_services": {
+                        "description": "GSTIN number - must be exactly 15 characters"
+                    },
+                    "details": {
                         "type": ["string", "null"],
                         "description": "Products or services offered"
                     }
                 },
-                "required": ["full_name", "company_name", "email", "location", "pincode", "gstin", "products_services"],
+                "required": ["name", "companyName", "email", "address", "zipCode", "gstin", "details"],
                 "additionalProperties": false
             },
             "completeness": {
