@@ -8,6 +8,7 @@ import logging
 from typing import Dict, Any, List, Optional, Type
 import re
 from pydantic import BaseModel
+from ...utils.pincode_lookup import get_location_from_pincode_async
 
 logger = logging.getLogger(__name__)
 
@@ -254,3 +255,42 @@ class AuthenticationHelpers:
                 "source_type": "W",
                 "whatsApp": True
             }
+    
+    @staticmethod
+    async def validate_pincode(entities: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[str]]:
+        """
+        Validate pincode in entities using API-based lookup.
+        
+        Args:
+            entities: Dict of extracted entities
+            
+        Returns:
+            tuple: (updated_entities, validation_error_message)
+        """
+        validated_entities = entities.copy()
+        validation_error_message = None
+        pincode = entities.get("pincode")
+        
+        if pincode:
+            try:
+                # Clean and validate pincode format
+                clean_pincode = str(pincode).strip()
+                if not clean_pincode.isdigit() or len(clean_pincode) != 6:
+                    logger.info(f"Invalid pincode format: {pincode}")
+                    validated_entities["pincode"] = None
+                    validation_error_message = "Pincode does not exist. Please provide a valid Indian pincode."
+                else:
+                    # Use API to validate pincode existence
+                    location_data = await get_location_from_pincode_async(clean_pincode)
+                    if not location_data:
+                        logger.info(f"Pincode {pincode} does not exist")
+                        validated_entities["pincode"] = None
+                        validation_error_message = "Pincode does not exist. Please provide a valid Indian pincode."
+                    else:
+                        logger.info(f"Pincode {pincode} is valid")
+            except Exception as e:
+                logger.error(f"Error validating pincode {pincode}: {e}")
+                validated_entities["pincode"] = None
+                validation_error_message = "Pincode does not exist. Please provide a valid Indian pincode."
+        
+        return validated_entities, validation_error_message

@@ -7,6 +7,7 @@ by the data model and orchestration layer.
 """
 
 import json
+import logging
 import os
 from datetime import datetime
 from typing import Dict
@@ -15,6 +16,8 @@ from ..services.openai_service import OpenAIService
 from ..utils.datetime_utils import format_date_display
 from ..utils.pincode_lookup import get_location_from_pincode_async
 
+
+logger = logging.getLogger(__name__)
 
 class EntityService:
     """Entity extraction service using OpenAI function calling."""
@@ -101,8 +104,6 @@ class EntityService:
             return result
             
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"Registration entity extraction error: {e}", exc_info=True)
             return {"entities": {}, "confidence": 0, "success": False}
     
