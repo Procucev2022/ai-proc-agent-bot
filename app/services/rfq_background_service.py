@@ -48,7 +48,18 @@ class RFQBackgroundService:
     seller selection, notification sending, and conversation management.
     """
     
+    _instance = None
+    _initialized = False
+    
+    def __new__(cls, db_session: Optional[Session] = None):
+        if cls._instance is None:
+            cls._instance = super(RFQBackgroundService, cls).__new__(cls)
+        return cls._instance
+    
     def __init__(self, db_session: Optional[Session] = None):
+        if self._initialized:
+            return
+        self._initialized = True
         self.db_session = db_session or get_db_session()
         self.settings = get_settings()
         
