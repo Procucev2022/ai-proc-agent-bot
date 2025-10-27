@@ -1550,46 +1550,6 @@ class ChatService:
             return await self._handle_error_response(e, user.phone_number, "general_inquiry",
                                                      "How can I assist you today?")
 
-    async def _handle_rfq_general_inquiry(
-        self, user: User, session: ConversationSession, message: str, intent_result: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
-        """Handle general inquiries within RFQ creation workflow context."""
-        try:
-            logger.info("handling RFQ general inquiry")
-            
-            # First try FAQ service for RFQ-related questions
-            faq_answer = await self.faq_service.get_faq_answer(message)
-            
-            if faq_answer:
-                # Provide FAQ answer with RFQ context
-                full_response = f"{faq_answer}\n\nWould you like to continue creating your RFQ or do you have other questions?"
-                await self.whatsapp_service.send_message(user.phone_number, full_response)
-                # Keep the RFQ workflow active
-                await self.session_manager.save_session(session, WorkflowType.rfq_creation)
-                return {"status": "rfq_faq_handled"}
-            
-            # Generate contextual response about RFQ process
-            rfq_help_message = (
-                "I'm here to help you create a Request for Quotation (RFQ). "
-                "An RFQ helps you get quotes from suppliers for the items you need.\n\n"
-                "To create an RFQ, I'll need:\n"
-                "• Product description and specifications\n"
-                "• Quantity needed\n"
-                "• Delivery date\n"
-                "• Delivery location\n\n"
-                "What specific information would you like to know about the RFQ process?"
-            )
-            
-            await self.whatsapp_service.send_message(user.phone_number, rfq_help_message)
-            
-            # Keep the RFQ workflow active
-            await self.session_manager.save_session(session, WorkflowType.rfq_creation)
-            return {"status": "rfq_general_inquiry_handled"}
-
-        except Exception as e:
-            return await self._handle_error_response(e, user.phone_number, "rfq_general_inquiry",
-                                                     "How can I help you with your RFQ?")
-
     async def _handle_faq_request(self, user: User, message: str) -> Dict[str, Any]:
         """Handle FAQ requests by providing answers from FAQ service."""
         try:
