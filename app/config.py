@@ -200,6 +200,7 @@ class Settings:
 
         # Queue Configuration
         self.batch_window_seconds: int = int(os.getenv("BATCH_WINDOW_SECONDS", "3"))
+        self.please_wait_threshold_seconds: int = int(os.getenv("PLEASE_WAIT_THRESHOLD_SECONDS", "10"))
 
         # Webhook Health Monitoring Configuration
         self.webhook_health_monitoring_enabled = os.getenv(
