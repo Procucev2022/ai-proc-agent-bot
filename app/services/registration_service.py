@@ -538,7 +538,9 @@ class RegistrationService:
                     if user_id:
                         from app.services.verification_check_service import VerificationCheckService
                         verification_service = VerificationCheckService(None, self.otp_service, self.whatsapp_service)
-                        domain_result = await verification_service._check_domain_approval(user_id)
+                        # Pass the fresh user data from API for domain check
+                        user_data_for_domain_check = fresh_user_data if 'fresh_user_data' in locals() else entities
+                        domain_result = await verification_service._check_domain_approval(user_id, False, user_data_for_domain_check)
 
 
                         if domain_result.get("approved"):
