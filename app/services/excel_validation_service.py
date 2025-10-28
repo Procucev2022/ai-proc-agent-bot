@@ -26,7 +26,7 @@ class ExcelValidationService:
     data quality, business rules, and edge case handling.
     """
     
-    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+    MAX_FILE_SIZE = 3 * 1024 * 1024  # 10MB
     MAX_ROWS = 50  # Maximum allowed rows
     MAX_COLUMNS = 15  # Maximum columns to process
     MAX_HEADER_ROW = 10  # Check headers up to row 10

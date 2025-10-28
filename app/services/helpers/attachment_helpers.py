@@ -29,7 +29,7 @@ if not whatsapp_payload_logger.handlers:
     log_file = os.path.join(log_dir, f"whatsapp_media_{datetime.now().strftime('%Y-%m-%d')}.log")
     file_handler = RotatingFileHandler(
         log_file,
-        maxBytes=10 * 1024 * 1024,  # 10MB
+        maxBytes= 3 * 1024 * 1024,  # 10MB
         backupCount=5,
         encoding='utf-8'
     )
@@ -48,7 +48,7 @@ class AttachmentHelpers:
     # Maximum number of attachments allowed per RFQ
     MAX_ATTACHMENTS_PER_RFQ = 4
     # Maximum file size in bytes (1MB)
-    MAX_FILE_SIZE_BYTES = 1 * 1024 * 1024  # 1MB
+    MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024  # 1MB
 
     @staticmethod
     async def download_and_encode_attachment(file_url: str, filename: str = None, mime_type: str = None) -> Dict[str, Any]:
