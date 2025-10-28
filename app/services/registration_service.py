@@ -26,6 +26,7 @@ from app.redis_db import get_auth_redis_service
 from app.services.support_notification_service import SupportNotificationService
 from app.services.domain_check_service import DomainCheckService
 from app.services.otp_service import OTPService
+from app.utils.pincode_lookup import get_location_from_pincode_async
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -104,27 +105,28 @@ class RegistrationService:
             if await self._check_exit_command(message_content):
                 return await self._handle_registration_exit(user_phone, session)
 
-            # Build context from conversation history for better entity extraction
-            conversation_context = self._build_registration_context(session, message_content)
-
-            # Extract entities from user message with full context
-            workflow_type = f"registration_{user_type}"
-            entity_result = await self.entity_service.extract_entities(
-                message_content,
-                context={
-                    "workflow_type": workflow_type,
-                    "conversation_history": conversation_context,
-                    "registration_stage": "data_collection"
-                },
-                workflow_type=workflow_type
-            )
-
             # Initialize registration_entities if not exists
             if "registration_entities" not in session.workflow_state:
                 session.workflow_state["registration_entities"] = {}
 
             # Get existing entities from session
             existing_entities = session.workflow_state.get("registration_entities", {})
+
+            # Build context from conversation history for better entity extraction
+            conversation_context = self._build_registration_context(session, message_content)
+
+            # Extract entities from user message with full context including existing entities
+            workflow_type = f"registration_{user_type}"
+            entity_result = await self.entity_service.extract_entities(
+                message_content,
+                context={
+                    "workflow_type": workflow_type,
+                    "conversation_history": conversation_context,
+                    "registration_stage": "data_collection",
+                    "existing_entities": existing_entities
+                },
+                workflow_type=workflow_type
+            )
 
             # Merge extracted entities with existing ones
             if entity_result.get("entities"):
@@ -141,14 +143,18 @@ class RegistrationService:
             else:
                 logger.warning("No entities extracted from message")
 
+            # Validate entities (email and pincode) using authentication helper
+            existing_entities, validation_error_message = await self.authentication_helpers.validate_pincode(existing_entities)
+            session.workflow_state["registration_entities"] = existing_entities
+
             # Dynamic schema-based field validation
             user_schema = BuyerRegistrationSchema if user_type == "buyer" else SellerRegistrationSchema
             missing_fields = AuthenticationHelpers.get_missing_fields(user_schema, existing_entities)
 
             if missing_fields:
-                # Generate questions for missing fields
+                # Generate questions for missing fields with validation errors merged
                 questions = await self._generate_contextual_registration_questions(
-                    missing_fields, user_type, existing_entities, message_content
+                    missing_fields, user_type, existing_entities, message_content, validation_error_message
                 )
                 if self.session_manager:
                     await self.session_manager.send_and_track_message(user_phone, questions, session)
@@ -357,11 +363,11 @@ class RegistrationService:
     
     async def _generate_contextual_registration_questions(self, missing_fields: List[str], 
                                                         user_type: str, existing_entities: Dict,
-                                                        current_message: str) -> str:
-        """Generate contextual questions dynamically based on schema."""
+                                                        current_message: str, validation_error_message: Optional[str] = None) -> str:
+        """Generate contextual questions dynamically based on schema with validation errors."""
         user_schema = BuyerRegistrationSchema if user_type == "buyer" else SellerRegistrationSchema
         return AuthenticationHelpers.generate_registration_questions_dynamic(
-            user_schema, existing_entities, missing_fields
+            user_schema, existing_entities, missing_fields, validation_error_message
         )
     
     async def _submit_registration(self, user_phone: str, session: ConversationSession,

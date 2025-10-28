@@ -8,6 +8,7 @@ import logging
 from typing import Dict, Any, List, Optional, Type
 import re
 from pydantic import BaseModel
+from ...utils.pincode_lookup import get_location_from_pincode_async
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +197,7 @@ class AuthenticationHelpers:
             return "Please confirm your registration details. (Error generating message)"
     
     @staticmethod
-    def generate_registration_questions_dynamic(schema: Type[BaseModel], collected_entities: Dict, missing_fields: List[str]) -> str:
+    def generate_registration_questions_dynamic(schema: Type[BaseModel], collected_entities: Dict, missing_fields: List[str], validation_error_message: Optional[str] = None) -> str:
         """Generate registration questions dynamically based on schema descriptions."""
         try:
             # Build greeting with user name if available
@@ -206,6 +207,11 @@ class AuthenticationHelpers:
                 greeting += f", {user_name.split()[0].lower()}!"
             else:
                 greeting += "!"
+            
+            # Add validation error if present
+            validation_notice = ""
+            if validation_error_message:
+                validation_notice = f"\n {validation_error_message}\n"
             
             # Acknowledge collected fields
             acknowledgment = ""
@@ -230,9 +236,9 @@ class AuthenticationHelpers:
                     questions.append(f"• What's your {field_desc.lower()}?")
             
             if questions:
-                return greeting + acknowledgment + "I still need:\n\n" + "\n".join(questions)
+                return greeting + validation_notice + acknowledgment + "I still need:\n\n" + "\n".join(questions)
             else:
-                return greeting + acknowledgment + "Please provide the remaining registration details."
+                return greeting + validation_notice + acknowledgment + "Please provide the remaining registration details."
                 
         except Exception as e:
             logger.error(f"Registration questions generation error: {e}")
@@ -283,3 +289,44 @@ class AuthenticationHelpers:
                 "source_type": "W",
                 "whatsApp": True
             }
+    
+    @staticmethod
+    async def validate_pincode(entities: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[str]]:
+        """
+        Validate pincode in entities using API-based lookup.
+        
+        Args:
+            entities: Dict of extracted entities
+            
+        Returns:
+            tuple: (updated_entities, validation_error_message)
+        """
+        validated_entities = entities.copy()
+        validation_error_message = None
+        # Check both possible field names for backward compatibility
+        pincode = entities.get("zipCode") or entities.get("pincode")
+        pincode_field = "zipCode" if "zipCode" in entities else "pincode"
+        
+        if pincode:
+            try:
+                # Clean and validate pincode format
+                clean_pincode = str(pincode).strip()
+                if not clean_pincode.isdigit() or len(clean_pincode) != 6:
+                    logger.info(f"Invalid pincode format: {pincode}")
+                    validated_entities[pincode_field] = None
+                    validation_error_message = "Pincode does not exist. Please provide a valid Indian pincode."
+                else:
+                    # Use API to validate pincode existence
+                    location_data = await get_location_from_pincode_async(clean_pincode)
+                    if not location_data:
+                        logger.info(f"Pincode {pincode} does not exist")
+                        validated_entities[pincode_field] = None
+                        validation_error_message = "Pincode does not exist. Please provide a valid Indian pincode."
+                    else:
+                        logger.info(f"Pincode {pincode} is valid")
+            except Exception as e:
+                logger.error(f"Error validating pincode {pincode}: {e}")
+                validated_entities[pincode_field] = None
+                validation_error_message = "Pincode does not exist. Please provide a valid Indian pincode."
+        
+        return validated_entities, validation_error_message

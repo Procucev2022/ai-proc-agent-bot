@@ -18,11 +18,11 @@
                     },
                     "email": {
                         "type": ["string", "null"],
-                        "description": "Organization email address"
+                        "description": "Business email address"
                     },
                     "address": {
                         "type": ["string", "null"],
-                        "description": "Company location (city, state)"
+                        "description": "Company location/address"
                     },
                     "zipCode": {
                         "type": ["string", "null"],
@@ -30,9 +30,9 @@
                     },
                     "gstin": {
                         "type": ["string", "null"],
-                        "description": "GSTIN number"
+                        "description": "GSTIN number - must be exactly 15 characters"
                     },
-                    "products_services": {
+                    "details": {
                         "type": ["string", "null"],
                         "description": "Products or services offered (mapped to 'details' in API)"
                     }
