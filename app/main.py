@@ -86,13 +86,33 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize database: {e}")
         raise
     
+    # Start message queue background tasks
+    message_queue_tasks = []
+    try:
+        from app.api.webhook import message_queue_service
+        
+        # Start batch poller (creates batches from incoming messages)
+        poller_task = asyncio.create_task(message_queue_service.run_batch_poller())
+        message_queue_tasks.append(poller_task)
+        logger.info("Message queue batch poller started")
+        
+        # Start monitoring loop (acknowledgments and please-wait messages)
+        monitor_task = asyncio.create_task(message_queue_service.run_monitoring_loop())
+        message_queue_tasks.append(monitor_task)
+        logger.info("Message queue monitoring loop started")
+        
+    except Exception as e:
+        logger.error(f"Failed to start message queue background tasks: {e}")
+        raise
+    
     # Start webhook health monitoring
-    monitor_task = None
+    webhook_monitor_task = None
+    webhook_monitor = None
     if settings.webhook_health_monitoring_enabled:
         try:
             from app.services.webhook_health_monitor_service import WebhookHealthMonitorService
-            monitor = WebhookHealthMonitorService()
-            monitor_task = asyncio.create_task(monitor.start_monitoring())
+            webhook_monitor = WebhookHealthMonitorService()
+            webhook_monitor_task = asyncio.create_task(webhook_monitor.start_monitoring())
             logger.info("Webhook health monitoring started")
         except Exception as e:
             logger.error(f"Failed to start webhook health monitoring: {e}")
@@ -102,15 +122,23 @@ async def lifespan(app: FastAPI):
     
     logger.info("Shutting down AI Procurement Agent application")
     
-    # Stop health monitoring gracefully
-    if monitor_task:
+    # Shutdown message queue service gracefully
+    try:
+        from app.api.webhook import message_queue_service
+        await message_queue_service.shutdown()
+        logger.info("Message queue service shut down successfully")
+    except Exception as e:
+        logger.error(f"Error shutting down message queue service: {e}")
+    
+    # Stop webhook health monitoring gracefully
+    if webhook_monitor_task and webhook_monitor:
         try:
-            monitor.stop_monitoring()
-            await asyncio.wait_for(monitor_task, timeout=5.0)
+            webhook_monitor.stop_monitoring()
+            await asyncio.wait_for(webhook_monitor_task, timeout=5.0)
             logger.info("Webhook health monitoring stopped")
         except asyncio.TimeoutError:
             logger.warning("Health monitoring shutdown timeout")
-            monitor_task.cancel()
+            webhook_monitor_task.cancel()
         except Exception as e:
             logger.error(f"Error stopping health monitoring: {e}")
     
@@ -217,6 +245,74 @@ async def health_check():
             "version": "1.0.0"
         }
     )
+
+
+@app.get("/health/queue")
+async def queue_health_check():
+    """
+    Health check endpoint specifically for message queue service.
+    
+    Returns comprehensive metrics about queue status, processing, and health.
+    """
+    try:
+        from app.api.webhook import message_queue_service
+        metrics = await message_queue_service.get_health_metrics()
+        
+        return JSONResponse(
+            content={
+                "status": "healthy",
+                "service": "Message Queue Service",
+                "metrics": metrics
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error getting queue health metrics: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "service": "Message Queue Service",
+                "error": str(e)
+            }
+        )
+
+
+@app.get("/debug/queue/{user_phone}")
+async def debug_queue_status(user_phone: str):
+    """
+    Debug endpoint to inspect queue status for a specific user.
+    
+    Args:
+        user_phone: User's phone number (without + prefix)
+        
+    Returns detailed queue status including:
+    - Incoming queue size
+    - Outgoing queue size
+    - Currently processing batch
+    - Session information
+    - Timer status
+    """
+    try:
+        from app.api.webhook import message_queue_service
+        status = await message_queue_service.get_queue_status(user_phone)
+        
+        return JSONResponse(
+            content={
+                "status": "success",
+                "user_phone": user_phone,
+                "queue_status": status
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error getting queue status for {user_phone}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "user_phone": user_phone,
+                "error": str(e)
+            }
+        )
 
 
 @app.get("/")
