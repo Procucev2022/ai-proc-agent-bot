@@ -367,9 +367,14 @@ class RegistrationService:
             # Get schema dynamically based on user type
             user_schema = BuyerRegistrationSchema if user_type == "buyer" else SellerRegistrationSchema
             
+            # Handle field mapping for seller registration
+            mapped_entities = entities.copy()
+            if user_type == "seller" and "products_services" in mapped_entities:
+                mapped_entities["details"] = mapped_entities.pop("products_services")
+            
             # Build payload dynamically from schema
             registration_data = AuthenticationHelpers.build_registration_payload_dynamic(
-                user_schema, entities, user_phone
+                user_schema, mapped_entities, user_phone
             )
             
             # Call appropriate API based on user type
