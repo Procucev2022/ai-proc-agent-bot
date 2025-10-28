@@ -214,7 +214,7 @@ class SellerAPIService:
     async def fetch_seller_open_rfqs_for_reminder(self, seller_id: str) -> Dict[str, Any]:
         """Fetch open RFQs where seller has not submitted bids yet for end-of-flow reminder."""
         try:
-            endpoint = "rest/gmt/getOpenRfqs"
+            endpoint = "/rest/gmt/getOpenRfqs"
             
             payload = {
                 "seller_id": seller_id
