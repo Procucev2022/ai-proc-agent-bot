@@ -165,7 +165,23 @@ INTENT CATEGORIES:
     Examples: "How to contact support?", "I need help", "Contact customer service", "Technical support", "Help me", "Support team"
     Context clues: Support keywords (support, help, contact, customer service, technical, assistance)
 
-16. **ambiguous** (<60% confidence) - Unclear intent, mixed signals, insufficient information, or conflicting intents in same message
+16. **faq** (80%+ confidence) - User asking frequently asked questions about GMT platform, pricing, features, or general information
+    Examples: "What is GMT?", "Is there any charge to use GMT?", "How does GMT work?", "What are the benefits?", "How to register?", "What information is shared?", "Is it free?", "Tell me about GMT"
+    
+    **FAQ INDICATORS:**
+    - Information requests: "what is", "how does", "how to", "what are", "explain", "tell me about"
+    - Pricing questions: "is there any charge", "cost to use", "free to use", "pricing", "fees", "charges"
+    - Feature questions: "benefits of", "what can", "do you provide", "features", "capabilities"
+    - Process questions: "how can i", "how to register", "how to post RFQ", "how to access"
+    - General inquiries: "information about", "details about", "tell me more"
+    
+    Context clues:
+    - User asking about platform features, pricing, or general information
+    - Questions about GMT functionality, registration process, or benefits
+    - NOT asking for help with technical issues (that's support)
+    - NOT greeting messages (that's general_inquiry)
+
+17. **ambiguous** (<60% confidence) - Unclear intent, mixed signals, insufficient information, or conflicting intents in same message
     Examples: "I want to sell fridge and buy 2 chairs 3 tables", "Looking to purchase laptops but also have printers to sell", "Need office supplies, also we supply construction materials"
     
 

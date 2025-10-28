@@ -249,6 +249,10 @@ class OpenAIService:
             # Build comprehensive context information for the prompt
             context_info = ""
             if context:
+                # Add FAQ context for better intent classification
+                if context.get('faq_context'):
+                    context_info += f"\n\nFAQ CONTEXT (for FAQ intent detection):\n{context['faq_context'][:2000]}..."  # Truncate to avoid token limits
+                
                 # Add conversation history
                 if context.get('conversation_history', {}).get('openai_messages'):
                     recent_messages = context['conversation_history']['openai_messages'][-5:]  # Last 5 messages for context
@@ -1284,7 +1288,8 @@ Analyze their response to determine their true choice.
                 "contextual_reference": 5,
                 "session_inquiry": 5,
                 "workflow_rejection": 5,
-                "alternative_request": 5
+                "alternative_request": 5,
+                "faq": 10
             },
             "context_analysis": {
                 "references_existing_data": False,
@@ -3075,3 +3080,35 @@ If multiple emails and user selected a number, include selection."""
         except Exception as e:
             logger.error(f"Registration type detection failed: {str(e)}")
             return {"success": False, "error": str(e)}
+    
+    async def get_completion(self, prompt: str) -> str:
+        """Get simple completion from OpenAI with logging."""
+        start_time = time.time()
+        
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.default_model,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            
+            processing_time = time.time() - start_time
+            result = response.choices[0].message.content
+            
+            self.interaction_logger.log_response_generation(
+                context={"prompt_type": "completion"},
+                generated_response=result,
+                conversation_stage="completion",
+                model_used=self.default_model,
+                processing_time=processing_time
+            )
+            
+            return result
+            
+        except Exception as e:
+            self.interaction_logger.log_error(
+                interaction_type="completion",
+                user_input=prompt,
+                error_message=str(e),
+                model_used=self.default_model
+            )
+            raise e

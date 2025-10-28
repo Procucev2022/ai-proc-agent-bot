@@ -15,6 +15,7 @@ import logging
 from typing import Dict, Any
 from app.services.openai_service import OpenAIService
 from app.config import get_settings
+from app.data.faq_config import FULL_FAQ_CONTEXT
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class IntentService:
             
         Returns:
             Dict containing:
-            - intent: classified intent (buy_something, general_inquiry, modification_request, confirmation_response, reference_request, ambiguous, contextual_reference, session_inquiry, exit_system, cancel_workflow, account_switch, register_account, alternative_request, support)
+            - intent: classified intent (buy_something, general_inquiry, modification_request, confirmation_response, reference_request, ambiguous, contextual_reference, session_inquiry, exit_system, cancel_workflow, account_switch, register_account, alternative_request, support, faq)
             - confidence: confidence score (0-100)
             - reasoning: explanation of classification including context analysis
             - all_intent_scores: scores for all possible intents
@@ -56,8 +57,12 @@ class IntentService:
             - should_update_entities: whether entities should be updated from contextual reference
         """
         try:
-            # Get classification from OpenAI with context
-            classification_result = await self.openai_service.classify_intent(message, context)
+            # Add FAQ context to help LLM understand FAQ-related questions
+            enhanced_context = context.copy() if context else {}
+            enhanced_context['faq_context'] = FULL_FAQ_CONTEXT
+            
+            # Get classification from OpenAI with enhanced context
+            classification_result = await self.openai_service.classify_intent(message, enhanced_context)
             
             if not classification_result.get("success", False):
                 logger.warning(f"OpenAI classification failed, using fallback")
@@ -184,6 +189,7 @@ class IntentService:
             "cancel_workflow": 5,
             "alternative_request": 5,
             "support": 10,
+            "faq": 10,
             "ambiguous": 20
         }
         all_scores[intent] = confidence
@@ -219,7 +225,16 @@ class IntentService:
             return "buy_something", 60
         elif any(keyword in message_lower for keyword in ["sell", "selling", "offer", "provide", "vendor", "supplier", "want to sell", "have to sell", "we offer", "can supply"]):
             return "sell_something", 60
-        elif any(keyword in message_lower for keyword in ["help", "how", "what can", "explain"]):
+        # Check for FAQ keywords (high priority) - enhanced detection
+        elif any(keyword in message_lower for keyword in [
+            "what is", "how does", "how to", "what are", "explain", "tell me about", 
+            "information about", "details about", "faq", "frequently asked", 
+            "question about", "help with", "is there any charge", "cost to use", 
+            "free to use", "pricing", "fees", "charges", "benefits of", 
+            "how can i", "what can", "do you provide", "tell me more"
+        ]):
+            return "faq", 85
+        elif any(keyword in message_lower for keyword in ["help", "how", "what can"]):
             return "general_inquiry", 60
         # Check for mixed intent (both buy and sell keywords)
         elif (any(buy_word in message_lower for buy_word in ["buy", "purchase", "need", "looking for"]) and

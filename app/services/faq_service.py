@@ -1,0 +1,67 @@
+import logging
+from typing import Optional
+from difflib import SequenceMatcher
+from app.services.openai_service import OpenAIService
+from app.data import faq_config
+FAQ_CONFIG = faq_config.FAQ_CONFIG
+FULL_FAQ_CONTEXT = faq_config.FULL_FAQ_CONTEXT
+
+logger = logging.getLogger(__name__)
+
+class FAQService:
+    def __init__(self):
+        self.openai_service = OpenAIService()
+        self.faq_config = FAQ_CONFIG
+
+    def clean_text(self, text: str) -> str:
+        """Clean text for WhatsApp: remove Markdown, bullets, and extra newlines"""
+        replacements = {
+            "*": "",
+            "_": "",
+            "#": "",
+            "- ": "",
+            "•": ""
+        }
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+        return " ".join(text.split())  # normalize spaces
+
+    def find_matching_question(self, user_question: str) -> Optional[str]:
+        """Find an exact match for the user's question in FAQ_CONFIG"""
+        user_q_clean = user_question.strip().lower().rstrip("?")
+
+        for main_question, config in self.faq_config.items():
+            if user_q_clean == main_question.strip().lower().rstrip("?"):
+                return main_question
+
+            for possible_q in config["possible_questions"]:
+                if user_q_clean == possible_q.strip().lower().rstrip("?"):
+                    return main_question
+
+        return None
+    async def get_faq_answer(self, user_question: str) -> str:
+        """Get FAQ answer - first check predefined, then use LLM with full context"""
+        # First, try to find matching question
+        main_question = self.find_matching_question(user_question)
+        
+        if main_question:
+            logger.info(f"without using LLM:{main_question}")
+            return self.faq_config[main_question]["answer"]
+        
+        # If not found, use LLM with full FAQ context
+        prompt = f"""
+Based on the following FAQ information, answer the user's question about GMT/Procucev:
+
+{FULL_FAQ_CONTEXT}
+
+User Question: {user_question}
+
+Provide a helpful and accurate whatsapp answer based on the FAQ information above. If the question is not covered in the FAQ, politely mention that and offer to connect them with support.
+"""
+        
+        try:
+            response = await self.openai_service.get_completion(prompt)
+            return self.clean_text(response)
+        except Exception as e:
+            logger.error(f"error occurred in get_faq_answer function:{e}")
+            return "I apologize, but I'm having trouble accessing the information right now. Please contact our support team for assistance."
