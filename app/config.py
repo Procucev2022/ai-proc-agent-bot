@@ -200,7 +200,7 @@ class Settings:
 
         # Queue Configuration
         self.batch_window_seconds: int = int(os.getenv("BATCH_WINDOW_SECONDS", "3"))
-        self.please_wait_threshold_seconds: int = int(os.getenv("PLEASE_WAIT_THRESHOLD_SECONDS", "10"))
+        self.please_wait_threshold_seconds: int = int(os.getenv("PLEASE_WAIT_THRESHOLD_SECONDS", "15"))
 
         # Webhook Health Monitoring Configuration
         self.webhook_health_monitoring_enabled = os.getenv(
@@ -208,7 +208,7 @@ class Settings:
         ).lower() == "true"
         
         self.webhook_health_check_interval_seconds = int(
-            os.getenv("WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS", "30")
+            os.getenv("WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS", "300")
         )
         
         self.webhook_api_response_threshold_seconds = float(
