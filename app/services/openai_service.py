@@ -249,13 +249,9 @@ class OpenAIService:
             # Build comprehensive context information for the prompt
             context_info = ""
             if context:
-                # Add FAQ context for better intent classification
-                if context.get('faq_context'):
-                    context_info += f"\n\nFAQ CONTEXT (for FAQ intent detection):\n{context['faq_context'][:2000]}..."  # Truncate to avoid token limits
-                
                 # Add conversation history
                 if context.get('conversation_history', {}).get('openai_messages'):
-                    recent_messages = context['conversation_history']['openai_messages'][-5:]  # Last 5 messages for context
+                    recent_messages = context['conversation_history']['openai_messages'][-2:]  # Last 2 messages for context (optimized)
                     # Safely extract text content from messages (handle both string and object content)
                     history_parts = []
                     for msg in recent_messages:
@@ -272,7 +268,7 @@ class OpenAIService:
                     history_text = "\n".join(history_parts)
                     context_info += f"\n\nRECENT CONVERSATION HISTORY:\n{history_text}"
                 
-                # Add current session state
+                # Add current session state (optimized - reduced verbosity)
                 if context.get('workflow_state'):
                     workflow_state = context['workflow_state']
                     context_info += f"\n\nCURRENT SESSION STATE:"
@@ -281,25 +277,13 @@ class OpenAIService:
                     context_info += f"\n- Has Pending Optional Fields: {bool(workflow_state.get('pending_optional_rfq'))}"
                     context_info += f"\n- Has Pending Attachment Decision: {bool(workflow_state.get('pending_attachment_decision'))}"
 
-                    # Add extracted entities information
+                    # Add extracted entities count only (not details - intent classification doesn't need product names)
                     if workflow_state.get('extracted_entities'):
                         entities = workflow_state['extracted_entities']
                         if isinstance(entities, list) and entities:
-                            # Multiple products
-                            context_info += f"\n- Existing Products: {len(entities)} products collected"
-                            for i, product in enumerate(entities[:3]):  # Show first 3 products
-                                desc = product.get('description', f'Product {i+1}')
-                                qty = product.get('quantity', 'unknown')
-                                context_info += f"\n  - {desc}: {qty}"
+                            context_info += f"\n- Existing Products: {len(entities)} products"
                         elif isinstance(entities, dict) and entities:
-                            # Single product
-                            desc = entities.get('description', 'Product')
-                            qty = entities.get('quantity', 'unknown')
-                            context_info += f"\n- Existing Product: {desc}: {qty}"
-                
-                # Add extracted entities from top level
-                if context.get('extracted_entities'):
-                    context_info += f"\n- Additional Entities: {list(context['extracted_entities'].keys())}"
+                            context_info += f"\n- Existing Products: 1 product"
                 
                 # Add context as developer message
                 if context_info.strip():
@@ -311,16 +295,39 @@ class OpenAIService:
             # Track this OpenAI call
             self._track_openai_call("intent_classification")
 
+            # Load system prompt
+            system_prompt = self._load_prompt("intent_classification", "_get_intent_system_prompt")
+
+            # Log timing breakdown
+            prep_time = time.time() - start_time
+            logger.info(f"Intent classification prep time: {prep_time:.2f}s")
+
+            api_call_start = time.time()
             response = await self.client.responses.create(
                 model=self.default_model,
                 input=input_messages,
-                instructions=self._load_prompt("intent_classification", "_get_intent_system_prompt"),
+                instructions=system_prompt,
                 tools=[intent_tool],
                 tool_choice={"type": "function", "name": "classify_intent"}
             )
-            
+            api_call_time = time.time() - api_call_start
+
+            # Log cache usage information
+            usage = getattr(response, 'usage', None)
+            if usage:
+                total_input_tokens = getattr(usage, 'input_tokens', 0)
+                input_tokens_details = getattr(usage, 'input_tokens_details', None)
+                cached_tokens = getattr(input_tokens_details, 'cached_tokens', 0) if input_tokens_details else 0
+                output_tokens = getattr(usage, 'output_tokens', 0)
+
+                cache_percentage = (cached_tokens / total_input_tokens * 100) if total_input_tokens > 0 else 0
+                logger.info(f"OpenAI API call time: {api_call_time:.2f}s | Input tokens: {total_input_tokens} | Cached: {cached_tokens} ({cache_percentage:.1f}%) | Output: {output_tokens}")
+            else:
+                logger.info(f"OpenAI API call time: {api_call_time:.2f}s (no usage data available)")
+
             processing_time = time.time() - start_time
-            
+            logger.info(f"Total intent classification time: {processing_time:.2f}s")
+
             # Parse function call response
             if response.output and len(response.output) > 0:
                 function_call = response.output[0]
@@ -335,8 +342,16 @@ class OpenAIService:
                         "suggested_clarification": args.get("suggested_clarification"),
                         "success": True
                     }
-                    
-                    # Log successful interaction with context info
+
+                    # Prepare complete OpenAI input for logging
+                    openai_input_data = {
+                        "instructions_length": len(system_prompt),
+                        "instructions_preview": system_prompt[:200] + "..." if len(system_prompt) > 200 else system_prompt,
+                        "input_messages": input_messages,
+                        "total_input_chars": len(system_prompt) + sum(len(str(msg.get('content', ''))) for msg in input_messages)
+                    }
+
+                    # Log successful interaction with complete OpenAI input
                     self.interaction_logger.log_intent_classification(
                         user_input=message,
                         intent=result["intent"],
@@ -344,7 +359,8 @@ class OpenAIService:
                         reasoning=result["reasoning"],
                         model_used=self.default_model,
                         processing_time=processing_time,
-                        all_scores=result["all_intent_scores"]
+                        all_scores=result["all_intent_scores"],
+                        openai_input=openai_input_data
                     )
                     
                     return result

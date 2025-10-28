@@ -18,95 +18,11 @@
             },
             "all_intent_scores": {
                 "type": "object",
-                "properties": {
-                    "buy_something": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "sell_something": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "bfs_search": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "account_switch": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "register_account": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "general_inquiry": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "modification_request": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "confirmation_response": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "rfq_status_check": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "contextual_reference": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "session_inquiry": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "workflow_rejection": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "alternative_request": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "support": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "exit_system": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "cancel_workflow": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    },
-                    "faq": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                    }
+                "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
                 },
-                "required": ["buy_something", "sell_something", "bfs_search", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check",  "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request", "support", "faq", "exit_system", "cancel_workflow"],
-                "additionalProperties": false,
                 "description": "Confidence scores for all intent categories"
             },
             "context_analysis": {
@@ -120,23 +36,6 @@
                         "type": "string",
                         "enum": ["collecting", "confirming", "optional_fields", "modifying", "referencing", "completed", "unknown"],
                         "description": "Current stage of the conversation based on context"
-                    },
-                    "modification_details": {
-                        "type": "object",
-                        "properties": {
-                            "target_entity": {
-                                "type": ["string", "null"],
-                                "description": "What entity/field is being modified (e.g., 'chairs', 'delivery_date')"
-                            },
-                            "modification_type": {
-                                "type": ["string", "null"],
-                                "enum": ["quantity", "delivery_date", "location", "specifications", "division", "other", null],
-                                "description": "Type of modification being requested"
-                            }
-                        },
-                        "required": ["target_entity", "modification_type"],
-                        "additionalProperties": false,
-                        "description": "Details about modification if this is a modification_request"
                     },
                     "confirmation_details": {
                         "type": "object",
@@ -189,51 +88,9 @@
                         "required": ["registration_type", "is_additional_account"],
                         "additionalProperties": false,
                         "description": "Details about registration if this is a register_account intent"
-                    },
-                    "exit_details": {
-                        "type": "object",
-                        "properties": {
-                            "exit_type": {
-                                "type": ["string", "null"],
-                                "enum": ["logout", "quit", "goodbye", "end_session", "cancel", "stop", null],
-                                "description": "Specific type of exit intent detected"
-                            },
-                            "is_definitive": {
-                                "type": "boolean",
-                                "description": "Whether the exit intent is definitive or tentative"
-                            },
-                            "wants_cleanup": {
-                                "type": "boolean",
-                                "description": "Whether user explicitly wants to clear all data/start fresh"
-                            }
-                        },
-                        "required": ["exit_type", "is_definitive", "wants_cleanup"],
-                        "additionalProperties": false,
-                        "description": "Details about exit if this is an exit_system intent"
-                    },
-                    "cancel_details": {
-                        "type": "object",
-                        "properties": {
-                            "cancel_scope": {
-                                "type": ["string", "null"],
-                                "enum": ["current_workflow", "last_entry", "everything", null],
-                                "description": "Scope of cancellation - current workflow restart vs complete exit"
-                            },
-                            "wants_restart": {
-                                "type": "boolean",
-                                "description": "Whether user wants to restart the current workflow from beginning"
-                            },
-                            "is_confirmed": {
-                                "type": "boolean",
-                                "description": "Whether this is a confirmation response to a cancel prompt"
-                            }
-                        },
-                        "required": ["cancel_scope", "wants_restart", "is_confirmed"],
-                        "additionalProperties": false,
-                        "description": "Details about cancellation if this is a cancel_workflow intent"
                     }
                 },
-                "required": ["references_existing_data", "conversation_stage", "modification_details", "confirmation_details", "account_switch_details", "registration_details", "exit_details", "cancel_details"],
+                "required": ["references_existing_data", "conversation_stage"],
                 "additionalProperties": false,
                 "description": "Analysis of conversation context and how it affects intent classification"
             },
@@ -249,5 +106,5 @@
         "required": ["intent", "confidence", "all_intent_scores", "context_analysis", "reasoning", "suggested_clarification"],
         "additionalProperties": false
     },
-    "strict": true
+    "strict": false
 }
