@@ -77,46 +77,75 @@ class AuthenticationHelpers:
     def generate_registration_message(schema: Type[BaseModel], role: str, show_optional: bool = True) -> str:
         """Generate a registration intro message dynamically from schema fields."""
         try:
-            fields = schema.model_fields
-            required_fields = []
-            optional_fields = []
+            # Return specific messages based on role
+            if role.lower() == "buyer":
+                return (
+                    "Hello Buyer!\n"
+                    "To get started, please share the following details:\n"
+                    "1. Full name\n"
+                    "2. Company name\n"
+                    "3. Organization email\n"
+                    "4. Pincode \n"
+                    "We'll have you registered right away.\n"
+                    "Please ensure your email is correct, as we will send an OTP to verify it in the next step"
+                )
+            elif role.lower() == "seller":
+                return (
+                    "Hello Seller!\n"
+                    "To get started, please share the following details:\n"
+                    "1. Full name\n"
+                    "2. Company name\n"
+                    "3. Organization email\n"
+                    "4. Location\n"
+                    "5. Pincode\n"
+                    "6. GSTIN number\n"
+                    "7. Products or Services offered\n\n"
+                    "We'll have you registered right away.\n"
+                    "please ensure your email is correct, as we will send an OTP to verify it in the next step"
+                )
+            else:
+                # Fallback to original dynamic logic for other roles
+                fields = schema.model_fields
+                required_fields = []
+                optional_fields = []
 
-            for name, field_info in fields.items():
-                # Skip internal or system fields
-                if name in {"source_type"}:
-                    continue
+                for name, field_info in fields.items():
+                    # Skip internal or system fields
+                    if name in {"source_type"}:
+                        continue
 
-                label = field_info.description or name.replace("_", " ").title()
+                    label = field_info.description or name.replace("_", " ").title()
 
-                # Determine if the field is required or optional
-                if field_info.is_required():
-                    required_fields.append(label)
-                else:
-                    optional_fields.append(label)
+                    # Determine if the field is required or optional
+                    if field_info.is_required():
+                        required_fields.append(label)
+                    else:
+                        optional_fields.append(label)
 
-            # Build numbered required list
-            numbered_required = [
-                f"{idx + 1}. {label}" for idx, label in enumerate(required_fields)
-            ]
+                # Build numbered required list
+                numbered_required = [
+                    f"{idx + 1}. {label}" for idx, label in enumerate(required_fields)
+                ]
 
-            # Build numbered optional list (only if enabled)
-            numbered_optional = [
-                f"{idx + 1}. {label}" for idx, label in enumerate(optional_fields)
-            ] if show_optional else []
+                # Build numbered optional list (only if enabled)
+                numbered_optional = [
+                    f"{idx + 1}. {label}" for idx, label in enumerate(optional_fields)
+                ] if show_optional else []
 
-            # Construct message
-            message_lines = [
-                f"Hello {role.capitalize()}!",
-                "To get started, please share the following details:\n",
-                "\n".join(numbered_required) if numbered_required else "(No required fields)",
-            ]
+                # Construct message
+                message_lines = [
+                    f"Hello {role.capitalize()}!",
+                    "To get started, please share the following details:\n",
+                    "\n".join(numbered_required) if numbered_required else "(No required fields)",
+                ]
 
-            if numbered_optional:
-                message_lines.append("\nOptional fields:\n" + "\n".join(numbered_optional))
+                if numbered_optional:
+                    message_lines.append("\nOptional fields:\n" + "\n".join(numbered_optional))
 
-            message_lines.append("\nWe'll have you registered right away.")
+                message_lines.append("\nWe'll have you registered right away." )
+                message_lines.append("\nPlease ensure your email is correct, as we will send an OTP to verify it in the next step")
 
-            return "\n".join(message_lines)
+                return "\n".join(message_lines)
         except Exception as e:
             logger.error(f"Registration message generation error: {e}")
             # Fallback message
