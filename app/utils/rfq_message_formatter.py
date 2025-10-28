@@ -48,48 +48,8 @@ def format_rfq_response_message(
         if remarks and remarks.strip():
             remarks_list.append(f"{remarks.strip()}")
 
-    # --- Base message (show only first 5 items) ---
-    total_items = len(items)
-    display_items = items[:MAX_ITEMS_TO_SHOW]
-    
-    if not items:
-        message = "I understand you want to raise an RFQ."
-    elif len(display_items) == 1 and total_items == 1:
-        message = f"I understand you require {display_items[0]}."
-    elif total_items <= MAX_ITEMS_TO_SHOW:
-        message = f"I understand you require {', '.join(display_items[:-1])}, and {display_items[-1]}."
-    else:
-        # More than 5 items, show first 5 and indicate there are more
-        remaining_count = total_items - MAX_ITEMS_TO_SHOW
-        if remaining_count == 1:
-            message = f"I understand you require {', '.join(display_items)}, and {remaining_count} more item."
-        else:
-            message = f"I understand you require {', '.join(display_items)}, and {remaining_count} more items."
-
-    # --- Add delivery date ---
-    if global_fields.get("deliveryDate"):
-        date_str = global_fields["deliveryDate"]
-        try:
-            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-            date_str = date_obj.strftime("%d %b %Y")
-        except:
-            pass
-        message = message.replace(".", f" on {date_str}.")
-
-    # --- Add delivery location ---
-    if any(global_fields.get(f) for f in ["city", "state", "pincode"]):
-        location = ", ".join(
-            str(global_fields.get(f)) for f in ["city", "state", "pincode"] if global_fields.get(f)
-        )
-        message = message.replace(".", f" for delivery at {location}.")
-
-    # --- Append remarks paragraph (only for small number of items with short remarks) ---
-    if remarks_list and total_items <= 3:
-        # Only show remarks if there are 3 or fewer items
-        combined_remarks = " ".join(remarks_list)
-        if len(combined_remarks) <= MAX_REMARKS_LENGTH:
-            message += "\n\nRemark: " + combined_remarks
-    # For more than 3 items or long remarks, skip showing remarks completely
+    # Start with acknowledgment
+    message = "Got it!"
 
     # --- Check for validation errors first ---
     validation_errors = set()  # Use set to avoid duplicates
@@ -201,10 +161,10 @@ def format_rfq_response_message(
                     message += f"[ERROR] {error}\n"
         else:
             # For other validation issues, show as questions
-            message += "\n\nHowever I need the following information to proceed.\n"
+            message += "\n\nHowever I need the following information to proceed\n\n"
             for issue in all_issues:
-                message += f"\n•  {issue}"
-            message += "\n\nPlease provide this information so I can continue with your request."
+                message += f"•  {issue}\n"
+            message += "\nPlease provide this information so I can continue with your request."
     elif include_optional and missing_fields:
         # If no mandatory issues but flag is set, add optional questions
         message += "\n\n" + "\n".join(missing_fields)
