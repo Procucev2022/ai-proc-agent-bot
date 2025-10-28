@@ -277,87 +277,40 @@ User-friendly interface for managing your procurement needs"""
 
 
 # Full FAQ context for LLM fallback
-FULL_FAQ_CONTEXT = """
-FAQs - GMT
+FULL_FAQ_CONTEXT =\
+    """
+- Platform Overview:
+    Procucev’s Get My Quote (GMT) is an AI-powered procurement and RFQ platform connecting buyers and sellers. Buyers access many vendors and receive fast, competitive quotes, while sellers gain leads, efficiency, and more business opportunities.
+- Registration & Access:
+    Register as a buyer or seller via WhatsApp AI Agent (“Hi” to our number) or the website (www.procucev.com). 
+    Multiple buyer or seller accounts can be linked to the same phone number using different email addresses; you will be prompted to select your profile when the session starts.
+- RFQ Process:
+    Raise, track, and customize RFQs (quotes) through WhatsApp AI Agent or web portal. You can provide details, attach files, and define criteria. Sellers get curated RFQs matching their offerings via email and the portal, and can respond or track quotations from a dashboard.
+- Features & Benefits:
+    Free for buyers; sellers get a free trial RFQ and can subscribe for more.
+    Instant notifications, buyer/seller dashboard access, and credit-based RFQ tracking.
+    Supports a wide variety of categories (manufacturing, engineering, logistics, services, HR, packaging, raw materials, and more).
+    Secure data handling and privacy aligned with industry standards.
+- Profiles, Account & Switching:
+    Switch between multiple profiles easily. Type “Exit” to reset the session in the bot.
+    Multiple Buyer/Seller accounts per WhatsApp number are supported.
+- Approvals, Modifications, and Tracking:
+    Registration approval typically within 24 business hours.
+    Buyers can raise, track, modify, or cancel RFQs as needed.
+    Sellers can manage quotes and queries through the dashboard.
+- Negotiation & Information Sharing:
+    Buyer and seller negotiations are handled directly once a quote is submitted.
+    Only RFQ-related project details you provide are shared with vendors.
+- Advanced/Additional Services:
+    Explore strategic sourcing, category-specific expert support, analytics, and workflow automation. Full details are on www.procucev.com
+- Support:
+    For any issues or questions, contact info@procucev.com. If you experience technical issues, try again in a few minutes or reach out for immediate assistance.
+- General Policies:
+    Inactive accounts may need reverification (advance notice given).
+    Each RFQ viewed/downloaded by a seller deducts one credit.
+- Helpful Links:
+    Buyer dashboard: portal.procucev.com
+    Seller dashboard: seller.procucev.com
+    Company website: www.procucev.com
 
-For Buyers :
-
-Q: What is GMT?
-A: Procucev’s Get My Quote (GMT) is a platform bridging the gap between Buyers and Sellers. Buyers get fast, competitive quotes, while Sellers gain access to a pool of active Buyers and expand their business.
-
-Q: What are the benefits of using the GMT?
-A: Access to a larger pool of Sellers for competitive RFQ’s, streamlined AI-enabled RFQ process with faster vendor responses, improved efficiency in sourcing and evaluating quotes, and a user-friendly interface.
-
-Q: How do I register for the GMT?
-A: You can register with GMT through our WhatsApp AI Agent or our website. Registration links are provided for buyers and sellers.
-
-Q: What is WhatsApp AI Agent?
-A: It’s an AI Assistant built in WhatsApp that directs you to register on the platform and supports you to raise RFQs effortlessly.
-
-Q: How can I access WhatsApp AI Agent?
-A: Just say “Hi” to the WhatsApp Number provided by us. The AI Agent will guide you to avail all GMT services.
-
-Q: How to post RFQ on GMT?
-A: Once registration is completed through our AI Agent, you’ll receive login credentials to raise RFQs through WhatsApp AI Agent.
-
-Q: Is there a cost to use the GMT?
-A: No, there is currently no cost associated with using the GMT Portal for Buyers.
-
-Q: Can I customize my RFQs?
-A: Yes, you can customize RFQs with specific details, attachments, and evaluation criteria to get the most relevant quotes.
-
-Q: What are the categories of vendors on the portal?
-A: Vendors span across industries — Civil works, Capex-Equipment, Machinery, Mechanical & Electrical Engineering items, Packing material, Logistics, Raw materials, Professional Services, HR, Admin, and Safety services.
-
-Q: What information is shared with vendors?
-A: Only relevant details like project description and specifications provided by you are shared.
-
-Q: Can I negotiate with sellers directly on the platform?
-A: GMT facilitates matching buyers and sellers. Negotiations can occur after quote submission. In BFS, buyers can bid directly. All negotiations, contracts, and timelines are between buyer and seller.
-
-Q: How is my business information secured on GMT?
-A: We employ robust security measures, follow industry best practices, and comply with data privacy regulations.
-
-Q: Can I get support if I have issues?
-A: Yes, our team is available for support via info@procucev.com.
-
-Q: Do you provide additional services?
-A: Yes, GMT is ideal for simple sourcing, and we also offer advanced Digital Procurement and Strategic Sourcing solutions via our website.
-
-Q: Does GMT offer a pool of quotes or additional features?
-A: Yes. The core functionality presents a pool of quotes and vendors. For advanced needs, explore our Digital Procurement Services and Strategic Sourcing offerings on www.procucev.com.
-
----
-
-For Sellers :
-
-Q: What is GMT and how does it work for sellers?
-A: GMT connects you with verified enterprise buyers across industries. As a subscribed Seller, you’ll receive real-time RFQs aligned with your offerings, increasing your chances of winning deals.
-
-Q: How do I register as a seller on GMT?
-A: Registering is quick and easy via our WhatsApp AI Agent or website.
-
-Q: What is WhatsApp AI Agent?
-A: It’s an AI Assistant in WhatsApp that directs you to register on GMT and supports you to access buyer RFQs.
-
-Q: How can I access WhatsApp AI Agent?
-A: Just say “Hi” to our WhatsApp Number provided. The AI Agent guides you to avail all GMT services.
-
-Q: Can I get RFQs free of cost?
-A: Yes. You’ll receive one curated RFQ free of cost to experience the platform. For ongoing RFQs, you can subscribe to a suitable plan.
-
-Q: What is the subscription fee for regular RFQs?
-A: GMT offers flexible plans suited for all business sizes. Plans provide access to curated RFQs, visibility to buyers, and sales management tools.
-
-Q: How will I receive RFQs?
-A: You’ll receive curated RFQs via email based on your registered categories and services.
-
-Q: Can I raise queries about RFQs?
-A: Yes, you can raise queries or clarifications via email to submit accurate, competitive quotes.
-
-Q: How can I submit my quote?
-A: Submit quotes directly via email. The process is simple and ensures timely delivery to buyers.
-
-Q: Can I track my submitted quotes?
-A: Yes, you’ll have access to your quote submission history and can monitor your leads from a single dashboard.
 """

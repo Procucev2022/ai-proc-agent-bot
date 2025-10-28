@@ -208,7 +208,7 @@ class Settings:
         ).lower() == "true"
         
         self.webhook_health_check_interval_seconds = int(
-            os.getenv("WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS", "300")
+            os.getenv("WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS", "30")
         )
         
         self.webhook_api_response_threshold_seconds = float(
