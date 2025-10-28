@@ -34,10 +34,10 @@
                     },
                     "details": {
                         "type": ["string", "null"],
-                        "description": "Products or services offered"
+                        "description": "Products or services offered (mapped to 'details' in API)"
                     }
                 },
-                "required": ["name", "companyName", "email", "address", "zipCode", "gstin", "details"],
+                "required": ["name", "companyName", "email", "address", "zipCode", "gstin", "products_services"],
                 "additionalProperties": false
             },
             "completeness": {

@@ -133,7 +133,11 @@ class RegistrationService:
                 # Smart merge - prioritize new data but preserve existing
                 for key, value in entity_result["entities"].items():
                     if value and str(value).strip():  # Only update if new value is meaningful
-                        existing_entities[key] = str(value).strip()
+                        # Map products_services to details for seller registration
+                        if key == "products_services" and user_type == "seller":
+                            existing_entities["details"] = str(value).strip()
+                        else:
+                            existing_entities[key] = str(value).strip()
                 session.workflow_state["registration_entities"] = existing_entities
                 session.workflow_state["last_activity_at"] = utc_now().isoformat()
             else:
@@ -373,9 +377,14 @@ class RegistrationService:
             # Get schema dynamically based on user type
             user_schema = BuyerRegistrationSchema if user_type == "buyer" else SellerRegistrationSchema
             
+            # Handle field mapping for seller registration
+            mapped_entities = entities.copy()
+            if user_type == "seller" and "products_services" in mapped_entities:
+                mapped_entities["details"] = mapped_entities.pop("products_services")
+            
             # Build payload dynamically from schema
             registration_data = AuthenticationHelpers.build_registration_payload_dynamic(
-                user_schema, entities, user_phone
+                user_schema, mapped_entities, user_phone
             )
             
             # Call appropriate API based on user type

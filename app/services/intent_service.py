@@ -57,12 +57,8 @@ class IntentService:
             - should_update_entities: whether entities should be updated from contextual reference
         """
         try:
-            # Add FAQ context to help LLM understand FAQ-related questions
-            enhanced_context = context.copy() if context else {}
-            enhanced_context['faq_context'] = FULL_FAQ_CONTEXT
-            
-            # Get classification from OpenAI with enhanced context
-            classification_result = await self.openai_service.classify_intent(message, enhanced_context)
+            # Get classification from OpenAI (FAQ intent can be detected from prompt alone, no need for full FAQ context)
+            classification_result = await self.openai_service.classify_intent(message, context)
             
             if not classification_result.get("success", False):
                 logger.warning(f"OpenAI classification failed, using fallback")
