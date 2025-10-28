@@ -12,7 +12,7 @@
                         "type": ["string", "null"],
                         "description": "Full name of the buyer"
                     },
-                    "company_name": {
+                    "companyName": {
                         "type": ["string", "null"],
                         "description": "Company or organization name"
                     },
@@ -20,12 +20,12 @@
                         "type": ["string", "null"],
                         "description": "Organization email address"
                     },
-                    "pincode": {
+                    "zipCode": {
                         "type": ["string", "null"],
                         "description": "6-digit pincode"
                     }
                 },
-                "required": ["name", "company_name", "email", "pincode"],
+                "required": ["name", "companyName", "email", "zipCode"],
                 "additionalProperties": false
             },
             "completeness": {

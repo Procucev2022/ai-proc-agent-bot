@@ -8,11 +8,11 @@
             "entities": {
                 "type": "object",
                 "properties": {
-                    "full_name": {
+                    "name": {
                         "type": ["string", "null"],
                         "description": "Full name of the seller"
                     },
-                    "company_name": {
+                    "companyName": {
                         "type": ["string", "null"],
                         "description": "Company or organization name"
                     },
@@ -20,11 +20,11 @@
                         "type": ["string", "null"],
                         "description": "Organization email address"
                     },
-                    "location": {
+                    "address": {
                         "type": ["string", "null"],
                         "description": "Company location (city, state)"
                     },
-                    "pincode": {
+                    "zipCode": {
                         "type": ["string", "null"],
                         "description": "6-digit pincode"
                     },
@@ -34,10 +34,10 @@
                     },
                     "products_services": {
                         "type": ["string", "null"],
-                        "description": "Products or services offered"
+                        "description": "Products or services offered (mapped to 'details' in API)"
                     }
                 },
-                "required": ["full_name", "company_name", "email", "location", "pincode", "gstin", "products_services"],
+                "required": ["name", "companyName", "email", "address", "zipCode", "gstin", "products_services"],
                 "additionalProperties": false
             },
             "completeness": {

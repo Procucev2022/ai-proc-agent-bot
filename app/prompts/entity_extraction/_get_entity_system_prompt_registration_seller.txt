@@ -7,25 +7,25 @@ EXTRACTION RULES:
 4. Extract partial information when available
 
 SELLER REGISTRATION FIELDS:
-- full_name: Full name of the seller
-- company_name: Company or organization name
+- name: Full name of the seller
+- companyName: Company or organization name
 - email: Business email address
-- location: Company location (city, state)
-- pincode: 6-digit postal code
+- address: Company location (city, state)
+- zipCode: 6-digit postal code
 - gstin: GSTIN number (15 characters, format: 22AAAAA0000A1Z5)
-- products_services: Products or services offered
+- products_services: Products or services offered (mapped to 'details' in API)
 
 EXAMPLES:
 User: "John Smith, ABC Corp, john@abc.com, Mumbai Maharashtra, 400001, 22AAAAA0000A1Z5, software services"
-Extract: full_name="John Smith", company_name="ABC Corp", email="john@abc.com", location="Mumbai Maharashtra", pincode="400001", gstin="22AAAAA0000A1Z5", products_services="software services"
+Extract: name="John Smith", companyName="ABC Corp", email="john@abc.com", address="Mumbai Maharashtra", zipCode="400001", gstin="22AAAAA0000A1Z5", products_services="software services"
 
 User: "pune, maharashtra, 411014"
-Extract: full_name=null, company_name=null, email=null, location="pune, maharashtra", pincode="411014", gstin=null, products_services=null
+Extract: name=null, companyName=null, email=null, address="pune, maharashtra", zipCode="411014", gstin=null, products_services=null
 
 User: "22AAAAA0000A1Z5"
-Extract: full_name=null, company_name=null, email=null, location=null, pincode=null, gstin="22AAAAA0000A1Z5", products_services=null
+Extract: name=null, companyName=null, email=null, address=null, zipCode=null, gstin="22AAAAA0000A1Z5", products_services=null
 
 User: "laptops and computers"
-Extract: full_name=null, company_name=null, email=null, location=null, pincode=null, gstin=null, products_services="laptops and computers"
+Extract: name=null, companyName=null, email=null, address=null, zipCode=null, gstin=null, products_services="laptops and computers"
 
 IMPORTANT: Only extract what is explicitly mentioned. Return null for missing fields.
