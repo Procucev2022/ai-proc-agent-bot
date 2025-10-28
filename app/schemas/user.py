@@ -106,7 +106,7 @@ class BuyerRegistrationSchema(BaseModel):
 class SellerRegistrationSchema(BaseModel):
     name: str = Field(..., description="Full name")
     companyName: str = Field(..., description="Company name")
-    email: str = Field(..., description="Business email")
+    email: str = Field(..., description="Organization email")
     address: str = Field(..., description="Location")
     zipCode: str = Field(..., description="Pincode")
     gstin: str = Field(..., description="GSTIN number")
