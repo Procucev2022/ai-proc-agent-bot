@@ -27,7 +27,7 @@ class ExcelProcessingService:
         logger.info(f"[EXCEL-PROCESS] Starting processing for {filename}, size: {len(content)} bytes")
         try:
             # Validate file size (10MB limit)
-            max_size = 10 * 1024 * 1024  # 10MB in bytes
+            max_size = 3 * 1024 * 1024  # 10MB in bytes
             if len(content) > max_size:
                 return {
                     'success': False,
