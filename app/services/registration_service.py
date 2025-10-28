@@ -131,7 +131,11 @@ class RegistrationService:
                 # Smart merge - prioritize new data but preserve existing
                 for key, value in entity_result["entities"].items():
                     if value and str(value).strip():  # Only update if new value is meaningful
-                        existing_entities[key] = str(value).strip()
+                        # Map products_services to details for seller registration
+                        if key == "products_services" and user_type == "seller":
+                            existing_entities["details"] = str(value).strip()
+                        else:
+                            existing_entities[key] = str(value).strip()
                 session.workflow_state["registration_entities"] = existing_entities
                 session.workflow_state["last_activity_at"] = utc_now().isoformat()
             else:
