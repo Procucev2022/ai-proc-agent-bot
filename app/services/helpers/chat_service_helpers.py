@@ -183,18 +183,20 @@ class ChatServiceHelpers:
     @staticmethod
     def build_conversation_context(session: ConversationSession, current_message: str) -> dict:
         """
-        Build comprehensive conversation context for intent classification and context-aware services.
+        Build optimized conversation context for intent classification.
+
+        Optimized to reduce token usage while maintaining all necessary context
+        for accurate intent classification. Only includes essential fields.
 
         Args:
             session: Current conversation session
             current_message: Current user message
 
         Returns:
-            Dict containing full conversation context including session state, history, entities, and user context
+            Dict containing essential conversation context for intent classification
         """
         # Extract bot's last message from conversation history for intent classification
         bot_last_message = None
-        bot_last_message_type = None
         conversation_history = session.conversation_history or {"openai_messages": [], "metadata": []}
 
         # Look through recent messages to find the last bot message
@@ -202,42 +204,20 @@ class ChatServiceHelpers:
             for msg_data in reversed(conversation_history["metadata"]):
                 if msg_data.get("role") == "assistant":
                     bot_last_message = msg_data.get("content", "")
-                    bot_last_message_type = msg_data.get("message_type", "text")
                     break
 
+        # Minimal session_status with only the critical flag used by intent_service fallback
+        # has_incomplete_products is used in intent_service.py line 121
         return {
-            'current_message': current_message,
-            'session_metadata': {
-                'session_id': session.session_id,
-                'workflow_type': session.workflow_type,
-                'outcome': session.outcome,
-                'created_at': session.created_at.isoformat() if session.created_at else None
-            },
+            'workflow_type': session.workflow_type,
             'conversation_history': conversation_history,
             'bot_last_message': bot_last_message,
-            'bot_last_message_type': bot_last_message_type,
             'workflow_state': session.workflow_state or {},
-            'extracted_entities': session.extracted_entities or {},
-            'whatsapp_context': session.whatsapp_context or {},
             'session_status': {
-                'has_pending_confirmations': bool(
-                    session.workflow_state.get("pending_combined_rfq") or
-                    session.workflow_state.get("pending_rfq")
-                ),
-                'has_extracted_entities': bool(
-                    session.workflow_state.get("extracted_entities") or
-                    session.extracted_entities
-                ),
                 'has_incomplete_products': bool(
                     session.workflow_state.get("incomplete_products") and
                     len(session.workflow_state.get("incomplete_products", [])) > 0
-                ),
-                'has_pending_optional': bool(
-                    session.workflow_state.get("pending_optional_rfq") or
-                    session.workflow_state.get("pending_optional_combined_rfq")
-                ),
-                'has_pending_attachment_decision': bool(session.workflow_state.get("pending_attachment_decision")),
-                'current_stage': ChatServiceHelpers.determine_conversation_stage(session)
+                )
             }
         }
     

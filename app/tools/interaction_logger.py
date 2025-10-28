@@ -39,9 +39,10 @@ class InteractionLogger:
         model_used: str,
         processing_time: float = None,
         all_scores: Dict[str, float] = None,
-        phone_number: str = None
+        phone_number: str = None,
+        openai_input: Dict = None
     ):
-        """Log intent classification interaction."""
+        """Log intent classification interaction with full OpenAI input."""
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "phone_number": phone_number or "N/A",
@@ -58,6 +59,10 @@ class InteractionLogger:
             },
             "processing_time_seconds": processing_time
         }
+
+        # Add complete OpenAI input for debugging
+        if openai_input:
+            log_entry["openai_input"] = openai_input
 
         self._write_log_entry(log_entry)
     
