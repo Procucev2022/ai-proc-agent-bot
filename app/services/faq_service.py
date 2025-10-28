@@ -56,7 +56,13 @@ Based on the following FAQ information, answer the user's question about GMT/Pro
 
 User Question: {user_question}
 
-Provide a helpful and accurate whatsapp answer based on the FAQ information above. If the question is not covered in the FAQ, politely mention that and offer to connect them with support.
+Instructions:
+- Provide a direct, concise answer without greetings or salutations
+- Use a professional but conversational tone suitable for WhatsApp
+- If the answer is in the FAQ, provide it clearly and briefly
+- If NOT in the FAQ, respond with: "I don't have specific information about that in our FAQ. Let me connect you with our support team for assistance."
+- Do not add phrases like "Hello!", "What can I assist you with next?", or similar conversational fillers
+- Keep the response focused and action-oriented
 """
         
         try:

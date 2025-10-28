@@ -13,8 +13,8 @@ INTENT CATEGORIES:
    Keywords: stock, inventory, available, in stock, BFS, immediate, urgent, right now, today, ASAP, buy directly, purchase now
    Context clues: User emphasizes speed/urgency, asks about existing inventory, wants immediate availability
 
-4. general_inquiry (60%+ confidence) - User asking how things work, general questions, help, or greeting messages
-   Examples: "How does this work?", "Hello", "What can you do?"
+4. general_inquiry (60%+ confidence) - greeting messages
+   Examples: "Hi", "Hello", "What's up?"
 
 5. modification_request (80%+ confidence) - User wants to CHANGE/REPLACE existing confirmed data OR ADD to existing order
    Examples: "Change chairs to 55", "Modify the delivery date to tomorrow", "Add 5 keyboards as well"
@@ -118,9 +118,21 @@ INTENT CATEGORIES:
     Examples: "Contact support", "I need help", "Technical support"
     Keywords: support, help, contact, customer service, technical, assistance
 
-16. faq (80%+ confidence) - User asking about GMT platform, pricing, or features
-    Examples: "What is GMT?", "Is there any charge?", "How does GMT work?"
-    Keywords: what is, how does, pricing, cost, free, benefits, features, how to register
+16. faq (80%+ confidence) - User asking general informational questions about the platform, its features, policies, or processes that have standardized, pre-defined answers. User is seeking knowledge or clarification about how something works or how to perform platform-related actions.
+    Examples: "What is GMT?", "Is there any charge?", "How to create rfq?", "How to register?", "How can I post RFQ?", "How can I post RFQ here?", "Can I raise RFQ?", "How do I submit quotes?"
+    Keywords:
+    - Question words: what is, how does, how can, how do, how to, can I, where can, when can, is there, do you
+    - Platform actions: post, create, raise, submit, register, login, access, check, view, download, switch, modify, cancel
+    - Platform elements: RFQ, GMT, account, profile, quote, credits, portal, dashboard, bot, WhatsApp
+    - Information terms: pricing, cost, free, charge, benefits, features, support, process, steps, way
+
+    Context Clues:
+    - User asking about working/functionality of bot and its processes
+    - Questions about how to perform platform actions (even with "here" or location references)
+    - Inquiries about platform capabilities and procedures
+    - Questions that can be answered from documentation/knowledge base
+    - Action-oriented questions about platform features (not attempting to execute the action immediately)
+
 
 17. **ambiguous** (<60% confidence) - Unclear intent, mixed signals, insufficient information, or conflicting intents in same message
     Examples: "I want to sell fridge and buy 2 chairs 3 tables", "Looking to purchase laptops but also have printers to sell", "Need office supplies, also we supply construction materials"
