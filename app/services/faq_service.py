@@ -41,16 +41,10 @@ class FAQService:
         return None
     async def get_faq_answer(self, user_question: str) -> str:
         """Get FAQ answer - first check predefined, then use LLM with full context"""
-        # First, try to find matching question
-        main_question = self.find_matching_question(user_question)
-        
-        if main_question:
-            logger.info(f"without using LLM:{main_question}")
-            return self.faq_config[main_question]["answer"]
-        
+
         # If not found, use LLM with full FAQ context
         prompt = f"""
-Based on the following FAQ information, answer the user's question about GMT/Procucev:
+Based on the following FAQ information, answer the user's question about GMT/Procucev Platform:
 
 {FULL_FAQ_CONTEXT}
 
