@@ -172,6 +172,10 @@ class MessageQueueService:
         """Redis key for response ready flag (prevents late please-wait)."""
         return f"{user_phone}:response_ready"
 
+    def _key_ack_sent(self, user_phone: str) -> str:
+        """Redis key for acknowledgment sent flag (persists across batches)."""
+        return f"{user_phone}:ack_sent"
+
     # ========================================================================
     # Public API - Entry Point
     # ========================================================================
@@ -868,7 +872,7 @@ class MessageQueueService:
             
             logger.debug(f"[CLEANUP] Cleared processing state and response ready flag for {user_phone}")
             
-            # If all queues empty, clear ack flag for next session
+            # If all queues empty, clear ack flag for next conversation session
             incoming_key = self._key_incoming(user_phone)
             outgoing_key = self._key_outgoing(user_phone)
             
@@ -876,10 +880,12 @@ class MessageQueueService:
             outgoing_count = await self.redis.llen(outgoing_key)
             
             if incoming_count == 0 and outgoing_count == 0:
-                # Session complete - user can start fresh next time
+                # Session complete - clear ack flag so user can start fresh next time
+                ack_sent_key = self._key_ack_sent(user_phone)
+                await self.redis.delete(ack_sent_key)
                 logger.info(
                     f"[CLEANUP] All queues empty for {user_phone}, "
-                    f"session complete"
+                    f"conversation session complete, cleared ack flag"
                 )
             
             # Trigger next batch if available
@@ -901,17 +907,18 @@ class MessageQueueService:
         
         Returns True if:
         - System is busy (processing, or queues not empty)
-        - AND acknowledgment not already sent this session
-        """
-        # Check if currently in a session with ack already sent
-        session_key = self._key_session(user_phone)
-        session_json = await self.redis.get(session_key)
+        - AND acknowledgment not already sent this conversation session
         
-        if session_json:
-            session = ProcessingSession.from_json(session_json)
-            if session.ack_sent:
-                logger.debug(f"[ACK] Already sent for {user_phone}")
-                return False
+        Note: Uses separate ack_sent flag (300s TTL) independent of batch session
+        to prevent duplicate acks across multiple batches in same conversation.
+        """
+        # Check if ack already sent in this conversation session
+        ack_sent_key = self._key_ack_sent(user_phone)
+        ack_already_sent = await self.redis.get(ack_sent_key)
+        
+        if ack_already_sent:
+            logger.debug(f"[ACK] Already sent in this conversation for {user_phone}")
+            return False
         
         # Check if system is busy
         processing_key = self._key_processing(user_phone)
@@ -928,7 +935,7 @@ class MessageQueueService:
         logger.debug(
             f"[ACK] {user_phone}: processing={is_processing}, "
             f"incoming={incoming_count}, outgoing={outgoing_count}, "
-            f"busy={is_busy}"
+            f"busy={is_busy}, ack_sent={bool(ack_already_sent)}"
         )
         
         return is_busy
@@ -937,23 +944,32 @@ class MessageQueueService:
         """
         Send acknowledgment message with atomic flag claiming.
         Uses lock to prevent duplicate sends across workers.
+        Sets separate ack_sent flag with 300s TTL (5 minutes) that persists
+        across multiple batches in the same conversation session.
         """
         lock_key = self._key_lock_ack(user_phone)
         lock = self.redis.lock(lock_key, timeout=10, blocking_timeout=1)
         
         try:
             async with lock:
-                # Double-check inside lock
+                # Double-check inside lock using separate ack_sent flag
+                ack_sent_key = self._key_ack_sent(user_phone)
+                ack_already_sent = await self.redis.get(ack_sent_key)
+                
+                if ack_already_sent:
+                    logger.debug(f"[ACK] Already sent (double-check) for {user_phone}")
+                    return
+                
+                # Set ack_sent flag with 300s TTL (5 minutes)
+                # This persists across batches in the same conversation
+                await self.redis.setex(ack_sent_key, 300, "1")
+                
+                # Also update session if it exists (for backward compatibility)
                 session_key = self._key_session(user_phone)
                 session_json = await self.redis.get(session_key)
                 
                 if session_json:
                     session = ProcessingSession.from_json(session_json)
-                    if session.ack_sent:
-                        logger.debug(f"[ACK] Already sent (double-check) for {user_phone}")
-                        return
-                    
-                    # Update session
                     session.ack_sent = True
                     await self.redis.setex(session_key, 60, session.to_json())
                 else:
@@ -974,7 +990,7 @@ class MessageQueueService:
                     message="Got it. Please wait while we process your request, we will be back shortly."
                 )
                 
-                logger.info(f"[ACK] Sent acknowledgment to {user_phone}")
+                logger.info(f"[ACK] Sent acknowledgment to {user_phone} (flag expires in 300s)")
         
         except Exception as e:
             logger.warning(
