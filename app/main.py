@@ -86,13 +86,33 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize database: {e}")
         raise
     
+    # Start message queue background tasks
+    message_queue_tasks = []
+    try:
+        from app.api.webhook import message_queue_service
+        
+        # Start batch poller (creates batches from incoming messages)
+        poller_task = asyncio.create_task(message_queue_service.run_batch_poller())
+        message_queue_tasks.append(poller_task)
+        logger.info("Message queue batch poller started")
+        
+        # Start monitoring loop (acknowledgments and please-wait messages)
+        monitor_task = asyncio.create_task(message_queue_service.run_monitoring_loop())
+        message_queue_tasks.append(monitor_task)
+        logger.info("Message queue monitoring loop started")
+        
+    except Exception as e:
+        logger.error(f"Failed to start message queue background tasks: {e}")
+        raise
+    
     # Start webhook health monitoring
-    monitor_task = None
+    webhook_monitor_task = None
+    webhook_monitor = None
     if settings.webhook_health_monitoring_enabled:
         try:
             from app.services.webhook_health_monitor_service import WebhookHealthMonitorService
-            monitor = WebhookHealthMonitorService()
-            monitor_task = asyncio.create_task(monitor.start_monitoring())
+            webhook_monitor = WebhookHealthMonitorService()
+            webhook_monitor_task = asyncio.create_task(webhook_monitor.start_monitoring())
             logger.info("Webhook health monitoring started")
         except Exception as e:
             logger.error(f"Failed to start webhook health monitoring: {e}")
@@ -102,15 +122,23 @@ async def lifespan(app: FastAPI):
     
     logger.info("Shutting down AI Procurement Agent application")
     
-    # Stop health monitoring gracefully
-    if monitor_task:
+    # Shutdown message queue service gracefully
+    try:
+        from app.api.webhook import message_queue_service
+        await message_queue_service.shutdown()
+        logger.info("Message queue service shut down successfully")
+    except Exception as e:
+        logger.error(f"Error shutting down message queue service: {e}")
+    
+    # Stop webhook health monitoring gracefully
+    if webhook_monitor_task and webhook_monitor:
         try:
-            monitor.stop_monitoring()
-            await asyncio.wait_for(monitor_task, timeout=5.0)
+            webhook_monitor.stop_monitoring()
+            await asyncio.wait_for(webhook_monitor_task, timeout=5.0)
             logger.info("Webhook health monitoring stopped")
         except asyncio.TimeoutError:
             logger.warning("Health monitoring shutdown timeout")
-            monitor_task.cancel()
+            webhook_monitor_task.cancel()
         except Exception as e:
             logger.error(f"Error stopping health monitoring: {e}")
     
