@@ -135,7 +135,7 @@ async def lifespan(app: FastAPI):
     # Stop webhook health monitoring gracefully
     if webhook_monitor_task and webhook_monitor:
         try:
-            webhook_monitor.stop_monitoring()
+            await webhook_monitor.stop_monitoring()
             await asyncio.wait_for(webhook_monitor_task, timeout=5.0)
             logger.info("Webhook health monitoring stopped")
         except asyncio.TimeoutError:

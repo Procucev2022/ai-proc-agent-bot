@@ -38,7 +38,7 @@ class ResponseHelpers:
                 context_data=context
             )
 
-            response = self.openai_service.client.responses.create(
+            response = await self.openai_service.client.responses.create(
                 model=self.openai_service.default_model,
                 input=[{"role": "user", "content": prompt}],
                 instructions=instructions

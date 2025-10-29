@@ -588,12 +588,15 @@ class MessageQueueService:
                     db_session=db,
                     message_queue_service=self  # Pass self as whatsapp_service
                 )
-                
-                await chat_service.process_message(
-                    user_phone=batch.user_phone,
-                    message_content=batch.concatenated_content,
-                    message_type=batch.message_type
-                )
+                try:
+                    await chat_service.process_message(
+                        user_phone=batch.user_phone,
+                        message_content=batch.concatenated_content,
+                        message_type=batch.message_type
+                    )
+                finally:
+                    # Cleanup to prevent unclosed aiohttp sessions
+                    await chat_service.cleanup()
             
             # Fallback cleanup if no send method was called
             session_key = self._key_session(batch.user_phone)
