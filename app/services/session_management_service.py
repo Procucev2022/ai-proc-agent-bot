@@ -10,7 +10,7 @@ import asyncio
 import inspect
 from typing import Dict, Any, Optional, Union
 from datetime import date, timedelta
-from app.models import User, ConversationSession, WorkflowType
+from app.models import User, ConversationSession, WorkflowType, ConversationOutcome
 from app.database import DatabaseManager
 from app.services.helpers.session_helpers import SessionHelpers
 from app.services.helpers.summarization_helpers import SummarizationHelpers
@@ -59,8 +59,6 @@ class SessionManagementService:
     
     async def get_conversation_context(self, phone_number: str) -> ConversationSession:
         """Retrieve or create conversation context for user session."""
-        from app.models import ConversationOutcome
-
         # Generate session ID using helper method (configurable strategy)
         session_id = SessionHelpers.generate_session_id(phone_number, "daily")
         session = None
@@ -75,65 +73,66 @@ class SessionManagementService:
                 # Convert dict back to ConversationSession object
                 session = self._dict_to_session(session_data)
 
-                # Check expiry
-                if await SessionHelpers.is_session_expired(session):
-                    logger.info(f"Session {session_id} expired, handling expiry")
-                    # Persist expired session to DB if meaningful
-                    if self._should_persist_abandoned(session):
-                        session_data['outcome'] = 'abandoned'
-                        self.db_manager.save_conversation_session(session_data)
-                        logger.info(f"Persisted abandoned session to DB: {session_id}")
-
-                    # Handle expiry (creates fresh session)
-                    session = await SessionHelpers.handle_session_expiry(session, self.db_manager)
-
-                    # Store fresh session in Redis
-                    await self.redis_session.store_session(session_id, self._session_to_dict(session))
-                else:
-                    # Refresh TTL on activity
-                    await self.redis_session.refresh_ttl(session_id)
-                    logger.debug(f"Refreshed TTL for session: {session_id}")
+                # Refresh TTL on activity
+                await self.redis_session.refresh_ttl(session_id)
+                logger.debug(f"Refreshed TTL for session: {session_id}")
 
                 return session
+            else:
+                # Session not in Redis (TTL expired or first time)
+                # Don't do anything here - just create fresh session below
+                # The welcome message logic will check DB later if needed
+                logger.info(f"Session {session_id} not found in Redis - will create fresh session")
+                session = None
 
-        # Fallback to database (or if Redis disabled)
-        if not session:
+        # Fallback to database ONLY if Redis is disabled
+        if not session and not self.redis_enabled:
             logger.debug(f"Checking database for session: {session_id}")
             session = self.db_manager.get_conversation_session(session_id)
 
         # Check if session exists but has been completed/abandoned
         if session and session.outcome:
             if session.outcome in [ConversationOutcome.abandoned, ConversationOutcome.completed, ConversationOutcome.timeout]:
-                logger.info(f"Session {session_id} was {session.outcome.value}, resetting Redis for new workflow (keeping DB data intact)")
+                # Check if this is a recently exited session (within last 30 seconds)
+                # If so, create a fresh session instead of resetting the exited one
+                if session.completed_at:
+                    time_since_completion = utc_now().replace(tzinfo=None) - session.completed_at
+                    if time_since_completion < timedelta(seconds=30):
+                        logger.info(f"Session {session_id} was recently exited ({time_since_completion.total_seconds():.1f}s ago), creating fresh session instead of reloading")
+                        session = None  # Force creation of new session below
 
-                # IMPORTANT: Keep conversation_history and rfq_ids from DB (accumulated throughout the day)
-                # Only reset workflow-specific fields for fresh start
-                session.workflow_state = {"extracted_entities": [], "last_activity_at": utc_now().isoformat()}
-                session.extracted_entities = {}  # Clear for new workflow
-                session.outcome = None  # Clear completion status
-                session.completed_at = None
-                session.workflow_type = None
+                # If session wasn't recently exited, reset it for new workflow
+                if session:
+                    logger.info(f"Session {session_id} was {session.outcome.value}, resetting Redis for new workflow (keeping DB data intact)")
 
-                # Save reset state to Redis ONLY (don't touch database)
-                # Database keeps all accumulated history via append_session_data
-                if self.redis_enabled:
-                    await self.redis_session.store_session(session_id, self._session_to_dict(session))
-                    logger.info(f"Session {session_id} reset in Redis for new workflow (DB data preserved)")
-                else:
-                    # If Redis disabled, we have no choice but to update DB
-                    # But we keep conversation_history and rfq_ids intact
-                    logger.warning(f"Redis disabled - resetting session {session_id} in database (history preserved)")
-                    session = self.db_manager.save_conversation_session({
-                        'session_id': session.session_id,
-                        'external_user_id': session.external_user_id,
-                        'workflow_type': None,
-                        'outcome': None,
-                        'workflow_state': session.workflow_state,
-                        'conversation_history': session.conversation_history,  # Preserved
-                        'extracted_entities': session.extracted_entities,  # Empty for new workflow
-                        'retention_date': session.retention_date,
-                        'completed_at': None
-                    })
+                    # IMPORTANT: Keep conversation_history and rfq_ids from DB (accumulated throughout the day)
+                    # Only reset workflow-specific fields for fresh start
+                    session.workflow_state = {"extracted_entities": [], "last_activity_at": utc_now().isoformat()}
+                    session.extracted_entities = {}  # Clear for new workflow
+                    session.outcome = None  # Clear completion status
+                    session.completed_at = None
+                    session.workflow_type = None
+
+                    # Save reset state to Redis ONLY (don't touch database)
+                    # Database keeps all accumulated history via append_session_data
+                    if self.redis_enabled:
+                        await self.redis_session.store_session(session_id, self._session_to_dict(session))
+                        logger.info(f"Session {session_id} reset in Redis for new workflow (DB data preserved)")
+                    else:
+                        # If Redis disabled, we have no choice but to update DB
+                        # But we keep conversation_history and rfq_ids intact
+                        logger.warning(f"Redis disabled - resetting session {session_id} in database (history preserved)")
+                        session = self.db_manager.save_conversation_session({
+                            'session_id': session.session_id,
+                            'external_user_id': session.external_user_id,
+                            'workflow_type': None,
+                            'outcome': None,
+                            'workflow_state': session.workflow_state,
+                            'conversation_history': session.conversation_history,  # Preserved
+                            'extracted_entities': session.extracted_entities,  # Empty for new workflow
+                            'retention_date': session.retention_date,
+                            'completed_at': None
+                        })
 
         if not session:
             # Create new session
@@ -206,38 +205,51 @@ class SessionManagementService:
         return session
     
     async def handle_session_expiry_check(self, user_phone: str, session: ConversationSession) -> ConversationSession:
-        """Handle session expiry check and renewal."""
-        # Check if session has expired
-        if await SessionHelpers.is_session_expired(session):
-            # Only send expiration message if appropriate
-            if await SessionHelpers.should_send_expiration_message(session):    
-                await self.whatsapp_service.send_message(
-                    user_phone,
-                    "Welcome back! Kindly wait while I verify your profile to proceed."
-                )
+        """Handle session expiry check and renewal.
 
-                
-                # Generate enhanced session summary for timeout (non-blocking)
-                await self._handle_session_completion_enhanced(session)
-            
-            # Handle session expiry properly (appends to DB, returns reset session)
-            session = await SessionHelpers.handle_session_expiry(session, self.db_manager)
+        For Redis-enabled:
+        - If session is fresh (just created), check if a previous session exists in DB
+        - If previous session found with messages, send welcome back message
+        - This handles TTL expiry without doing DB GET in main flow
+        """
+        # For Redis-enabled: Check if this is a fresh session after timeout/abandonment
+        if self.redis_enabled and session:
+            # Check if session is freshly created (no messages yet)
+            messages = session.conversation_history.get("messages", []) if session.conversation_history else []
+            if len(messages) == 0:
+                # Fresh session - check if there's a previous abandoned/timed-out session in DB
+                # This DB GET only happens once when user returns after timeout/exit - acceptable
+                db_session = self.db_manager.get_conversation_session(session.session_id)
+                if db_session and db_session.outcome in [ConversationOutcome.timeout, ConversationOutcome.abandoned]:
+                    # Previous session was abandoned or timed out - send welcome back message
+                    logger.info(f"Session {session.session_id} is fresh, found previous {db_session.outcome.value} session - sending welcome back")
+                    await self.whatsapp_service.send_message(
+                        user_phone,
+                        "Welcome back! Kindly wait while I verify your profile to proceed."
+                    )
 
-            # Delete from Redis (session already appended to DB with full history)
-            if self.redis_enabled:
-                await self.redis_session.delete_session(session.session_id)
-                logger.info(f"Deleted expired session {session.session_id} from Redis after DB append")
+        # For Redis-disabled mode: Use old logic
+        elif not self.redis_enabled:
+            # Check if session has expired
+            if await SessionHelpers.is_session_expired(session):
+                # Only send expiration message if appropriate
+                if await SessionHelpers.should_send_expiration_message(session):
+                    await self.whatsapp_service.send_message(
+                        user_phone,
+                        "Welcome back! Kindly wait while I verify your profile to proceed."
+                    )
 
-            # Store fresh session in Redis for continuation
-            if self.redis_enabled:
-                await self.redis_session.store_session(session.session_id, self._session_to_dict(session))
-                logger.info(f"Stored fresh session {session.session_id} in Redis after timeout")
-        else:
-            # Session is active, renew its activity timestamp
-            session = await SessionHelpers.renew_session_activity(session)
-            current_workflow = session.workflow_type or WorkflowType.general_inquiry
-            await self.save_session(session, current_workflow)
-        
+                    # Generate enhanced session summary for timeout (non-blocking)
+                    await self._handle_session_completion_enhanced(session)
+
+                # Handle session expiry properly (appends to DB, returns reset session)
+                session = await SessionHelpers.handle_session_expiry(session, self.db_manager)
+            else:
+                # Session is active, renew its activity timestamp
+                session = await SessionHelpers.renew_session_activity(session)
+                current_workflow = session.workflow_type or WorkflowType.general_inquiry
+                await self.save_session(session, current_workflow)
+
         return session
     
     def add_message_to_history(self, session: ConversationSession, role: str, content: str, message_type: str = "text", intent: str = None, confidence: float = None):
@@ -310,6 +322,23 @@ class SessionManagementService:
                     if current_workflow
                     else WorkflowType.general_inquiry.value
                 )
+
+            # CRITICAL: Update session.workflow_type attribute so Redis gets the correct value
+            # Previously, workflow_value was only used for DB persistence, but Redis reads from session.workflow_type
+            if workflow_type:
+                if isinstance(workflow_type, WorkflowType):
+                    session.workflow_type = workflow_type
+                elif isinstance(workflow_type, str):
+                    # Convert string to enum if valid
+                    try:
+                        session.workflow_type = WorkflowType(workflow_type)
+                    except (ValueError, KeyError):
+                        session.workflow_type = WorkflowType.general_inquiry
+                else:
+                    session.workflow_type = WorkflowType.general_inquiry
+            # If no workflow_type passed and session.workflow_type is None, set to general_inquiry
+            elif not session.workflow_type:
+                session.workflow_type = WorkflowType.general_inquiry
 
             # Clean workflow_state to ensure JSON serialization
             clean_workflow_state = self._clean_for_json_serialization(session.workflow_state) if session.workflow_state else {}

@@ -376,9 +376,10 @@ class AuthenticationOrchestrator:
                     user_phone, message_content, session, stored_intent_result
                 )
             else:
-                # No valid auth stage - use stored intent and start new flow
-                logger.info(f"No valid auth stage, starting new flow with stored intent")
-                stored_intent_result = session.workflow_state.get("current_intent_result", {"intent": "general_inquiry", "confidence": 50})
+                # No valid auth stage - use current intent and start new flow
+                logger.info(f"No valid auth stage, starting new flow with current intent")
+                # Use the current intent_result parameter (fresh classification), not stale session data
+                stored_intent_result = intent_result
 
                 # Handle exit intent immediately before starting new flow
                 intent = stored_intent_result.get('intent')
