@@ -490,13 +490,11 @@ class ChatService:
                     # Max OTP retries exceeded, user exited, or other support-requiring scenario
                     # Check if exit has already been completed to avoid duplicate calls
                     if auth_result.get("exit_completed"):
-                       
-                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        # Exit already completed - session already cleaned up, no need to save
                         return auth_result
                     else:
-                        
+                        # Exit service handles all session persistence (DB + Redis cleanup)
                         exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                        await self.session_manager.save_session(session, WorkflowType.user_exit)
                         return exit_result
 
                 elif auth_status == "registration_completed":
@@ -657,12 +655,12 @@ class ChatService:
                     # Check if exit has already been completed to avoid duplicate calls
                     if auth_result.get("exit_completed"):
                         logger.info(f"Exit already completed in auth flow for {user_phone}, skipping duplicate exit call")
-                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        # Exit already completed - session already cleaned up, no need to save
                         return auth_result
                     else:
                         logger.info(f"Final redirect to support - calling exit service for {user_phone}")
+                        # Exit service handles all session persistence (DB + Redis cleanup)
                         exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                        await self.session_manager.save_session(session, WorkflowType.user_exit)
                         return exit_result
                 elif auth_status == "verification_required":
                     # Handle verification required status
@@ -851,8 +849,8 @@ class ChatService:
                 logger.info(f"Cancel workflow intent detected with {confidence}% confidence")
                 user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
 
-                # Trigger cancel confirmation flow (will send buttons)
-                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session)
+                # Trigger cancel confirmation flow (will send buttons or handle confirmation)
+                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message)
                 await self.session_manager.save_session(session, session.workflow_type)
                 return cancel_result
 
@@ -877,8 +875,8 @@ class ChatService:
                     logger.info(f"Exit intent detected with {confidence}% confidence - handling system exit")
                     # Use the same phone format as used in authentication flow
                     user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+                    # Exit service handles all session persistence (DB + Redis cleanup)
                     exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                    await self.session_manager.save_session(session, WorkflowType.user_exit)
                     return exit_result
 
             if intent == "support" and confidence > 0.7:
@@ -2098,8 +2096,8 @@ class ChatService:
         elif button_id == "exit":
             # Trigger exit flow
             user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+            # Exit service handles all session persistence (DB + Redis cleanup)
             exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-            await self.session_manager.save_session(session, WorkflowType.user_exit)
             return exit_result
 
         # Handle cancel workflow confirmation buttons

@@ -38,13 +38,14 @@ class CancelService:
             confirmation_tool = ConfirmationTool(openai_service)
             self.confirmation_service = ConfirmationService(confirmation_tool)
 
-    async def handle_cancel_intent(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
+    async def handle_cancel_intent(self, user_phone: str, session: ConversationSession, message: str = None) -> Dict[str, Any]:
         """
         Handle cancel intent - ask for confirmation before clearing workflow state.
 
         Args:
             user_phone: User's phone number
             session: Current conversation session
+            message: User's message (optional, for detecting yes/no confirmation)
 
         Returns:
             Dict with status and details
@@ -62,6 +63,15 @@ class CancelService:
                     "status": "no_workflow",
                     "message": "No active workflow to cancel"
                 }
+
+            # Check if cancel is already pending - if so, this is a confirmation response
+            if session.workflow_state and session.workflow_state.get("cancel_pending"):
+                logger.info(f"Cancel already pending for {user_phone}, treating message '{message}' as confirmation response")
+                # Simple yes/no detection - if message contains "yes" or similar, confirm; otherwise decline
+                message_lower = (message or "").lower()
+                is_confirmed = any(word in message_lower for word in ["yes", "confirm", "cancel", "sure", "ok"])
+                logger.info(f"Detected confirmation: {is_confirmed} from message: '{message}'")
+                return await self.handle_cancel_confirmation(user_phone, session, is_confirmed)
 
             # Set cancel pending state
             if not session.workflow_state:
