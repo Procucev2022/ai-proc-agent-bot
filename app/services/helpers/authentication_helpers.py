@@ -89,7 +89,9 @@ class AuthenticationHelpers:
                 # Only include required fields
                 if field_info.is_required():
                     label = field_info.description or name.replace("_", " ").title()
-                    required_fields.append(label)
+                    # Make field names bold for WhatsApp
+                    bold_label = f"*{label}*"
+                    required_fields.append(bold_label)
 
             if not required_fields:
                 field_text = "your registration details"
