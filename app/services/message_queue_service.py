@@ -162,6 +162,12 @@ class MessageQueueService:
     def _key_lock_ack(self, user_phone: str) -> str:
         return f"{user_phone}:lock:ack"
 
+    def _key_lock_monitor(self, user_phone: str) -> str:
+        return f"{user_phone}:lock:monitor"
+
+    def _key_lock_monitor_log(self, user_phone: str) -> str:
+        return f"{user_phone}:lock:monitor_log"
+
     # ========================================================================
     # Public API - Entry Point
     # ========================================================================
@@ -347,6 +353,7 @@ class MessageQueueService:
         - Log warnings for slow batches
         
         Runs every 5 seconds. Idempotent across workers.
+        Workers coordinate via Redis SET NX EX to prevent duplicates.
         """
         logger.info("[MONITOR] Monitoring loop started")
         
@@ -384,32 +391,81 @@ class MessageQueueService:
                             
                             # Send please-wait if threshold exceeded
                             if duration >= self.please_wait_threshold and not session.please_wait_sent:
-                                logger.info(
-                                    f"[MONITOR] Sending please-wait to {user_phone} "
-                                    f"after {duration:.1f}s"
+                                # Atomic lock to prevent duplicate sends across workers
+                                lock_key = self._key_lock_monitor(user_phone)
+                                lock_acquired = await self.redis.set(
+                                    lock_key,
+                                    "1",
+                                    nx=True,
+                                    ex=5
                                 )
-                                await self._send_please_wait(user_phone)
                                 
-                                # Update session
-                                session.please_wait_sent = True
-                                await self.redis.setex(
-                                    key,
-                                    60,  # Refresh TTL
-                                    session.to_json()
-                                )
+                                if lock_acquired:
+                                    # This worker won the race - double-check and send
+                                    try:
+                                        session_json_check = await self.redis.get(key)
+                                        if not session_json_check:
+                                            continue
+                                        
+                                        session_check = ProcessingSession.from_json(session_json_check)
+                                        if session_check.please_wait_sent:
+                                            logger.debug(
+                                                f"[MONITOR] Please-wait already sent by another worker "
+                                                f"for {user_phone}"
+                                            )
+                                            continue
+                                        
+                                        logger.info(
+                                            f"[MONITOR] Sending please-wait to {user_phone} "
+                                            f"after {duration:.1f}s"
+                                        )
+                                        await self._send_please_wait(user_phone)
+                                        
+                                        # Update session
+                                        session.please_wait_sent = True
+                                        await self.redis.setex(
+                                            key,
+                                            60,  # Refresh TTL
+                                            session.to_json()
+                                        )
+                                    except Exception as send_error:
+                                        logger.error(
+                                            f"[MONITOR] Error sending please-wait to {user_phone}: {send_error}",
+                                            exc_info=True
+                                        )
+                                else:
+                                    # Another worker is handling it
+                                    logger.debug(
+                                        f"[MONITOR] Another worker is handling please-wait "
+                                        f"for {user_phone}"
+                                    )
                             
-                            # Log warnings for slow processing
-                            if duration > 50:
-                                logger.critical(
-                                    f"[MONITOR-CRITICAL] Batch {session.batch_id} "
-                                    f"for {user_phone} processing for {duration:.1f}s "
-                                    f"(approaching TTL limit!)"
-                                )
-                            elif duration > 30:
-                                logger.error(
-                                    f"[MONITOR-ERROR] Batch {session.batch_id} "
-                                    f"for {user_phone} processing for {duration:.1f}s"
-                                )
+                            # Log warnings for slow processing (deduplicated across workers)
+                            if duration > 50 or duration > 30:
+                                log_lock_key = self._key_lock_monitor_log(user_phone)
+                                try:
+                                    log_flag_set = await self.redis.set(
+                                        log_lock_key, 
+                                        "1", 
+                                        nx=True, 
+                                        ex=5
+                                    )
+                                    
+                                    if log_flag_set:
+                                        if duration > 50:
+                                            logger.critical(
+                                                f"[MONITOR-CRITICAL] Batch {session.batch_id} "
+                                                f"for {user_phone} processing for {duration:.1f}s "
+                                                f"(approaching TTL limit!)"
+                                            )
+                                        elif duration > 30:
+                                            logger.error(
+                                                f"[MONITOR-ERROR] Batch {session.batch_id} "
+                                                f"for {user_phone} processing for {duration:.1f}s"
+                                            )
+                                except Exception:
+                                    # Ignore logging coordination errors
+                                    pass
                         
                         except Exception as e:
                             logger.error(f"[MONITOR] Error checking session {key}: {e}")
