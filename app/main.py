@@ -26,15 +26,17 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from typing import Dict, Any
+from typing import Dict, Any, Union
 from app.config import get_settings
 from app.api.webhook import router as webhook_router
-from app.database import init_database
+from app.database import init_database, get_db_session_context
 from app.services.chat_service import ChatService
 from app.services.global_error_handler import handle_server_error
 from app.context.middleware import ContextMiddleware
 from app.utils.logging_utils import setup_basic_logging, CustomFormatter
+from unittest.mock import patch
 import gc
+import time
 
 
 # Get settings and configure logging with custom formatter
@@ -272,9 +274,14 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
     """Process chat message through ChatService - works exactly like test_multi_turn_conversation.py"""
     from app.utils.logging_utils import UserPhoneContext
 
+    request_start = time.time()
+
     # Set phone number context for all logs in this request
     async with UserPhoneContext(chat_message.phone):
         try:
+            t1 = time.time()
+            logger.info(f"[PERF] Request parsing completed: {(t1-request_start)*1000:.0f}ms")
+
             # Store captured WhatsApp messages (same as terminal test)
             whatsapp_messages = []
 
@@ -291,16 +298,37 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
             if isinstance(content, dict) and "image" in content:
                 message_type = "image"
 
+            t2 = time.time()
+            logger.info(f"[PERF] Message validation completed: {(t2-t1)*1000:.0f}ms")
+
             # Create ChatService per-request with proper session management
-            from app.database import get_db_session_context
-            from unittest.mock import patch
+            t3 = time.time()
+            logger.info(f"[PERF] Setup completed: {(t3-t2)*1000:.0f}ms")
 
             with get_db_session_context() as db:
-                chat_service = ChatService(db_session=db)
+                t4 = time.time()
+                logger.info(f"[PERF] DB session acquired: {(t4-t3)*1000:.0f}ms")
 
-                # Process message through ChatService with mocked WhatsApp (same as terminal test)
-                with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message):
-                    chat_result = await chat_service.process_message(chat_message.phone, content, message_type)
+                chat_service = ChatService(db_session=db)
+                t5 = time.time()
+                logger.info(f"[PERF] ChatService initialized: {(t5-t4)*1000:.0f}ms")
+
+                try:
+                    # Process message through ChatService with mocked WhatsApp (same as terminal test)
+                    with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message):
+                        t6 = time.time()
+                        logger.info(f"[PERF] Mock patching completed: {(t6-t5)*1000:.0f}ms")
+
+                        chat_result = await chat_service.process_message(chat_message.phone, content, message_type)
+                        t7 = time.time()
+                        logger.info(f"[PERF] process_message completed: {(t7-t6)*1000:.0f}ms")
+                finally:
+                    # Always cleanup resources
+                    await chat_service.cleanup()
+                    logger.debug("ChatService resources cleaned up")
+
+            t_total = time.time()
+            logger.info(f"[PERF] Total request time: {(t_total-request_start)*1000:.0f}ms")
 
             return {
                 "success": True,

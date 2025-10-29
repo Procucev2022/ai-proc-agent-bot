@@ -136,13 +136,20 @@ class AuthenticationOrchestrator:
                 exit_result = await exit_service.handle_exit_intent(user_phone, session)
                 return exit_result
 
+            # CRITICAL: Check if user is responding to an existing profile selection FIRST
+            if session.workflow_state.get('profile_selection_stage'):
+                logger.info(f"User is responding to existing profile selection (stage: {session.workflow_state.get('profile_selection_stage')})")
+                return await self.profile_selection_service.handle_profile_selection_response(
+                    user_phone, message_content, session
+                )
+
             # Step 5: For ambiguous or low confidence intents, use profile selection service
             if intent == "ambiguous" or confidence < 50:
                 logger.info(f"Using profile selection service for ambiguous/low confidence intent: {intent} ({confidence}%)")
                 return await self.profile_selection_service.handle_profile_selection(
                     user_phone, message_content, session, intent_result
                 )
-            
+
             # Step 6: Use profile selection service for clear intents
             if intent in ["buy_something", "sell_something", "rfq_status_check", "general_inquiry", "register_account"]:
                 logger.info(f"Using profile selection service for intent: {intent} ({confidence}%)")

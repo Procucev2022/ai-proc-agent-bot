@@ -663,8 +663,9 @@ class ProductsArrayHandler:
                     print(f"ProductsArrayHandler: Merging re-extracted data for product: {existing_desc}")
 
                     # Merge all non-None fields from re-extracted product
+                    # For re-extracted products, we ALWAYS update fields (even if they exist) because this is a modification
                     for field, value in reextracted_product.items():
-                        if value is not None and (merged_entity.get(field) is None or merged_entity.get(field) == ""):  # Only fill if field is None or empty
+                        if value is not None:  # Update any non-None value from re-extraction
                             merged_entity[field] = value
                             print(f"ProductsArrayHandler: Applied {field}={value} to {existing_desc}")
                     

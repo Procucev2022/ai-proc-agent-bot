@@ -49,13 +49,8 @@ class ProcucevAPIClient:
         self.redis_service = get_redis_service()
         self.token_cache_key = "procucev_api:auth_token"
 
-    def __del__(self):
-        """Cleanup session on object destruction."""
-        if self.session and not self.session.closed:
-            try:
-                asyncio.create_task(self.session.close())
-            except Exception:
-                pass
+    # Note: __del__ removed - cannot reliably close async sessions in __del__
+    # Use context managers (async with) or explicit close_session() calls instead
 
     async def __aenter__(self):
         await self.create_session()

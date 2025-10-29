@@ -13,6 +13,11 @@ Key responsibilities:
 - Maintain conversation context and session state
 - Handle error scenarios and fallback mechanisms
 - Coordinate responses back to users through WhatsApp
+
+Performance Notes:
+- ChatService is instantiated per request (by design) to avoid DB connection leaks
+- Heavy services use singleton patterns (InteractionLogger, LocationService)
+- SessionManagementService is instantiated per request but uses Redis for state
 """
 
 import logging
@@ -107,79 +112,223 @@ class ChatService:
             from app.services.whatsapp_service import WhatsAppService
             self.whatsapp_service = WhatsAppService()
 
-        # Initialize services that don't need database sessions
-        self.intent_service = IntentService()
-        self.entity_service = EntityService()
-        self.openai_service = OpenAIService()
-        self.response_helpers = ResponseHelpers(self.openai_service)
+        # Lazy initialization for services - only create when first accessed
+        self._intent_service = None
+        self._entity_service = None
+        self._openai_service = None
+        self._response_helpers = None
 
-        # Initialize services that need database sessions
+        # Lazy initialization for handlers
+        self._confirmation_service = None
+        self._authentication_service = None
+        self._registration_service = None
+        self._exit_service = None
+        self._cancel_service = None
+        self._faq_service = None
+        self._confirmation_handler = None
+        self._intent_switch_handler = None
+        self._products_array_handler = None
+        self._purchase_intent_handler = None
+        self._attachment_decision_handler = None
+        self._image_processor = None
+        self._seller_service = None
+        self._rfq_status_service = None
+
+        # Initialize only lightweight services that need database sessions
         self.chat_summary_service = ChatSummaryService(db_session=db_session)
         self.daily_summary_service = DailySummaryService()
-
-        # Now all services use the same session (either provided or created)
         self.db_manager = DatabaseManager(session=db_session)
         self.vendor_service = VendorService(db_session=db_session)
         self.rfq_service = RFQService()
         self.rfq_background_service = RFQBackgroundService(db_session=db_session)
-        
-        # Initialize extracted services first
+
+        # Initialize session manager (lightweight, needed early)
         self.session_manager = SessionManagementService(
             self.db_manager, self.whatsapp_service,
             self.chat_summary_service, self.daily_summary_service
         )
-        
-        # Initialize services that depend on whatsapp_service and session_manager
-        self.seller_service = SellerService(
-            whatsapp_service=self.whatsapp_service,
-            session_manager=self.session_manager,
-            db_session=db_session
-        )
-        self.rfq_status_service = RFQStatusService(
-            whatsapp_service=self.whatsapp_service,
-            session_manager=self.session_manager,
-            db_session=db_session
-        )
-        
-        # Initialize confirmation service and tools
 
-        
-        confirmation_tool = ConfirmationTool(self.openai_service)
-        confirmation_service = ConfirmationService(confirmation_tool)
-        
-        # Initialize authentication and registration services with session_manager
-        self.authentication_service = AuthenticationService(
-            self.whatsapp_service, self.openai_service, self.response_helpers, self.session_manager
-        )
-        self.registration_service = RegistrationService(
-            self.whatsapp_service, self.openai_service, self.entity_service, self.response_helpers, confirmation_service, self.session_manager
-        )
-        self.exit_service = ExitService(
-            self.whatsapp_service, self.authentication_service, self.session_manager, self.db_manager
-        )
-        self.cancel_service = CancelService(
-            self.whatsapp_service, self.session_manager, self.db_manager
-        )
-        self.faq_service = FAQService()
-        self.confirmation_handler = ConfirmationHandler(
-            self.whatsapp_service, self.response_helpers
-        )
-        self.intent_switch_handler = IntentSwitchHandler(
-            self.whatsapp_service, self.response_helpers
-        )
-        self.products_array_handler = ProductsArrayHandler(
-            self.whatsapp_service, self.openai_service,
-            self.response_helpers, self.session_manager
-        )
-        self.purchase_intent_handler = PurchaseIntentHandler(
-            self.whatsapp_service, self.response_helpers, self.entity_service,
-            self.chat_summary_service, self.products_array_handler, self.session_manager
-        )
-        self.attachment_decision_handler = AttachmentDecisionHandler(
-            self.whatsapp_service, self.response_helpers,
-            self.purchase_intent_handler, self.session_manager
-        )
-        self.image_processor = ImageMessageProcessor(self.whatsapp_service, self.response_helpers)
+    # Lazy-loaded service properties
+    @property
+    def intent_service(self):
+        """Lazy-load IntentService only when needed."""
+        if self._intent_service is None:
+            self._intent_service = IntentService()
+        return self._intent_service
+
+    @property
+    def entity_service(self):
+        """Lazy-load EntityService only when needed."""
+        if self._entity_service is None:
+            self._entity_service = EntityService()
+        return self._entity_service
+
+    @property
+    def openai_service(self):
+        """Lazy-load OpenAIService only when needed."""
+        if self._openai_service is None:
+            self._openai_service = OpenAIService()
+        return self._openai_service
+
+    @property
+    def response_helpers(self):
+        """Lazy-load ResponseHelpers only when needed."""
+        if self._response_helpers is None:
+            self._response_helpers = ResponseHelpers(self.openai_service)
+        return self._response_helpers
+
+    @property
+    def confirmation_service(self):
+        """Lazy-load ConfirmationService only when needed."""
+        if self._confirmation_service is None:
+            from app.tools.confirmation_tool import ConfirmationTool
+            from app.services.confirmation_service import ConfirmationService
+            confirmation_tool = ConfirmationTool(self.openai_service)
+            self._confirmation_service = ConfirmationService(confirmation_tool)
+        return self._confirmation_service
+
+    @property
+    def authentication_service(self):
+        """Lazy-load AuthenticationService only when needed."""
+        if self._authentication_service is None:
+            from app.services.authentication_service import AuthenticationService
+            self._authentication_service = AuthenticationService(
+                self.whatsapp_service, self.openai_service, self.response_helpers, self.session_manager
+            )
+        return self._authentication_service
+
+    @property
+    def registration_service(self):
+        """Lazy-load RegistrationService only when needed."""
+        if self._registration_service is None:
+            from app.services.registration_service import RegistrationService
+            self._registration_service = RegistrationService(
+                self.whatsapp_service, self.openai_service, self.entity_service,
+                self.response_helpers, self.confirmation_service, self.session_manager
+            )
+        return self._registration_service
+
+    @property
+    def exit_service(self):
+        """Lazy-load ExitService only when needed."""
+        if self._exit_service is None:
+            from app.services.exit_service import ExitService
+            self._exit_service = ExitService(
+                self.whatsapp_service, self.authentication_service, self.session_manager, self.db_manager
+            )
+        return self._exit_service
+
+    @property
+    def cancel_service(self):
+        """Lazy-load CancelService only when needed."""
+        if self._cancel_service is None:
+            from app.services.cancel_service import CancelService
+            self._cancel_service = CancelService(
+                self.whatsapp_service, self.session_manager, self.db_manager
+            )
+        return self._cancel_service
+
+    @property
+    def faq_service(self):
+        """Lazy-load FAQService only when needed."""
+        if self._faq_service is None:
+            from app.services.faq_service import FAQService
+            self._faq_service = FAQService()
+        return self._faq_service
+
+    @property
+    def confirmation_handler(self):
+        """Lazy-load ConfirmationHandler only when needed."""
+        if self._confirmation_handler is None:
+            from app.services.handlers.confirmation_handler import ConfirmationHandler
+            self._confirmation_handler = ConfirmationHandler(
+                self.whatsapp_service, self.response_helpers
+            )
+        return self._confirmation_handler
+
+    @property
+    def intent_switch_handler(self):
+        """Lazy-load IntentSwitchHandler only when needed."""
+        if self._intent_switch_handler is None:
+            from app.services.handlers.intent_switch_handler import IntentSwitchHandler
+            self._intent_switch_handler = IntentSwitchHandler(
+                self.whatsapp_service, self.response_helpers
+            )
+        return self._intent_switch_handler
+
+    @property
+    def products_array_handler(self):
+        """Lazy-load ProductsArrayHandler only when needed."""
+        if self._products_array_handler is None:
+            from app.services.handlers.products_array_handler import ProductsArrayHandler
+            self._products_array_handler = ProductsArrayHandler(
+                self.whatsapp_service, self.openai_service,
+                self.response_helpers, self.session_manager
+            )
+        return self._products_array_handler
+
+    @property
+    def purchase_intent_handler(self):
+        """Lazy-load PurchaseIntentHandler only when needed."""
+        if self._purchase_intent_handler is None:
+            from app.services.handlers.purchase_intent_handler import PurchaseIntentHandler
+            self._purchase_intent_handler = PurchaseIntentHandler(
+                self.whatsapp_service, self.response_helpers, self.entity_service,
+                self.chat_summary_service, self.products_array_handler, self.session_manager
+            )
+        return self._purchase_intent_handler
+
+    @property
+    def attachment_decision_handler(self):
+        """Lazy-load AttachmentDecisionHandler only when needed."""
+        if self._attachment_decision_handler is None:
+            from app.services.handlers.attachment_decision_handler import AttachmentDecisionHandler
+            self._attachment_decision_handler = AttachmentDecisionHandler(
+                self.whatsapp_service, self.response_helpers,
+                self.purchase_intent_handler, self.session_manager
+            )
+        return self._attachment_decision_handler
+
+    @property
+    def image_processor(self):
+        """Lazy-load ImageMessageProcessor only when needed."""
+        if self._image_processor is None:
+            from app.services.processors.image_message_processor import ImageMessageProcessor
+            self._image_processor = ImageMessageProcessor(self.whatsapp_service, self.response_helpers)
+        return self._image_processor
+
+    @property
+    def seller_service(self):
+        """Lazy-load SellerService only when needed."""
+        if self._seller_service is None:
+            from app.services.seller_service import SellerService
+            self._seller_service = SellerService(
+                whatsapp_service=self.whatsapp_service,
+                session_manager=self.session_manager,
+                db_session=self.db_session
+            )
+        return self._seller_service
+
+    @property
+    def rfq_status_service(self):
+        """Lazy-load RFQStatusService only when needed."""
+        if self._rfq_status_service is None:
+            from app.services.rfq_status_service import RFQStatusService
+            self._rfq_status_service = RFQStatusService(
+                whatsapp_service=self.whatsapp_service,
+                session_manager=self.session_manager,
+                db_session=self.db_session
+            )
+        return self._rfq_status_service
+
+    async def cleanup(self):
+        """Cleanup resources - close OpenAI client to prevent connection leaks."""
+        try:
+            if self._openai_service is not None:
+                await self._openai_service.close()
+                logger.debug("ChatService: OpenAI service closed")
+        except Exception as e:
+            logger.warning(f"ChatService: Error during cleanup: {e}")
 
     def _get_workflow_or_default(self, session: ConversationSession, default: str = 'general_inquiry') -> WorkflowType:
         """
@@ -901,9 +1050,36 @@ class ChatService:
 
                 # Handle session completion if RFQs were created
                 if result.get("status") == "multiple_rfqs_created":
-                    # Generate enhanced session summary BEFORE clearing (non-blocking)
-                    await self.session_manager.handle_session_completion_enhanced(session)
-                    await self.session_manager.save_session(session, WorkflowType.rfq_submitted)
+                    # APPEND session to database (preserves history from previous RFQs)
+                    from app.database import DatabaseManager
+                    db_manager = DatabaseManager()
+                    try:
+                        db_manager.append_session_data({
+                            'session_id': session.session_id,
+                            'external_user_id': session.external_user_id,
+                            'workflow_type': WorkflowType.rfq_submitted.value,
+                            'outcome': session.outcome.value if session.outcome else None,
+                            'workflow_state': session.workflow_state,
+                            'conversation_history': session.conversation_history,
+                            'extracted_entities': session.extracted_entities,
+                            'rfq_ids': session.rfq_ids if hasattr(session, 'rfq_ids') else None,
+                            'product_items': session.product_items if hasattr(session, 'product_items') else None,
+                            'retention_date': session.retention_date,
+                            'last_activity_at': session.last_activity_at,
+                            'completed_at': session.completed_at
+                        })
+                        logger.info(f"Appended completed RFQ session {session.session_id} to database")
+                    finally:
+                        db_manager.close()
+
+                    # Clear Redis (session complete)
+                    from app.redis_db import get_session_redis_service
+                    from app.config import get_settings
+                    settings = get_settings()
+                    if settings.redis_session_storage_enabled:
+                        redis_session = get_session_redis_service()
+                        await redis_session.delete_session(session.session_id)
+                        logger.info(f"Deleted completed session {session.session_id} from Redis")
                 elif result.get("continue_with_purchase_intent"):
                     # Continue with purchase intent flow for modifications
                     return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None,

@@ -76,7 +76,7 @@ class ExitService:
 
     async def _clear_session_data(self, session: ConversationSession) -> bool:
         """
-        Clear all session data and mark session as completed.
+        Save complete session data to database (preserving conversation history), then clear Redis.
 
         Args:
             session: Current conversation session
@@ -88,48 +88,45 @@ class ExitService:
             if not session:
                 return True
 
-            # Clear all session state
             from app.models import ConversationOutcome
-            session.workflow_type = None
-            session.outcome = ConversationOutcome.abandoned
-            exit_timestamp = session.workflow_state.get("last_activity_at") if session.workflow_state else None
-            # Handle exit_timestamp - it might already be a string or datetime
-            if exit_timestamp:
-                if hasattr(exit_timestamp, 'isoformat'):
-                    exit_timestamp_str = exit_timestamp.isoformat()
-                else:
-                    exit_timestamp_str = str(exit_timestamp)
-            else:
-                exit_timestamp_str = None
-            
-            session.workflow_state = {
-                "exit_completed": True,
-                "exit_timestamp": exit_timestamp_str
-            }
-            session.conversation_history = {"messages": [], "metadata": []}
-            session.extracted_entities = {}
 
-            # Mark session as completed
+            # Mark session as completed and abandoned (but keep all data intact)
+            session.outcome = ConversationOutcome.abandoned
             session.completed_at = utc_now().replace(tzinfo=None)
 
-            # Save the cleared session
-            if self.session_manager:
-                await self.session_manager.save_session(session, WorkflowType.user_exit)
-            else:
-                # Fallback to direct database save
-                self.db_manager.save_conversation_session({
-                    'session_id': session.session_id,
-                    'external_user_id': session.external_user_id,
-                    'workflow_type': "user_exit",
-                    'outcome': "abandoned",
-                    'workflow_state': session.workflow_state,
-                    'conversation_history': session.conversation_history,
-                    'extracted_entities': session.extracted_entities,
-                    'retention_date': session.retention_date,
-                    'completed_at': session.completed_at
-                })
+            # Add exit metadata to workflow_state without clearing other data
+            if not session.workflow_state:
+                session.workflow_state = {}
+            session.workflow_state["exit_completed"] = True
+            session.workflow_state["exit_timestamp"] = utc_now().isoformat()
 
-            logger.info(f"Session {session.session_id} cleared and marked as completed")
+            # IMPORTANT: Keep conversation_history intact for audit trail
+            # All messages with timestamps are preserved in the database
+
+            # STEP 1: APPEND complete session to database (preserves all history)
+            self.db_manager.append_session_data({
+                'session_id': session.session_id,
+                'external_user_id': session.external_user_id,
+                'workflow_type': WorkflowType.user_exit.value,
+                'outcome': ConversationOutcome.abandoned.value,
+                'workflow_state': session.workflow_state,
+                'conversation_history': session.conversation_history,  # Appended to existing
+                'extracted_entities': session.extracted_entities,
+                'retention_date': session.retention_date,
+                'completed_at': session.completed_at
+            })
+
+            logger.info(f"Session {session.session_id} saved to database with complete conversation history preserved (outcome=abandoned)")
+
+            # STEP 2: Clear Redis (user is exiting, session is complete)
+            from app.redis_db import get_session_redis_service
+            from app.config import get_settings
+            settings = get_settings()
+            if settings.redis_session_storage_enabled:
+                redis_session = get_session_redis_service()
+                await redis_session.delete_session(session.session_id)
+                logger.info(f"Session {session.session_id} deleted from Redis after exit")
+
             return True
 
         except Exception as e:

@@ -156,7 +156,7 @@ class CancelService:
 
     async def _clear_workflow_state(self, session: ConversationSession) -> bool:
         """
-        Clear workflow state and entities while preserving workflow type.
+        Reset session completely for fresh start (user is continuing, not exiting).
 
         Args:
             session: Current conversation session
@@ -168,36 +168,34 @@ class CancelService:
             if not session:
                 return True
 
-            # Preserve workflow type
-            current_workflow_type = session.workflow_type
+            from app.utils.datetime_utils import utc_now
 
-            # Clear workflow state (except workflow type)
-            session.workflow_state = {}
-
-            # Clear extracted entities
+            # Reset all session data for fresh start
+            session.workflow_state = {"last_activity_at": utc_now().isoformat()}
             session.extracted_entities = {}
+            session.conversation_history = {"messages": [], "metadata": [], "openai_messages": []}
+            session.workflow_type = None
+            session.outcome = None
+            session.completed_at = None
 
-            # Keep workflow type intact
-            session.workflow_type = current_workflow_type
-
-            # Save the cleared session
+            # Save reset session to Redis (and optionally DB)
             if self.session_manager:
-                await self.session_manager.save_session(session, current_workflow_type)
+                await self.session_manager.save_session(session, persist_to_db=False)
             else:
                 # Fallback to direct database save
                 self.db_manager.save_conversation_session({
                     'session_id': session.session_id,
                     'external_user_id': session.external_user_id,
-                    'workflow_type': current_workflow_type.value if current_workflow_type else None,
-                    'outcome': session.outcome,
+                    'workflow_type': None,
+                    'outcome': None,
                     'workflow_state': session.workflow_state,
                     'conversation_history': session.conversation_history,
                     'extracted_entities': session.extracted_entities,
                     'retention_date': session.retention_date,
-                    'completed_at': session.completed_at
+                    'completed_at': None
                 })
 
-            logger.info(f"Session {session.session_id} state cleared, workflow type preserved: {current_workflow_type}")
+            logger.info(f"Session {session.session_id} reset for fresh start (kept in Redis)")
             return True
 
         except Exception as e:

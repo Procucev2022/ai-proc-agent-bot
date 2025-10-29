@@ -206,11 +206,11 @@ def get_db_session():
             engine = create_engine(
                 settings.get_database_url(),
                 connect_args=connect_args,
-                pool_pre_ping=True,  # Test connections before using
-                pool_recycle=3600,  # Recycle connections after 1 hour
-                pool_size=10,
-                max_overflow=20,
-                pool_timeout=60,
+                pool_pre_ping=False,  # Disabled for performance - rely on pool_recycle instead
+                pool_recycle=1800,  # Recycle connections after 30 min (more frequent than before)
+                pool_size=20,  # Increased from 10 - more ready connections
+                max_overflow=10,  # Decreased from 20 - reduce connection creation overhead
+                pool_timeout=30,  # Decreased from 60 - fail faster if pool exhausted
                 echo_pool=False,
                 isolation_level="READ COMMITTED"  # See latest committed data across workers
             )
@@ -226,8 +226,7 @@ def get_db_session():
     try:
         # Return new session - caller must close it when done
         session = SessionLocal()
-        # Test connection
-        session.execute(text("SELECT 1"))
+        # Note: Removed redundant SELECT 1 health check - pool_pre_ping already validates connections
 
         # Log connection pool status
         _log_pool_status("after creating session")
@@ -650,8 +649,160 @@ class DatabaseManager:
         """
         pass
 
+    def append_session_data(self, session_data: dict) -> ConversationSession:
+        """
+        Append session data to existing database record (preserves history across multiple workflows).
+
+        This method loads existing session and:
+        1. APPENDS to array fields (conversation_history, rfq_ids, product_items, etc.)
+        2. MERGES object fields (workflow_state, extracted_entities, etc.)
+        3. UPDATES scalar fields (outcome, completed_at, etc.)
+
+        Use for: timeout, exit, completion to maintain complete audit trail.
+
+        Args:
+            session_data: New session data to append/merge
+
+        Returns:
+            Updated ConversationSession with merged data
+        """
+        from sqlalchemy.exc import SQLAlchemyError
+        import os
+
+        worker_pid = os.getpid()
+        session_id = session_data.get('session_id', 'UNKNOWN')
+
+        try:
+            # Load existing session from database
+            existing_session = self.session.query(ConversationSession).filter_by(
+                session_id=session_id
+            ).first()
+
+            if not existing_session:
+                # No existing session, just save as new
+                logger.info(f"[WORKER-{worker_pid}] [SESSION-APPEND] No existing session for {session_id}, creating new")
+                return self.save_conversation_session(session_data)
+
+            logger.info(f"[WORKER-{worker_pid}] [SESSION-APPEND] Appending to existing session {session_id}")
+
+            # APPEND conversation_history messages with deduplication
+            existing_history = existing_session.conversation_history or {"messages": [], "metadata": [], "openai_messages": []}
+            new_history = session_data.get('conversation_history', {})
+
+            if new_history:
+                # Deduplicate messages based on timestamp + content to prevent duplicates
+                def deduplicate_messages(existing_msgs, new_msgs):
+                    """Deduplicate messages using timestamp + content/role as unique key."""
+                    # Create set of existing message signatures
+                    existing_sigs = set()
+                    for msg in existing_msgs:
+                        # Use timestamp + content + role as unique signature
+                        sig = (
+                            msg.get('timestamp'),
+                            msg.get('content'),
+                            msg.get('role')
+                        )
+                        existing_sigs.add(sig)
+
+                    # Only add messages that don't already exist
+                    unique_new = []
+                    for msg in new_msgs:
+                        sig = (
+                            msg.get('timestamp'),
+                            msg.get('content'),
+                            msg.get('role')
+                        )
+                        if sig not in existing_sigs:
+                            unique_new.append(msg)
+                            existing_sigs.add(sig)  # Prevent duplicates within new_msgs too
+
+                    return existing_msgs + unique_new
+
+                # Deduplicate each message array type
+                existing_messages = existing_history.get("messages", [])
+                new_messages = new_history.get("messages", [])
+                merged_messages = deduplicate_messages(existing_messages, new_messages)
+
+                existing_metadata = existing_history.get("metadata", [])
+                new_metadata = new_history.get("metadata", [])
+                merged_metadata = deduplicate_messages(existing_metadata, new_metadata)
+
+                # For openai_messages, deduplicate by content + role only (no timestamp)
+                existing_openai = existing_history.get("openai_messages", [])
+                new_openai = new_history.get("openai_messages", [])
+                openai_sigs = {(m.get('content'), m.get('role')) for m in existing_openai}
+                unique_openai = [m for m in new_openai if (m.get('content'), m.get('role')) not in openai_sigs]
+                merged_openai = existing_openai + unique_openai
+
+                merged_history = {
+                    "messages": merged_messages,
+                    "metadata": merged_metadata,
+                    "openai_messages": merged_openai
+                }
+
+                existing_session.conversation_history = merged_history
+                flag_modified(existing_session, 'conversation_history')
+
+                new_msg_count = len(merged_messages) - len(existing_messages)
+                logger.info(f"[SESSION-APPEND] Appended {new_msg_count} unique messages (total: {len(merged_messages)}, deduplicated: {len(new_messages) - new_msg_count})")
+
+            # APPEND array fields (avoid duplicates for IDs)
+            array_fields = ['rfq_ids', 'product_items', 'bfs_products_searched', 'bfs_price_accepted', 'bfs_counter_offers',
+                           'products_bid_for', 'bids_received', 'bids_accepted', 'counter_offers_made',
+                           'counter_offers_accepted', 'rfqs_with_response', 'seller_responses']
+
+            for field in array_fields:
+                if field in session_data and session_data[field]:
+                    existing_array = getattr(existing_session, field, None) or []
+                    new_array = session_data[field] if isinstance(session_data[field], list) else [session_data[field]]
+
+                    # For ID fields, avoid duplicates; for data fields, append all
+                    if field in ['rfq_ids', 'rfqs_with_response']:
+                        merged_array = existing_array + [item for item in new_array if item and item not in existing_array]
+                    else:
+                        merged_array = existing_array + new_array
+
+                    setattr(existing_session, field, merged_array)
+                    flag_modified(existing_session, field)
+                    logger.info(f"[SESSION-APPEND] {field}: {len(existing_array)} -> {len(merged_array)}")
+
+            # MERGE object fields (workflow_state, extracted_entities, etc.)
+            object_fields = ['workflow_state', 'extracted_entities', 'rfq_metadata', 'interaction_metrics', 'whatsapp_context']
+
+            for field in object_fields:
+                if field in session_data and session_data[field]:
+                    existing_obj = getattr(existing_session, field, None) or {}
+                    new_obj = session_data[field]
+                    merged_obj = {**existing_obj, **new_obj}  # New values override old
+                    setattr(existing_session, field, merged_obj)
+                    flag_modified(existing_session, field)
+
+            # UPDATE scalar fields (latest values)
+            scalar_fields = ['workflow_type', 'outcome', 'completed_at', 'last_activity_at', 'user_type', 'session_state']
+
+            for field in scalar_fields:
+                if field in session_data and session_data[field] is not None:
+                    setattr(existing_session, field, session_data[field])
+
+            # INCREMENT counters
+            if 'bfs_search_count' in session_data and session_data['bfs_search_count']:
+                existing_session.bfs_search_count = (existing_session.bfs_search_count or 0) + session_data['bfs_search_count']
+
+            # Commit changes
+            self.session.commit()
+            self.session.refresh(existing_session)
+
+            logger.info(f"[WORKER-{worker_pid}] [SESSION-APPEND] Successfully appended data to {session_id}")
+            return existing_session
+
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in append_session_data for {session_id}: {e}")
+            self.session.rollback()
+            # Fallback to regular save
+            return self.save_conversation_session(session_data)
+
     def save_conversation_session(self, session_data: dict) -> ConversationSession:
-        """Save or update a conversation session."""
+        """Save or update a conversation session (REPLACES existing data)."""
         from sqlalchemy.exc import SQLAlchemyError, IntegrityError
         import os
 
