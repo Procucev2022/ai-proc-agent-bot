@@ -457,7 +457,7 @@ class MessageQueueService:
                                     )
                             
                             # Log warnings for slow processing (deduplicated across workers)
-                            if duration > 50 or duration > 30:
+                            if duration > 30:
                                 log_lock_key = self._key_lock_monitor_log(user_phone)
                                 try:
                                     log_flag_set = await self.redis.set(
@@ -474,7 +474,7 @@ class MessageQueueService:
                                                 f"for {user_phone} processing for {duration:.1f}s "
                                                 f"(approaching TTL limit!)"
                                             )
-                                        elif duration > 30:
+                                        else:  # 30-50 seconds
                                             logger.error(
                                                 f"[MONITOR-ERROR] Batch {session.batch_id} "
                                                 f"for {user_phone} processing for {duration:.1f}s"
