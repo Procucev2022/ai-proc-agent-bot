@@ -168,6 +168,10 @@ class MessageQueueService:
     def _key_lock_monitor_log(self, user_phone: str) -> str:
         return f"{user_phone}:lock:monitor_log"
 
+    def _key_response_ready(self, user_phone: str) -> str:
+        """Redis key for response ready flag (prevents late please-wait)."""
+        return f"{user_phone}:response_ready"
+
     # ========================================================================
     # Public API - Entry Point
     # ========================================================================
@@ -391,6 +395,18 @@ class MessageQueueService:
                             
                             # Send please-wait if threshold exceeded
                             if duration >= self.please_wait_threshold and not session.please_wait_sent:
+                                # Check if response is already ready (prevents late please-wait)
+                                response_ready_key = self._key_response_ready(user_phone)
+                                response_ready = await self.redis.get(response_ready_key)
+                                
+                                if response_ready:
+                                    logger.info(
+                                        f"[MONITOR] Response ready for {user_phone} "
+                                        f"(batch {session.batch_id}, duration {duration:.1f}s), "
+                                        f"skipping please-wait to avoid race condition"
+                                    )
+                                    continue
+                                
                                 # Atomic lock to prevent duplicate sends across workers
                                 lock_key = self._key_lock_monitor(user_phone)
                                 lock_acquired = await self.redis.set(
@@ -744,6 +760,17 @@ class MessageQueueService:
                 
                 # Not suppressed - send for real
                 try:
+                    # Mark response as ready before sending (prevents late please-wait)
+                    response_ready_key = self._key_response_ready(user_phone)
+                    await self.redis.setex(response_ready_key, 10, "1")  # 10s TTL
+                    
+                    # Calculate processing time for logging
+                    processing_time = time.time() - session.started_at
+                    logger.info(
+                        f"[SEND] Response ready for {recipient_id} after {processing_time:.1f}s "
+                        f"(batch {session.batch_id}) - marked to prevent late please-wait"
+                    )
+                    
                     logger.info(
                         f"[SEND] Calling {name} for {recipient_id} "
                         f"in batch {session.batch_id}"
@@ -833,9 +860,13 @@ class MessageQueueService:
             # Clear processing state
             processing_key = self._key_processing(user_phone)
             session_key = self._key_session(user_phone)
+            response_ready_key = self._key_response_ready(user_phone)
             
             await self.redis.delete(processing_key)
             await self.redis.delete(session_key)
+            await self.redis.delete(response_ready_key)
+            
+            logger.debug(f"[CLEANUP] Cleared processing state and response ready flag for {user_phone}")
             
             # If all queues empty, clear ack flag for next session
             incoming_key = self._key_incoming(user_phone)
