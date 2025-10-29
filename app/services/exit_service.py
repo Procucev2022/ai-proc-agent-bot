@@ -30,13 +30,14 @@ class ExitService:
         self.session_manager = session_manager
         self.db_manager = db_manager or DatabaseManager()
 
-    async def handle_exit_intent(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
+    async def handle_exit_intent(self, user_phone: str, session: ConversationSession, show_message: bool = True) -> Dict[str, Any]:
         """
-        Handle complete exit logic - clear auth, session, and send goodbye message.
+        Handle complete exit logic - clear auth, session, and optionally send goodbye message.
 
         Args:
             user_phone: User's phone number
             session: Current conversation session
+            show_message: Whether to send goodbye message (default: True)
 
         Returns:
             Dict with status and completion details
@@ -54,9 +55,13 @@ class ExitService:
             session_cleared = await self._clear_session_data(session)
             logger.info(f"Session data cleared: {session_cleared}")
 
-            # Step 3: Send goodbye message
-            goodbye_sent = await self._send_goodbye_message(user_phone)
-            logger.info(f"Goodbye message sent: {goodbye_sent}")
+            # Step 3: Send goodbye message (only if show_message is True)
+            goodbye_sent = False
+            if show_message:
+                goodbye_sent = await self._send_goodbye_message(user_phone)
+                logger.info(f"Goodbye message sent: {goodbye_sent}")
+            else:
+                logger.info("Goodbye message skipped (show_message=False)")
 
             return {
                 "status": "exit_completed",
