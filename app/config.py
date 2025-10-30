@@ -208,7 +208,7 @@ class Settings:
         ).lower() == "true"
         
         self.webhook_health_check_interval_seconds = int(
-            os.getenv("WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS", "30")
+            os.getenv("WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS", "300")
         )
         
         self.webhook_api_response_threshold_seconds = float(
@@ -220,7 +220,7 @@ class Settings:
         )
         
         self.webhook_failure_grace_period_seconds = int(
-            os.getenv("WEBHOOK_FAILURE_GRACE_PERIOD_SECONDS", "60")
+            os.getenv("WEBHOOK_FAILURE_GRACE_PERIOD_SECONDS", "900")
         )
         
         self.webhook_recovery_confirmations = int(
