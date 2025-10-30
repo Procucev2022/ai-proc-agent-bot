@@ -305,7 +305,17 @@ class ConfirmationHandler:
         if session.workflow_state.get("pending_optional_rfq"):
             # Single product
             product_info = session.workflow_state["pending_optional_rfq"]
-            rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(product_info["entities"], None)
+            entities = product_info["entities"]
+
+            # Apply attachment caption as remarks if present
+            attachment_caption = session.workflow_state.get("attachment_caption")
+            if attachment_caption and not entities.get("remarks"):
+                logger.info(f"Applying attachment caption to confirmation: {attachment_caption}")
+                entities["remarks"] = attachment_caption
+                # Clear the caption after applying
+                del session.workflow_state["attachment_caption"]
+
+            rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(entities, None)
 
             # Load summaries for enhanced response generation
             chat_summaries = []  # Could load from chat summary service if needed
@@ -334,6 +344,22 @@ class ConfirmationHandler:
         elif session.workflow_state.get("pending_optional_combined_rfq"):
             # Combined RFQ with multiple items
             combined_data = session.workflow_state["pending_optional_combined_rfq"]
+
+            # Apply attachment caption as remarks to all products if present
+            attachment_caption = session.workflow_state.get("attachment_caption")
+            if attachment_caption:
+                logger.info(f"Applying attachment caption to combined RFQ: {attachment_caption}")
+                for product in combined_data.get("products", []):
+                    entities = product.get("entities", {})
+                    if not entities.get("remarks"):
+                        entities["remarks"] = attachment_caption
+                # Update the combined schema with the new remarks
+                # Note: combined_schema is already built, so we need to update it
+                if "remarks" in combined_data["combined_schema"] and not combined_data["combined_schema"]["remarks"]:
+                    combined_data["combined_schema"]["remarks"] = attachment_caption
+                # Clear the caption after applying
+                del session.workflow_state["attachment_caption"]
+
             combined_schema = RFQValidationSchema(**combined_data["combined_schema"])
 
             # Load summaries for enhanced response generation
