@@ -377,25 +377,36 @@ class ChatService:
             session = await self.session_manager.handle_session_expiry_check(user_phone, session)
 
             # Track user message in conversation history using extracted service
-            # Classify intent for all user messages to enable proper message routing after auth
+            # Classify intent only for text messages - skip for interactive messages (buttons)
             message_intent_result = None
 
-            # Classify intent once for all message routing and tracking
-            try:
-                conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
-                # Now using async OpenAI service
-                message_intent_result = await self.intent_service.classify_intent(message_content, conversation_context)
-                intent = message_intent_result.get('intent')
-                confidence = message_intent_result.get('confidence', 0)
-                self.session_manager.add_message_to_history(session, "user", message_content, message_type, intent, confidence)
-            except Exception as e:
-                # If intent classification fails, still track the message without intent
-                logger.warning(f"Intent classification failed during message tracking: {e}")
+            # Skip intent classification for interactive messages (buttons, lists)
+            if message_type == "interactive":
+                # For interactive messages, we don't need intent classification
+                # The button/list ID tells us exactly what the user wants
+                logger.info(f"Skipping intent classification for interactive message type: {message_type}")
                 self.session_manager.add_message_to_history(session, "user", message_content, message_type)
-                message_intent_result = {"intent": "general_inquiry", "confidence": 0}
+                # Don't set a fake intent - let the interactive processor handle routing
+                message_intent_result = None
+            else:
+                # Classify intent for text messages only
+                try:
+                    conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
+                    # Now using async OpenAI service
+                    message_intent_result = await self.intent_service.classify_intent(message_content, conversation_context)
+                    intent = message_intent_result.get('intent')
+                    confidence = message_intent_result.get('confidence', 0)
+                    self.session_manager.add_message_to_history(session, "user", message_content, message_type, intent, confidence)
+                except Exception as e:
+                    # If intent classification fails, still track the message without intent
+                    logger.warning(f"Intent classification failed during message tracking: {e}")
+                    self.session_manager.add_message_to_history(session, "user", message_content, message_type)
+                    message_intent_result = {"intent": "general_inquiry", "confidence": 0}
 
             # Track meaningful messages during auth/registration flows for later processing
-            self._track_meaningful_message_during_auth_flow(session, message_content, message_intent_result)
+            # Skip tracking for interactive messages since they don't have business intent
+            if message_intent_result:
+                self._track_meaningful_message_during_auth_flow(session, message_content, message_intent_result)
 
             # User Authentication flow
             # Preserve meaningful message in cache for post-auth/registration processing
@@ -436,7 +447,10 @@ class ChatService:
                 await self.session_manager.save_session(session, session.workflow_type)
                 return cancel_result
 
-            if intent=='faq':
+            # Handle FAQ only for text messages, not interactive messages
+            intent = message_intent_result.get('intent') if message_intent_result else None
+            if intent == 'faq' and message_type != "interactive":
+                # FAQ handling code remains the same
                 # Handle FAQ directly without authentication for quick responses
                 faq_answer = await self.faq_service.get_faq_answer(message_content)
                 if faq_answer:

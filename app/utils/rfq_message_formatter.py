@@ -161,10 +161,10 @@ def format_rfq_response_message(
                     message += f"[ERROR] {error}\n"
         else:
             # For other validation issues, show as questions
-            message += "\n\nHowever I need the following information to proceed\n\n"
+            message += " To proceed, please share the following information:\n\n"
             for issue in all_issues:
                 message += f"•  {issue}\n"
-            message += "\nPlease provide this information so I can continue with your request."
+            message += "\nOnce I have this, I can continue with your request."
     elif include_optional and missing_fields:
         # If no mandatory issues but flag is set, add optional questions
         message += "\n\n" + "\n".join(missing_fields)

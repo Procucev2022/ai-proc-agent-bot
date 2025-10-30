@@ -1138,8 +1138,8 @@ class ProfileSelectionService:
         try:
             message = (
                 "Would you like to register as:\n"
-                "• 🛒 Buyer (to create RFQs and purchase items)\n"
-                "• 💼 Seller (to respond to RFQs and sell items)\n\n"
+                "1. Buyer (to create RFQs and purchase items)\n"
+                "2. Seller (to respond to RFQs and sell items)\n\n"
                 "Please let me know which type of account you'd like to create."
             )
 
@@ -1671,40 +1671,31 @@ class ProfileSelectionService:
                     "role_filter": role_filter
                 }
 
-            # Show filtered profiles
+            # If single profile, auto-select and show menu
+            if len(filtered_profiles) == 1:
+                selected_profile = filtered_profiles[0]
+                return await self._show_role_based_menu(user_phone, selected_profile, session)
+
+            # Multiple profiles - show selection
             message_parts = [
-                f"Here are your {role_filter.title()} profiles:",
+                f"Select your {role_filter.title()} account:",
                 ""
             ]
 
             profile_options = []
-            option_num = 1
-
-            # Add filtered profiles
-            for profile in filtered_profiles:
-                message_parts.append(f" {option_num}. {profile['email']} — {role_filter.title()}")
+            for i, profile in enumerate(filtered_profiles, 1):
+                message_parts.append(f"{i}. {profile['email']}")
                 profile_options.append({
-                    "number": option_num,
+                    "number": i,
                     "profile": profile,
-                    "display": f"{profile['email']} — {role_filter.title()}"
+                    "display": profile['email']
                 })
-                option_num += 1
-
-            # Add additional options
-            message_parts.append(f" {option_num}. Register a new {role_filter.title()} account")
-            profile_options.append({
-                "number": option_num,
-                "action": f"register_{role_filter}",
-                "display": f"Register a new {role_filter.title()} account"
-            })
-            option_num += 1
 
             message_parts.extend([
                 "",
                 "Reply with the number corresponding to your choice."
             ])
 
-            # Store in session
             session.workflow_state = session.workflow_state or {}
             session.workflow_state['profile_options'] = profile_options
             session.workflow_state['profile_selection_stage'] = f'filtered_{role_filter}_profiles'
