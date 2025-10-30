@@ -144,7 +144,12 @@ class RegistrationService:
                 logger.warning("No entities extracted from message")
 
             # Validate entities (email and pincode) using authentication helper
-            existing_entities, validation_error_message = await self.authentication_helpers.validate_pincode(existing_entities)
+            if user_type == 'buyer':
+                entity_schema = BuyerRegistrationSchema
+            else:  # seller
+                entity_schema = SellerRegistrationSchema
+
+            existing_entities, validation_error_message = await self.authentication_helpers.validate_entities(existing_entities, entity_schema)
             session.workflow_state["registration_entities"] = existing_entities
 
             # Dynamic schema-based field validation
