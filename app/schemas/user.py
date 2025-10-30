@@ -76,13 +76,23 @@ class BuyerRegistrationSchema(BaseModel):
     whatsApp: Optional[bool] = Field(None, description="WhatsApp flag")
     source_type: str = "W"
 
+    @field_validator("name")
+    def validate_name(cls, v: str) -> str:
+        v = v.strip().title()
+        if not re.match(r"^[A-Za-z\s.]+$", v):
+            raise ValueError("Name must contain only letters and spaces")
+        return v
+
+    @field_validator("companyName")
+    def validate_company(cls, v: str) -> str:
+        v = v.strip().title()
+        return v
+
     @field_validator("email")
     def validate_email(cls, v: str) -> str:
         if not v or len(v.strip()) == 0:
             raise ValueError("Email cannot be empty")
         v = v.strip().lower()
-        if len(v) > 254:  # RFC 5321 limit
-            raise ValueError("Email address too long")
         if not EMAIL_REGEX.match(v):
             raise ValueError("Invalid email format")
         return v
@@ -115,13 +125,33 @@ class SellerRegistrationSchema(BaseModel):
     whatsApp: Optional[bool] = Field(None, description="WhatsApp flag")
     source_type: str = "W"
 
+    @field_validator("name")
+    def validate_name(cls, v: str) -> str:
+        v = v.strip().title()
+        if not re.match(r"^[A-Za-z\s.]+$", v):
+            raise ValueError("Name must contain only letters and spaces")
+        return v
+
+    @field_validator("companyName")
+    def validate_company(cls, v: str) -> str:
+        v = v.strip().title()
+        return v
+
+    @field_validator("address")
+    def validate_address(cls, v: str) -> str:
+        v = v.strip().title()
+        return v
+
+    @field_validator("details")
+    def validate_details(cls, v: str) -> str:
+        v = v.strip()
+        return v
+
     @field_validator("email")
     def validate_email(cls, v: str) -> str:
         if not v or len(v.strip()) == 0:
             raise ValueError("Email cannot be empty")
         v = v.strip().lower()
-        if len(v) > 254:  # RFC 5321 limit
-            raise ValueError("Email address too long")
         if not EMAIL_REGEX.match(v):
             raise ValueError("Invalid email format")
         return v
@@ -143,6 +173,7 @@ class SellerRegistrationSchema(BaseModel):
 
     @field_validator("gstin")
     def validate_gstin(cls, v: str) -> str:
+        v = v.strip().upper()
         if not GSTIN_REGEX.match(v):
             raise ValueError("Invalid GSTIN format")
         return v

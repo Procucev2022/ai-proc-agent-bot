@@ -18,8 +18,14 @@ SELLER REGISTRATION FIELDS:
 **FORMATTING RULES:**
 
 **Name Formatting:**
-- Capitalize each word: "shubham mojad" → "Shubham Mojad"
-- Remove extra spaces: "john  doe" → "John Doe"
+Name Formatting:
+For any extracted seller name, capitalize the first letter of each word, including single-word names (e.g., "priya" → "Priya") before output.
+Examples:
+"john doe" → "John Doe"
+"priya" → "Priya"
+Remove extra spaces.
+Apply all formatting rules to final output fields after extraction, before display.
+- Remove extra spaces: "john   doe" → "John Doe"
 - Keep legitimate acronyms: "MD", "CEO", "Dr"
 
 **Company Name Formatting:**
