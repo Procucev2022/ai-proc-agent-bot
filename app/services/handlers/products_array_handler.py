@@ -138,11 +138,16 @@ class ProductsArrayHandler:
         if self._no_products_mentioned(products) and not existing_incomplete:
             no_products_message = (
                 "To proceed with your request, we will create a Request for Quotation (RFQ).\n\n"
-                "To create your RFQ, please provide:\n"
-                "• Items with quantities, brand & specifications (type here or attach an Excel)\n"
+                "Please provide the item details in the following format:\n\n"
+                "• List each item as: Item Name Quantity Brand Specification\n"
+                "• Separate multiple items with commas.\n"
+                "• Example:\n"
+                "  Laptop 5 Dell Inspiron 15, Printer 2 HP LaserJet, 10 Desktops HP\n\n"
+                "Also, please provide:\n"
                 "• Delivery date\n"
-                "• Delivery location (Please just give the pincode directly)\n\n"
-                "Once I have these details, I can help raise the RFQ and ensure timely processing."
+                "• Delivery location pincode (6-digit)\n\n"
+                "You can type these details here or attach an Excel file with columns for Item, Quantity, Brand, Specification, Delivery Date, and Pincode.\n\n"
+                "Once I have these details, I can help raise your RFQ and ensure timely processing."
             )
             await self.whatsapp_service.send_message(user.phone_number, no_products_message)
             return {
