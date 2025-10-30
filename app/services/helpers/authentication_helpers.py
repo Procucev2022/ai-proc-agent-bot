@@ -75,83 +75,48 @@ class AuthenticationHelpers:
             return []
         
     @staticmethod
-    def generate_registration_message(schema: Type[BaseModel], role: str, show_optional: bool = True) -> str:
-        """Generate a registration intro message dynamically from schema fields."""
+    def generate_registration_message(schema: Type[BaseModel], role: str, show_optional: bool = False) -> str:
+        """Generate a conversational registration message from schema fields."""
         try:
-            # Return specific messages based on role
-            if role.lower() == "buyer":
-                return (
-                    "Hello Buyer!\n"
-                    "To get started, please share the following details:\n"
-                    "1. Full name\n"
-                    "2. Company name\n"
-                    "3. Organization email\n"
-                    "4. Pincode \n"
-                    "We'll have you registered right away.\n"
-                    "Please ensure your email is correct, as we will send an OTP to verify it in the next step"
-                )
-            elif role.lower() == "seller":
-                return (
-                    "Hello Seller!\n"
-                    "To get started, please share the following details:\n"
-                    "1. Full name\n"
-                    "2. Company name\n"
-                    "3. Organization email\n"
-                    "4. Location\n"
-                    "5. Pincode\n"
-                    "6. GSTIN number\n"
-                    "7. Products or Services offered\n\n"
-                    "We'll have you registered right away.\n"
-                    "please ensure your email is correct, as we will send an OTP to verify it in the next step"
-                )
-            else:
-                # Fallback to original dynamic logic for other roles
-                fields = schema.model_fields
-                required_fields = []
-                optional_fields = []
+            fields = schema.model_fields
+            required_fields = []
 
-                for name, field_info in fields.items():
-                    # Skip internal or system fields
-                    if name in {"source_type"}:
-                        continue
+            for name, field_info in fields.items():
+                # Skip internal or system fields
+                if name in {"source_type"}:
+                    continue
 
+                # Only include required fields
+                if field_info.is_required():
                     label = field_info.description or name.replace("_", " ").title()
+                    # Make field names bold for WhatsApp
+                    bold_label = f"*{label}*"
+                    required_fields.append(bold_label)
 
-                    # Determine if the field is required or optional
-                    if field_info.is_required():
-                        required_fields.append(label)
-                    else:
-                        optional_fields.append(label)
+            if not required_fields:
+                field_text = "your registration details"
+            else:
+                if len(required_fields) > 1:
+                    field_text = (
+                        ", ".join(required_fields[:-1]) + f", and {required_fields[-1]}"
+                    )
+                else:
+                    field_text = required_fields[0]
 
-                # Build numbered required list
-                numbered_required = [
-                    f"{idx + 1}. {label}" for idx, label in enumerate(required_fields)
-                ]
+            # Build conversational message
+            message = (
+                f"Hello {role.capitalize()}! 👋\n"
+                f"To get started, please share your {field_text}.\n"
+                f"Once received, we'll complete your Registration.\n\n"
+                f"Kindly ensure your Email Address is accurate, as you'll receive an OTP there for Verification."
+            )
 
-                # Build numbered optional list (only if enabled)
-                numbered_optional = [
-                    f"{idx + 1}. {label}" for idx, label in enumerate(optional_fields)
-                ] if show_optional else []
+            return message
 
-                # Construct message
-                message_lines = [
-                    f"Hello {role.capitalize()}!",
-                    "To get started, please share the following details:\n",
-                    "\n".join(numbered_required) if numbered_required else "(No required fields)",
-                ]
-
-                if numbered_optional:
-                    message_lines.append("\nOptional fields:\n" + "\n".join(numbered_optional))
-
-                message_lines.append("\nWe'll have you registered right away." )
-                message_lines.append("\nPlease ensure your email is correct, as we will send an OTP to verify it in the next step")
-
-                return "\n".join(message_lines)
         except Exception as e:
             logger.error(f"Registration message generation error: {e}")
-            # Fallback message
             return (
-                f"Hello {role.capitalize()}! To get started, please provide your details. "
+                f"Hello {role.capitalize()}! 👋 To get started, please provide your details. "
                 "We'll guide you through the registration process shortly."
             )
     
