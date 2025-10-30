@@ -57,6 +57,14 @@ class AuthenticationOrchestrator:
         try:
             logger.info(f"Starting authentication flow for {user_phone}")
 
+            # PRIORITY 1: Handle exit intent immediately - works in any workflow state
+            if intent_result and intent_result.get('intent') == "exit_system" and intent_result.get('confidence', 0) > 50:
+                logger.info(f"Exit intent detected at orchestrator level with {intent_result.get('confidence')}% confidence")
+                exit_service = ExitService(self.whatsapp_service, self.authentication_service,
+                                         self.chat_service.session_manager if self.chat_service else None,
+                                         self.chat_service.db_manager if self.chat_service else None)
+                return await exit_service.handle_exit_intent(user_phone, session)
+
             # Check if this is a role switch scenario
             role_switch_in_progress = session.workflow_state.get("role_switch_in_progress", False)
             target_user_type = session.workflow_state.get("user_type")
@@ -127,14 +135,7 @@ class AuthenticationOrchestrator:
             intent = intent_result.get('intent')
             confidence = intent_result.get('confidence', 0)
 
-            # Handle exit intent immediately - even for unauthenticated users
-            if intent == "exit_system" and confidence > 50:
-                logger.info(f"Exit intent detected in auth flow with {confidence}% confidence")
-                exit_service = ExitService(self.whatsapp_service, self.authentication_service,
-                                         self.chat_service.session_manager if self.chat_service else None,
-                                         self.chat_service.db_manager if self.chat_service else None)
-                exit_result = await exit_service.handle_exit_intent(user_phone, session)
-                return exit_result
+
 
             # Step 5: For ambiguous or low confidence intents, use profile selection service
             if intent == "ambiguous" or confidence < 50:
@@ -373,16 +374,7 @@ class AuthenticationOrchestrator:
                 logger.info(f"No valid auth stage, starting new flow with stored intent")
                 stored_intent_result = session.workflow_state.get("current_intent_result", {"intent": "general_inquiry", "confidence": 50})
 
-                # Handle exit intent immediately before starting new flow
-                intent = stored_intent_result.get('intent')
-                confidence = stored_intent_result.get('confidence', 0)
-                if intent == "exit_system" and confidence > 50:
-                    logger.info(f"Exit intent detected in auth workflow with {confidence}% confidence")
-                    exit_service = ExitService(self.whatsapp_service, self.authentication_service,
-                                             self.chat_service.session_manager if self.chat_service else None,
-                                             self.chat_service.db_manager if self.chat_service else None)
-                    exit_result = await exit_service.handle_exit_intent(user_phone, session)
-                    return exit_result
+    
 
                 return await self._start_authentication_flow(user_phone, message_content, session, stored_intent_result)
                 
@@ -413,14 +405,7 @@ class AuthenticationOrchestrator:
             new_intent = new_intent_result.get('intent')
             confidence = new_intent_result.get('confidence', 0)
 
-            # Handle exit intent immediately before processing registration stages
-            if new_intent == "exit_system" and confidence > 50:
-                logger.info(f"Exit intent detected in registration workflow with {confidence}% confidence")
-                exit_service = ExitService(self.whatsapp_service, self.authentication_service,
-                                         self.chat_service.session_manager if self.chat_service else None,
-                                         self.chat_service.db_manager if self.chat_service else None)
-                exit_result = await exit_service.handle_exit_intent(user_phone, session)
-                return exit_result
+
             
             registration_stage = session.workflow_state.get("registration_stage")
             current_user_type = session.workflow_state.get("user_type", "buyer")
@@ -456,6 +441,11 @@ class AuthenticationOrchestrator:
                 result = await self.registration_service.handle_registration_otp_validation(
                     user_phone, message_content, session
                 )
+                
+                # If exit was completed during OTP, return immediately
+                if result.get("status") == "exit_completed":
+                    logger.info(f"Exit completed during registration OTP validation for {user_phone}")
+                    return result
                 
                 # Check if registration is completely finished
                 if result.get("status") == "registration_completed" and result.get("registration_flow_complete"):
