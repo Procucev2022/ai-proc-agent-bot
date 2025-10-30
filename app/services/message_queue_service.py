@@ -510,23 +510,23 @@ class MessageQueueService:
         Critical: Checks if user is currently processing before creating batch.
         This ensures sequential batch processing.
         """
-        # Check if already processing (prevent parallel batches)
-        processing_key = self._key_processing(user_phone)
-        is_processing = await self.redis.exists(processing_key)
-        
-        if is_processing:
-            logger.info(
-                f"[BATCH_CREATE] {user_phone} already processing, "
-                f"skip batch creation (sequential processing)"
-            )
-            return
-        
-        # Acquire batch lock
+        # Acquire batch lock FIRST for atomic check-and-create
         lock_key = self._key_lock_batch(user_phone)
         lock = self.redis.lock(lock_key, timeout=10, blocking_timeout=10)
         
         try:
             async with lock:
+                # Check if already processing INSIDE lock (prevent race condition)
+                processing_key = self._key_processing(user_phone)
+                is_processing = await self.redis.exists(processing_key)
+                
+                if is_processing:
+                    logger.info(
+                        f"[BATCH_CREATE] {user_phone} already processing, "
+                        f"skip batch creation (sequential processing)"
+                    )
+                    return
+                
                 incoming_key = self._key_incoming(user_phone)
                 
                 # Get all messages (sorted by timestamp)
@@ -597,49 +597,60 @@ class MessageQueueService:
     async def _try_start_processing(self, user_phone: str) -> None:
         """
         Atomically claim next batch and start processing if not already processing.
+        Uses distributed lock to ensure atomic check-claim-process operation.
         """
-        processing_key = self._key_processing(user_phone)
+        # Acquire lock FIRST for atomic check-claim-process
+        lock_key = self._key_lock_batch(user_phone)
+        lock = self.redis.lock(lock_key, timeout=10, blocking_timeout=1)
         
-        # Check if already processing
-        is_processing = await self.redis.exists(processing_key)
-        if is_processing:
-            logger.debug(f"[START] {user_phone} already processing, batch will wait")
-            return
-        
-        # Claim first batch from queue
-        outgoing_key = self._key_outgoing(user_phone)
-        batch_json = await self.redis.lpop(outgoing_key)
-        
-        if not batch_json:
-            logger.debug(f"[START] No batches in queue for {user_phone}")
-            return
-        
-        # Parse batch
         try:
-            batch = Batch.from_dict(json.loads(batch_json))
+            async with lock:
+                processing_key = self._key_processing(user_phone)
+                
+                # Check if already processing INSIDE lock (prevent race condition)
+                is_processing = await self.redis.exists(processing_key)
+                if is_processing:
+                    logger.debug(f"[START] {user_phone} already processing, batch will wait")
+                    return
+                
+                # Claim first batch from queue (atomic with check)
+                outgoing_key = self._key_outgoing(user_phone)
+                batch_json = await self.redis.lpop(outgoing_key)
+                
+                if not batch_json:
+                    logger.debug(f"[START] No batches in queue for {user_phone}")
+                    return
+                
+                # Parse batch
+                try:
+                    batch = Batch.from_dict(json.loads(batch_json))
+                except Exception as e:
+                    logger.error(f"[START] Error parsing batch: {e}", exc_info=True)
+                    # Re-queue for retry
+                    await self.redis.lpush(outgoing_key, batch_json)
+                    return
+                
+                # Mark as processing (60s TTL for crash recovery)
+                await self.redis.setex(processing_key, 60, batch.batch_id)
+                
+                # Create session (inside lock to ensure atomicity)
+                session = ProcessingSession(
+                    batch_id=batch.batch_id,
+                    started_at=time.time()
+                )
+                session_key = self._key_session(user_phone)
+                await self.redis.setex(session_key, 60, session.to_json())
+                
+                logger.info(
+                    f"[START] Starting processing for batch {batch.batch_id}, "
+                    f"user={user_phone}"
+                )
+        
         except Exception as e:
-            logger.error(f"[START] Error parsing batch: {e}", exc_info=True)
-            # Re-queue for retry
-            await self.redis.lpush(outgoing_key, batch_json)
+            logger.error(f"[START] Error claiming batch: {e}", exc_info=True)
             return
         
-        # Mark as processing (60s TTL for crash recovery)
-        await self.redis.setex(processing_key, 60, batch.batch_id)
-        
-        # Create session
-        session = ProcessingSession(
-            batch_id=batch.batch_id,
-            started_at=time.time()
-        )
-        session_key = self._key_session(user_phone)
-        await self.redis.setex(session_key, 60, session.to_json())
-        
-        logger.info(
-            f"[START] Starting processing for batch {batch.batch_id}, "
-            f"user={user_phone}"
-        )
-        
-        # Process batch
+        # Process batch (outside lock to avoid blocking other operations)
         asyncio.create_task(self._process_batch(batch))
 
     async def _process_batch(self, batch: Batch) -> None:
