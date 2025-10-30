@@ -344,7 +344,8 @@ class MessageQueueService:
                         
                         # Check each user for expired timer
                         for key in incoming_keys:
-                            user_phone = key.replace(":incoming", "")
+                            user_phone = key.rsplit(":incoming", 1)[0]
+                            
                             # Check if timer exists
                             trigger_key = self._key_batch_trigger(user_phone)
                             timer_exists = await self.redis.exists(trigger_key)
@@ -620,6 +621,8 @@ class MessageQueueService:
         lock_key = self._key_lock_batch(user_phone)
         lock = self.redis.lock(lock_key, timeout=10, blocking_timeout=1)
         
+        batch = None  # Initialize to avoid NameError if early return occurs
+        
         try:
             async with lock:
                 processing_key = self._key_processing(user_phone)
@@ -668,7 +671,8 @@ class MessageQueueService:
             return
         
         # Process batch (outside lock to avoid blocking other operations)
-        asyncio.create_task(self._process_batch(batch))
+        if batch is not None:
+            asyncio.create_task(self._process_batch(batch))
 
     async def _process_batch(self, batch: Batch) -> None:
         """
