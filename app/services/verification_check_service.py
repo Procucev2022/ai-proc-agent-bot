@@ -62,12 +62,18 @@ class VerificationCheckService:
             
             # Extract verification data
             verification_status = user_dict.get("verificationStatus") or user_dict.get("verification_status") or "PENDING_EMAIL_VERIFICATION"
-            self_client = user_dict.get("selfClient") or user_dict.get("self_client", True)
+            # CRITICAL FIX: Handle selfClient=False correctly (sellers)
+            self_client = user_dict.get("selfClient")
+            if self_client is None:
+                self_client = user_dict.get("self_client", True)
             user_type = "buyer" if self_client else "seller"
             approved = user_dict.get("approved")
             email = user_dict.get("username") or user_dict.get("email")
             
             logger.info(f"Verification check: user_type={user_type}, status={verification_status}, approved={approved}, email={email}")
+            
+            # CRITICAL FIX: Domain matching should ONLY apply to buyers, not sellers
+            # Sellers should be allowed access with EMAIL_VERIFIED status regardless of approved flag
             
             # Step 1: Check verification status - block if not EMAIL_VERIFIED
             if verification_status in ["PENDING_EMAIL_VERIFICATION", "EMAIL_VERIFICATION_FAILED"]:
@@ -133,7 +139,17 @@ class VerificationCheckService:
                             refresh_result = await self.refresh_user_verification_status(user_phone, max_retries=1)
                             
                             if refresh_result.get("success") and refresh_result.get("data"):
-                                refreshed_data = refresh_result["data"][0] if refresh_result["data"] else {}
+                                # Find the specific user by user_id instead of using first user
+                                refreshed_data = None
+                                for user in refresh_result["data"]:
+                                    if user.get("id") == user_id:
+                                        refreshed_data = user
+                                        break
+                                
+                                if not refreshed_data:
+                                    logger.warning(f"Could not find user {user_id} in refreshed data, using original data")
+                                    refreshed_data = user_dict
+                                
                                 refreshed_approved = refreshed_data.get("approved")
                                 
                                 if refreshed_approved is True:
@@ -154,7 +170,17 @@ class VerificationCheckService:
                                         # Refresh user data again to get updated approval status
                                         final_refresh = await self.refresh_user_verification_status(user_phone, max_retries=2)
                                         if final_refresh.get("success") and final_refresh.get("data"):
-                                            final_data = final_refresh["data"][0] if final_refresh["data"] else {}
+                                            # Find the specific user by user_id instead of using first user
+                                            final_data = None
+                                            for user in final_refresh["data"]:
+                                                if user.get("id") == user_id:
+                                                    final_data = user
+                                                    break
+                                            
+                                            if not final_data:
+                                                logger.warning(f"Could not find user {user_id} in final refresh data")
+                                                final_data = refreshed_data
+                                            
                                             final_approved = final_data.get("approved")
                                             
                                             if final_approved is True:
@@ -177,9 +203,9 @@ class VerificationCheckService:
                                             from app.services.support_notification_service import SupportNotificationService
                                             support_service = SupportNotificationService()
                                             full_name = refreshed_data.get("fullName", "Unknown")
-                                            email = refreshed_data.get("username") or refreshed_data.get("email", "Unknown")
-                                            notification_result = await support_service.notify_buyer_registration_not_approved(full_name, email, user_phone)
-                                            logger.info(f"Support notification sent for domain mismatch: {email}, result: {notification_result}")
+                                            email_for_notification = refreshed_data.get("username") or refreshed_data.get("email", "Unknown")
+                                            notification_result = await support_service.notify_buyer_registration_not_approved(full_name, email_for_notification, user_phone)
+                                            logger.info(f"Support notification sent for domain mismatch: {email_for_notification}, result: {notification_result}")
                                         except Exception as e:
                                             logger.error(f"Failed to send support notification for domain mismatch: {e}")
                                         
@@ -232,9 +258,9 @@ class VerificationCheckService:
                                             from app.services.support_notification_service import SupportNotificationService
                                             support_service = SupportNotificationService()
                                             full_name = user_dict.get("fullName", "Unknown")
-                                            email = user_dict.get("username") or user_dict.get("email", "Unknown")
-                                            notification_result = await support_service.notify_buyer_registration_not_approved(full_name, email, user_phone)
-                                            logger.info(f"Support notification sent for domain mismatch: {email}, result: {notification_result}")
+                                            email_for_notification = user_dict.get("username") or user_dict.get("email", "Unknown")
+                                            notification_result = await support_service.notify_buyer_registration_not_approved(full_name, email_for_notification, user_phone)
+                                            logger.info(f"Support notification sent for domain mismatch: {email_for_notification}, result: {notification_result}")
                                         except Exception as e:
                                             logger.error(f"Failed to send support notification for domain mismatch: {e}")
                                         
@@ -286,8 +312,8 @@ class VerificationCheckService:
                                 }
                             }
                 else:
-                    # Sellers need EMAIL_VERIFIED (approved flag doesn't matter for sellers)
-                    logger.info(f"Access granted - seller with EMAIL_VERIFIED status")
+                    # FIXED: Sellers need only EMAIL_VERIFIED status - NO domain matching or approval checks
+                    logger.info(f"Access granted - seller with EMAIL_VERIFIED status (no domain check required)")
                     return {"access_granted": True, "user_data": user_dict}
             
             # Step 3: Unknown/invalid verification status - require verification

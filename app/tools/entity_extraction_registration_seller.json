@@ -37,7 +37,7 @@
                         "description": "Products or services offered (mapped to 'details' in API)"
                     }
                 },
-                "required": ["name", "companyName", "email", "address", "zipCode", "gstin", "products_services"],
+                "required": ["name", "companyName", "email", "address", "zipCode", "gstin", "details"],
                 "additionalProperties": false
             },
             "completeness": {

@@ -1,3 +1,21 @@
+# Role-specific FAQ sections for better targeting
+BUYER_SPECIFIC_FAQS = [
+    "What is GMT?", "What are the benefits of using GMT?", "How do I register for GMT?",
+    "How do I post an RFQ on GMT?", "Is GMT free for buyers?", "Can I customize my RFQs?",
+    "What categories of vendors are available on GMT?", "What information is shared with vendors?",
+    "Can I negotiate with sellers directly on the platform?", "How can I ensure the security of my business information on GMT?",
+    "Can I get support if I have issues?", "Do you provide any additional services?",
+    "Does the GMT Portal offer additional features?"
+]
+
+SELLER_SPECIFIC_FAQS = [
+    "What is GMT and how does it work for sellers like me?", "How do I register as a seller on GMT?",
+    "What is WhatsApp AI Agent for sellers?", "How can I access WhatsApp AI Agent as a seller?",
+    "Can I get RFQs free of cost?", "What is the subscription fee to get regular RFQs?",
+    "How will I receive RFQs?", "Can I raise queries or ask for clarifications on the RFQs I receive?",
+    "How can I submit my quote to the buyer?", "Can I track my submitted quotes?"
+]
+
 FAQ_CONFIG = {
     # ---------------- BUYERS ----------------
     "What is GMT?": {
@@ -312,5 +330,10 @@ FULL_FAQ_CONTEXT =\
     Buyer dashboard: portal.procucev.com
     Seller dashboard: seller.procucev.com
     Company website: www.procucev.com
+- No RFQs Available
+    For Buyers:If you see “no RFQs available,” you have either not created any RFQ yet, or there is no active RFQ for you in the application.
+    For Sellers:If you see “no RFQs available,” it means there are currently no active RFQs matching the categories you have selected. RFQs relevant to your business will appear as buyers create them. Consider expanding your category selection or checking back regularly for new opportunities.
+- Excel Data Format for RFQs:
+    When submitting procurement requests, attach an Excel file with columns for: Item, Quantity, Brand, Specification, Delivery Date, and Pincode.
 
 """
