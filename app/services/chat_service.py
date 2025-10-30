@@ -237,7 +237,8 @@ class ChatService:
                 # The button/list ID tells us exactly what the user wants
                 logger.info(f"Skipping intent classification for interactive message type: {message_type}")
                 self.session_manager.add_message_to_history(session, "user", message_content, message_type)
-                message_intent_result = {"intent": "interactive_response", "confidence": 100}
+                # Don't set a fake intent - let the interactive processor handle routing
+                message_intent_result = None
             else:
                 # Classify intent for text messages only
                 try:
@@ -254,7 +255,9 @@ class ChatService:
                     message_intent_result = {"intent": "general_inquiry", "confidence": 0}
 
             # Track meaningful messages during auth/registration flows for later processing
-            self._track_meaningful_message_during_auth_flow(session, message_content, message_intent_result)
+            # Skip tracking for interactive messages since they don't have business intent
+            if message_intent_result:
+                self._track_meaningful_message_during_auth_flow(session, message_content, message_intent_result)
 
             # User Authentication flow
             # Preserve meaningful message in cache for post-auth/registration processing
@@ -274,6 +277,7 @@ class ChatService:
             # Handle FAQ only for text messages, not interactive messages
             intent = message_intent_result.get('intent') if message_intent_result else None
             if intent == 'faq' and message_type != "interactive":
+                # FAQ handling code remains the same
                 # Handle FAQ directly without authentication for quick responses
                 faq_answer = await self.faq_service.get_faq_answer(message_content)
                 if faq_answer:
