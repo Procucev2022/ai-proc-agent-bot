@@ -412,6 +412,30 @@ class ChatService:
 
 
 
+            # CRITICAL: Handle exit and cancel intents BEFORE any workflow routing
+            # This ensures users can always exit regardless of workflow state (especially auth loops)
+            # Only applies when user is NOT authenticated (auth flow)
+            # For authenticated users, exit is handled later with optional field logic
+            workflow_type_str = str(session.workflow_type).lower() if session.workflow_type else None
+            is_in_auth_workflow = workflow_type_str in ["workflowtype.authentication", "authentication"]
+
+            if intent == "exit_system" and confidence > 50 and is_in_auth_workflow:
+                logger.info(f"Exit intent detected in auth workflow with {confidence}% confidence - handling immediately to prevent loop")
+                exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                return exit_result
+
+            if intent == "cancel_workflow" and confidence > 50 and is_in_auth_workflow:
+                logger.info(f"Cancel workflow intent detected in auth workflow with {confidence}% confidence - handling immediately to prevent loop")
+                from app.schemas.conversation import MessageSchema
+                message = MessageSchema(
+                    content=message_content,
+                    external_user_id=user_phone,
+                    message_type=message_type
+                )
+                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message)
+                await self.session_manager.save_session(session, session.workflow_type)
+                return cancel_result
+
             if intent=='faq':
                 # Handle FAQ directly without authentication for quick responses
                 faq_answer = await self.faq_service.get_faq_answer(message_content)

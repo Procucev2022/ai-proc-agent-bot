@@ -126,6 +126,12 @@ class CancelService:
                 cancellation_result = await self._clear_workflow_state(session)
                 logger.info(f"Workflow state cleared: {cancellation_result}")
 
+                # Clear meaningful message cache (user is starting fresh)
+                from app.services.user_cache_service import get_user_cache_service
+                user_cache_service = get_user_cache_service()
+                meaningful_cleared = await user_cache_service.clear_meaningful_message(user_phone)
+                logger.info(f"Meaningful message cleared: {meaningful_cleared}")
+
                 # Send cancellation success message
                 message_sent = await self._send_cancellation_message(user_phone)
                 logger.info(f"Cancellation message sent: {message_sent}")

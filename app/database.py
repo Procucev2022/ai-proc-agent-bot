@@ -693,13 +693,18 @@ class DatabaseManager:
                 # Deduplicate messages based on timestamp + content to prevent duplicates
                 def deduplicate_messages(existing_msgs, new_msgs):
                     """Deduplicate messages using timestamp + content/role as unique key."""
+                    import json
                     # Create set of existing message signatures
                     existing_sigs = set()
                     for msg in existing_msgs:
                         # Use timestamp + content + role as unique signature
+                        # Convert content to JSON string if it's a dict to make it hashable
+                        content = msg.get('content')
+                        if isinstance(content, dict):
+                            content = json.dumps(content, sort_keys=True)
                         sig = (
                             msg.get('timestamp'),
-                            msg.get('content'),
+                            content,
                             msg.get('role')
                         )
                         existing_sigs.add(sig)
@@ -707,9 +712,13 @@ class DatabaseManager:
                     # Only add messages that don't already exist
                     unique_new = []
                     for msg in new_msgs:
+                        # Convert content to JSON string if it's a dict to make it hashable
+                        content = msg.get('content')
+                        if isinstance(content, dict):
+                            content = json.dumps(content, sort_keys=True)
                         sig = (
                             msg.get('timestamp'),
-                            msg.get('content'),
+                            content,
                             msg.get('role')
                         )
                         if sig not in existing_sigs:
@@ -728,10 +737,26 @@ class DatabaseManager:
                 merged_metadata = deduplicate_messages(existing_metadata, new_metadata)
 
                 # For openai_messages, deduplicate by content + role only (no timestamp)
+                import json
                 existing_openai = existing_history.get("openai_messages", [])
                 new_openai = new_history.get("openai_messages", [])
-                openai_sigs = {(m.get('content'), m.get('role')) for m in existing_openai}
-                unique_openai = [m for m in new_openai if (m.get('content'), m.get('role')) not in openai_sigs]
+                # Convert dict content to JSON string for hashing
+                openai_sigs = set()
+                for m in existing_openai:
+                    content = m.get('content')
+                    if isinstance(content, dict):
+                        content = json.dumps(content, sort_keys=True)
+                    openai_sigs.add((content, m.get('role')))
+
+                unique_openai = []
+                for m in new_openai:
+                    content = m.get('content')
+                    if isinstance(content, dict):
+                        content = json.dumps(content, sort_keys=True)
+                    if (content, m.get('role')) not in openai_sigs:
+                        unique_openai.append(m)
+                        openai_sigs.add((content, m.get('role')))
+
                 merged_openai = existing_openai + unique_openai
 
                 merged_history = {

@@ -192,17 +192,21 @@ class AuthenticationOrchestrator:
             logger.info(f"Starting authentication flow for intent: {intent} (confidence: {confidence}%)")
             
             # Ensure we have a valid intent before proceeding
-            valid_intents = ["buy_something", "sell_something", "general_inquiry", "modification_request", 
-                           "confirmation_response", "rfq_status_check", "ambiguous"]
-            
+            valid_intents = ["buy_something", "sell_something", "general_inquiry", "modification_request",
+                           "confirmation_response", "rfq_status_check", "ambiguous", "register_account"]
+
+            # Workflow control intents should not trigger clarification - they're handled elsewhere
+            workflow_control_intents = ["exit_system", "cancel_workflow", "support"]
+
             # For user-initiated switches (from auth/reg switch choices), accept even low confidence
             user_switch_in_progress = session.workflow_state.get("pending_auth_reg_switch") is not None
 
-            if intent not in valid_intents or (confidence < 50 and intent != "ambiguous"):
-                logger.warning(f"Invalid or low confidence intent in auth flow: {intent} ({confidence}%)")
-                # Allow user-initiated switches and role switches to proceed
-                if not (role_switch_in_progress or user_switch_in_progress):
-                    return await self._handle_auth_clarification_request(user_phone, message_content)
+            if intent not in valid_intents and intent not in workflow_control_intents:
+                if (confidence < 50 and intent != "ambiguous"):
+                    logger.warning(f"Invalid or low confidence intent in auth flow: {intent} ({confidence}%)")
+                    # Allow user-initiated switches and role switches to proceed
+                    if not (role_switch_in_progress or user_switch_in_progress):
+                        return await self._handle_auth_clarification_request(user_phone, message_content)
             
             # Handle ambiguous intent - show all available emails with buyer/seller labels
             if intent == "ambiguous":

@@ -45,10 +45,11 @@ class ExitService:
         try:
             logger.info(f"Handling exit intent for user: {user_phone}")
 
-            # Step 1: Clear authentication token
+            # Step 1: Clear authentication token and ALL cached data (including meaningful messages)
             auth_cleared = False
             if self.authentication_service:
-                auth_cleared = await self.authentication_service.clear_user_token(user_phone)
+                # preserve_meaningful_message=False ensures complete cleanup on exit
+                auth_cleared = await self.authentication_service.clear_user_token(user_phone, preserve_meaningful_message=False)
                 logger.info(f"Authentication token cleared: {auth_cleared}")
 
             # Step 2: Clear session data
