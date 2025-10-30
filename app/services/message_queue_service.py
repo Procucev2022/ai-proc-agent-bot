@@ -304,7 +304,8 @@ class MessageQueueService:
         Background task: Poll for users with expired batch timers.
         Creates batches when timer expires and messages exist.
         
-        Runs every 1 second. Idempotent across workers.
+        Runs every 1 second. Uses distributed lock to ensure only ONE worker
+        polls at a time across all Gunicorn workers (prevents duplicate polling).
         """
         logger.info("[POLLER] Batch poller started")
         
@@ -312,38 +313,57 @@ class MessageQueueService:
             while True:
                 await asyncio.sleep(1)  # Poll every second
                 
+                # Global poller lock - only one worker should poll at a time
+                global_poller_lock_key = "global:poller:lock"
+                poller_lock = self.redis.lock(
+                    global_poller_lock_key,
+                    timeout=2,  # 2s timeout (longer than poll cycle)
+                    blocking_timeout=0  # Non-blocking - skip if another worker is polling
+                )
+                
                 try:
-                    # Find all incoming queues
-                    cursor = 0
-                    incoming_keys = []
-                    while True:
-                        cursor, keys = await self.redis.scan(
-                            cursor=cursor,
-                            match="*:incoming",
-                            count=100
-                        )
-                        incoming_keys.extend(keys)
-                        if cursor == 0:
-                            break
+                    # Try to acquire global poller lock (non-blocking)
+                    acquired = await poller_lock.acquire()
+                    if not acquired:
+                        # Another worker is polling, skip this cycle
+                        continue
                     
-                    # Check each user for expired timer
-                    for key in incoming_keys:
-                        user_phone = key.replace(":incoming", "")
+                    try:
+                        # Find all incoming queues
+                        cursor = 0
+                        incoming_keys = []
+                        while True:
+                            cursor, keys = await self.redis.scan(
+                                cursor=cursor,
+                                match="*:incoming",
+                                count=100
+                            )
+                            incoming_keys.extend(keys)
+                            if cursor == 0:
+                                break
                         
-                        # Check if timer exists
-                        trigger_key = self._key_batch_trigger(user_phone)
-                        timer_exists = await self.redis.exists(trigger_key)
-                        
-                        if not timer_exists:
-                            # Timer expired, check if messages exist
-                            message_count = await self.redis.zcard(key)
+                        # Check each user for expired timer
+                        for key in incoming_keys:
+                            user_phone = key.replace(":incoming", "")
                             
-                            if message_count > 0:
-                                logger.info(
-                                    f"[POLLER] Timer expired for {user_phone}, "
-                                    f"{message_count} messages, creating batch"
-                                )
-                                await self._create_batch(user_phone)
+                            # Check if timer exists
+                            trigger_key = self._key_batch_trigger(user_phone)
+                            timer_exists = await self.redis.exists(trigger_key)
+                            
+                            if not timer_exists:
+                                # Timer expired, check if messages exist
+                                message_count = await self.redis.zcard(key)
+                                
+                                if message_count > 0:
+                                    logger.info(
+                                        f"[POLLER] Timer expired for {user_phone}, "
+                                        f"{message_count} messages, creating batch"
+                                    )
+                                    await self._create_batch(user_phone)
+                    
+                    finally:
+                        # Always release the global poller lock
+                        await poller_lock.release()
                 
                 except Exception as e:
                     logger.error(f"[POLLER] Error in poll cycle: {e}", exc_info=True)
