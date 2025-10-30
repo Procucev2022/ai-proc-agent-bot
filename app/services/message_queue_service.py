@@ -345,17 +345,14 @@ class MessageQueueService:
                         # Check each user for expired timer
                         for key in incoming_keys:
                             user_phone = key.replace(":incoming", "")
-                            
                             # Check if timer exists
                             trigger_key = self._key_batch_trigger(user_phone)
                             timer_exists = await self.redis.exists(trigger_key)
-                            
                             if not timer_exists:
                                 # Timer expired, check if messages exist
                                 message_count = await self.redis.zcard(key)
-                                
                                 if message_count > 0:
-                                    logger.info(
+                                    logger.debug(
                                         f"[POLLER] Timer expired for {user_phone}, "
                                         f"{message_count} messages, creating batch"
                                     )
@@ -541,7 +538,7 @@ class MessageQueueService:
                 is_processing = await self.redis.exists(processing_key)
                 
                 if is_processing:
-                    logger.info(
+                    logger.debug(
                         f"[BATCH_CREATE] {user_phone} already processing, "
                         f"skip batch creation (sequential processing)"
                     )
