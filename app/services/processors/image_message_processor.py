@@ -44,6 +44,7 @@ class ImageMessageProcessor:
                     media_id = content.get("id")
                     mime_type = content.get("mime_type")
                     filename = content.get("filename")  # Only present for DOCUMENT type
+                    caption = content.get("caption")  # Caption text sent with the attachment
 
                     # Auto-generate filename from MIME type if not provided
                     if not filename:
@@ -55,6 +56,8 @@ class ImageMessageProcessor:
                     base64_data = None
 
                     logger.info(f"Processing ICS media - ID: {media_id}, Type: {mime_type}, URL: {file_url}")
+                    if caption:
+                        logger.info(f"Attachment has caption: {caption}")
 
                 # Legacy format support (old nested structure or web UI)
                 elif "image" in content or "document" in content:
@@ -123,6 +126,13 @@ class ImageMessageProcessor:
 
             # Auto-approve the attachment
             AttachmentHelpers.approve_pending_attachment(session)
+
+            # Store caption as pending remark if provided
+            if isinstance(content, dict) and "caption" in content:
+                caption = content.get("caption")
+                if caption:
+                    session.workflow_state["attachment_caption"] = caption
+                    logger.info(f"Stored attachment caption as pending remark: {caption}")
 
             # Acknowledge the attachment with count
             count = add_result.get("count", 1)

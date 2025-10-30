@@ -44,6 +44,16 @@ class ProductsArrayHandler:
                 products = await self._merge_with_existing_incomplete_products(existing_incomplete, products)
                 print(f"ProductsArrayHandler: After merging, processing {len(products)} total products")
 
+            # Apply attachment caption as remarks to all products if present
+            attachment_caption = session.workflow_state.get("attachment_caption")
+            if attachment_caption:
+                logger.info(f"Applying attachment caption as remarks to {len(products)} products: {attachment_caption}")
+                for product in products:
+                    if isinstance(product, dict) and not product.get("remarks"):
+                        product["remarks"] = attachment_caption
+                # Clear the caption after applying it
+                del session.workflow_state["attachment_caption"]
+
             # Track categories from all products in product_items
             await self._track_product_categories(session, products)
 
