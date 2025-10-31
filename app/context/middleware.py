@@ -15,20 +15,27 @@ async def extract_phone_from_request(request):
     """Extract phone number from webhook request for logging context"""
     try:
         if request.url.path == "/webhook/whatsapp" and request.method == "POST":
-            # Try to get phone from form data (ICS webhook format)
-            if "application/x-www-form-urlencoded" in request.headers.get("content-type", ""):
-                body = await request.body()
-                from urllib.parse import parse_qs
-                form_data = parse_qs(body.decode())
-                customer_number = form_data.get("customernumber", [None])[0]
+            content_type = request.headers.get("content-type", "")
+            
+            if "application/x-www-form-urlencoded" in content_type:
+                # ICS webhook format: replytype, customernumber, replymessage, timestamp, wabanumber, mid, smsgid
+                form_data = await request.form()
+                customer_number = form_data.get("customernumber")
                 if customer_number:
                     return customer_number
+            elif "application/json" in content_type:
+                # JSON webhook format (if any)
+                json_data = await request.json()
+                # Extract phone from JSON structure if present
+                if "from" in json_data:
+                    return json_data["from"]
         elif request.url.path == "/webhook/delivery":
-            # Extract from delivery callback
+            # ICS delivery callback: qStatus, qMobile, qMsgRef, qDTime, SMSMSGID, SENDERID, NOTES
             mobile = request.query_params.get("qMobile")
             if mobile:
                 return mobile
-    except Exception:
+    except Exception as e:
+        logger.info("Middleware Phone setting", e)
         pass
     return None
 
