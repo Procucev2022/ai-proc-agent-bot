@@ -1883,7 +1883,7 @@ class ChatService:
             # Create the profile selection message
             profile_message = (
                 "Got it! You’re looking to check if items are available in stock.\n\n"
-                "🔍 **BFS Search coming soon!**"
+                "🔍 *BFS Search coming soon!*"
             )
 
             if user_role == "buyer":

@@ -662,14 +662,14 @@ class ProfileSelectionService:
         try:
             # Case 6: New User Registration Flow
             message = (
-                "👋 **Hi there!**\n"
+                "👋 *Hi there!*\n"
                 "It looks like there’s no registered account linked to this number or email.\n\n"
                 "Let’s get you started by creating a new profile so you can easily raise or respond to RFQs.\n\n"
                 "Please select one of the options below 👇\n"
-                "1. **Register as Buyer** – to create and manage RFQs for your requirements\n"
-                "2. **Register as Seller** – to receive and respond to buyer RFQs\n"
-                "3. **Exit**\n\n"
-                "Please reply with the number (1, 2, or 3) or type **Buyer**, **Seller**, or **Exit** to continue."
+                "1. *Register as Buyer* – to create and manage RFQs for your requirements\n"
+                "2. *Register as Seller* – to receive and respond to buyer RFQs\n"
+                "3. *Exit*\n\n"
+                "Please reply with the number (1, 2, or 3) or type *Buyer*, *Seller*, or *Exit* to continue."
             )
 
             # Store registration options in session

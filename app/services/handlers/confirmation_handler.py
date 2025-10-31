@@ -470,8 +470,8 @@ class ConfirmationHandler:
             # Single RFQ case (matches your example format)
             if successful_count == 1:
                 response = (
-                    "✅ **RFQ created successfully!**\n\n"
-                    f"**ID:** {rfq_ids[0]}\n"
+                    "✅ *RFQ created successfully!*\n\n"
+                    f"*ID:* {rfq_ids[0]}\n"
                     "(You can use this ID anytime to track your request.)\n\n"
                     "What would you like to do next?\n"
                     "You can choose from the options below or simply type what you’d like to do next."
