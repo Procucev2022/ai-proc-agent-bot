@@ -481,6 +481,7 @@ class SessionManagementService:
         """Convert ConversationSession object to dict for Redis storage."""
         from app.models import WorkflowType, ConversationOutcome
         from datetime import date, datetime
+        from app.services.helpers.session_helpers import SessionHelpers
 
         # Helper to serialize dates/datetimes
         def serialize_date(value):
@@ -490,7 +491,8 @@ class SessionManagementService:
                 return value.isoformat()
             return str(value)
 
-        return {
+        # Build the dictionary with top-level serialization
+        session_dict = {
             'session_id': session.session_id,
             'external_user_id': session.external_user_id,
             'workflow_type': session.workflow_type.value if isinstance(session.workflow_type, WorkflowType) else session.workflow_type,
@@ -504,6 +506,9 @@ class SessionManagementService:
             'last_activity_at': serialize_date(session.last_activity_at),
             'completed_at': serialize_date(session.completed_at),
         }
+
+        # Recursively clean all nested data to ensure JSON serialization
+        return SessionHelpers.clean_for_json_serialization(session_dict)
 
     def _dict_to_session(self, data: Dict[str, Any]) -> ConversationSession:
         """Convert dict from Redis to ConversationSession object."""
