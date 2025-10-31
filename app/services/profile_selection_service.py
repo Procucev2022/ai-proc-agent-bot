@@ -662,12 +662,14 @@ class ProfileSelectionService:
         try:
             # Case 6: New User Registration Flow
             message = (
-                "👋 Hi there! I don't see any registered accounts linked to this number or email.\n"
-                "Would you like to get started by creating a new profile?\n\n"
-                "Please select:\n"
-                " 1. Register as Buyer\n"
-                " 2. Register as Seller\n"
-                " 3. Exit"
+                "👋 *Hi there!*\n"
+                "It looks like there’s no registered account linked to this number or email.\n\n"
+                "Let’s get you started by creating a new profile so you can easily raise or respond to RFQs.\n\n"
+                "Please select one of the options below 👇\n"
+                "1. *Register as Buyer* – to create and manage RFQs for your requirements\n"
+                "2. *Register as Seller* – to receive and respond to buyer RFQs\n"
+                "3. *Exit*\n\n"
+                "Please reply with the number (1, 2, or 3) or type *Buyer*, *Seller*, or *Exit* to continue."
             )
 
             # Store registration options in session
@@ -1140,7 +1142,7 @@ class ProfileSelectionService:
                 "Would you like to register as:\n"
                 "1. Buyer (to create RFQs and purchase items)\n"
                 "2. Seller (to respond to RFQs and sell items)\n\n"
-                "Please let me know which type of account you'd like to create."
+                "Please reply with the number (1, 2) or type Buyer, Seller, or Exit to continue."
             )
 
             await self.whatsapp_service.send_message(user_phone, message)

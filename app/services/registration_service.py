@@ -433,6 +433,7 @@ class RegistrationService:
                     "user_id": user_id
                 }
             else:
+                logger.info(f"handling else condition in registartion:{result}")
                 # Registration failed
                 error_msg = result.get("message", "Registration failed")
                 
@@ -445,8 +446,10 @@ class RegistrationService:
                 )
                 
                 if "already exists" in error_msg.lower():
+                    logger.info("alredy exists")
                     return await self._redirect_to_support(user_phone, "user_already_exists", error_msg, session)
                 else:
+                    logger.info("registation failed")
                     return await self._redirect_to_support(user_phone, "registration_failed", error_msg, session)
                     
         except Exception as e:
@@ -562,10 +565,14 @@ class RegistrationService:
                             logger.info(f"entitiies:{entities}")
                             # Show buying options with buttons
                             buying_message = (
-                                f"Let's continue with your Buyer profile ({entities.get('email', 'your profile')}). What would you like to do today?\n"
+                                "Your OTP has been verified successfully, and your account is now active and ready to use.\n\n"
+                                f"Let's continue with your *Buyer profile ({entities.get('email', 'your profile')})*.\n"
+                                "What would you like to do today?\n"
+                                "You can choose from the options below or type your request."
                             )
+
                             name = entities.get('name', 'there').split()[0].title()
-                            header = f"Hi {name}! Your OTP has been verified successfully."
+                            header = f"Hello {name},"
                             buttons_config = [
                                 {"id": "create_rfq", "title": "Create new RFQ"},
                                 {"id": "rfq_status", "title": "Check RFQ Status"},

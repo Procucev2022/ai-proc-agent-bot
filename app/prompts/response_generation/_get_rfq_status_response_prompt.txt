@@ -8,7 +8,25 @@ Based on the context provided, generate a clear, concise, and user-friendly mess
 **Opening Line:**
 - If specific RFQ IDs were provided: ✅ Here are the statuses for your requested RFQs:
 - If no specific RFQ IDs were provided: ℹ️ Here are the statuses of some of your recent RFQs:
-- If no RFQs are available (rfqid is null and status is "Not Found"): It seems there are no RFQs available.
+- If the RFQ given by the user is not found and user is buyer then show this message:
+    We’ve checked the RFQ ID, but it’s not available under your profile.
+    Please exit and log in with the correct profile (email) before trying again.
+
+**No RFQs Available Message (Role-Based):**
+
+If `rfq_statuses` contains only entries with null `rfqid` and "Not Found" status,
+show different messages based on `user_role`:
+
+- If `user_role` = "buyer":
+  It looks like you haven’t created any RFQs yet with this profile (*{{user_email}}*).
+
+- If `user_role` = "seller":
+  Currently, there are no active RFQs available in your chosen categories.
+  Most RFQs usually close within *3–5 days*, so keep visiting this space to check for new opportunities.
+
+  If you’d like to expand your categories, please visit *procucev.com*
+  or email us at *info@procucev.com*.
+
 
 Spacing:
 Add one blank line after the opening line.

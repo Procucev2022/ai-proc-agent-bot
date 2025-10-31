@@ -469,7 +469,14 @@ class ConfirmationHandler:
         if rfq_ids:
             # Single RFQ case (matches your example format)
             if successful_count == 1:
-                response = f"✅ RFQ created successfully!\n\nID: {rfq_ids[0]}\n(You can use this ID anytime to track your request.)\n\nWhat would you like to do next?"
+                response = (
+                    "✅ *RFQ created successfully!*\n\n"
+                    f"*ID:* {rfq_ids[0]}\n"
+                    "(You can use this ID anytime to track your request.)\n\n"
+                    "What would you like to do next?\n"
+                    "You can choose from the options below or simply type what you’d like to do next."
+                )
+
             # Multiple RFQs case
             else:
                 rfq_ids_text = "\n".join([f"ID: {rfq_id}" for rfq_id in rfq_ids])

@@ -214,7 +214,11 @@ class ChatService:
             welcome_service = get_welcome_service()
             welcome_sent = False
             if await welcome_service.should_send_welcome(user_phone):
-                welcome_text = "Hello 👋, I'm QUA – your Procurement Assistant. Kindly wait while we check your registered profile. Will be with you shortly."
+                welcome_text = (
+                    "Hello Namaste 🙏, I'm Qua – Your Procurement Partner.\n"
+                    "Thank you for contacting me. Let me check if you have visited us earlier..."
+                )
+
                 message_response = await self.whatsapp_service.send_message(user_phone, welcome_text)
                 if message_response.success:
                     await welcome_service.mark_welcome_sent(user_phone)
@@ -1885,8 +1889,11 @@ class ChatService:
             user_email = getattr(user, 'email', 'your profile')
             
             # Create the profile selection message
-            profile_message = f"Got it, you're looking to check if items are available in stock.\nLet's continue with your {user_role.title()} profile ({user_email}).\n\nBFS Search coming soon!\nPlease confirm what you'd like to do next:"
-            
+            profile_message = (
+                "Got it! You’re looking to check if items are available in stock.\n\n"
+                "🔍 *BFS Search coming soon!*"
+            )
+
             if user_role == "buyer":
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
