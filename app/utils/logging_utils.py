@@ -74,22 +74,30 @@ class UserPhoneContext:
 
     def __init__(self, phone_number: str):
         self.phone_number = phone_number
-        self.token = None
+        self.previous_phone = None
 
     def __enter__(self):
+        self.previous_phone = get_user_phone_context()
         set_user_phone_context(self.phone_number)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        clear_user_phone_context()
+        if self.previous_phone:
+            set_user_phone_context(self.previous_phone)
+        else:
+            clear_user_phone_context()
         return False
 
     async def __aenter__(self):
+        self.previous_phone = get_user_phone_context()
         set_user_phone_context(self.phone_number)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        clear_user_phone_context()
+        if self.previous_phone:
+            set_user_phone_context(self.previous_phone)
+        else:
+            clear_user_phone_context()
         return False
 
 
