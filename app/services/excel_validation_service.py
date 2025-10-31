@@ -39,6 +39,7 @@ class ExcelValidationService:
     # Business validation rules
     REQUIRED_FIELDS = ['ItemDescription', 'Quantity']
     INVALID_UOM_VALUES = {'each', 'per item', 'item', 'piece'}
+    SPECIAL_CHARS_PATTERN = r'[^a-zA-Z0-9\s\-\._()]'
     
     async def validate_excel_file_from_url(self, file_url: str, filename: str) -> Dict[str, Any]:
         """

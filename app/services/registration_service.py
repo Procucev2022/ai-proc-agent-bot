@@ -433,6 +433,7 @@ class RegistrationService:
                     "user_id": user_id
                 }
             else:
+                logger.info(f"handling else condition in registartion:{result}")
                 # Registration failed
                 error_msg = result.get("message", "Registration failed")
                 
@@ -445,8 +446,10 @@ class RegistrationService:
                 )
                 
                 if "already exists" in error_msg.lower():
+                    logger.info("alredy exists")
                     return await self._redirect_to_support(user_phone, "user_already_exists", error_msg, session)
                 else:
+                    logger.info("registation failed")
                     return await self._redirect_to_support(user_phone, "registration_failed", error_msg, session)
                     
         except Exception as e:
