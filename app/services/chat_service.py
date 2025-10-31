@@ -214,7 +214,11 @@ class ChatService:
             welcome_service = get_welcome_service()
             welcome_sent = False
             if await welcome_service.should_send_welcome(user_phone):
-                welcome_text = "Hello 👋, I'm QUA – your Procurement Assistant. Kindly wait while we check your registered profile. Will be with you shortly."
+                welcome_text = (
+                    "Hello Namaste 🙏, I'm Qua – Your Procurement Partner.\n"
+                    "Thank you for contacting me. Let me check if you have visited us earlier..."
+                )
+
                 message_response = await self.whatsapp_service.send_message(user_phone, welcome_text)
                 if message_response.success:
                     await welcome_service.mark_welcome_sent(user_phone)
