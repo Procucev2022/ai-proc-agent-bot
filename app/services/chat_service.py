@@ -1881,8 +1881,11 @@ class ChatService:
             user_email = getattr(user, 'email', 'your profile')
             
             # Create the profile selection message
-            profile_message = f"Got it, you're looking to check if items are available in stock.\nLet's continue with your {user_role.title()} profile ({user_email}).\n\nBFS Search coming soon!\nPlease confirm what you'd like to do next:"
-            
+            profile_message = (
+                "Got it! You’re looking to check if items are available in stock.\n\n"
+                "🔍 *BFS Search coming soon!*"
+            )
+
             if user_role == "buyer":
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
