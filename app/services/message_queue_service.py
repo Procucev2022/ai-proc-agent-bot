@@ -162,6 +162,20 @@ class MessageQueueService:
     def _key_lock_ack(self, user_phone: str) -> str:
         return f"{user_phone}:lock:ack"
 
+    def _key_lock_monitor(self, user_phone: str) -> str:
+        return f"{user_phone}:lock:monitor"
+
+    def _key_lock_monitor_log(self, user_phone: str) -> str:
+        return f"{user_phone}:lock:monitor_log"
+
+    def _key_response_ready(self, user_phone: str) -> str:
+        """Redis key for response ready flag (prevents late please-wait)."""
+        return f"{user_phone}:response_ready"
+
+    def _key_ack_sent(self, user_phone: str) -> str:
+        """Redis key for acknowledgment sent flag (persists across batches)."""
+        return f"{user_phone}:ack_sent"
+
     # ========================================================================
     # Public API - Entry Point
     # ========================================================================
@@ -290,7 +304,8 @@ class MessageQueueService:
         Background task: Poll for users with expired batch timers.
         Creates batches when timer expires and messages exist.
         
-        Runs every 1 second. Idempotent across workers.
+        Runs every 1 second. Uses distributed lock to ensure only ONE worker
+        polls at a time across all Gunicorn workers (prevents duplicate polling).
         """
         logger.info("[POLLER] Batch poller started")
         
@@ -298,38 +313,55 @@ class MessageQueueService:
             while True:
                 await asyncio.sleep(1)  # Poll every second
                 
+                # Global poller lock - only one worker should poll at a time
+                global_poller_lock_key = "global:poller:lock"
+                poller_lock = self.redis.lock(
+                    global_poller_lock_key,
+                    timeout=2,  # 2s timeout (longer than poll cycle)
+                    blocking_timeout=0  # Non-blocking - skip if another worker is polling
+                )
+                
                 try:
-                    # Find all incoming queues
-                    cursor = 0
-                    incoming_keys = []
-                    while True:
-                        cursor, keys = await self.redis.scan(
-                            cursor=cursor,
-                            match="*:incoming",
-                            count=100
-                        )
-                        incoming_keys.extend(keys)
-                        if cursor == 0:
-                            break
+                    # Try to acquire global poller lock (non-blocking)
+                    acquired = await poller_lock.acquire()
+                    if not acquired:
+                        # Another worker is polling, skip this cycle
+                        continue
                     
-                    # Check each user for expired timer
-                    for key in incoming_keys:
-                        user_phone = key.replace(":incoming", "")
+                    try:
+                        # Find all incoming queues
+                        cursor = 0
+                        incoming_keys = []
+                        while True:
+                            cursor, keys = await self.redis.scan(
+                                cursor=cursor,
+                                match="*:incoming",
+                                count=100
+                            )
+                            incoming_keys.extend(keys)
+                            if cursor == 0:
+                                break
                         
-                        # Check if timer exists
-                        trigger_key = self._key_batch_trigger(user_phone)
-                        timer_exists = await self.redis.exists(trigger_key)
-                        
-                        if not timer_exists:
-                            # Timer expired, check if messages exist
-                            message_count = await self.redis.zcard(key)
+                        # Check each user for expired timer
+                        for key in incoming_keys:
+                            user_phone = key.rsplit(":incoming", 1)[0]
                             
-                            if message_count > 0:
-                                logger.info(
-                                    f"[POLLER] Timer expired for {user_phone}, "
-                                    f"{message_count} messages, creating batch"
-                                )
-                                await self._create_batch(user_phone)
+                            # Check if timer exists
+                            trigger_key = self._key_batch_trigger(user_phone)
+                            timer_exists = await self.redis.exists(trigger_key)
+                            if not timer_exists:
+                                # Timer expired, check if messages exist
+                                message_count = await self.redis.zcard(key)
+                                if message_count > 0:
+                                    logger.debug(
+                                        f"[POLLER] Timer expired for {user_phone}, "
+                                        f"{message_count} messages, creating batch"
+                                    )
+                                    await self._create_batch(user_phone)
+                    
+                    finally:
+                        # Always release the global poller lock
+                        await poller_lock.release()
                 
                 except Exception as e:
                     logger.error(f"[POLLER] Error in poll cycle: {e}", exc_info=True)
@@ -347,6 +379,7 @@ class MessageQueueService:
         - Log warnings for slow batches
         
         Runs every 5 seconds. Idempotent across workers.
+        Workers coordinate via Redis SET NX EX to prevent duplicates.
         """
         logger.info("[MONITOR] Monitoring loop started")
         
@@ -384,32 +417,93 @@ class MessageQueueService:
                             
                             # Send please-wait if threshold exceeded
                             if duration >= self.please_wait_threshold and not session.please_wait_sent:
-                                logger.info(
-                                    f"[MONITOR] Sending please-wait to {user_phone} "
-                                    f"after {duration:.1f}s"
-                                )
-                                await self._send_please_wait(user_phone)
+                                # Check if response is already ready (prevents late please-wait)
+                                response_ready_key = self._key_response_ready(user_phone)
+                                response_ready = await self.redis.get(response_ready_key)
                                 
-                                # Update session
-                                session.please_wait_sent = True
-                                await self.redis.setex(
-                                    key,
-                                    60,  # Refresh TTL
-                                    session.to_json()
+                                if response_ready:
+                                    logger.info(
+                                        f"[MONITOR] Response ready for {user_phone} "
+                                        f"(batch {session.batch_id}, duration {duration:.1f}s), "
+                                        f"skipping please-wait to avoid race condition"
+                                    )
+                                    continue
+                                
+                                # Atomic lock to prevent duplicate sends across workers
+                                lock_key = self._key_lock_monitor(user_phone)
+                                lock_acquired = await self.redis.set(
+                                    lock_key,
+                                    "1",
+                                    nx=True,
+                                    ex=5
                                 )
+                                
+                                if lock_acquired:
+                                    # This worker won the race - double-check and send
+                                    try:
+                                        session_json_check = await self.redis.get(key)
+                                        if not session_json_check:
+                                            continue
+                                        
+                                        session_check = ProcessingSession.from_json(session_json_check)
+                                        if session_check.please_wait_sent:
+                                            logger.debug(
+                                                f"[MONITOR] Please-wait already sent by another worker "
+                                                f"for {user_phone}"
+                                            )
+                                            continue
+                                        
+                                        logger.info(
+                                            f"[MONITOR] Sending please-wait to {user_phone} "
+                                            f"after {duration:.1f}s"
+                                        )
+                                        await self._send_please_wait(user_phone)
+                                        
+                                        # Update session
+                                        session.please_wait_sent = True
+                                        await self.redis.setex(
+                                            key,
+                                            60,  # Refresh TTL
+                                            session.to_json()
+                                        )
+                                    except Exception as send_error:
+                                        logger.error(
+                                            f"[MONITOR] Error sending please-wait to {user_phone}: {send_error}",
+                                            exc_info=True
+                                        )
+                                else:
+                                    # Another worker is handling it
+                                    logger.debug(
+                                        f"[MONITOR] Another worker is handling please-wait "
+                                        f"for {user_phone}"
+                                    )
                             
-                            # Log warnings for slow processing
-                            if duration > 50:
-                                logger.critical(
-                                    f"[MONITOR-CRITICAL] Batch {session.batch_id} "
-                                    f"for {user_phone} processing for {duration:.1f}s "
-                                    f"(approaching TTL limit!)"
-                                )
-                            elif duration > 30:
-                                logger.error(
-                                    f"[MONITOR-ERROR] Batch {session.batch_id} "
-                                    f"for {user_phone} processing for {duration:.1f}s"
-                                )
+                            # Log warnings for slow processing (deduplicated across workers)
+                            if duration > 30:
+                                log_lock_key = self._key_lock_monitor_log(user_phone)
+                                try:
+                                    log_flag_set = await self.redis.set(
+                                        log_lock_key, 
+                                        "1", 
+                                        nx=True, 
+                                        ex=5
+                                    )
+                                    
+                                    if log_flag_set:
+                                        if duration > 50:
+                                            logger.critical(
+                                                f"[MONITOR-CRITICAL] Batch {session.batch_id} "
+                                                f"for {user_phone} processing for {duration:.1f}s "
+                                                f"(approaching TTL limit!)"
+                                            )
+                                        else:  # 30-50 seconds
+                                            logger.error(
+                                                f"[MONITOR-ERROR] Batch {session.batch_id} "
+                                                f"for {user_phone} processing for {duration:.1f}s"
+                                            )
+                                except Exception:
+                                    # Ignore logging coordination errors
+                                    pass
                         
                         except Exception as e:
                             logger.error(f"[MONITOR] Error checking session {key}: {e}")
@@ -434,23 +528,23 @@ class MessageQueueService:
         Critical: Checks if user is currently processing before creating batch.
         This ensures sequential batch processing.
         """
-        # Check if already processing (prevent parallel batches)
-        processing_key = self._key_processing(user_phone)
-        is_processing = await self.redis.exists(processing_key)
-        
-        if is_processing:
-            logger.info(
-                f"[BATCH_CREATE] {user_phone} already processing, "
-                f"skip batch creation (sequential processing)"
-            )
-            return
-        
-        # Acquire batch lock
+        # Acquire batch lock FIRST for atomic check-and-create
         lock_key = self._key_lock_batch(user_phone)
         lock = self.redis.lock(lock_key, timeout=10, blocking_timeout=10)
         
         try:
             async with lock:
+                # Check if already processing INSIDE lock (prevent race condition)
+                processing_key = self._key_processing(user_phone)
+                is_processing = await self.redis.exists(processing_key)
+                
+                if is_processing:
+                    logger.debug(
+                        f"[BATCH_CREATE] {user_phone} already processing, "
+                        f"skip batch creation (sequential processing)"
+                    )
+                    return
+                
                 incoming_key = self._key_incoming(user_phone)
                 
                 # Get all messages (sorted by timestamp)
@@ -521,50 +615,64 @@ class MessageQueueService:
     async def _try_start_processing(self, user_phone: str) -> None:
         """
         Atomically claim next batch and start processing if not already processing.
+        Uses distributed lock to ensure atomic check-claim-process operation.
         """
-        processing_key = self._key_processing(user_phone)
+        # Acquire lock FIRST for atomic check-claim-process
+        lock_key = self._key_lock_batch(user_phone)
+        lock = self.redis.lock(lock_key, timeout=10, blocking_timeout=1)
         
-        # Check if already processing
-        is_processing = await self.redis.exists(processing_key)
-        if is_processing:
-            logger.debug(f"[START] {user_phone} already processing, batch will wait")
-            return
+        batch = None  # Initialize to avoid NameError if early return occurs
         
-        # Claim first batch from queue
-        outgoing_key = self._key_outgoing(user_phone)
-        batch_json = await self.redis.lpop(outgoing_key)
-        
-        if not batch_json:
-            logger.debug(f"[START] No batches in queue for {user_phone}")
-            return
-        
-        # Parse batch
         try:
-            batch = Batch.from_dict(json.loads(batch_json))
+            async with lock:
+                processing_key = self._key_processing(user_phone)
+                
+                # Check if already processing INSIDE lock (prevent race condition)
+                is_processing = await self.redis.exists(processing_key)
+                if is_processing:
+                    logger.debug(f"[START] {user_phone} already processing, batch will wait")
+                    return
+                
+                # Claim first batch from queue (atomic with check)
+                outgoing_key = self._key_outgoing(user_phone)
+                batch_json = await self.redis.lpop(outgoing_key)
+                
+                if not batch_json:
+                    logger.debug(f"[START] No batches in queue for {user_phone}")
+                    return
+                
+                # Parse batch
+                try:
+                    batch = Batch.from_dict(json.loads(batch_json))
+                except Exception as e:
+                    logger.error(f"[START] Error parsing batch: {e}", exc_info=True)
+                    # Re-queue for retry
+                    await self.redis.lpush(outgoing_key, batch_json)
+                    return
+                
+                # Mark as processing (60s TTL for crash recovery)
+                await self.redis.setex(processing_key, 60, batch.batch_id)
+                
+                # Create session (inside lock to ensure atomicity)
+                session = ProcessingSession(
+                    batch_id=batch.batch_id,
+                    started_at=time.time()
+                )
+                session_key = self._key_session(user_phone)
+                await self.redis.setex(session_key, 60, session.to_json())
+                
+                logger.info(
+                    f"[START] Starting processing for batch {batch.batch_id}, "
+                    f"user={user_phone}"
+                )
+        
         except Exception as e:
-            logger.error(f"[START] Error parsing batch: {e}", exc_info=True)
-            # Re-queue for retry
-            await self.redis.lpush(outgoing_key, batch_json)
+            logger.error(f"[START] Error claiming batch: {e}", exc_info=True)
             return
         
-        # Mark as processing (60s TTL for crash recovery)
-        await self.redis.setex(processing_key, 60, batch.batch_id)
-        
-        # Create session
-        session = ProcessingSession(
-            batch_id=batch.batch_id,
-            started_at=time.time()
-        )
-        session_key = self._key_session(user_phone)
-        await self.redis.setex(session_key, 60, session.to_json())
-        
-        logger.info(
-            f"[START] Starting processing for batch {batch.batch_id}, "
-            f"user={user_phone}"
-        )
-        
-        # Process batch
-        asyncio.create_task(self._process_batch(batch))
+        # Process batch (outside lock to avoid blocking other operations)
+        if batch is not None:
+            asyncio.create_task(self._process_batch(batch))
 
     async def _process_batch(self, batch: Batch) -> None:
         """
@@ -688,6 +796,17 @@ class MessageQueueService:
                 
                 # Not suppressed - send for real
                 try:
+                    # Mark response as ready before sending (prevents late please-wait)
+                    response_ready_key = self._key_response_ready(user_phone)
+                    await self.redis.setex(response_ready_key, 10, "1")  # 10s TTL
+                    
+                    # Calculate processing time for logging
+                    processing_time = time.time() - session.started_at
+                    logger.info(
+                        f"[SEND] Response ready for {recipient_id} after {processing_time:.1f}s "
+                        f"(batch {session.batch_id}) - marked to prevent late please-wait"
+                    )
+                    
                     logger.info(
                         f"[SEND] Calling {name} for {recipient_id} "
                         f"in batch {session.batch_id}"
@@ -777,11 +896,15 @@ class MessageQueueService:
             # Clear processing state
             processing_key = self._key_processing(user_phone)
             session_key = self._key_session(user_phone)
+            response_ready_key = self._key_response_ready(user_phone)
             
             await self.redis.delete(processing_key)
             await self.redis.delete(session_key)
+            await self.redis.delete(response_ready_key)
             
-            # If all queues empty, clear ack flag for next session
+            logger.debug(f"[CLEANUP] Cleared processing state and response ready flag for {user_phone}")
+            
+            # If all queues empty, clear ack flag for next conversation session
             incoming_key = self._key_incoming(user_phone)
             outgoing_key = self._key_outgoing(user_phone)
             
@@ -789,10 +912,12 @@ class MessageQueueService:
             outgoing_count = await self.redis.llen(outgoing_key)
             
             if incoming_count == 0 and outgoing_count == 0:
-                # Session complete - user can start fresh next time
+                # Session complete - clear ack flag so user can start fresh next time
+                ack_sent_key = self._key_ack_sent(user_phone)
+                await self.redis.delete(ack_sent_key)
                 logger.info(
                     f"[CLEANUP] All queues empty for {user_phone}, "
-                    f"session complete"
+                    f"conversation session complete, cleared ack flag"
                 )
             
             # Trigger next batch if available
@@ -814,17 +939,18 @@ class MessageQueueService:
         
         Returns True if:
         - System is busy (processing, or queues not empty)
-        - AND acknowledgment not already sent this session
-        """
-        # Check if currently in a session with ack already sent
-        session_key = self._key_session(user_phone)
-        session_json = await self.redis.get(session_key)
+        - AND acknowledgment not already sent this conversation session
         
-        if session_json:
-            session = ProcessingSession.from_json(session_json)
-            if session.ack_sent:
-                logger.debug(f"[ACK] Already sent for {user_phone}")
-                return False
+        Note: Uses separate ack_sent flag (300s TTL) independent of batch session
+        to prevent duplicate acks across multiple batches in same conversation.
+        """
+        # Check if ack already sent in this conversation session
+        ack_sent_key = self._key_ack_sent(user_phone)
+        ack_already_sent = await self.redis.get(ack_sent_key)
+        
+        if ack_already_sent:
+            logger.debug(f"[ACK] Already sent in this conversation for {user_phone}")
+            return False
         
         # Check if system is busy
         processing_key = self._key_processing(user_phone)
@@ -841,7 +967,7 @@ class MessageQueueService:
         logger.debug(
             f"[ACK] {user_phone}: processing={is_processing}, "
             f"incoming={incoming_count}, outgoing={outgoing_count}, "
-            f"busy={is_busy}"
+            f"busy={is_busy}, ack_sent={bool(ack_already_sent)}"
         )
         
         return is_busy
@@ -850,23 +976,32 @@ class MessageQueueService:
         """
         Send acknowledgment message with atomic flag claiming.
         Uses lock to prevent duplicate sends across workers.
+        Sets separate ack_sent flag with 300s TTL (5 minutes) that persists
+        across multiple batches in the same conversation session.
         """
         lock_key = self._key_lock_ack(user_phone)
         lock = self.redis.lock(lock_key, timeout=10, blocking_timeout=1)
         
         try:
             async with lock:
-                # Double-check inside lock
+                # Double-check inside lock using separate ack_sent flag
+                ack_sent_key = self._key_ack_sent(user_phone)
+                ack_already_sent = await self.redis.get(ack_sent_key)
+                
+                if ack_already_sent:
+                    logger.debug(f"[ACK] Already sent (double-check) for {user_phone}")
+                    return
+                
+                # Set ack_sent flag with 300s TTL (5 minutes)
+                # This persists across batches in the same conversation
+                await self.redis.setex(ack_sent_key, 300, "1")
+                
+                # Also update session if it exists (for backward compatibility)
                 session_key = self._key_session(user_phone)
                 session_json = await self.redis.get(session_key)
                 
                 if session_json:
                     session = ProcessingSession.from_json(session_json)
-                    if session.ack_sent:
-                        logger.debug(f"[ACK] Already sent (double-check) for {user_phone}")
-                        return
-                    
-                    # Update session
                     session.ack_sent = True
                     await self.redis.setex(session_key, 60, session.to_json())
                 else:
@@ -887,7 +1022,7 @@ class MessageQueueService:
                     message="Got it. Please wait while we process your request, we will be back shortly."
                 )
                 
-                logger.info(f"[ACK] Sent acknowledgment to {user_phone}")
+                logger.info(f"[ACK] Sent acknowledgment to {user_phone} (flag expires in 300s)")
         
         except Exception as e:
             logger.warning(

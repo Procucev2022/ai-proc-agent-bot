@@ -144,7 +144,12 @@ class RegistrationService:
                 logger.warning("No entities extracted from message")
 
             # Validate entities (email and pincode) using authentication helper
-            existing_entities, validation_error_message = await self.authentication_helpers.validate_pincode(existing_entities)
+            if user_type == 'buyer':
+                entity_schema = BuyerRegistrationSchema
+            else:  # seller
+                entity_schema = SellerRegistrationSchema
+
+            existing_entities, validation_error_message = await self.authentication_helpers.validate_entities(existing_entities, entity_schema)
             session.workflow_state["registration_entities"] = existing_entities
 
             # Dynamic schema-based field validation
@@ -751,7 +756,7 @@ class RegistrationService:
     async def _redirect_to_support(self, user_phone: str, issue_type: str, error_details: str, session: ConversationSession = None) -> Dict[str, Any]:
         """Redirect user to support team."""
         try:
-            support_message = "Our support team will contact you shortly to assist with your registration."
+            support_message = "We could not complete your registration at this time. Our support team will reach out to you soon to help finalize your onboarding. If you need immediate assistance, please contact us at info@procucev.com."
             if self.session_manager and session:
                 await self.session_manager.send_and_track_message(user_phone, support_message, session)
             else:
@@ -788,7 +793,7 @@ class RegistrationService:
         """Handle exit during registration."""
         from app.services.exit_service import ExitService
         exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
-        return await exit_service.handle_exit_intent(user_phone, session)
+        return await exit_service.handle_exit_intent(user_phone, session, show_message=False)
     
     async def _handle_neutral_greeting(self, user_phone: str, profiles: List[Dict],
                                      session: ConversationSession) -> Dict[str, Any]:

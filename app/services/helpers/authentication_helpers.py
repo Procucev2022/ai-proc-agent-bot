@@ -7,7 +7,7 @@ Utility functions for authentication workflow.
 import logging
 from typing import Dict, Any, List, Optional, Type
 import re
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from ...utils.pincode_lookup import get_location_from_pincode_async
 
 logger = logging.getLogger(__name__)
@@ -75,83 +75,48 @@ class AuthenticationHelpers:
             return []
         
     @staticmethod
-    def generate_registration_message(schema: Type[BaseModel], role: str, show_optional: bool = True) -> str:
-        """Generate a registration intro message dynamically from schema fields."""
+    def generate_registration_message(schema: Type[BaseModel], role: str, show_optional: bool = False) -> str:
+        """Generate a conversational registration message from schema fields."""
         try:
-            # Return specific messages based on role
-            if role.lower() == "buyer":
-                return (
-                    "Hello Buyer!\n"
-                    "To get started, please share the following details:\n"
-                    "1. Full name\n"
-                    "2. Company name\n"
-                    "3. Organization email\n"
-                    "4. Pincode \n"
-                    "We'll have you registered right away.\n"
-                    "Please ensure your email is correct, as we will send an OTP to verify it in the next step"
-                )
-            elif role.lower() == "seller":
-                return (
-                    "Hello Seller!\n"
-                    "To get started, please share the following details:\n"
-                    "1. Full name\n"
-                    "2. Company name\n"
-                    "3. Organization email\n"
-                    "4. Location\n"
-                    "5. Pincode\n"
-                    "6. GSTIN number\n"
-                    "7. Products or Services offered\n\n"
-                    "We'll have you registered right away.\n"
-                    "please ensure your email is correct, as we will send an OTP to verify it in the next step"
-                )
-            else:
-                # Fallback to original dynamic logic for other roles
-                fields = schema.model_fields
-                required_fields = []
-                optional_fields = []
+            fields = schema.model_fields
+            required_fields = []
 
-                for name, field_info in fields.items():
-                    # Skip internal or system fields
-                    if name in {"source_type"}:
-                        continue
+            for name, field_info in fields.items():
+                # Skip internal or system fields
+                if name in {"source_type"}:
+                    continue
 
+                # Only include required fields
+                if field_info.is_required():
                     label = field_info.description or name.replace("_", " ").title()
+                    # Make field names bold for WhatsApp
+                    bold_label = f"*{label}*"
+                    required_fields.append(bold_label)
 
-                    # Determine if the field is required or optional
-                    if field_info.is_required():
-                        required_fields.append(label)
-                    else:
-                        optional_fields.append(label)
+            if not required_fields:
+                field_text = "your registration details"
+            else:
+                if len(required_fields) > 1:
+                    field_text = (
+                        ", ".join(required_fields[:-1]) + f", and {required_fields[-1]}"
+                    )
+                else:
+                    field_text = required_fields[0]
 
-                # Build numbered required list
-                numbered_required = [
-                    f"{idx + 1}. {label}" for idx, label in enumerate(required_fields)
-                ]
+            # Build conversational message
+            message = (
+                f"Hello {role.capitalize()}! 👋\n"
+                f"To get started, please share your {field_text}.\n"
+                f"Once received, we'll complete your Registration.\n\n"
+                f"Kindly ensure your Email Address is accurate, as you'll receive an OTP there for Verification."
+            )
 
-                # Build numbered optional list (only if enabled)
-                numbered_optional = [
-                    f"{idx + 1}. {label}" for idx, label in enumerate(optional_fields)
-                ] if show_optional else []
+            return message
 
-                # Construct message
-                message_lines = [
-                    f"Hello {role.capitalize()}!",
-                    "To get started, please share the following details:\n",
-                    "\n".join(numbered_required) if numbered_required else "(No required fields)",
-                ]
-
-                if numbered_optional:
-                    message_lines.append("\nOptional fields:\n" + "\n".join(numbered_optional))
-
-                message_lines.append("\nWe'll have you registered right away." )
-                message_lines.append("\nPlease ensure your email is correct, as we will send an OTP to verify it in the next step")
-
-                return "\n".join(message_lines)
         except Exception as e:
             logger.error(f"Registration message generation error: {e}")
-            # Fallback message
             return (
-                f"Hello {role.capitalize()}! To get started, please provide your details. "
+                f"Hello {role.capitalize()}! 👋 To get started, please provide your details. "
                 "We'll guide you through the registration process shortly."
             )
     
@@ -291,42 +256,71 @@ class AuthenticationHelpers:
             }
     
     @staticmethod
-    async def validate_pincode(entities: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[str]]:
+    async def validate_entities(entities: Dict[str, Any], SchemaModel: Type[BaseModel]) -> tuple[Dict[str, Any], Optional[str]]:
         """
-        Validate pincode in entities using API-based lookup.
+        Validate and normalize entity data using schema and external checks.
         
         Args:
-            entities: Dict of extracted entities
-            
+            entities: Dict of extracted entities.
+            SchemaModel: BuyerRegistrationSchema or SellerRegistrationSchema.
+
         Returns:
-            tuple: (updated_entities, validation_error_message)
+            (validated_entities, validation_error_message)
         """
         validated_entities = entities.copy()
         validation_error_message = None
-        # Check both possible field names for backward compatibility
-        pincode = entities.get("zipCode") or entities.get("pincode")
-        pincode_field = "zipCode" if "zipCode" in entities else "pincode"
-        
+
+        # --- 1. Auto-format fields before validation ---
+        if "name" in validated_entities and validated_entities["name"]:
+            validated_entities["name"] = validated_entities["name"].strip().title()
+
+        if "companyName" in validated_entities and validated_entities["companyName"]:
+            validated_entities["companyName"] = validated_entities["companyName"].strip().title()
+
+        if "email" in validated_entities and validated_entities["email"]:
+            validated_entities["email"] = validated_entities["email"].strip().lower()
+
+        if "organizationPhonenumber" in validated_entities and validated_entities["organizationPhonenumber"]:
+            validated_entities["organizationPhonenumber"] = re.sub(r"\s+", "", validated_entities["organizationPhonenumber"])
+
+        if "zipCode" in validated_entities and validated_entities["zipCode"]:
+            validated_entities["zipCode"] = str(validated_entities["zipCode"]).strip()
+
+        if "address" in validated_entities and validated_entities["address"]:
+            validated_entities["address"] = validated_entities["address"].strip().title()
+
+        if "gstin" in validated_entities and validated_entities["gstin"]:
+            validated_entities["gstin"] = validated_entities["gstin"].strip().upper()
+
+        # --- 2. Schema-based validation (Pydantic) ---
+        try:
+            from pydantic import ValidationError
+            validated_model = SchemaModel(**validated_entities)
+            validated_entities = validated_model.model_dump()
+        except ValidationError as e:
+            # Collect first validation error message
+            first_error = e.errors()[0]
+            field_name = first_error.get('loc', [''])[0]
+            error_msg = first_error.get('msg', '')
+            validation_error_message = f"{field_name}: {error_msg}"
+            logger.warning(f"Schema validation failed: {validation_error_message}")
+            return validated_entities, validation_error_message
+
+        # --- 3. External validation: pincode existence check ---
+        pincode = validated_entities.get("zipCode")
         if pincode:
             try:
-                # Clean and validate pincode format
-                clean_pincode = str(pincode).strip()
-                if not clean_pincode.isdigit() or len(clean_pincode) != 6:
-                    logger.info(f"Invalid pincode format: {pincode}")
-                    validated_entities[pincode_field] = None
-                    validation_error_message = "Pincode does not exist. Please provide a valid Indian pincode."
+                if not pincode.isdigit() or len(pincode) != 6:
+                    validation_error_message = "Pincode must be a 6-digit number."
+                    validated_entities["zipCode"] = None
                 else:
-                    # Use API to validate pincode existence
-                    location_data = await get_location_from_pincode_async(clean_pincode)
+                    location_data = await get_location_from_pincode_async(pincode)
                     if not location_data:
-                        logger.info(f"Pincode {pincode} does not exist")
-                        validated_entities[pincode_field] = None
                         validation_error_message = "Pincode does not exist. Please provide a valid Indian pincode."
-                    else:
-                        logger.info(f"Pincode {pincode} is valid")
+                        validated_entities["zipCode"] = None
             except Exception as e:
                 logger.error(f"Error validating pincode {pincode}: {e}")
-                validated_entities[pincode_field] = None
-                validation_error_message = "Pincode does not exist. Please provide a valid Indian pincode."
-        
+                validation_error_message = "Error verifying pincode. Please recheck and try again."
+                validated_entities["zipCode"] = None
+
         return validated_entities, validation_error_message

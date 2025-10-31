@@ -2850,13 +2850,18 @@ class ChatService:
             if intent in meaningful_intents and confidence > 50:
                 session.workflow_state = session.workflow_state or {}
 
-                # If we have an existing meaningful message AND no active workflow (post-auth state),
-                # preserve it instead of overwriting with the user's response to the options
-                # Note: workflow_type might be general_inquiry even when auth is complete, so also check if it's not authentication/registration
-                if existing_meaningful and session.workflow_type not in [WorkflowType.authentication, WorkflowType.registration]:
-                    logger.info(f"Preserving existing meaningful message '{str(existing_meaningful)[:50]}...' (post-auth state, ignoring '{str(message_content)[:50]}...')")
+                # Check if this is a button response to options (which should be ignored)
+                # vs a new meaningful business request (which should replace existing)
+                is_button_response = (
+                    existing_meaningful and 
+                    session.workflow_type not in [WorkflowType.authentication, WorkflowType.registration] and
+                    message_content.lower().strip() in ["1", "2", "3", "create new rfq", "check rfq status", "search stocks", "get_support"]
+                )
+                
+                if is_button_response:
+                    logger.info(f"Preserving existing meaningful message '{str(existing_meaningful)[:50]}...' (ignoring button response '{str(message_content)[:50]}...')")
                 else:
-                    # Normal case: track the meaningful message
+                    # Normal case or new meaningful message: track/update the meaningful message
                     session.workflow_state["last_meaningful_message"] = message_content
                     session.workflow_state["last_meaningful_intent_result"] = intent_result
                     logger.info(f"Tracked meaningful message: '{str(message_content)[:50]}...' with intent: {intent} (confidence: {confidence}%)")
