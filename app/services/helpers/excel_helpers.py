@@ -19,33 +19,70 @@ class ExcelHelpers:
     def convert_excel_to_entities(items: List[Dict]) -> List[Dict]:
         """Convert Excel items to entity format for chat workflow."""
         entities = []
-        for item in items:
-            entity = {
-                'description': item.get('ItemDescription', ''),
-                'specification': item.get('Specification', ''),
-                'quantity': item.get('Quantity', '1'),
-                'unit_of_measure': item.get('Uom', 'pcs'),
-                'remarks': item.get('Remarks', '')
-            }
-            entities.append(entity)
-        return entities
+        try:
+            logger.info(f"Converting {len(items)} Excel items to entities")
+            for i, item in enumerate(items, 1):
+                try:
+                    logger.info(f"Processing item {i}: {item}")
+                    entity = {
+                        'description': str(item.get('ItemDescription', '')).strip(),
+                        'specification': str(item.get('Specification', '')).strip(),
+                        'quantity': str(item.get('Quantity', '1')).strip(),
+                        'unit_of_measure': str(item.get('Uom', 'pcs')).strip(),
+                        'remarks': str(item.get('Remarks', '')).strip()
+                    }
+                    logger.info(f"Converted entity {i}: {entity}")
+                    entities.append(entity)
+                except Exception as item_error:
+                    logger.error(f"Error processing item {i}: {item_error}")
+                    logger.error(f"Item data: {item}")
+                    continue
+            
+            logger.info(f"Successfully converted {len(entities)} entities")
+            return entities
+        except Exception as e:
+            logger.error(f"Error in convert_excel_to_entities: {e}")
+            logger.error(f"Input items: {items}")
+            return []
     
     @staticmethod
     def calculate_excel_completeness(items: List[Dict]) -> int:
         """Calculate completeness percentage of Excel data."""
-        if not items:
+        try:
+            if not items:
+                logger.info("No items provided for completeness calculation")
+                return 0
+            
+            logger.info(f"Calculating completeness for {len(items)} items")
+            required_fields = ['ItemDescription', 'Quantity']
+            total_checks = len(items) * len(required_fields)
+            passed_checks = 0
+            
+            for i, item in enumerate(items, 1):
+                try:
+                    logger.info(f"Checking item {i}: {item}")
+                    for field in required_fields:
+                        try:
+                            value = item.get(field)
+                            if value is not None and str(value).strip():
+                                passed_checks += 1
+                                logger.info(f"Item {i} field '{field}' passed: '{value}'")
+                            else:
+                                logger.info(f"Item {i} field '{field}' failed: '{value}'")
+                        except Exception as field_error:
+                            logger.error(f"Error checking field '{field}' in item {i}: {field_error}")
+                except Exception as item_error:
+                    logger.error(f"Error processing item {i} for completeness: {item_error}")
+                    continue
+            
+            completeness = int((passed_checks / total_checks) * 100) if total_checks > 0 else 0
+            logger.info(f"Completeness calculation: {passed_checks}/{total_checks} = {completeness}%")
+            return completeness
+            
+        except Exception as e:
+            logger.error(f"Error in calculate_excel_completeness: {e}")
+            logger.error(f"Items: {items}")
             return 0
-        
-        required_fields = ['ItemDescription', 'Quantity']
-        total_checks = len(items) * len(required_fields)
-        passed_checks = 0
-        
-        for item in items:
-            for field in required_fields:
-                if item.get(field) and str(item[field]).strip():
-                    passed_checks += 1
-        
-        return int((passed_checks / total_checks) * 100) if total_checks > 0 else 0
     
     @staticmethod
     def generate_excel_summary(processing_result: Dict) -> str:
@@ -79,52 +116,130 @@ class ExcelHelpers:
     @staticmethod
     def identify_missing_fields(items: List[Dict]) -> List[str]:
         """Identify which fields are commonly missing in Excel data."""
-        missing_fields = []
-        
-        if not items:
-            return ["No items found"]
-        
-        # Check for missing descriptions
-        missing_descriptions = sum(1 for item in items if not item.get('ItemDescription', '').strip())
-        if missing_descriptions > len(items) * 0.3:  # More than 30% missing
-            missing_fields.append("Item descriptions")
-        
-        # Check for missing quantities
-        missing_quantities = sum(1 for item in items if not item.get('Quantity', '').strip())
-        if missing_quantities > len(items) * 0.3:
-            missing_fields.append("Quantities")
-        
-        # Check for missing UOM
-        missing_uom = sum(1 for item in items if not item.get('Uom', '').strip())
-        if missing_uom > len(items) * 0.5:  # More than 50% missing
-            missing_fields.append("Units of measure")
-        
-        # Check for missing specifications
-        missing_specs = sum(1 for item in items if not item.get('Specification', '').strip())
-        if missing_specs > len(items) * 0.7:  # More than 70% missing
-            missing_fields.append("Specifications")
-        
-        return missing_fields
+        try:
+            missing_fields = []
+            
+            if not items:
+                logger.info("No items provided for missing fields identification")
+                return ["No items found"]
+            
+            logger.info(f"Identifying missing fields for {len(items)} items")
+            
+            # Check for missing descriptions
+            try:
+                missing_descriptions = sum(1 for item in items if not str(item.get('ItemDescription', '')).strip())
+                logger.info(f"Missing descriptions: {missing_descriptions}/{len(items)}")
+                if missing_descriptions > len(items) * 0.3:  # More than 30% missing
+                    missing_fields.append("Item descriptions")
+            except Exception as e:
+                logger.error(f"Error checking missing descriptions: {e}")
+            
+            # Check for missing quantities
+            try:
+                missing_quantities = sum(1 for item in items if not str(item.get('Quantity', '')).strip())
+                logger.info(f"Missing quantities: {missing_quantities}/{len(items)}")
+                if missing_quantities > len(items) * 0.3:
+                    missing_fields.append("Quantities")
+            except Exception as e:
+                logger.error(f"Error checking missing quantities: {e}")
+            
+            # Check for missing UOM
+            try:
+                missing_uom = sum(1 for item in items if not str(item.get('Uom', '')).strip())
+                logger.info(f"Missing UOM: {missing_uom}/{len(items)}")
+                if missing_uom > len(items) * 0.5:  # More than 50% missing
+                    missing_fields.append("Units of measure")
+            except Exception as e:
+                logger.error(f"Error checking missing UOM: {e}")
+            
+            # Check for missing specifications
+            try:
+                missing_specs = sum(1 for item in items if not str(item.get('Specification', '')).strip())
+                logger.info(f"Missing specifications: {missing_specs}/{len(items)}")
+                if missing_specs > len(items) * 0.7:  # More than 70% missing
+                    missing_fields.append("Specifications")
+            except Exception as e:
+                logger.error(f"Error checking missing specifications: {e}")
+            
+            logger.info(f"Identified missing fields: {missing_fields}")
+            return missing_fields
+            
+        except Exception as e:
+            logger.error(f"Error in identify_missing_fields: {e}")
+            logger.error(f"Items: {items}")
+            return ["Error analyzing fields"]
     
     @staticmethod
     def prepare_excel_context(processing_result: Dict, user_phone: str) -> Dict[str, Any]:
         """Prepare context for Excel-based chat workflow."""
-        items = processing_result.get('items', [])
-        
-        context = {
-            'workflow_type': 'excel_rfq_upload',
-            'excel_data': processing_result,
-            'extracted_entities': ExcelHelpers.convert_excel_to_entities(items),
-            'completeness': ExcelHelpers.calculate_excel_completeness(items),
-            'missing_fields': ExcelHelpers.identify_missing_fields(items),
-            'conversation_stage': 'excel_processing',
-            'user_phone': user_phone,
-            'upload_timestamp': datetime.now().isoformat(),
-            'filename': processing_result.get('filename', ''),
-            'total_items': processing_result.get('total_items', 0)
-        }
-        
-        return context
+        try:
+            logger.info(f"Preparing Excel context for user: {user_phone}")
+            logger.info(f"Processing result type: {type(processing_result)}")
+            logger.info(f"Processing result: {processing_result}")
+            
+            items = processing_result.get('items', [])
+            logger.info(f"Extracted {len(items)} items from processing result")
+            
+            # Convert entities with error handling
+            try:
+                extracted_entities = ExcelHelpers.convert_excel_to_entities(items)
+                logger.info(f"Successfully converted {len(extracted_entities)} entities")
+            except Exception as entity_error:
+                logger.error(f"Error converting entities: {entity_error}")
+                extracted_entities = []
+            
+            # Calculate completeness with error handling
+            try:
+                completeness = ExcelHelpers.calculate_excel_completeness(items)
+                logger.info(f"Calculated completeness: {completeness}%")
+            except Exception as completeness_error:
+                logger.error(f"Error calculating completeness: {completeness_error}")
+                completeness = 0
+            
+            # Identify missing fields with error handling
+            try:
+                missing_fields = ExcelHelpers.identify_missing_fields(items)
+                logger.info(f"Identified missing fields: {missing_fields}")
+            except Exception as missing_error:
+                logger.error(f"Error identifying missing fields: {missing_error}")
+                missing_fields = []
+            
+            context = {
+                'workflow_type': 'excel_rfq_upload',
+                'excel_data': processing_result,
+                'extracted_entities': extracted_entities,
+                'completeness': completeness,
+                'missing_fields': missing_fields,
+                'conversation_stage': 'excel_processing',
+                'user_phone': user_phone,
+                'upload_timestamp': datetime.now().isoformat(),
+                'filename': processing_result.get('filename', ''),
+                'total_items': processing_result.get('total_items', 0)
+            }
+            
+            logger.info(f"Successfully prepared Excel context with {len(extracted_entities)} entities")
+            return context
+            
+        except Exception as e:
+            logger.error(f"Error in prepare_excel_context: {e}")
+            logger.error(f"Processing result at error: {processing_result}")
+            logger.error(f"User phone: {user_phone}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            
+            # Return minimal context on error
+            return {
+                'workflow_type': 'excel_rfq_upload',
+                'excel_data': processing_result,
+                'extracted_entities': [],
+                'completeness': 0,
+                'missing_fields': ['Error processing Excel data'],
+                'conversation_stage': 'excel_processing_error',
+                'user_phone': user_phone,
+                'upload_timestamp': datetime.now().isoformat(),
+                'filename': processing_result.get('filename', '') if isinstance(processing_result, dict) else '',
+                'total_items': 0
+            }
     
     @staticmethod
     def should_complete_immediately(completeness: int, items: List[Dict]) -> bool:
@@ -259,3 +374,5 @@ class ExcelHelpers:
         
         # File appears complete
         return [f"Your Excel file '{filename}' looks good! I'll process it now."]
+
+

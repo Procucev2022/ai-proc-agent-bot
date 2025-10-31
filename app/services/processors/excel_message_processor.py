@@ -155,29 +155,52 @@ class ExcelMessageProcessor:
             return {"status": "error", "response": str(e)}
     
     async def _handle_complete_excel(self, user: User, session: ConversationSession, processing_result: Dict) -> Dict[str, Any]:
-        """Handle complete Excel files by redirecting to multiple entity flow."""
+        """Handle complete Excel files using new streamlined RFQ format."""
         try:
-            # Convert Excel items to entities format for multiple product flow
-            excel_entities = self._convert_excel_to_entities(processing_result['items'])
+            # Use new RFQ format from streamlined processing
+            rfqs = processing_result.get('rfqs', [])
             
-            # Store entities in session for multiple product RFQ creation
-            session.workflow_state = session.workflow_state or {}
-            session.workflow_state['extracted_entities'] = excel_entities
+            if not rfqs:
+                # Fallback to legacy conversion if no RFQs in new format
+                excel_entities = self._convert_excel_to_entities(processing_result['items'])
+                session.workflow_state = session.workflow_state or {}
+                session.workflow_state['extracted_entities'] = excel_entities
+            else:
+                # Use new structured RFQ format
+                # Convert RFQs to entities format for compatibility
+                excel_entities = []
+                for rfq in rfqs:
+                    for product in rfq.get('products', []):
+                        entity = {
+                            'description': product.get('description', ''),
+                            'quantity': product.get('quantity'),
+                            'unitofMeasures': product.get('unitofMeasures', 'pcs'),
+                            'brand': product.get('brand', ''),
+                            'remarks': product.get('remarks', '')
+                        }
+                        excel_entities.append(entity)
+                
+                # Store both formats in session
+                session.workflow_state = session.workflow_state or {}
+                session.workflow_state['extracted_entities'] = excel_entities
+                session.workflow_state['structured_rfqs'] = rfqs  # New structured format
+            
             session.workflow_state['excel_source'] = True
             session.workflow_state['excel_filename'] = processing_result.get('filename', '')
             
             # Generate processing response
+            total_products = processing_result.get('processing_summary', {}).get('total_products_extracted', len(excel_entities))
             context = {
                 'excel_data': processing_result,
                 'workflow_type': 'excel_rfq_upload',
                 'conversation_stage': 'excel_processing',
-                'total_items': processing_result.get('total_items', 0),
+                'total_items': total_products,
                 'filename': processing_result.get('filename', '')
             }
             
             processing_response = await self.response_helpers.generate_contextual_response(
                 context,
-                [f"I found {processing_result.get('total_items', 0)} items from your Excel file. Now I need some additional details to create your RFQ."],
+                [f"I found {total_products} items from your Excel file. Now I need some additional details to create your RFQ."],
                 "excel_processing"
             )
             
@@ -198,22 +221,47 @@ class ExcelMessageProcessor:
             return await self._handle_incomplete_excel(user, session, {"excel_data": processing_result})
     
     async def _handle_incomplete_excel(self, user: User, session: ConversationSession, excel_context: Dict) -> Dict[str, Any]:
-        """Handle incomplete Excel files by adding to entities and asking for missing common data."""
+        """Handle incomplete Excel files using new streamlined format."""
         try:
             processing_result = excel_context['excel_data']
-            items = processing_result.get('items', [])
             
-            # Convert Excel items to entities format even if incomplete
-            excel_entities = self._convert_excel_to_entities(items)
+            # Use new structured format if available
+            rfqs = processing_result.get('rfqs', [])
+            if rfqs:
+                # Convert structured RFQs to entities for compatibility
+                excel_entities = []
+                for rfq in rfqs:
+                    for product in rfq.get('products', []):
+                        entity = {
+                            'description': product.get('description', ''),
+                            'quantity': product.get('quantity'),
+                            'unitofMeasures': product.get('unitofMeasures', 'pcs'),
+                            'brand': product.get('brand', ''),
+                            'remarks': product.get('remarks', '')
+                        }
+                        excel_entities.append(entity)
+                
+                # Check if global fields are missing from RFQs
+                missing_common_fields = []
+                for rfq in rfqs:
+                    if not rfq.get('deliveryDate'):
+                        missing_common_fields.append('delivery_date')
+                    if not rfq.get('pincode'):
+                        missing_common_fields.append('location')
+                    break  # Check only first RFQ since global fields apply to all
+            else:
+                # Fallback to legacy processing
+                items = processing_result.get('items', [])
+                excel_entities = self._convert_excel_to_entities(items)
+                missing_common_fields = self._identify_missing_common_fields(items)
             
             # Store entities in session
             session.workflow_state = session.workflow_state or {}
             session.workflow_state['extracted_entities'] = excel_entities
             session.workflow_state['excel_source'] = True
             session.workflow_state['excel_filename'] = processing_result.get('filename', '')
-            
-            # Identify missing common fields (delivery date, location)
-            missing_common_fields = self._identify_missing_common_fields(items)
+            if rfqs:
+                session.workflow_state['structured_rfqs'] = rfqs
             
             if missing_common_fields:
                 # Ask for missing common data
@@ -223,12 +271,13 @@ class ExcelMessageProcessor:
                 if 'location' in missing_common_fields:
                     questions.append("What is your delivery location (pincode)?")
                 
+                total_items = processing_result.get('processing_summary', {}).get('total_products_extracted', len(excel_entities))
                 context = {
                     'excel_data': processing_result,
                     'workflow_type': 'excel_rfq_upload',
                     'conversation_stage': 'excel_completion',
                     'missing_fields': missing_common_fields,
-                    'total_items': processing_result.get('total_items', 0),
+                    'total_items': total_items,
                     'filename': processing_result.get('filename', '')
                 }
                 
@@ -240,29 +289,8 @@ class ExcelMessageProcessor:
                 
                 return {"status": "excel_missing_common_data", "continue_with_purchase_intent": True}
             else:
-                # Generate reupload instructions for missing item-specific fields
-                missing_fields = excel_context.get('missing_fields', [])
-                instructions = ExcelHelpers.generate_reupload_instructions(missing_fields, excel_context)
-                
-                context = {
-                    'excel_data': processing_result,
-                    'workflow_type': 'excel_rfq_upload',
-                    'conversation_stage': 'excel_completion',
-                    'missing_fields': missing_fields,
-                    'total_items': processing_result.get('total_items', 0),
-                    'filename': processing_result.get('filename', ''),
-                    'completeness': excel_context.get('completeness', 0)
-                }
-                
-                clarification_response = await self.openai_service.generate_clarification_response(
-                    instructions, 
-                    excel_context.get('completeness', 0), 
-                    context
-                )
-                
-                await self.whatsapp_service.send_message(user.phone_number, clarification_response)
-                
-                return {"status": "excel_reupload_required", "response": "excel_reupload_instructions_sent"}
+                # All required data is present, proceed with RFQ creation
+                return {"status": "redirect_to_multiple_flow", "entities": excel_entities, "continue_with_purchase_intent": True}
             
         except Exception as e:
             logger.error(f"Error handling incomplete Excel: {e}")

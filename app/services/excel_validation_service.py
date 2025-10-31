@@ -39,7 +39,6 @@ class ExcelValidationService:
     # Business validation rules
     REQUIRED_FIELDS = ['ItemDescription', 'Quantity']
     INVALID_UOM_VALUES = {'each', 'per item', 'item', 'piece'}
-    SPECIAL_CHARS_PATTERN = r'[^a-zA-Z0-9\s\-\._()]'
     
     async def validate_excel_file_from_url(self, file_url: str, filename: str) -> Dict[str, Any]:
         """
@@ -422,16 +421,9 @@ class ExcelValidationService:
                     'error_type': 'non_english_headers'
                 }
             
-            # Check 5: Special characters in data
-            special_char_issues = self._validate_special_characters(df)
-            if special_char_issues:
-                return {
-                    'valid': False,
-                    'error': f"Invalid characters found: {'; '.join(special_char_issues[:3])}",
-                    'error_type': 'special_characters_found'
-                }
+
             
-            # Check 6: Data type consistency
+            # Check 5: Data type consistency
             data_issues = self._validate_data_types(df)
             if data_issues:
                 return {
@@ -489,21 +481,3 @@ class ExcelValidationService:
         
         return issues
     
-    def _validate_special_characters(self, df: pd.DataFrame) -> List[str]:
-        """Validate data for problematic special characters."""
-        issues = []
-        
-        for column in df.columns:
-            col_data = df[column].dropna()
-            if col_data.empty:
-                continue
-            
-            for idx, value in enumerate(col_data.head(10)):
-                if isinstance(value, str):
-                    # Check for problematic characters
-                    if re.search(self.SPECIAL_CHARS_PATTERN, value):
-                        special_chars = re.findall(self.SPECIAL_CHARS_PATTERN, value)
-                        issues.append(f"Column '{column}' row {idx+1}: contains special characters {set(special_chars)}")
-                        break  # Only report first occurrence per column
-        
-        return issues
