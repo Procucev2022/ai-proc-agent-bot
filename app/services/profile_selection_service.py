@@ -1142,7 +1142,7 @@ class ProfileSelectionService:
                 "Would you like to register as:\n"
                 "1. Buyer (to create RFQs and purchase items)\n"
                 "2. Seller (to respond to RFQs and sell items)\n\n"
-                "Please let me know which type of account you'd like to create."
+                "Please reply with the number (1, 2) or type Buyer, Seller, or Exit to continue."
             )
 
             await self.whatsapp_service.send_message(user_phone, message)
