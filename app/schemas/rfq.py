@@ -28,6 +28,12 @@ class RFQItemSchema(BaseModel):
     
     @validator('quantity')
     def validate_quantity(cls, v):
+        # Convert string to float if needed
+        if isinstance(v, str):
+            try:
+                v = float(v)
+            except ValueError:
+                raise ValueError('Quantity must be a valid number')
         if v <= 0:
             raise ValueError('Quantity must be greater than 0')
         return v
@@ -123,7 +129,7 @@ class RFQCreateRequestSchema(BaseModel):
     """
     # Required fields
     created_by: str = Field(..., alias="createdBy", description="User who created the RFQ")
-    project_desc: str = Field(..., alias="projectDesc", description="Project description")
+    project_desc: Optional[str] = Field(None, alias="projectDesc", description="Project description (auto-populated by system)")
     delivery_date: datetime = Field(..., alias="deliveryDate", description="Required delivery date")
     division: Optional[str] = Field(None, description="Division/department (auto-populated via categorization)")
     user: str = Field(..., description="User ID")
@@ -295,7 +301,7 @@ class RFQValidationSchema(BaseModel):
     field collection and progress tracking. Supports division auto-population.
     """
     # Core mandatory fields
-    project_desc: Optional[str] = Field(None, description="Project description")
+    project_desc: Optional[str] = Field(None, description="Project description (auto-populated by system)")
     delivery_date: Optional[datetime] = Field(None, description="Required delivery date")
     division: Optional[str] = Field(None, description="Division/department")
     user_id: Optional[str] = Field(None, description="User ID")
@@ -321,11 +327,10 @@ class RFQValidationSchema(BaseModel):
     def get_missing_mandatory_fields(self) -> List[str]:
         """Return list of missing mandatory fields based on GMT API requirements."""
         missing = []
-        
+
         # User-providable mandatory fields (from GMT API)
-        if not self.project_desc:
-            missing.append("project_desc")
-        if not self.delivery_date and not self.date_validation_error:
+        # Note: project_desc is now auto-populated by system, not required from user
+        if not self.delivery_date or self.date_validation_error:
             missing.append("delivery_date")
         
         # Division is now auto-populated via categorization service - not required from user
@@ -337,8 +342,17 @@ class RFQValidationSchema(BaseModel):
             for i, item in enumerate(self.items):
                 if not item.get("description"):
                     missing.append(f"item_{i}_description")
-                if not item.get("quantity") or item.get("quantity") <= 0:
+                quantity = item.get("quantity")
+                if not quantity:
                     missing.append(f"item_{i}_quantity")
+                else:
+                    # Convert to float for comparison if it's a string
+                    try:
+                        quantity_val = float(quantity) if isinstance(quantity, str) else quantity
+                        if quantity_val <= 0:
+                            missing.append(f"item_{i}_quantity")
+                    except (ValueError, TypeError):
+                        missing.append(f"item_{i}_quantity")
         
         if not self.delivery_locations:
             missing.append("delivery_locations")
@@ -370,12 +384,10 @@ class RFQValidationSchema(BaseModel):
     
     def get_completeness_percentage(self) -> float:
         """Calculate completeness percentage based on filled fields."""
-        total_fields = 10  # 7 mandatory + 3 optional
+        total_fields = 9  # 6 mandatory + 3 optional (project_desc is auto-populated)
         filled_fields = 0
-        
-        # Check mandatory fields
-        if self.project_desc:
-            filled_fields += 1
+
+        # Check mandatory fields (project_desc excluded as it's auto-populated)
         if self.delivery_date:
             filled_fields += 1
         if self.division:
@@ -404,67 +416,91 @@ class RFQValidationSchema(BaseModel):
         return len(self.get_missing_mandatory_fields()) == 0
     
     def get_mandatory_questions(self) -> List[str]:
-        """Generate user-friendly questions for missing mandatory fields."""
+        """Generate user-friendly questions for missing mandatory fields with smart field grouping."""
         missing = self.get_missing_mandatory_fields()
         questions = []
-        
-        # Question mapping for better user experience
-        question_map = {
-            "project_description": "What is the project description or item name?",
+
+        # Field groups for related fields that should be asked together
+        FIELD_GROUPS = {
+            "delivery_address": {
+                "fields": ["delivery_location_0_state", "delivery_location_0_city", "delivery_location_0_pincode"],
+                "group_question": "Where should the items be delivered? Please provide the complete address (State, City, and Pincode)",
+                "individual_questions": {
+                    "delivery_location_0_state": "What is the delivery state?",
+                    "delivery_location_0_city": "What is the delivery city?",
+                    "delivery_location_0_pincode": "What is the delivery pincode?"
+                }
+            },
+            "item_details": {
+                "fields": ["item_0_description", "item_0_quantity"],
+                "group_question": "What are the item details? Please provide the description and quantity needed",
+                "individual_questions": {
+                    "item_0_description": "What is the item description?",
+                    "item_0_quantity": "How many items do you need (quantity)?"
+                }
+            }
+        }
+
+        # Question mapping for standalone fields
+        standalone_question_map = {
             "delivery_date": "What is the required delivery date?",
             "division_confirmation": "Please confirm the division for this request",
             "division_selection": "Which division or department is this for?",
-            "items_details": "What are the item details?",
-            "item_description": "What is the item description?",
-            "item_quantity": "How many items do you need (quantity)?",
-            "delivery_location": "Where should the items be delivered? (Please provide State, City, and Pincode)",
-            "delivery_state": "What is the delivery state?",
-            "delivery_city": "What is the delivery city?", 
-            "delivery_pincode": "What is the delivery pincode?"
+            "items": "What items do you need for your RFQ?",
+            "delivery_locations": "Where should the items be delivered?"
         }
-        
-        if "project_desc" in missing:
-            questions.append(question_map["project_description"])
-        
-        if "delivery_date" in missing and not self.date_validation_error:
-            questions.append(question_map["delivery_date"])
-        
-        if "division_confirmation" in missing:
-            questions.append(question_map["division_confirmation"])
-        elif "division" in missing:
-            questions.append(question_map["division_selection"])
-        
-        if "items" in missing:
-            questions.append(question_map["items_details"])
-        
-        # Handle specific item field questions
-        for missing_field in missing:
-            if missing_field.startswith("item_") and "_description" in missing_field:
-                questions.append(question_map["item_description"])
-            elif missing_field.startswith("item_") and "_quantity" in missing_field:
-                questions.append(question_map["item_quantity"])
-        
-        # Handle specific item field questions
-        for missing_field in missing:
-            if missing_field.startswith("item_") and "_description" in missing_field:
-                questions.append("item_description")
-            elif missing_field.startswith("item_") and "_quantity" in missing_field:
-                questions.append("item_quantity")
-        
-        if "delivery_locations" in missing:
-            questions.append(question_map["delivery_location"])
-        
-        # Handle specific delivery location field questions
-        for missing_field in missing:
-            if missing_field.startswith("delivery_location_") and "_state" in missing_field:
 
-                questions.append(question_map["delivery_state"])
-            elif missing_field.startswith("delivery_location_") and "_city" in missing_field:
-                questions.append(question_map["delivery_city"])
-            elif missing_field.startswith("delivery_location_") and "_pincode" in missing_field:
-                questions.append(question_map["delivery_pincode"])
+        # Process field groups first
+        processed_fields = set()
 
-        
+        for group_name, group_config in FIELD_GROUPS.items():
+            group_fields = group_config["fields"]
+            missing_in_group = [f for f in missing if f in group_fields]
+
+            if missing_in_group:
+                if len(missing_in_group) >= 2:
+                    # Multiple fields missing in group - ask group question
+                    questions.append(group_config["group_question"])
+                    processed_fields.update(group_fields)
+                else:
+                    # Only one field missing - ask specific question
+                    missing_field = missing_in_group[0]
+                    questions.append(group_config["individual_questions"][missing_field])
+                    processed_fields.add(missing_field)
+
+        # Process standalone fields
+        for missing_field in missing:
+            if missing_field in processed_fields:
+                continue
+
+            if missing_field == "delivery_date":
+                questions.append(standalone_question_map["delivery_date"])
+            elif missing_field == "division_confirmation":
+                questions.append(standalone_question_map["division_confirmation"])
+            elif missing_field == "division":
+                questions.append(standalone_question_map["division_selection"])
+            elif missing_field == "items":
+                questions.append(standalone_question_map["items"])
+            elif missing_field == "delivery_locations":
+                questions.append(standalone_question_map["delivery_locations"])
+            else:
+                # Handle dynamic field names that don't match exact patterns
+                if missing_field.startswith("item_") and "_description" in missing_field:
+                    if not any("item details" in q.lower() for q in questions):
+                        questions.append("What is the item description?")
+                elif missing_field.startswith("item_") and "_quantity" in missing_field:
+                    if not any("quantity" in q.lower() for q in questions):
+                        questions.append("How many items do you need (quantity)?")
+                elif missing_field.startswith("delivery_location_") and "_state" in missing_field:
+                    if not any("address" in q.lower() or "delivered" in q.lower() for q in questions):
+                        questions.append("What is the delivery state?")
+                elif missing_field.startswith("delivery_location_") and "_city" in missing_field:
+                    if not any("address" in q.lower() or "delivered" in q.lower() for q in questions):
+                        questions.append("What is the delivery city?")
+                elif missing_field.startswith("delivery_location_") and "_pincode" in missing_field:
+                    if not any("address" in q.lower() or "delivered" in q.lower() for q in questions):
+                        questions.append("What is the delivery pincode?")
+
         # Remove duplicates while preserving order
         return list(dict.fromkeys(questions))
     
@@ -473,15 +509,9 @@ class RFQValidationSchema(BaseModel):
     def get_optional_questions(self) -> List[str]:
         """Generate questions for optional fields."""
         questions = []
-        
-        if not self.preferred_brand and self.items:
-            questions.append("Do you have any preferred brand or specifications?")
-        
-        if not self.remarks:
-            questions.append("Do you have any additional remarks or special requirements?")
-            
+
         if not self.attachments:
-            questions.append("Would you like to add any specification documents or images to your RFQ? You can send an image now or reply 'no' to continue.")
+            questions.append("Would you like to add any specification documents or images to your RFQ? ")
         
         return questions
     
@@ -529,10 +559,10 @@ class RFQValidationSchema(BaseModel):
 class RFQUpdateSchema(BaseModel):
     """
     Schema for updating existing RFQ records.
-    
+
     Allows partial updates to RFQ fields during the collection process.
     """
-    project_desc: Optional[str] = Field(None, description="Project description")
+    project_desc: Optional[str] = Field(None, description="Project description (auto-populated by system)")
     delivery_date: Optional[datetime] = Field(None, description="Required delivery date")
     division: Optional[str] = Field(None, description="Division/department")
     remarks: Optional[str] = Field(None, description="Additional remarks")

@@ -28,16 +28,39 @@ PINCODE_REGEX = re.compile(r"^\d{6}$")
 GSTIN_REGEX = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$")
 
 
-def sanitize_phone_number(phone: str) -> str:
-    """Sanitize phone number by removing non-digit characters."""
+def normalize_phone_number(phone: str, default_country_code: str = "91") -> str:
+    """Normalize and format phone number to +<countrycode><number> format.
+    
+    - Strips spaces, dashes, parentheses, dots
+    - Ensures +<countrycode> prefix
+    - Defaults to +91 for 10-digit numbers (India)
+    """
     if not phone:
-        return phone
-    # Remove spaces, dashes, plus signs, parentheses
-    sanitized = re.sub(r'[\s\-\+\(\)\.]', '', phone)
-    # Remove country code if present (91 for India)
-    if sanitized.startswith('91') and len(sanitized) == 12:
-        sanitized = sanitized[2:]
-    return sanitized
+        return ""
+
+    # Remove unwanted characters
+    phone_clean = re.sub(r'[\s\-()."\']', '', phone.strip())
+
+
+    # If starts with +, assume already correct
+    if phone_clean.startswith('+'):
+        return phone_clean
+
+    # If starts with country code without +, add +
+    if phone_clean.startswith(default_country_code):
+        return f"+{phone_clean}"
+
+    # If 10-digit number, assume local number and add country code
+    if len(phone_clean) == 10 and phone_clean.isdigit():
+        return f"+{default_country_code}{phone_clean}"
+
+    # Default: just prefix with + if missing
+    if not phone_clean.startswith('+'):
+        return f"+{default_country_code}{phone_clean}"
+
+    return phone_clean
+
+
 
 
 # -------------------------------
@@ -46,19 +69,30 @@ def sanitize_phone_number(phone: str) -> str:
 
 class BuyerRegistrationSchema(BaseModel):
     name: str = Field(..., description="Full name")
-    company_name: str = Field(..., description="Company name")
+    companyName: str = Field(..., description="Company name")
     email: str = Field(..., description="Organization email")
-    pincode: str = Field(..., description="Pincode")
+    zipCode: str = Field(..., description="Pincode")
     organizationPhonenumber: Optional[str] = Field(None, description="Phone number")
-    whatsapp: Optional[bool] = Field(None, description="WhatsApp flag")
+    whatsApp: Optional[bool] = Field(None, description="WhatsApp flag")
+    source_type: str = "W"
+
+    @field_validator("name")
+    def validate_name(cls, v: str) -> str:
+        v = v.strip().title()
+        if not re.match(r"^[A-Za-z\s.]+$", v):
+            raise ValueError("Name must contain only letters and spaces")
+        return v
+
+    @field_validator("companyName")
+    def validate_company(cls, v: str) -> str:
+        v = v.strip().title()
+        return v
 
     @field_validator("email")
     def validate_email(cls, v: str) -> str:
         if not v or len(v.strip()) == 0:
             raise ValueError("Email cannot be empty")
         v = v.strip().lower()
-        if len(v) > 254:  # RFC 5321 limit
-            raise ValueError("Email address too long")
         if not EMAIL_REGEX.match(v):
             raise ValueError("Invalid email format")
         return v
@@ -67,36 +101,57 @@ class BuyerRegistrationSchema(BaseModel):
     def validate_phone(cls, v: Optional[str]) -> Optional[str]:
         if not v:
             return v
-        sanitized = sanitize_phone_number(v)
+        sanitized = normalize_phone_number(v)
         if not PHONE_REGEX.match(sanitized):
             raise ValueError("Invalid phone number format")
         return sanitized
 
-    @field_validator("pincode")
-    def validate_pincode(cls, v: str) -> str:
+    @field_validator("zipCode")
+    def validate_zipcode(cls, v: str) -> str:
         if not PINCODE_REGEX.match(v):
             raise ValueError("Pincode must be 6 digits")
         return v
 
 
 class SellerRegistrationSchema(BaseModel):
-    full_name: str
-    company_name: str
-    email: str
-    location: str
-    pincode: str
-    gstin: str
-    products_services: str
-    organizationPhonenumber: Optional[str] = None
-    whatsapp: Optional[bool] = None
+    name: str = Field(..., description="Full name")
+    companyName: str = Field(..., description="Company name")
+    email: str = Field(..., description="Organization email")
+    address: str = Field(..., description="Location")
+    zipCode: str = Field(..., description="Pincode")
+    gstin: str = Field(..., description="GSTIN number")
+    details: str = Field(..., description="Products or Services offered")
+    organizationPhonenumber: Optional[str] = Field(None, description="Phone number")
+    whatsApp: Optional[bool] = Field(None, description="WhatsApp flag")
+    source_type: str = "W"
+
+    @field_validator("name")
+    def validate_name(cls, v: str) -> str:
+        v = v.strip().title()
+        if not re.match(r"^[A-Za-z\s.]+$", v):
+            raise ValueError("Name must contain only letters and spaces")
+        return v
+
+    @field_validator("companyName")
+    def validate_company(cls, v: str) -> str:
+        v = v.strip().title()
+        return v
+
+    @field_validator("address")
+    def validate_address(cls, v: str) -> str:
+        v = v.strip().title()
+        return v
+
+    @field_validator("details")
+    def validate_details(cls, v: str) -> str:
+        v = v.strip()
+        return v
 
     @field_validator("email")
     def validate_email(cls, v: str) -> str:
         if not v or len(v.strip()) == 0:
             raise ValueError("Email cannot be empty")
         v = v.strip().lower()
-        if len(v) > 254:  # RFC 5321 limit
-            raise ValueError("Email address too long")
         if not EMAIL_REGEX.match(v):
             raise ValueError("Invalid email format")
         return v
@@ -105,19 +160,20 @@ class SellerRegistrationSchema(BaseModel):
     def validate_phone(cls, v: Optional[str]) -> Optional[str]:
         if not v:
             return v
-        sanitized = sanitize_phone_number(v)
+        sanitized = normalize_phone_number(v)
         if not PHONE_REGEX.match(sanitized):
             raise ValueError("Invalid phone number format")
         return sanitized
 
-    @field_validator("pincode")
-    def validate_pincode(cls, v: str) -> str:
+    @field_validator("zipCode")
+    def validate_zipcode(cls, v: str) -> str:
         if not PINCODE_REGEX.match(v):
             raise ValueError("Pincode must be 6 digits")
         return v
 
     @field_validator("gstin")
     def validate_gstin(cls, v: str) -> str:
+        v = v.strip().upper()
         if not GSTIN_REGEX.match(v):
             raise ValueError("Invalid GSTIN format")
         return v
@@ -131,12 +187,12 @@ class APIUserSchema(BaseModel):
     phone: Optional[str] = None
     companyName: Optional[str] = None
     uniqueId: Optional[str] = None
-    org_uuid: Optional[str] = None
-    orgUuid: Optional[str] = None
     orgId: Optional[str] = None
+    verificationStatus: Optional[str] = None
+    approved: Optional[bool] = None
     
 
-class UserDetailsSchema(BaseModel):
+class User(BaseModel):
     id: str
     name: Optional[str] = None
     email: Optional[str] = None
@@ -147,33 +203,48 @@ class UserDetailsSchema(BaseModel):
     company_name: Optional[str] = None
     unique_id: Optional[str] = None
     org_id: Optional[str] = None
+    verification_status: Optional[str] = None
+    approved: Optional[bool] = None
 
     @classmethod
-    def from_api_response(cls, api_data: dict) -> "UserDetailsSchema":
-        """Create UserDetailsSchema from API response."""
+    def from_api_response(cls, api_data: dict) -> "User":
+        """Create User from API response."""
         # Debug logging to see raw API data
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"Creating UserDetailsSchema from API data: {api_data}")
+        
+        # Ensure we're working with a dict
+        if not isinstance(api_data, dict):
+            if hasattr(api_data, 'dict'):
+                api_data = api_data.dict()
+            elif hasattr(api_data, '__dict__'):
+                api_data = api_data.__dict__
+            else:
+                raise ValueError("api_data must be a dictionary or have dict() method")
+        
+        logger.info(f"Creating User from API data: {api_data}")
 
         # Determine role
-        match api_data.get("selfClient"):
-            case True:
-                role = UserRole.BUYER
-            case False:
-                role = UserRole.SELLER
-            case _:
-                role = UserRole.UNKNOWN
+        self_client_value = api_data.get("selfClient")
+        if self_client_value is True:
+            role = UserRole.BUYER
+        elif self_client_value is False:
+            role = UserRole.SELLER
+        else:
+            role = UserRole.UNKNOWN
 
         # Handle both 'id' and 'userId' fields for Redis compatibility
         user_id = str(api_data.get("id") or api_data.get("userId", ""))
         if not user_id:
             raise ValueError("User ID is required")
 
-        # Sanitize phone number if present
+        # Keep original phone format from API (with country code)
         phone = api_data.get("phone")
-        if phone:
-            phone = sanitize_phone_number(phone)
+        # Don't sanitize - keep the original format for session consistency
+        
+        # Set is_registered to True by default
+        verification_status = api_data.get("verificationStatus") or "PENDING_EMAIL_VERIFICATION"
+        is_registered = True
 
         return cls(
             id=user_id,
@@ -181,15 +252,46 @@ class UserDetailsSchema(BaseModel):
             email=api_data.get("username"),
             self_client=api_data.get("selfClient", False),
             role=role,
-            is_registered=bool(user_id),
+            is_registered=is_registered,
             phone_number=phone,
             company_name=api_data.get("companyName"),
             unique_id=api_data.get("uniqueId"),
-            org_id=api_data.get("org_uuid") or api_data.get("orgUuid") or api_data.get("orgId") or api_data.get("organizationId")
+            org_id=api_data.get("orgId"),
+            verification_status=verification_status,
+            approved=api_data.get("approved")
         )
 
     @classmethod
-    def invalid_user(cls, user_phone: str) -> "UserDetailsSchema":
+    def from_mixed_data(cls, data) -> "User":
+        """Create User from either API response or User dict format."""
+        # Handle None or empty data
+        if not data:
+            raise ValueError("Cannot create User from empty data")
+        
+        # If it's already a User object, return it
+        if isinstance(data, cls):
+            return data
+            
+        # Convert to dict if it's an object with dict method or __dict__
+        if not isinstance(data, dict):
+            if hasattr(data, 'dict'):
+                data = data.dict()
+            elif hasattr(data, '__dict__'):
+                data = data.__dict__
+            else:
+                raise ValueError("Cannot convert data to dictionary format")
+            
+        # Check if it's already in User format (has 'name', 'email' fields)
+        if 'name' in data and 'email' in data:
+            # Set is_registered to True by default
+            user_data = data.copy()
+            user_data['is_registered'] = True
+            return cls(**user_data)
+        # Otherwise treat as API response format
+        return cls.from_api_response(data)
+
+    @classmethod
+    def invalid_user(cls, user_phone: str) -> "User":
         """Returns a dummy user for test environments or invalid cases."""
         return cls(
             id="1428bbb9-a0ba-459d-b1e8-23d7c49455e8",
@@ -199,7 +301,5 @@ class UserDetailsSchema(BaseModel):
             role=UserRole.UNKNOWN,
             is_registered=True,
             phone_number=user_phone,
-            company_name="mohap ai solutin",
-
-           
+            company_name="mohap ai solution"
         )

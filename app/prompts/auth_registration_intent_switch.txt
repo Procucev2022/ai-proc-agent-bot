@@ -1,0 +1,16 @@
+User message: "{message}"
+
+The user was presented with three options:
+1. Switch to existing {target_role} account
+2. Register new {target_role} account
+3. Continue with current {current_role} account
+
+Context: {context_type}
+
+Analyze their response and return only one of:
+- "switch_existing" if they want option 1
+- "register_new" if they want option 2
+- "continue_current" if they want option 3
+- "unclear" if ambiguous
+
+Focus on the user's intent rather than exact wording.

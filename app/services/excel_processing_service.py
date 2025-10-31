@@ -6,7 +6,8 @@ import logging
 import io
 import pandas as pd
 import base64
-from typing import Dict, Any, List
+import re
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -22,14 +23,15 @@ class ExcelProcessingService:
         self.target_columns = ['S.No', 'ItemDescription', 'Specification', 'Uom', 'Quantity', 'Remarks']
     
     async def process_excel_file(self, content: bytes, filename: str) -> Dict[str, Any]:
-        """Process Excel file and extract items data using OpenAI for intelligent analysis."""
+        """Process Excel file directly to multiple RFQ format using streamlined OpenAI processing."""
+        logger.info(f"[EXCEL-PROCESS] Starting streamlined processing for {filename}, size: {len(content)} bytes")
         try:
-            # Validate file size (10MB limit)
-            max_size = 10 * 1024 * 1024  # 10MB in bytes
+            # Validate file size (3MB limit)
+            max_size = 3 * 1024 * 1024  # 3MB in bytes
             if len(content) > max_size:
                 return {
                     'success': False,
-                    'error': f'File size ({len(content)} bytes) exceeds maximum allowed size of {max_size} bytes (10MB)'
+                    'error': f'File size ({len(content)} bytes) exceeds maximum allowed size of {max_size} bytes (3MB)'
                 }
             
             # Validate file format
@@ -37,6 +39,14 @@ class ExcelProcessingService:
                 return {
                     'success': False,
                     'error': 'Invalid Excel file format. Please upload a valid .xlsx or .xls file'
+                }
+            
+            # Validate Excel structure (row count and merged cells) before processing
+            structure_validation = await self._validate_excel_structure(content)
+            if not structure_validation['valid']:
+                return {
+                    'success': False,
+                    'error': structure_validation['error']
                 }
             
             # Read Excel file
@@ -70,69 +80,97 @@ class ExcelProcessingService:
                 }
             
             logger.info(f"DEBUG: Excel file shape: {df.shape}")
-            logger.info(f"DEBUG: First 3 rows: {df.head(3).values.tolist()}")
             
-            # Get first 5 rows for header detection
-            sample_rows = df.head(5).values.tolist()
+            # Use new streamlined OpenAI processing
+            processing_result = await self._process_excel_with_openai(df, filename)
             
-            # Use OpenAI to detect header row
-            header_result = self.openai_service.detect_excel_header_row(sample_rows)
-            header_row_index = header_result.get('header_row_index')
+            if not processing_result.get('success'):
+                return {
+                    'success': False,
+                    'error': processing_result.get('error', 'Failed to process Excel data')
+                }
             
-            logger.info(f"DEBUG: Header detection result: {header_result}")
+            # Extract results from OpenAI processing
+            rfqs = processing_result.get('rfqs', [])
+            processing_summary = processing_result.get('processing_summary', {})
             
-            if header_row_index is None or header_row_index < 0:
-                # No clear header found, use first row as data
-                headers = [f"Column_{i+1}" for i in range(df.shape[1])]
-                data_df = df
-            else:
-                # Extract headers and data
-                headers = df.iloc[header_row_index].astype(str).tolist()
-                data_df = df.iloc[header_row_index + 1:].reset_index(drop=True)
+            # Convert to legacy format for compatibility
+            items = []
+            for rfq in rfqs:
+                for product in rfq.get('products', []):
+                    # Convert to legacy item format
+                    item = {
+                        'S.No': len(items) + 1,
+                        'ItemDescription': product.get('description', ''),
+                        'Specification': product.get('brand', ''),
+                        'Uom': product.get('unitofMeasures', 'pcs'),
+                        'Quantity': product.get('quantity'),
+                        'Remarks': product.get('remarks', '')
+                    }
+                    items.append(item)
             
-            # Clean up headers by trimming whitespace
-            headers = [header.strip() for header in headers]
-            
-            logger.info(f"DEBUG: Extracted headers: {headers}")
-            logger.info(f"DEBUG: Data shape after header extraction: {data_df.shape}")
-            
-            # Use OpenAI to map columns to target format
-            mapping_result = self.openai_service.map_excel_columns(headers)
-            column_mapping = mapping_result.get('column_mapping', {})
-            
-            logger.info(f"DEBUG: Column mapping result: {mapping_result}")
-            logger.info(f"DEBUG: Column mapping: {column_mapping}")
-            
-            # Extract items using the mapping
-            items = self._extract_items_with_mapping(data_df, headers, column_mapping)
-            
-            logger.info(f"DEBUG: Extracted {len(items)} items")
-            if items:
-                logger.info(f"DEBUG: First item: {items[0]}")
-            
-            # Validate items for GMT API requirements
-            validation_result = self._validate_items_for_gmt_api(items)
+            logger.info(f"[EXCEL-PROCESS] Processed {len(items)} items from {len(rfqs)} RFQs")
             
             return {
                 'success': True,
                 'filename': filename,
                 'items': items,
                 'total_items': len(items),
-                'headers': headers,
-                'column_mapping': column_mapping,
-                'header_row_index': header_row_index,
-                'header_detection': header_result,
-                'mapping_details': mapping_result,
-                'validation_result': validation_result,
-                'summary': f"Found {len(items)} items in {filename}"
+                'rfqs': rfqs,  # New structured format
+                'processing_summary': processing_summary,
+                'confidence': processing_result.get('confidence', 85),
+                'summary': f"Processed {processing_summary.get('total_products_extracted', len(items))} products from {filename}"
             }
             
         except Exception as e:
-            logger.error(f"Error processing Excel file: {e}")
+            logger.error(f"[EXCEL-PROCESS] Error processing Excel file {filename}: {e}")
+            import traceback
+            logger.error(f"[EXCEL-PROCESS] Stack trace: {traceback.format_exc()}")
             return {
                 'success': False,
                 'error': f'Failed to process Excel: {str(e)}'
             }
+    
+    async def _process_excel_with_openai(self, df: pd.DataFrame, filename: str) -> Dict[str, Any]:
+        """Process Excel DataFrame directly using OpenAI for streamlined RFQ creation."""
+        logger.info(f"[EXCEL-PROCESS] Starting OpenAI streamlined processing for {filename}")
+        try:
+            # Convert DataFrame to dict format for OpenAI processing
+            excel_data = df.fillna('').astype(str).to_dict(orient='records')
+            
+            # Create readable string for OpenAI input
+            excel_text = "\n".join([f"Row {i+1}: {row}" for i, row in enumerate(excel_data[:50])])  # Limit to 50 rows
+            
+            logger.info(f"[EXCEL-PROCESS] Sending {min(len(excel_data), 50)} rows to OpenAI for processing")
+            
+            # Use OpenAI to process Excel data directly
+            result = await self.openai_service.process_excel_to_rfqs(excel_text, filename)
+            
+            if result.get('success'):
+                logger.info(f"[EXCEL-PROCESS] OpenAI processing successful: {result.get('processing_summary', {})}")
+                return result
+            else:
+                logger.error(f"[EXCEL-PROCESS] OpenAI processing failed: {result.get('error')}")
+                return {
+                    'success': False,
+                    'error': result.get('error', 'OpenAI processing failed')
+                }
+                
+        except Exception as e:
+            logger.error(f"[EXCEL-PROCESS] Error in OpenAI processing: {e}")
+            return {
+                'success': False,
+                'error': f'OpenAI processing error: {str(e)}'
+            }
+    
+    def _create_fallback_mapping(self, headers: List[str]) -> Dict[str, str]:
+        """Create fallback column mapping for exact matches."""
+        mapping = {}
+        for header in headers:
+            if header in self.target_columns:
+                mapping[header] = header
+        logger.info(f"[EXCEL-PROCESS] Created fallback mapping: {mapping}")
+        return mapping
     
     def _is_valid_excel_file(self, content: bytes, filename: str) -> bool:
         """Validate if the file is a valid Excel file."""
@@ -169,9 +207,16 @@ class ExcelProcessingService:
             logger.error(f"Error validating Excel file: {e}")
             return False
     
-    def _extract_items_with_mapping(self, df: pd.DataFrame, headers: List[str], column_mapping: Dict[str, str]) -> List[Dict[str, Any]]:
+    def _extract_items_with_mapping(self, df: pd.DataFrame, headers: List[str], column_mapping: Dict[str, str]) -> Dict[str, Any]:
         """Extract items using the column mapping."""
+        logger.info(f"[EXCEL-EXTRACT] Starting item extraction with {len(headers)} headers and {len(column_mapping)} mappings")
+        logger.info(f"[EXCEL-EXTRACT] Headers: {headers}")
+        logger.info(f"[EXCEL-EXTRACT] Mappings: {column_mapping}")
         items = []
+        removed_rows = 0
+        
+        # Define mandatory fields
+        mandatory_fields = ['Specification', 'Quantity']
         
         try:
             for index, row in df.iterrows():
@@ -190,15 +235,31 @@ class ExcelProcessingService:
                         
                         if col_index < len(row):
                             value = row.iloc[col_index]
-                            logger.info(f"DEBUG: Extracting header '{header}' -> '{target_col}', value: '{value}'")
+                            logger.debug(f"[EXCEL-EXTRACT] Extracting header '{header}' -> '{target_col}', value: '{value}'")
                             if pd.notna(value) and str(value).strip():
-                                item[target_col] = str(value).strip()
+                                value_str = str(value).strip()
+                                item[target_col] = value_str
                                 has_data = True
                             else:
-                                logger.warning(f"DEBUG: Empty/NaN value for '{header}' -> '{target_col}': '{value}'")
+                                logger.debug(f"[EXCEL-EXTRACT] Empty/NaN value for '{header}' -> '{target_col}': '{value}'")
+                    else:
+                        logger.debug(f"[EXCEL-EXTRACT] Header '{header}' not in column mapping")
                 
-                # Add serial number if missing
+                # Check if row has mandatory fields before adding
                 if has_data:
+                    # Check for mandatory fields
+                    missing_mandatory = []
+                    for field in mandatory_fields:
+                        if field not in item or not str(item[field]).strip():
+                            missing_mandatory.append(field)
+                    
+                    # Skip row if missing mandatory fields
+                    if missing_mandatory:
+                        removed_rows += 1
+                        logger.info(f"[EXCEL-EXTRACT] Removed row {index + 1} - missing mandatory fields: {missing_mandatory}")
+                        continue
+                    
+                    # Add serial number if missing
                     if 'S.No' not in item:
                         item['S.No'] = str(len(items) + 1)
                     
@@ -207,14 +268,28 @@ class ExcelProcessingService:
                         item['Uom'] = 'pcs'
                     
                     items.append(item)
+                    logger.info(f"[EXCEL-EXTRACT] Added item {len(items)}: {item}")
+                else:
+                    logger.debug(f"[EXCEL-EXTRACT] Skipped row {index} - no data found")
             
-            return items
+            logger.info(f"[EXCEL-EXTRACT] Successfully extracted {len(items)} items, removed {removed_rows} incomplete rows")
+            return {
+                'success': True,
+                'items': items,
+                'removed_rows': removed_rows
+            }
             
         except Exception as e:
-            logger.error(f"Error extracting items: {e}")
-            return []
+            logger.error(f"[EXCEL-EXTRACT] Error extracting items: {e}")
+            import traceback
+            logger.error(f"[EXCEL-EXTRACT] Stack trace: {traceback.format_exc()}")
+            return {
+                'success': False,
+                'items': [],
+                'error': f"Failed to extract items: {str(e)}"
+            }
     
-    def _validate_items_for_gmt_api(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _validate_items_comprehensive(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Validate items meet GMT API requirements."""
         validation_result = {
             'valid': True,
@@ -256,6 +331,17 @@ class ExcelProcessingService:
             
             validation_result['field_explanations'] = explanations
         
+        # Enhanced data type validation
+        data_type_validation = self._validate_data_types(items)
+        if not data_type_validation['valid']:
+            validation_result['errors'].extend(data_type_validation['issues'])
+            validation_result['valid'] = False
+        
+        # Regional format detection
+        regional_formats = self._detect_regional_formats(items)
+        if regional_formats['issues']:
+            validation_result['warnings'].extend(regional_formats['issues'])
+        
         # Check for common issues
         if validation_result['missing_required_fields']:
             validation_result['errors'].extend(validation_result['missing_required_fields'])
@@ -265,6 +351,114 @@ class ExcelProcessingService:
         
         logger.info(f"DEBUG: Validation result: {validation_result}")
         return validation_result
+    
+    def _validate_business_rules(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Validate business rules and edge cases."""
+        validation_result = {
+            'valid': True,
+            'errors': [],
+            'warnings': []
+        }
+        
+        # Check for duplicate item descriptions
+        descriptions = [item.get('ItemDescription', '').strip().lower() for item in items if item.get('ItemDescription')]
+        duplicates = [desc for desc in set(descriptions) if descriptions.count(desc) > 1]
+        if duplicates:
+            validation_result['warnings'].append(f"Duplicate items found: {', '.join(duplicates[:3])}")
+        
+        # Validate quantities
+        for i, item in enumerate(items, 1):
+            qty = item.get('Quantity')
+            if qty is not None:
+                try:
+                    qty_float = float(str(qty).replace(',', ''))
+                    if qty_float <= 0:
+                        validation_result['errors'].append(f"Item {i}: Quantity must be positive (found: {qty})")
+                        validation_result['valid'] = False
+                    elif qty_float > 10000:
+                        validation_result['warnings'].append(f"Item {i}: Very large quantity ({qty_float})")
+                except (ValueError, TypeError):
+                    # Handle text quantities like "Five", "5 pieces"
+                    qty_str = str(qty).lower().strip()
+                    if any(word in qty_str for word in ['five', 'ten', 'twenty', 'hundred']):
+                        validation_result['errors'].append(f"Item {i}: Please use numeric quantities instead of text ({qty})")
+                        validation_result['valid'] = False
+            
+            # Validate UOM values
+            uom = item.get('Uom', '').lower().strip()
+            if uom in ['each', 'per item', 'item']:
+                validation_result['warnings'].append(f"Item {i}: Consider using standard UOM like 'pcs' instead of '{uom}'")
+            
+
+        
+        return validation_result
+    
+    def _normalize_quantity(self, qty_value: Any) -> Optional[float]:
+        """Normalize quantity values handling various formats."""
+        if qty_value is None:
+            return None
+        
+        try:
+            # Handle string quantities with commas
+            if isinstance(qty_value, str):
+                qty_str = qty_value.strip().replace(',', '')
+                # Extract numeric part from strings like "5 pieces", "10 kg"
+                import re
+                numeric_match = re.search(r'\d+(?:\.\d+)?', qty_str)
+                if numeric_match:
+                    return float(numeric_match.group())
+            
+            return float(qty_value)
+        except (ValueError, TypeError):
+            return None
+    
+    def _detect_regional_formats(self, items: List[Dict]) -> Dict[str, Any]:
+        """Detect and handle regional number formats."""
+        format_info = {
+            'decimal_separator': '.',
+            'thousands_separator': ',',
+            'issues': []
+        }
+        
+        # Check for European format (comma as decimal separator)
+        for item in items[:5]:  # Check first 5 items
+            qty = str(item.get('Quantity', ''))
+            if ',' in qty and '.' not in qty:
+                # Likely European format
+                format_info['decimal_separator'] = ','
+                format_info['thousands_separator'] = '.'
+                format_info['issues'].append("European number format detected (comma as decimal)")
+                break
+        
+        return format_info
+    
+    def _validate_data_types(self, items: List[Dict]) -> Dict:
+        """Enhanced data type validation."""
+        issues = []
+        for i, item in enumerate(items, 1):
+            # Quantity validation
+            if 'Quantity' in item:
+                qty = item['Quantity']
+                if qty is not None:
+                    normalized_qty = self._normalize_quantity(qty)
+                    if normalized_qty is None:
+                        issues.append(f"Item {i}: Invalid quantity format '{qty}'")
+                    elif normalized_qty <= 0:
+                        issues.append(f"Item {i}: Quantity must be positive")
+            
+            # ItemDescription validation
+            desc = item.get('ItemDescription', '').strip()
+            if not desc:
+                issues.append(f"Item {i}: Missing item description")
+            elif len(desc) > 200:
+                issues.append(f"Item {i}: Item description too long (max 200 characters)")
+            
+            # UOM validation
+            uom = item.get('Uom', '').strip()
+            if uom and len(uom) > 20:
+                issues.append(f"Item {i}: UOM too long (max 20 characters)")
+        
+        return {"valid": len(issues) == 0, "issues": issues}
     
     def create_standard_template(self, items: List[Dict[str, Any]]) -> bytes:
         """Create standardized Excel template for GMT API."""
@@ -346,6 +540,78 @@ class ExcelProcessingService:
         except Exception as e:
             logger.error(f"Error creating template: {e}")
             raise
+    
+    async def _validate_excel_structure(self, content: bytes) -> Dict[str, Any]:
+        """Validate Excel structure: row count and merged cells."""
+        try:
+            from openpyxl import load_workbook
+            from openpyxl.utils.exceptions import InvalidFileException
+            
+            file_obj = io.BytesIO(content)
+            MAX_ROWS = 50  # Maximum allowed rows
+            
+            # Use openpyxl for structure validation
+            try:
+                workbook = load_workbook(file_obj, read_only=False)
+                worksheet = workbook.active
+                
+                # Check 1: Count only filled rows (rows with actual data)
+                filled_rows = 0
+                for row in worksheet.iter_rows():
+                    # Check if row has any non-empty cells
+                    if any(cell.value is not None and str(cell.value).strip() != '' for cell in row):
+                        filled_rows += 1
+                
+                logger.info(f"[EXCEL-STRUCTURE] Excel has {filled_rows} filled rows (out of {worksheet.max_row} total), max allowed: {MAX_ROWS}")
+                if filled_rows > MAX_ROWS:
+                    workbook.close()
+                    logger.error(f"[EXCEL-STRUCTURE] Too many filled rows: {filled_rows} > {MAX_ROWS}")
+                    return {
+                        'valid': False,
+                        'error': f"Your Excel file contains {filled_rows} rows with data, but only 50 rows are allowed per upload. Please reduce to 50 rows and reupload."
+                    }
+                
+                # Check 2: Merged cells validation
+                merged_ranges = list(worksheet.merged_cells.ranges)
+                logger.info(f"[EXCEL-STRUCTURE] Found {len(merged_ranges)} merged cell ranges")
+                if merged_ranges:
+                    workbook.close()
+                    logger.error(f"[EXCEL-STRUCTURE] Merged cells found: {merged_ranges}")
+                    return {
+                        'valid': False,
+                        'error': "Your Excel file contains merged cells. Please unmerge all cells and reupload."
+                    }
+                
+                workbook.close()
+                return {'valid': True}
+                
+            except Exception as openpyxl_error:
+                # Fallback: Try with pandas for basic row count check
+                file_obj.seek(0)
+                try:
+                    df = pd.read_excel(file_obj, sheet_name=0)
+                    # Remove completely empty rows
+                    df_cleaned = df.dropna(how='all')
+                    filled_rows = len(df_cleaned)
+                    logger.info(f"[EXCEL-STRUCTURE-FALLBACK] Pandas found {filled_rows} filled rows, max allowed: {MAX_ROWS}")
+                    if filled_rows > MAX_ROWS:
+                        logger.error(f"[EXCEL-STRUCTURE-FALLBACK] Too many filled rows: {filled_rows} > {MAX_ROWS}")
+                        return {
+                            'valid': False,
+                            'error': f"Your Excel file contains {filled_rows} rows with data, but only 50 rows are allowed per upload. Please reduce to 50 rows and reupload."
+                        }
+                    # Can't check merged cells with pandas, so assume valid
+                    return {'valid': True}
+                except Exception:
+                    # If both methods fail, return the original error
+                    raise openpyxl_error
+                
+        except Exception as e:
+            logger.error(f"Error validating Excel structure: {e}")
+            return {
+                'valid': False,
+                'error': "Failed to validate Excel file structure."
+            }
     
     def encode_for_api(self, excel_bytes: bytes, filename: str = "rfq_items.xlsx") -> Dict[str, str]:
         """Encode Excel file for GMT API submission."""

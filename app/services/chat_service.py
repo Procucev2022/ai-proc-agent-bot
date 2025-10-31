@@ -22,8 +22,10 @@ import asyncio
 
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
+from app.services.welcome_message_service import get_welcome_service
 from app.utils.datetime_utils import utc_now
 from app.utils.logging_utils import log_service_method
+from app.context import session_context, user_context, get_request_id
 from app.services.intent_service import IntentService
 from app.services.entity_service import EntityService
 from app.services.vendor_service import VendorService
@@ -42,10 +44,10 @@ from app.services.handlers.purchase_intent_handler import PurchaseIntentHandler
 from app.services.handlers.attachment_decision_handler import AttachmentDecisionHandler
 from app.services.handlers.intent_switch_handler import IntentSwitchHandler
 from app.services.processors.image_message_processor import ImageMessageProcessor
-
+from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.services.excel_validation_service import ExcelValidationService
 from app.services.excel_processing_service import ExcelProcessingService
-from app.services.gmt_api_service import GMTAPIService
+from app.procucev_apis.rfq_apis import RFQAPIService
 from app.services.chat_summary_service import ChatSummaryService
 from app.services.daily_summary_service import DailySummaryService
 from app.services.rfq_background_service import RFQBackgroundService
@@ -54,10 +56,18 @@ from app.config import get_settings
 from app.services.seller_service import SellerService
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
+from app.services.exit_service import ExitService
+from app.services.cancel_service import CancelService
+from app.services.faq_service import FAQService
+from app.tools.confirmation_tool import ConfirmationTool
+from app.services.confirmation_service import ConfirmationService
+from app.services.workflow_manager import WorkflowManager, WorkflowStage, PendingFlag
+from app.services.message_queue_service import MessageQueueService
 
-from app.database import SessionLocal, DatabaseManager
-from app.models import User, ConversationSession
-from app.schemas.user import UserDetailsSchema
+from app.database import SessionLocal, DatabaseManager, get_db_session, get_db_session_context
+from app.models import ConversationSession, WorkflowType, ConversationOutcome
+from app.schemas.user import User
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -70,20 +80,48 @@ class ChatService:
     and response generation for the complete chat experience.
     """
 
-    def __init__(self):
+    def __init__(self, db_session: Session = None, message_queue_service: MessageQueueService = None):
+        """
+        Initialize ChatService with a shared database session.
+
+        Args:
+            db_session: Database session (optional for now, will be required in future).
+                       When provided, prevents connection leaks by sharing session across services.
+                       Should be provided by the caller using get_db_session_context().
+            message_queue_service: Optional MessageQueueService for batching.
+
+        Note:
+            For production use, always provide db_session to prevent connection leaks.
+            Backward compatibility: If not provided, services will create their own sessions
+            (may cause connection leaks at high traffic).
+        """
+        self.db_session = db_session
+        self.message_queue_service = message_queue_service
+
+        # Use message_queue_service if provided, otherwise use WhatsAppService directly
+        if message_queue_service:
+            # When message queue is available, it wraps WhatsApp functionality
+            self.whatsapp_service = message_queue_service
+        else:
+            # Fallback to direct WhatsApp service (for non-queued scenarios)
+            from app.services.whatsapp_service import WhatsAppService
+            self.whatsapp_service = WhatsAppService()
+
+        # Initialize services that don't need database sessions
         self.intent_service = IntentService()
         self.entity_service = EntityService()
-        self.vendor_service = VendorService()
-        self.seller_service = SellerService()
-        self.rfq_service = RFQService()
-        self.rfq_status_service = RFQStatusService()
-        self.whatsapp_service = WhatsAppService()
         self.openai_service = OpenAIService()
-        self.db_manager = DatabaseManager()
         self.response_helpers = ResponseHelpers(self.openai_service)
-        self.chat_summary_service = ChatSummaryService()
+
+        # Initialize services that need database sessions
+        self.chat_summary_service = ChatSummaryService(db_session=db_session)
         self.daily_summary_service = DailySummaryService()
-        self.rfq_background_service = RFQBackgroundService()
+
+        # Now all services use the same session (either provided or created)
+        self.db_manager = DatabaseManager(session=db_session)
+        self.vendor_service = VendorService(db_session=db_session)
+        self.rfq_service = RFQService()
+        self.rfq_background_service = RFQBackgroundService(db_session=db_session)
         
         # Initialize extracted services first
         self.session_manager = SessionManagementService(
@@ -91,13 +129,38 @@ class ChatService:
             self.chat_summary_service, self.daily_summary_service
         )
         
+        # Initialize services that depend on whatsapp_service and session_manager
+        self.seller_service = SellerService(
+            whatsapp_service=self.whatsapp_service,
+            session_manager=self.session_manager,
+            db_session=db_session
+        )
+        self.rfq_status_service = RFQStatusService(
+            whatsapp_service=self.whatsapp_service,
+            session_manager=self.session_manager,
+            db_session=db_session
+        )
+        
+        # Initialize confirmation service and tools
+
+        
+        confirmation_tool = ConfirmationTool(self.openai_service)
+        confirmation_service = ConfirmationService(confirmation_tool)
+        
         # Initialize authentication and registration services with session_manager
         self.authentication_service = AuthenticationService(
             self.whatsapp_service, self.openai_service, self.response_helpers, self.session_manager
         )
         self.registration_service = RegistrationService(
-            self.whatsapp_service, self.openai_service, self.entity_service, self.response_helpers, self.session_manager
+            self.whatsapp_service, self.openai_service, self.entity_service, self.response_helpers, confirmation_service, self.session_manager
         )
+        self.exit_service = ExitService(
+            self.whatsapp_service, self.authentication_service, self.session_manager, self.db_manager
+        )
+        self.cancel_service = CancelService(
+            self.whatsapp_service, self.session_manager, self.db_manager
+        )
+        self.faq_service = FAQService()
         self.confirmation_handler = ConfirmationHandler(
             self.whatsapp_service, self.response_helpers
         )
@@ -118,6 +181,25 @@ class ChatService:
         )
         self.image_processor = ImageMessageProcessor(self.whatsapp_service, self.response_helpers)
 
+    def _get_workflow_or_default(self, session: ConversationSession, default: str = 'general_inquiry') -> WorkflowType:
+        """
+        Helper to get current workflow type as enum with fallback.
+
+        Args:
+            session: Conversation session
+            default: Default workflow type string (will be converted to enum)
+
+        Returns:
+            WorkflowType enum
+        """
+        current = WorkflowManager.get_workflow_type(session)
+        if current:
+            return current
+        try:
+            return WorkflowType(default)
+        except (ValueError, KeyError):
+            return WorkflowType.general_inquiry
+
     @log_service_method("chat_service")
     async def process_message(self, user_phone: str, message_content: str, message_type: str = "text") -> Dict[
         str, Any]:
@@ -128,6 +210,21 @@ class ChatService:
         workflow routing, and response generation.
         """
         try:
+            # Check and send welcome message if needed (before session creation)
+            welcome_service = get_welcome_service()
+            welcome_sent = False
+            if await welcome_service.should_send_welcome(user_phone):
+                welcome_text = (
+                    "Hello Namaste 🙏, I'm Qua – Your Procurement Partner.\n"
+                    "Thank you for contacting me. Let me check if you have visited us earlier..."
+                )
+
+                message_response = await self.whatsapp_service.send_message(user_phone, welcome_text)
+                if message_response.success:
+                    await welcome_service.mark_welcome_sent(user_phone)
+                    welcome_sent = True
+                # Continue processing user's message instead of returning early
+            
             # Get or create user session using extracted service
             session = await self.session_manager.get_conversation_context(user_phone)
 
@@ -135,102 +232,380 @@ class ChatService:
             session = await self.session_manager.handle_session_expiry_check(user_phone, session)
 
             # Track user message in conversation history using extracted service
-            self.session_manager.add_message_to_history(session, "user", message_content, message_type)
+            # Classify intent for all user messages to enable proper message routing after auth
+            message_intent_result = None
+
+            # Classify intent once for all message routing and tracking
+            try:
+                conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
+                # Now using async OpenAI service
+                message_intent_result = await self.intent_service.classify_intent(message_content, conversation_context)
+                intent = message_intent_result.get('intent')
+                confidence = message_intent_result.get('confidence', 0)
+                self.session_manager.add_message_to_history(session, "user", message_content, message_type, intent, confidence)
+            except Exception as e:
+                # If intent classification fails, still track the message without intent
+                logger.warning(f"Intent classification failed during message tracking: {e}")
+                self.session_manager.add_message_to_history(session, "user", message_content, message_type)
+                message_intent_result = {"intent": "general_inquiry", "confidence": 0}
+
+            # Track meaningful messages during auth/registration flows for later processing
+            self._track_meaningful_message_during_auth_flow(session, message_content, message_intent_result)
 
             # User Authentication flow
-            auth_result = await self.authentication_orchestrator_flow(user_phone, message_content, session)
+            # Preserve meaningful message in cache for post-auth/registration processing
+            from app.services.user_cache_service import get_user_cache_service
+            user_cache_service = get_user_cache_service()
+
+            if session.workflow_state:
+                last_meaningful = session.workflow_state.get("last_meaningful_message")
+                last_meaningful_intent = session.workflow_state.get("last_meaningful_intent_result")
+
+                if last_meaningful and last_meaningful_intent:
+                    # Store in cache (survives workflow_state clears)
+                    await user_cache_service.store_meaningful_message(user_phone, last_meaningful, last_meaningful_intent)
+
+
+
+            if intent=='faq':
+                # Handle FAQ directly without authentication for quick responses
+                faq_answer = await self.faq_service.get_faq_answer(message_content)
+                if faq_answer:
+                    full_response = f"{faq_answer}\n\nWhat can I assist you with next?"
+                    await self.whatsapp_service.send_message(user_phone, full_response)
+                    return {"status": "faq_handled", "answer_provided": True}
+                else:
+                    fallback_message = "I don't have specific information about that. For detailed assistance, please contact our support team."
+                    await self.whatsapp_service.send_message(user_phone, fallback_message)
+                    return {"status": "faq_no_answer", "answer_provided": False}
+            auth_result = await self.authentication_orchestrator_flow(user_phone, message_content, session, message_intent_result)
 
             # Check if authentication is still in progress
             if isinstance(auth_result, dict):
                 auth_status = auth_result.get("status")
-                logger.info(f"Authentication in progress - status: {auth_status}")
                 
                 # Authentication/registration flow statuses - stay in auth loop
                 auth_in_progress_statuses = [
                     "clarification_sent", "general_inquiry_handled", "fallback_handled",
-                    "redirected_to_registration", "redirected_to_email_confirmation", "otp_sent",
+                    "redirected_to_registration", "redirected_to_buyer_registration", "redirected_to_seller_registration",
+                    "redirected_to_email_confirmation", "otp_sent",
                     "email_selection_requested", "registration_initiated", "data_collection_in_progress",
-                    "awaiting_confirmation", "registration_restarted", "otp_validated", "otp_invalid",
-                    "domain_approved", "domain_approval_required", "email_confirmation_requested"
+                    "awaiting_confirmation", "registration_restarted", "otp_validated", "otp_invalid", "otp_format_invalid",
+                    "domain_approved", "domain_approval_required", "email_confirmation_requested",
+                    "auth_reg_switch_choice_presented", "exit_completed", "switch_authentication_started",
+                    "role_switch_clarification_requested", "profile_selection_presented",
+                    "buyer_profile_selection_presented", "seller_profile_selection_presented",
+                    "rfq_status_profile_selection_presented", "ambiguous_profile_selection_presented",
+                    "registration_choice_presented", "registration_type_choice_presented",
+                    "profile_selection_retry_presented", "role_menu_presented",
+                    "redirected_to_buyer_registration", "redirected_to_seller_registration",
+                    "intent_mismatch_handled", "intent_mismatch_retry_sent", "new_user_registration_presented",
+                    "buyer_options_presented", "single_buyer_profile_selection_presented", "profile_selection_sent",
+                    "registration_type_clarification_sent", "verification_failed"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
-                    # Save session and return - do not proceed to main flow
-                    workflow_type = "registration" if session.workflow_type == "registration" else auth_result.get(
-                        "workflow_type", "authentication")
-                    await self.session_manager.save_session(session, workflow_type)
-                    logger.info(f"Authentication flow handled - returning without main flow processing")
-                    return auth_result
-                elif auth_status == "registration_completed":
-                    # Registration completed, create mock user and continue to main flow
-                    user = self._create_mock_authenticated_user(user_phone, session)
-                    logger.info(f"Registration completed - proceeding to main flow")
-                    return await self._process_text_message(user, session, message_content)
-                elif auth_status == "authentication_completed":
-                    # Authentication completed - check if we need to process stored original message
-                    # First check auth_result for original_message, then fallback to session workflow_state
-                    original_message = auth_result.get("original_message") if isinstance(auth_result, dict) else None
-                    if not original_message:
-                        original_message = session.workflow_state.get("original_message") if session.workflow_state else None
-                    
-                    if original_message and original_message != message_content:
-                        # Process the stored original message instead of current message
-                        logger.info(f"Authentication completed - processing stored original message: {original_message}")
-                        user_session = await self.authentication_service.validate_token(user_phone)
-                        if user_session:
-                            user = self._create_user_from_details(user_session)
-                        else:
-                            return {"status": "error", "error": "Session not found after authentication"}
-                        return await self._process_text_message(user, session, original_message)
-                    else:
-                        # No original message or it's the same as current - process normally  
-                        logger.info(f"Authentication completed - processing current message")
-                        user_session = await self.authentication_service.validate_token(user_phone)
-                        if user_session:
-                            user = self._create_user_from_details(user_session)
-                        else:
-                            return {"status": "error", "error": "Session not found after authentication"}
-                        return await self._process_text_message(user, session, message_content)
+                    # Special handling for buyer/seller_options_presented: preserve meaningful message
+                    if auth_status in ["buyer_options_presented", "seller_options_presented"]:
+                        # Preserve meaningful message before saving - user will respond to options next
+                        last_meaningful = session.workflow_state.get("last_meaningful_message")
+                        last_meaningful_intent = session.workflow_state.get("last_meaningful_intent_result")
 
-            # Check if auth returned UserDetailsSchema (authenticated user)
-            if isinstance(auth_result, UserDetailsSchema):
+                        if last_meaningful and last_meaningful_intent:
+                            # Clear workflow_type to indicate auth is complete (just waiting for button response)
+                            session.workflow_type = None
+                            # Preserve only the meaningful message fields for next interaction
+                            session.workflow_state = {
+                                "last_meaningful_message": last_meaningful,
+                                "last_meaningful_intent_result": last_meaningful_intent
+                            }
+                            logger.info(f"Preserved meaningful message for post-auth interaction: '{str(last_meaningful)[:50]}...'")
+                            await self.session_manager.save_session(session, None)
+                        else:
+                            # No meaningful message to preserve, save as normal
+                            current_workflow = WorkflowManager.get_workflow_type(session)
+                            workflow_type = WorkflowType.registration if current_workflow == WorkflowType.registration else WorkflowType.authentication
+                            await self.session_manager.save_session(session, workflow_type)
+                    else:
+
+                        # Save session and return - do not proceed to main flow
+                        current_workflow = WorkflowManager.get_workflow_type(session)
+                        if current_workflow == WorkflowType.registration:
+                            workflow_type = WorkflowType.registration
+                        else:
+                            workflow_type_str = auth_result.get("workflow_type", "authentication")
+                            try:
+                                workflow_type = WorkflowType(workflow_type_str)
+                            except (ValueError, KeyError):
+                                workflow_type = WorkflowType.authentication
+                        await self.session_manager.save_session(session, workflow_type)
+                        
+                    return auth_result
+                elif auth_status in ["redirected_to_support", "redirect_to_support", "user_exited"]:
+                    # Max OTP retries exceeded, user exited, or other support-requiring scenario
+                    # Check if exit has already been completed to avoid duplicate calls
+                    if auth_result.get("exit_completed"):
+                       
+                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        return auth_result
+                    else:
+                        
+                        exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        return exit_result
+
+                elif auth_status == "registration_completed":
+                    # Registration completed - check if this is truly complete or needs further processing
+                    registration_flow_complete = auth_result.get("registration_flow_complete", False)
+                    user_type = auth_result.get("user_type", "unknown")
+                    approved = auth_result.get("approved", False)
+
+                    if registration_flow_complete:
+                        # Registration is completely done - no further processing needed
+                        # Clear workflow completely to prevent any further processing
+                        session.workflow_type = None
+                        session.workflow_state = {}
+                        await self.session_manager.save_session(session, None)
+                        return {"status": "registration_completed", "message": "Registration successful", "flow_terminated": True}
+                    
+                    # Legacy handling for cases where registration_flow_complete is not set
+                    user = await self.authentication_service.validate_token(user_phone)
+                    if user:
+                        # Refresh user cache after successful registration to include the new account
+                        try:
+                            # Clear existing cache first to force fresh API call
+                            from app.services.user_cache_service import get_user_cache_service
+                            user_cache_service = get_user_cache_service()
+                            await user_cache_service.clear_user_data(user_phone)
+
+                            # Make fresh API call to get updated user data including new account
+                            auth_response = await self.authentication_service.user_authenticate(
+                                user_phone, "refresh_cache_post_registration", session, intent="general_inquiry"
+                            )
+                            if not auth_response.get("success"):
+                                logger.warning(f"Failed to refresh user cache after registration for {user_phone}")
+                        except Exception as e:
+                            logger.error(f"Error refreshing user cache after registration for {user_phone}: {e}")
+                            # Continue with flow even if cache refresh fails
+                        user_type = auth_result.get("user_type", "buyer")
+
+                        if user_type == "seller":
+                            # Sellers: Registration is complete, don't process the OTP message further
+                            return {"status": "registration_completed", "message": "Seller registration successful"}
+                        else:
+                            # Buyers: Check if approved for main flow
+                            redirect_to_main_flow = auth_result.get("redirect_to_main_flow", False)
+                            approved = auth_result.get("approved", False)
+
+                            if redirect_to_main_flow and approved:
+                                # Domain approved buyers: Continue to main flow
+                                # Restore meaningful message from cache if workflow_state was cleared
+                                cached_meaningful = await user_cache_service.get_meaningful_message(user_phone)
+
+                                if cached_meaningful and not session.workflow_state.get("last_meaningful_message"):
+                                    session.workflow_state["last_meaningful_message"] = cached_meaningful["message"]
+                                    session.workflow_state["last_meaningful_intent_result"] = cached_meaningful["intent_result"]
+
+                                    # Clear from cache since we've restored it
+                                    await user_cache_service.clear_meaningful_message(user_phone)
+                                elif not cached_meaningful:
+                                    logger.warning(f"No cached meaningful message to restore after registration")
+
+                                message_to_process, intent_to_process = self._get_meaningful_message_after_auth(
+                                    session, message_content, message_intent_result
+                                )
+                                return await self._process_text_message(user, session, message_to_process, intent_to_process)
+                            else:
+                                # Domain NOT approved buyers: Registration complete, no further processing
+                                return {"status": "registration_completed", "message": "Buyer registration successful - awaiting approval"}
+                    else:
+                        return {"status": "error", "error": "Session not found after registration"}
+                elif auth_status in ["authentication_completed", "profile_selected_and_authenticated", "profile_selection_sent"]:
+                    # Authentication completed - check user type before processing
+                    user_type = auth_result.get("user_type")
+                    original_message = auth_result.get("original_message", message_content)
+                    original_intent = auth_result.get("original_intent", "general_inquiry")
+
+                    if user_type == "seller":
+                        # For sellers, process the meaningful message after authentication
+                        # Use original message from profile selection if available
+                        message_to_process = original_message if original_message else message_content
+                        intent_to_process = {"intent": original_intent, "confidence": 90} if isinstance(original_intent, str) else original_intent
+                        
+                        # Restore meaningful message from cache if workflow_state was cleared
+                        cached_meaningful = await user_cache_service.get_meaningful_message(user_phone)
+
+                        if cached_meaningful and not session.workflow_state.get("last_meaningful_message"):
+                            session.workflow_state["last_meaningful_message"] = cached_meaningful["message"]
+                            session.workflow_state["last_meaningful_intent_result"] = cached_meaningful["intent_result"]
+
+                            # Clear from cache since we've restored it
+                            await user_cache_service.clear_meaningful_message(user_phone)
+
+                            # Use cached message if no original message from profile selection
+                            if not original_message:
+                                message_to_process, intent_to_process = self._get_meaningful_message_after_auth(
+                                    session, message_content, message_intent_result
+                                )
+
+                        user = await self.authentication_service.validate_token(user_phone)
+                        if user:
+                            return await self._process_text_message(user, session, message_to_process, intent_to_process)
+                        else:
+                            return {"status": "error", "error": "Session not found after seller authentication"}
+
+                    # For buyers, process the meaningful message after authentication
+                    # Use original message from profile selection if available
+                    message_to_process = original_message if original_message else message_content
+                    intent_to_process = {"intent": original_intent, "confidence": 90} if isinstance(original_intent, str) else original_intent
+                    
+                    # Restore meaningful message from cache if workflow_state was cleared
+                    cached_meaningful = await user_cache_service.get_meaningful_message(user_phone)
+
+                    if cached_meaningful and not session.workflow_state.get("last_meaningful_message"):
+                        session.workflow_state["last_meaningful_message"] = cached_meaningful["message"]
+                        session.workflow_state["last_meaningful_intent_result"] = cached_meaningful["intent_result"]
+
+                        # Clear from cache since we've restored it
+                        await user_cache_service.clear_meaningful_message(user_phone)
+
+                        # Use cached message if no original message from profile selection
+                        if not original_message:
+                            message_to_process, intent_to_process = self._get_meaningful_message_after_auth(
+                                session, message_content, message_intent_result
+                            )
+
+                    user = await self.authentication_service.validate_token(user_phone)
+                    if user:
+                        # Ensure user cache is populated after authentication
+                        try:
+                            from app.services.user_cache_service import get_user_cache_service
+                            user_cache_service = get_user_cache_service()
+                            cached_data = await user_cache_service.get_user_data(user_phone)
+
+                            if not cached_data:
+                                # No cache exists, make API call to populate it
+                                auth_response = await self.authentication_service.user_authenticate(
+                                    user_phone, "refresh_cache_post_auth", session, intent="general_inquiry"
+                                )
+                                if not auth_response.get("success"):
+                                    logger.warning(f"Failed to populate user cache after authentication for {user_phone}")
+                        except Exception as e:
+                            logger.error(f"Error ensuring user cache after authentication for {user_phone}: {e}")
+                            # Continue with flow even if cache population fails
+                        return await self._process_text_message(user, session, message_to_process, intent_to_process)
+                    else:
+                        return {"status": "error", "error": "Session not found after authentication"}
+
+            # Check if auth returned User (authenticated user)
+            if isinstance(auth_result, User):
                 if auth_result.is_registered:
-                    # User is authenticated, create user object and proceed to main flow
-                    user = self._create_user_from_details(auth_result)
-                    logger.info(f"User authenticated - proceeding to main flow: {user.phone_number}")
+                    # User is authenticated, proceed to main flow
+                    pass
                 else:
                     # Invalid user but not registered, handle as general inquiry
-                    user = self._create_user_from_details(auth_result)
-                    return await self._process_text_message(user, session, message_content)
+                    return await self._process_text_message(auth_result, session, message_content, message_intent_result)
+            elif isinstance(auth_result, dict):
+                # Handle dict responses that weren't caught above
+                auth_status = auth_result.get("status")
+                if auth_status == "redirected_to_support" or auth_status == "redirect_to_support" :
+                    # Check if exit has already been completed to avoid duplicate calls
+                    if auth_result.get("exit_completed"):
+                        logger.info(f"Exit already completed in auth flow for {user_phone}, skipping duplicate exit call")
+                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        return auth_result
+                    else:
+                        logger.info(f"Final redirect to support - calling exit service for {user_phone}")
+                        exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        return exit_result
+                elif auth_status == "verification_required":
+                    # Handle verification required status
+                    logger.info(f"Verification required for {user_phone}")
+                    
+                    # Send verification message to user
+                    redirect_info = auth_result.get("redirect_info", {})
+                    verification_message = redirect_info.get("message", "Email verification is required to continue.")
+                    
+                    # await self.whatsapp_service.send_message(user_phone, verification_message)
+                    
+                    await self.session_manager.save_session(session, WorkflowType.authentication)
+                    return auth_result
+                elif auth_status == "verification_failed":
+                    # Handle verification failed status
+                    logger.info(f"Verification failed for {user_phone}")
+                    
+                    # Send verification failed message to user
+                    redirect_info = auth_result.get("redirect_info", {})
+                    pending_message = (
+                        "*Registration received—thank you!*\n\n"
+                        "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                        "Our team will get in touch shortly to complete the process, and once verified, "
+                        "you’ll be able to access your account and start raising RFQs."
+                    )
+
+                    verification_message = redirect_info.get("message", pending_message)
+                    
+                    await self.whatsapp_service.send_message(user_phone, verification_message)
+                    
+                    await self.session_manager.save_session(session, WorkflowType.authentication)
+                    return auth_result
+                else:
+                    logger.error(f"Unexpected auth_result dict with status: {auth_status}")
+                    return {"status": "error", "error": "Authentication failed"}
             else:
                 logger.error(f"Unexpected auth_result type: {type(auth_result)}")
                 return {"status": "error", "error": "Authentication failed"}
 
             # Only proceed to main flow if user is properly authenticated
+            user = auth_result
             if message_type == "text":
-                result = await self._process_text_message(user, session, message_content)
+                result = await self._process_text_message(user, session, message_content, message_intent_result)
             elif message_type == "interactive":
                 result = await self._process_interactive_message(user, session, message_content)
             elif message_type == "excel_upload":
                 result = await self._process_excel_upload(user, session, message_content)
             elif message_type == "image" or message_type == "document":
                 result = await self.image_processor.process_image_message(user, session, message_content)
-                await self.session_manager.save_session(session, "rfq_creation")
+                await self.session_manager.save_session(session, WorkflowType.rfq_creation)
             else:
                 result = {"status": "error", "error": f"Unknown message type: {message_type}"}
+
+            # # Log OpenAI call summary for performance monitoring
+            # call_summary = self.openai_service.get_call_summary(user_phone)
+            # if call_summary:
+            #     total_calls = sum(call_summary.values())
+            #     call_breakdown = ", ".join([f"{call_type}: {count}" for call_type, count in call_summary.items()])
+            #     logger.info(f"OpenAI calls for {user_phone}: {total_calls} total ({call_breakdown})")
+
+            # Include welcome message information in the result if it was sent
+            if welcome_sent:
+                if isinstance(result, dict):
+                    result["welcome_message_sent"] = True
+                    logger.info(f"Both welcome message and user message processed for {user_phone}")
 
             return result
 
         except Exception as e:
-            return await self._handle_error_response(e, user_phone, "processing_message", "Please try again")
+            logger.error(f"Critical error in process_message for {user_phone}: {e}")
+            
+            # Use technical failure handler for critical errors
+            from app.utils.technical_failure_handler import handle_technical_failure
+            await handle_technical_failure(
+                user_phone=user_phone,
+                error_message=f"Critical processing error: {str(e)}",
+                error_type="Critical System Error"
+            )
+            
+            return {"status": "technical_failure", "error": str(e)}
 
     async def authentication_orchestrator_flow(self, user_phone: str, message_content: str,
-                                               session: ConversationSession) -> Dict[str, Any]:
+                                               session: ConversationSession, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """Main authentication orchestrator function."""
         try:
             # Initialize authentication orchestrator
             from app.services.handlers.authentication_orchestrator import AuthenticationOrchestrator
-            from app.services.handlers.supportService_hanlder import SupportHelpers
+            from app.services.helpers.support_helpers import SupportHelpers
 
             auth_orchestrator = AuthenticationOrchestrator(
                 self.whatsapp_service, self.response_helpers,
@@ -239,88 +614,145 @@ class ChatService:
             )
 
             return await auth_orchestrator.authentication_orchestrator_flow(
-                user_phone, message_content, session
+                user_phone, message_content, session, intent_result
             )
 
         except Exception as e:
             logger.error(f"Authentication orchestrator error for {user_phone}: {e}")
             return {"status": "error", "error": str(e)}
 
-    def _create_mock_authenticated_user(self, user_phone: str, session: ConversationSession) -> User:
-        """Create mock authenticated user after successful registration."""
 
-        class MockUser:
-            def __init__(self, phone_number, user_type):
-                self.id = 1
-                self.phone_number = phone_number
-                self.name = "Registered User"
-                self.is_registered = True
-                self.role = "buyer" if user_type == "buyer" else "seller"
 
-        user_type = session.user_type.value if session.user_type and hasattr(session.user_type, 'value') else str(session.user_type) if session.user_type else "buyer"
-        return MockUser(user_phone, user_type)
 
-    def _create_user_from_details(self, user_details) -> User:
-        """Create user object from UserDetailsSchema or dict."""
-        # Debug logging to see what's in user_details
-        logger.info(f"Raw user_details for AuthenticatedUser creation: {user_details}")
-        if hasattr(user_details, '__dict__'):
-            logger.info(f"User details attributes: {user_details.__dict__}")
-        
 
-        class AuthenticatedUser:
-            def __init__(self, details):
-                if isinstance(details, dict):
-                    self.id = details.get('id', 1)
-                    self.phone_number = details.get('phone_number', '')
-                    self.name = details.get('name', 'User')
-                    self.is_registered = details.get('is_registered', False)
-                    self.role = details.get('role', 'buyer')
-                    self.org_id = details.get('org_id')
-                else:
-                    self.id = details.id
-                    self.phone_number = details.phone_number
-                    self.name = details.name
-                    self.is_registered = details.is_registered
-                    self.role = details.role.value if hasattr(details.role, 'value') else details.role
-                    self.org_id = getattr(details, 'org_id', None)
-        
-
-        return AuthenticatedUser(user_details)
-
-    async def _process_text_message(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+    async def _process_text_message(self, user: User, session: ConversationSession, message: str, message_intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """Process text message through intent classification and routing."""
         try:
-            # Check if user needs registration
-            if not user.is_registered:
+            # Check if user needs registration - handle both User object and dict
+            if isinstance(user, dict):
+                # User is a dict (from validate_token returning dict with verification_required)
+                if user.get("verification_required"):
+                    return {"status": "verification_required", "verification_info": user.get("verification_info", {})}
+                # Convert dict to User object if possible
+                try:
+                    from app.schemas.user import User as UserSchema
+                    user = UserSchema.from_mixed_data(user)
+                except Exception as e:
+                    logger.error(f"Failed to convert user dict to User object: {e}")
+                    return {"status": "error", "error": "Invalid user data"}
+            
+            # Now check registration status
+            if hasattr(user, 'is_registered') and not user.is_registered:
                 return await self._handle_registration_workflow(user, message)
-            # Handle seller RFQ selection workflow BEFORE intent classification
-            if session.workflow_type and hasattr(session.workflow_type, 'value') and session.workflow_type.value == "seller_rfq_view":
-                workflow_state = session.workflow_state or {}
-                current_seller_state = workflow_state.get("seller_workflow_state")
-                # Seller is responding to RFQ list - handle this immediately
-                return await self._handle_seller_flow(user, session, message)
+
+            logger.info(f"user  phone number {user.phone_number}")
+
+            logger.info(f"use details:{user.email}")
+
+
+
             
             # Handle pending role switch confirmation FIRST
             if session.workflow_state.get("pending_role_switch"):
                 from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
                 auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
                 result = await auth_reg_switch.handle_role_switch_response(user, session, message, self.authentication_service)
-                await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                await self.session_manager.save_session(session, self._get_workflow_or_default(session))
+
+                # If role switch completed with original message, process it
+                if result.get("status") == "authentication_completed" and result.get("original_message"):
+                    original_msg = result["original_message"]
+                    original_intent = result.get("original_intent_result")
+
+                    # Get fresh user object after switch
+                    user = await self.authentication_service.validate_token(user.phone_number)
+                    if user:
+                        return await self._process_text_message(user, session, original_msg, original_intent)
+
+                return result
+
+            # Handle pending account switch confirmation (same-role switches)
+            if session.workflow_state.get("pending_account_switch"):
+                from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
+                auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
+                result = await auth_reg_switch.handle_account_switch_response(user, session, message, self.authentication_service)
+                await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                 return result
             
-            # Handle pending intent switch choices FIRST (user responding to "1. Continue or 2. Switch")
+            # Use already-classified intent from message tracking or fallback to classification
+            intent_result = message_intent_result
+            if not intent_result:
+                # Fallback: classify intent if not provided (shouldn't happen with our optimization)
+                conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
+                intent_result = await self.intent_service.classify_intent(message, conversation_context)
+                logger.warning(f"Had to fallback to intent classification - this shouldn't happen")
+
+            logger.info(f"Intent classification result: {intent_result}")
+
+            intent = intent_result.get('intent')
+            confidence = intent_result.get('confidence', 0)
+
+            # Update the last user message in conversation history with intent data
+            self._update_last_user_message_with_intent(session, intent, confidence)
+
+            # Handle FAQ requests FIRST - can interrupt any workflow (highest priority after exit)
+            if intent == "faq" and confidence > 0.6:
+                logger.info(f"FAQ intent detected with {confidence}% confidence - handling immediately (interrupting workflow)")
+                result = await self._handle_faq_request(user, message)
+                return result
+
+            # Handle cancel workflow intent - highest priority after FAQ and exit
+            if intent == "cancel_workflow" and confidence > 50:
+                logger.info(f"Cancel workflow intent detected with {confidence}% confidence")
+                user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+
+                # Trigger cancel confirmation flow (will send buttons)
+                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session)
+                await self.session_manager.save_session(session, session.workflow_type)
+                return cancel_result
+
+            # Handle exit intent - but check for pending optional fields first
+            if intent == "exit_system" and confidence > 50:
+                # Check if user has pending optional fields - they might mean "skip" instead of "exit"
+                has_pending_optional = bool(
+                    session.workflow_state.get("pending_optional_rfq") or
+                    session.workflow_state.get("pending_optional_combined_rfq")
+                )
+
+                if has_pending_optional:
+                    # User said "exit" but has pending optional fields
+                    # Interpret as "skip optional fields and proceed to confirmation"
+                    logger.info(f"Exit intent detected but user has pending optional fields - treating as 'skip optional' instead")
+                    # Route to optional fields handler which will skip and proceed to confirmation
+                    result = await self.confirmation_handler.handle_optional_fields_response(user, session, message)
+                    await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+                    return result
+                else:
+                    # No pending optional fields - treat as genuine exit
+                    logger.info(f"Exit intent detected with {confidence}% confidence - handling system exit")
+                    # Use the same phone format as used in authentication flow
+                    user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                    await self.session_manager.save_session(session, WorkflowType.user_exit)
+                    return exit_result
+
+            if intent == "support" and confidence > 0.7:
+                logger.info(f"Support intent detected with {confidence}% confidence - handling immediately")
+                result = await self._handle_support_request(user, message)
+                return result
+
+            # Handle pending intent switch choices (user responding to "1. Continue or 2. Switch")
             if session.workflow_state.get("pending_intent_switch"):
                 result = await self.intent_switch_handler.handle_intent_switch_response(user, session, message)
 
                 # Handle corrupted intent switch data
                 if result.get("status") == "corrupted_intent_switch_data":
                     logger.error("Corrupted intent switch data detected, continuing with normal flow")
-                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                     # Fall through to normal intent processing below
                 elif result.get("status") == "continue_current_workflow":
                     # User chose to continue with current workflow
-                    await self.session_manager.save_session(session, session.workflow_type or 'rfq_creation')
+                    await self.session_manager.save_session(session, self._get_workflow_or_default(session, WorkflowType.rfq_creation.value))
                     return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None,
                                                                                      self._should_use_summary_aware_extraction)
                 elif result.get("status") == "switch_to_new_intent":
@@ -329,16 +761,17 @@ class ChatService:
                     new_message = result["new_message"]
                     intent_result = result["intent_result"]
 
-                    # Map intent to valid workflow type (following pattern used by other handlers)
+                    # Map intent to valid workflow type (using enums)
                     if new_intent == "buy_something":
-                        workflow_type = "rfq_creation"
+                        workflow_type = WorkflowType.rfq_creation
                     elif new_intent == "rfq_status_check":
-                        workflow_type = "rfq_status_check"
+                        workflow_type = WorkflowType.rfq_status_check
                     elif new_intent == "general_inquiry":
-                        workflow_type = "general_inquiry"
+                        workflow_type = WorkflowType.general_inquiry
                     else:
-                        workflow_type = "general_inquiry"  # Safe default
+                        workflow_type = WorkflowType.general_inquiry  # Safe default
 
+                    WorkflowManager.set_workflow_type(session, workflow_type, caller='intent_switch_handler')
                     await self.session_manager.save_session(session, workflow_type)
 
                     # Route to appropriate handler based on new intent
@@ -351,7 +784,7 @@ class ChatService:
                     elif new_intent == "sell_something":
                         return await self._handle_seller_flow(user, session, message)
                     elif new_intent == "general_inquiry":
-                        return await self._handle_general_inquiry(user, new_message)
+                        return await self._handle_general_inquiry(user, new_message, intent_result)
                     else:
                         return await self._handle_fallback(user, new_message)
                 elif result.get("status") == "error":
@@ -363,11 +796,11 @@ class ChatService:
                         "error"
                     )
                     await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
-                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                     return result
                 else:
                     # Clarification requested or other status
-                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                     return result
 
             # Check if we're already in an RFQ workflow
@@ -388,16 +821,47 @@ class ChatService:
             print(
                 f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}")
 
-            # Classify intent FIRST - if modification_request is detected, handle immediately regardless of workflow state
-            conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
-            intent_result = self.intent_service.classify_intent(message, conversation_context)
-            logger.info(f"Intent classification result: {intent_result}")
+            # Debug logging for optional fields state
 
-            intent = intent_result.get('intent')
-            confidence = intent_result.get('confidence', 0)
+           
+
+
+
+            # Handle cancel confirmation response (when cancel_pending is true)
+            cancel_pending = session.workflow_state and session.workflow_state.get("cancel_pending", False)
+            if cancel_pending:
+                user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+
+                # Detect confirmation from the message using confirmation service
+                confirmation_result = await self.cancel_service.confirmation_service.parse_confirmation(message)
+                is_confirmed = confirmation_result == "yes"
+                cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed)
+
+                if cancel_result.get("status") == "cancelled":
+                    # Workflow was cancelled, save session and return
+                    await self.session_manager.save_session(session, session.workflow_type)
+                    return cancel_result
+                elif cancel_result.get("status") == "cancelled_aborted":
+                    # User declined, save session and continue with normal flow
+                    await self.session_manager.save_session(session, session.workflow_type)
+                    # Don't return - let the flow continue below to re-ask pending questions
+                else:
+                    # Any other status, return the result
+                    return cancel_result
+
+            # Handle FAQ requests immediately - even during active workflows (highest priority after exit/cancel)
+            if intent == "faq" and confidence > 0.6:
+                logger.info(f"FAQ intent detected with {confidence}% confidence - handling immediately")
+                result = await self._handle_faq_request(user, message)
+                return result
+
+            # Handle support requests immediately - even during active workflows
+            if intent == "support" and confidence > 0.7:
+                result = await self._handle_support_request(user, message)
+                return result
 
             # Handle contextual intents with direct response capability
-            if intent in ['contextual_reference', 'session_inquiry', 'workflow_rejection', 'alternative_request'] and confidence > 60:
+            if intent in ['contextual_reference', 'session_inquiry', 'alternative_request'] and confidence > 60:
                 if intent_result.get('should_handle_directly'):
                     logger.info(f"Contextual intent detected: {intent} with {confidence}% confidence - handling directly")
                     return await self._handle_contextual_interaction(user, session, message, intent_result)
@@ -419,7 +883,7 @@ class ChatService:
                     session, intent, confidence, intent_result.get('context_analysis')):
                 result = await self.intent_switch_handler.handle_intent_switch_choice(user, session, message, intent,
                                                                                       intent_result)
-                await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                 return result
 
             # Handle pending optional field responses
@@ -431,7 +895,7 @@ class ChatService:
                     return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None,
                                                                                      self._should_use_summary_aware_extraction)
                 else:
-                    await self.session_manager.save_session(session, 'rfq_creation')
+                    await self.session_manager.save_session(session, WorkflowType.rfq_creation)
                     return result
 
             # Handle pending confirmations (user responding to "Would you like to proceed?")
@@ -443,14 +907,14 @@ class ChatService:
                 if result.get("status") == "multiple_rfqs_created":
                     # Generate enhanced session summary BEFORE clearing (non-blocking)
                     await self.session_manager.handle_session_completion_enhanced(session)
-                    await self.session_manager.save_session(session, 'rfq_submitted')
+                    await self.session_manager.save_session(session, WorkflowType.rfq_submitted)
                 elif result.get("continue_with_purchase_intent"):
                     # Continue with purchase intent flow for modifications
                     return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None,
                                                                                      self._should_use_summary_aware_extraction)
 
                 else:
-                    await self.session_manager.save_session(session, 'rfq_creation')
+                    await self.session_manager.save_session(session, WorkflowType.rfq_creation)
 
                 return result
 
@@ -459,13 +923,21 @@ class ChatService:
                 if await self.intent_switch_handler.should_handle_intent_switch(session, intent, confidence, intent_result.get('context_analysis')):
                     result = await self.intent_switch_handler.handle_intent_switch_choice(user, session, message,
                                                                                           intent, intent_result)
-                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                     return result
 
                 # Already in RFQ workflow, continue collecting
                 logger.info("Continuing existing RFQ workflow")
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None,
                                                                                  self._should_use_summary_aware_extraction)
+
+            # Handle seller RFQ selection workflow BEFORE intent classification
+            if session.workflow_type and hasattr(session.workflow_type,
+                                                 'value') and session.workflow_type.value == "seller_rfq_view":
+                workflow_state = session.workflow_state or {}
+                current_seller_state = workflow_state.get("seller_workflow_state")
+                # Seller is responding to RFQ list - handle this immediately
+                return await self._handle_seller_flow(user, session, message)
 
             # Check if user recently completed registration and handle follow-up messages
             recently_registered = session.workflow_state.get("recently_completed_registration", False)
@@ -481,25 +953,113 @@ class ChatService:
                 modified_intent_result["confidence"] = 75
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, modified_intent_result, self._should_use_summary_aware_extraction)
             
+            # Check for registration intent (new account registration)
+            if intent == "register_account" and confidence > 0.6:
+                registration_details = intent_result.get("context_analysis", {}).get("registration_details", {})
+                registration_type = registration_details.get("registration_type")
+
+                if registration_type in ["buyer", "seller"]:
+                    if user.is_registered:
+                        # User is authenticated - treat as account switch with registration option
+                        current_role = user.role.value if hasattr(user.role, 'value') else user.role
+                        from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
+                        auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
+
+                        if registration_type != current_role:
+                            # Cross-role registration (buyer wants to register seller)
+                            result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, registration_type)
+                        else:
+                            # Same-role registration (buyer wants to register another buyer)
+                            result = await auth_reg_switch.handle_account_switch_confirmation(user, session, message, registration_type)
+
+                        await self.session_manager.save_session(session, self._get_workflow_or_default(session))
+                        return result
+                    else:
+                        # User not authenticated - direct to registration
+                        result = await self.registration_service.initiate_registration(
+                            user.phone_number, session, registration_type, message
+                        )
+                        await self.session_manager.save_session(session, WorkflowType.registration)
+                        return result
+                else:
+                    # Unclear registration type - ask for clarification
+                    await self.whatsapp_service.send_message(
+                        user.phone_number,
+                        "Would you like to register as a buyer or seller?"
+                    )
+                    return {"status": "registration_clarification_requested"}
+
             # Check for role switch (authenticated user wanting to switch from buyer to seller or vice versa)
             if user.is_registered and confidence > 0.7:
-                current_role = getattr(user, 'role', 'buyer')
+                current_role = user.role.value if hasattr(user.role, 'value') else user.role
                 if intent == "sell_something" and current_role == "buyer":
+                    # Cross-role switch: buyer -> seller, check if user has seller accounts
+                    from app.services.user_cache_service import get_user_cache_service
                     from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
+
+                    user_cache_service = get_user_cache_service()
+                    account_options = await user_cache_service.get_account_options_for_intent_switch(
+                        user.phone_number, "sell_something", getattr(user, 'email', None) or getattr(user, 'username', None)
+                    )
+
                     auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
-                    result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "seller")
-                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    if account_options and account_options.get("success") and account_options.get("has_target_accounts"):
+                        # User has seller accounts - show enhanced selection
+                        logger.info("Cross-role switch (buyer->seller) with cached seller accounts - using enhanced selection")
+                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "seller")
+                    else:
+                        # No cached seller accounts - use standard role switch
+                        logger.info("Cross-role switch (buyer->seller) without cached seller accounts - using standard flow")
+                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "seller")
+
+                    await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                     return result
+
                 elif intent == "buy_something" and current_role == "seller":
+                    # Cross-role switch: seller -> buyer, check if user has buyer accounts
+                    from app.services.user_cache_service import get_user_cache_service
                     from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
+
+                    user_cache_service = get_user_cache_service()
+                    account_options = await user_cache_service.get_account_options_for_intent_switch(
+                        user.phone_number, "buy_something", getattr(user, 'email', None) or getattr(user, 'username', None)
+                    )
+
                     auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
-                    result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "buyer")
-                    await self.session_manager.save_session(session, session.workflow_type or 'general_inquiry')
+                    if account_options and account_options.get("success") and account_options.get("has_target_accounts"):
+                        # User has buyer accounts - show enhanced selection
+                        logger.info("Cross-role switch (seller->buyer) with cached buyer accounts - using enhanced selection")
+                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "buyer")
+                    else:
+                        # No cached buyer accounts - use standard role switch
+                        logger.info("Cross-role switch (seller->buyer) without cached buyer accounts - using standard flow")
+                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "buyer")
+
+                    await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                     return result
             
             # Route based on already classified intent (intent was classified earlier in the function)
             if intent == "buy_something" and confidence > 0.7:
-                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result,
+                # Check if we have a meaningful message preserved from auth/registration flow
+                message_to_process = message
+                intent_to_process = intent_result
+
+                if session.workflow_state:
+                    tracked_message = session.workflow_state.get("last_meaningful_message")
+                    tracked_intent = session.workflow_state.get("last_meaningful_intent_result")
+
+                    # Use meaningful message if it exists AND current message is post-auth (no active auth workflow)
+                    if tracked_message and tracked_intent and session.workflow_type not in [WorkflowType.authentication, WorkflowType.registration]:
+                        logger.info(f"Using preserved meaningful message '{str(tracked_message)[:50]}...' instead of current message '{str(message)[:50]}...'")
+                        message_to_process = tracked_message
+                        intent_to_process = tracked_intent
+
+                        # Clear the tracked message now that we're using it
+                        session.workflow_state.pop("last_meaningful_message", None)
+                        session.workflow_state.pop("last_meaningful_intent_result", None)
+
+                # Normal buy_something flow - user wants to buy with current account
+                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message_to_process, intent_to_process,
                                                                                  self._should_use_summary_aware_extraction)
             elif intent == "confirmation_response" and confidence > 0.7:
                 # Handle confirmation responses - these should already be handled by pending confirmations check above
@@ -513,12 +1073,47 @@ class ChatService:
                 logger.info(f"Handling reference request with context: {intent_result.get('context_analysis', {})}")
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result,
                                                                                  self._should_use_summary_aware_extraction)
+            elif intent == "bfs_search" and confidence > 0.7:
+                # Handle BFS search intent with profile selection message
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                user_email = getattr(user, 'email', 'your profile')
+                
+                # Create the profile selection message
+                profile_message = f"Got it, you're looking to check if items are available in stock.\nLet's continue with your {user_role.title()} profile ({user_email}).\n\nBFS Search coming soon!\nPlease confirm what you'd like to do next:"
+                
+                if user_role == "buyer":
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "get_support", "title": "Get Support Info"}
+                    ]
+                else:  # seller or other roles
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "get_support", "title": "Get Support Info"}
+                    ]
+                
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    profile_message,
+                    buttons_config
+                )
+                
+                return {"status": "bfs_search_handled"}
             elif intent == "rfq_status_check" and confidence > 0.7:
                 return await self._handle_rfq_status_inquiry(user, message, session)
             elif intent == "sell_something" and confidence > 0.7:
+                # Normal sell_something flow - user wants to sell with current account
                 return await self._handle_seller_flow(user, session, message)
+            elif intent == "account_switch" and confidence > 0.7:
+                return await self._handle_account_switch_intent(user, session, message, intent_result)
+            elif intent == "faq":
+                # Handle FAQ requests
+                logger.info(f"FAQ intent detected with {confidence}% confidence in main routing")
+                return await self._handle_faq_request(user, message)
             elif intent == "general_inquiry":
-                return await self._handle_general_inquiry(user, message)
+                return await self._handle_general_inquiry(user, message, intent_result)
+
             elif confidence < 0.5:
                 return await self._handle_clarification_request(user, message)
             else:
@@ -580,16 +1175,29 @@ class ChatService:
                     ["Please complete your registration first before uploading files."],
                     "registration_required"
                 )
+
                 await self.session_manager.send_and_track_message(user.phone_number, registration_response, session)
                 return {"status": "handled", "response": "registration_required"}
 
-            # Extract document information
+            # Extract document information - handle both formats
             if not isinstance(content, dict):
                 raise ValueError("Invalid Excel upload content format")
 
-            document_info = content.get("document", {})
-            file_url = document_info.get("link")
-            filename = document_info.get("filename", "")
+            if "document" in content:
+                # Standard WhatsApp format
+                document_info = content["document"]
+                file_url = document_info.get("link")
+                filename = document_info.get("filename", "")
+            else:
+                # ICS format - direct content structure
+                media_id = content.get("id")
+                filename = content.get("filename", "")
+                
+                if media_id:
+                    # Construct download URL from media ID
+                    file_url = f"https://download.sendmsg.in/whatsapp-mediadownloader/{media_id}"
+                else:
+                    file_url = None
 
             if not file_url:
                 error_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'file_access_error'}
@@ -604,9 +1212,12 @@ class ChatService:
             # Validate Excel file
             validation_service = ExcelValidationService()
             validation_result = await validation_service.validate_excel_file_from_url(file_url, filename)
+            
+            logger.info(f"[EXCEL-VALIDATION] Validation result: {validation_result}")
 
             if not validation_result.get('valid'):
                 validation_error = validation_result.get('error', 'Invalid Excel file')
+                logger.error(f"[EXCEL-VALIDATION] Validation failed: {validation_error}")
                 error_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'validation_failed',
                                  'error': validation_error}
                 error_response = await self.response_helpers.generate_contextual_response(
@@ -624,124 +1235,69 @@ class ChatService:
                 filename=filename
             )
 
-            if not processing_result.get('success'):
-                processing_error = processing_result.get('error', 'Failed to process Excel file')
-                error_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'processing_failed',
-                                 'error': processing_error}
-                error_response = await self.response_helpers.generate_contextual_response(
-                    error_context,
-                    [f"Error processing Excel: {processing_error}"],
-                    "processing_failed"
-                )
-                await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
-                return {"status": "handled", "response": "processing_failed"}
 
             # Prepare context using helpers
             excel_context = ExcelHelpers.prepare_excel_context(processing_result, user.phone_number)
 
             # Update session
-            session.workflow_type = 'rfq_creation'
-            session.workflow_state = session.workflow_state or {}
+            WorkflowManager.set_workflow_type(session, WorkflowType.rfq_creation, caller='excel_upload_handler')
+            WorkflowManager.initialize_workflow_state(session)
             session.workflow_state.update(excel_context)
 
             # Determine flow based on completeness
             completeness = excel_context['completeness']
             items = processing_result.get('items', [])
 
-            if ExcelHelpers.should_complete_immediately(completeness, items):
+            # Always redirect to multiple RFQ flow for Excel uploads with valid items
+            if items and len(items) > 0:
+                logger.info(f"[EXCEL-REDIRECT] Redirecting {len(items)} Excel items to multiple RFQ creation flow")
+                # Set workflow type for RFQ creation
+                WorkflowManager.set_workflow_type(session, WorkflowType.rfq_creation, caller='excel_upload_complete')
                 return await self._handle_complete_excel(user, session, processing_result)
             else:
                 return await self._handle_incomplete_excel(user, session, excel_context)
 
         except Exception as e:
             logger.error(f"Error processing Excel upload: {e}")
-            await self.whatsapp_service.send_message(
-                user.phone_number,
-                "Sorry, I encountered an error processing your Excel file. Please try again."
-            )
+            error_message = "Sorry, I encountered an error processing your Excel file. Please try uploading again or provide the details through text."
+            await self.session_manager.send_and_track_message(user.phone_number, error_message, session)
             return {"status": "error", "response": str(e)}
 
     async def _handle_complete_excel(self, user: User, session: ConversationSession, processing_result: Dict) -> Dict[
         str, Any]:
-        """Handle complete Excel files that can create RFQ immediately."""
+        """Handle complete Excel files by converting to products array and using existing multiple RFQ flow."""
         try:
-            # Generate processing response using OpenAI
-            context = {
-                'excel_data': processing_result,
-                'workflow_type': 'excel_rfq_upload',
-                'conversation_stage': 'excel_processing',
-                'total_items': processing_result.get('total_items', 0),
-                'filename': processing_result.get('filename', '')
-            }
-
-            processing_response = await self.response_helpers.generate_contextual_response(
-                context,
-                [f"Processing {processing_result.get('total_items', 0)} items from Excel file"],
-                "excel_processing"
+            # Convert Excel items to products array format for existing multiple RFQ flow
+            products = self._convert_excel_items_to_products_array(processing_result['items'])
+            
+            logger.info(f"[EXCEL-TO-MULTIPLE-RFQ] Converted {len(processing_result['items'])} Excel items to {len(products)} products for multiple RFQ flow")
+            
+            # Clear any existing workflow state to start fresh with multiple RFQ flow
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state.pop('incomplete_products', None)
+            session.workflow_state.pop('complete_products', None)
+            session.workflow_state.pop('excel_data', None)
+            
+            # Send acknowledgment message first
+            removed_rows = processing_result.get('removed_rows', 0)
+            if removed_rows > 0:
+                success_message = f"✅ Successfully extracted {len(products)} valid items from your Excel file!\n\n📝 Note: {removed_rows} incomplete rows were automatically removed (missing mandatory fields: Specification or Quantity).\n\nProcessing your RFQ..."
+            else:
+                success_message = f"✅ Successfully extracted {len(products)} items from your Excel file!\n\nProcessing your RFQ..."
+            await self.session_manager.send_and_track_message(user.phone_number, success_message, session)
+            
+            # Use existing products array handler for multiple RFQ creation
+            return await self.products_array_handler.handle_products_array(
+                user, session, f"Excel upload: {processing_result['filename']}", products
             )
 
-            await self.whatsapp_service.send_message(user.phone_number, processing_response)
-
-            # Validate items before creating template
-            validation_result = processing_result.get('validation_result', {})
-            if not validation_result.get('valid', False):
-                # Items don't meet GMT API requirements
-                error_msg = "Excel file doesn't meet GMT API requirements:\n"
-                for error in validation_result.get('errors', []):
-                    error_msg += f"• {error}\n"
-                for warning in validation_result.get('warnings', []):
-                    error_msg += f"• {warning}\n"
-
-                error_response = await self.response_helpers.generate_contextual_response(
-                    {**context, 'error': error_msg},
-                    ["Please check your Excel file format and try again."],
-                    "error"
-                )
-                await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
-                return {"status": "failed", "error": error_msg}
-
-            # Create GMT template and submit
-            processing_service = ExcelProcessingService(self.openai_service)
-            template_bytes = processing_service.create_standard_template(processing_result['items'])
-            api_data = processing_service.encode_for_api(template_bytes, processing_result['filename'])
-
-            # Submit to GMT API
-            gmt_service = GMTAPIService()
-            gmt_result = await gmt_service.bulk_upload_rfq(api_data)
-
-            if gmt_result.get('success'):
-                # Generate completion response using OpenAI
-                rfq_data = {
-                    'items': processing_result['items'],
-                    'filename': processing_result['filename'],
-                    'total_items': processing_result['total_items']
-                }
-
-                completion_response = self.openai_service.generate_completion_response(rfq_data, context)
-                await self.session_manager.send_and_track_message(user.phone_number, completion_response, session)
-                
-                session.outcome = 'completed'
-                session.completed_at = utc_now().replace(tzinfo=None)
-
-                # Generate enhanced session summary (non-blocking)
-                await self._handle_session_completion_enhanced(session)
-
-                await self._save_session(session, 'rfq_submitted')
-
-                return {"status": "completed", "response": "rfq_created"}
-            else:
-                # GMT API failed, fall back to conversation completion
-                error_context = {**context, 'error': gmt_result.get('error', 'Unknown error')}
-                error_response = await self.response_helpers.generate_contextual_response(
-                    error_context,
-                    ["There was an issue creating the RFQ. Let me help you complete it through conversation."],
-                    "error_recovery"
-                )
-                await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
-                return await self._handle_incomplete_excel(user, session, {"excel_data": processing_result})
-
         except Exception as e:
-            logger.error(f"Error handling complete Excel: {e}")
+            logger.error(f"[EXCEL-COMPLETE-ERROR] Error handling complete Excel: {e}")
+            logger.error(f"[EXCEL-COMPLETE-ERROR] Error type: {type(e)}")
+            logger.error(f"[EXCEL-COMPLETE-ERROR] Processing result at error: {processing_result}")
+            import traceback
+            logger.error(f"[EXCEL-COMPLETE-ERROR] Full traceback: {traceback.format_exc()}")
+            
             error_context = {'error': str(e), 'workflow_type': 'excel_rfq_upload'}
             error_response = await self.response_helpers.generate_contextual_response(
                 error_context,
@@ -750,6 +1306,85 @@ class ChatService:
             )
             await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
             return await self._handle_incomplete_excel(user, session, {"excel_data": processing_result})
+    
+    def _convert_excel_items_to_products_array(self, excel_items: List[Dict]) -> List[Dict]:
+        """Convert Excel items to products array format for existing multiple RFQ flow."""
+        logger.info(f"[EXCEL-CONVERSION-START] Converting {len(excel_items)} Excel items to products array")
+        logger.info(f"[EXCEL-CONVERSION-INPUT] Raw excel_items: {excel_items}")
+        
+        products = []
+        
+        for i, item in enumerate(excel_items, 1):
+            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing item: {item}")
+            
+            # Map Excel columns to entity format expected by products array handler
+            product_entity = {
+                'description': item.get('ItemDescription', ''),
+                'projectDesc': item.get('Specification', ''),
+                'quantity': item.get('Quantity', ''),
+                'uom': item.get('Uom', 'pcs'),
+                'remarks': item.get('Remarks', ''),
+                # Add default values for required fields that Excel doesn't have
+                'deliveryDate': None,
+                'state': None,
+                'city': None,
+                'pincode': None,
+                'division': None
+            }
+            
+            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Mapped product_entity: {product_entity}")
+            
+            # Clean up empty values but keep structure for validation
+            cleaned_entity = {}
+            for k, v in product_entity.items():
+                logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing field '{k}': value={v}, type={type(v)}")
+                
+                try:
+                    if v is not None:
+                        # Convert to string first
+                        v_str = str(v)
+                        logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Field '{k}': converted to string='{v_str}'")
+                        
+                        # Check if it has content (str() already gives clean representation)
+                        if v_str and v_str.strip():
+                            # Keep quantity as string but ensure it's valid
+                            if k == 'quantity':
+                                logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing quantity field: '{v_str}'")
+                                try:
+                                    # Validate it's a valid number but keep as string
+                                    float(v_str)
+                                    cleaned_entity[k] = v_str
+                                    logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Quantity validated and set: '{v_str}'")
+                                except ValueError as ve:
+                                    logger.error(f"[EXCEL-CONVERSION-ITEM-{i}] Quantity validation failed: {ve}")
+                                    cleaned_entity[k] = None
+                            else:
+                                # Only strip if it's actually a string that needs stripping
+                                logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing non-quantity field '{k}': original_type={type(v)}, is_string={isinstance(v, str)}")
+                                if isinstance(v, str):
+                                    cleaned_entity[k] = v_str.strip()
+                                    logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] String field '{k}' stripped: '{cleaned_entity[k]}'")
+                                else:
+                                    cleaned_entity[k] = v_str
+                                    logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Non-string field '{k}' used as-is: '{cleaned_entity[k]}'")
+                        else:
+                            cleaned_entity[k] = None  # Keep None for empty strings
+                            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Field '{k}' set to None (empty after strip)")
+                    else:
+                        cleaned_entity[k] = None  # Keep None for missing required fields
+                        logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Field '{k}' set to None (was None)")
+                        
+                except Exception as field_error:
+                    logger.error(f"[EXCEL-CONVERSION-ITEM-{i}] ERROR processing field '{k}': {field_error}")
+                    logger.error(f"[EXCEL-CONVERSION-ITEM-{i}] Field details - value: {v}, type: {type(v)}")
+                    raise field_error
+            
+            products.append(cleaned_entity)
+            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Final cleaned_entity: {cleaned_entity}")
+            
+        logger.info(f"[EXCEL-CONVERSION-SUCCESS] Successfully converted {len(excel_items)} Excel items to products array")
+        logger.info(f"[EXCEL-CONVERSION-RESULT] Final products: {products}")
+        return products
 
     async def _handle_incomplete_excel(self, user: User, session: ConversationSession, excel_context: Dict) -> Dict[
         str, Any]:
@@ -773,7 +1408,7 @@ class ChatService:
             }
 
             # Generate clarification response using OpenAI with reupload instructions
-            clarification_response = self.openai_service.generate_clarification_response(
+            clarification_response = await self.openai_service.generate_clarification_response(
                 instructions,
                 excel_context.get('completeness', 0),
                 context
@@ -786,13 +1421,17 @@ class ChatService:
             session.workflow_state['stage'] = 'excel_reupload_required'
             session.workflow_state['pending_excel_reupload'] = True
             session.workflow_state['last_excel_issues'] = missing_fields
-            await self.session_manager.save_session(session, 'rfq_creation')
+            await self.session_manager.save_session(session, WorkflowType.rfq_creation)
 
             return {"status": "excel_reupload_required", "response": "excel_reupload_instructions_sent"}
 
         except Exception as e:
             logger.error(f"Error handling incomplete Excel: {e}")
-            raise
+            # Store issues in session state for retry
+            session.workflow_state['last_excel_issues'] = missing_fields
+            await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+            
+            return {"status": "excel_reupload_required", "response": "excel_reupload_instructions_sent"}
 
     async def _handle_registration_workflow(self, user: User, message: str) -> Dict[str, Any]:
         """Handle user registration process."""
@@ -822,21 +1461,96 @@ class ChatService:
                     db_user.is_registered = True
                     db.commit()
 
-                return await self._process_text_message(user, await self._get_conversation_context(user.phone_number),
+                return await self._process_text_message(user, await self.session_manager.get_conversation_context(user.phone_number),
                                                         message)
 
         except Exception as e:
             return await self._handle_error_response(e, user.phone_number, "registration_workflow",
                                                      "Please tell me your name to get started")
 
-    async def _handle_general_inquiry(self, user: User, message: str) -> Dict[str, Any]:
+    async def _handle_general_inquiry(
+            self, user: User, message: str, intent_result: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
         """Handle general inquiries using OpenAI."""
         try:
             context = ChatServiceHelpers.build_context("general_inquiry", message)
+            logger.info(f"intent result in handle general inquiry :{intent_result}")
 
-            await self._send_contextual_response(user.phone_number, context,
-                                                 ["How can I help you with your procurement needs today?"],
-                                                 "general_inquiry")
+            # Determine user role
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+
+            logger.info(f"continue with user profile:{user.email}, name:{user.name}, user role:{user_role}")
+
+            # Role-based button configuration
+            if user_role == "buyer":
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
+                ]
+                profile_message = f"Let's continue with your buyer profile ({user.email})"
+                # Extract first name and capitalize first letter
+                first_name = user.name.split()[0].capitalize() if user.name else "there"
+                header = f"Hi {first_name}! What can I assist you with today?"
+
+            elif user_role == "seller":
+                buttons_config = [
+                    {"id": "rfq_status", "title": "Check RFQ status"},
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+                profile_message = f"Let's continue with your seller account ({user.email})"
+                # Extract first name and capitalize first letter
+                first_name = user.name.split()[0].capitalize() if user.name else "there"
+                header = f"Hi {first_name}! What would you like to do today?"
+
+            else:
+                # Unknown role → check if we can determine role from user object
+                if hasattr(user, 'role') and user.role:
+                    actual_role = user.role.value if hasattr(user.role, 'value') else user.role
+                    if actual_role == "buyer":
+                        buttons_config = [
+                            {"id": "create_rfq", "title": "Create new RFQ"},
+                            {"id": "rfq_status", "title": "Check RFQ Status"},
+                            {"id": "search_bfs", "title": "Search Stocks"}
+                        ]
+                        profile_message = f"Let's continue with your buyer profile ({user.email})"
+                        # Extract first name and capitalize first letter
+                        first_name = user.name.split()[0].capitalize() if user.name else "there"
+                        header = f"Hi {first_name}! What can I assist you with today?"
+                    elif actual_role == "seller":
+                        buttons_config = [
+                            {"id": "rfq_status", "title": "Check RFQs Status"},
+                            {"id": "contact_support", "title": "Contact Support"}
+                        ]
+                        profile_message = f"Let's continue with your seller account ({user.email})"
+                        # Extract first name and capitalize first letter
+                        first_name = user.name.split()[0].capitalize() if user.name else "there"
+                        header = f"Hi {first_name}! What would you like to do today?"
+                    else:
+                        buttons_config = [
+                            {"id": "create_rfq", "title": "Create new RFQ"},
+                            {"id": "rfq_status", "title": "Check RFQ Status"},
+                            {"id": "search_bfs", "title": "Search Stocks"}
+                        ]
+                        profile_message = "How can I help you with your procurement needs today?"
+                        header = "Please choose an option:"
+                else:
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                    profile_message = "How can I help you with your procurement needs today?"
+                    header = "Please choose an option:"
+
+            # ✅ Send interactive buttons
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                profile_message,
+                buttons_config,
+                header
+            )
+
 
             return {"status": "general_inquiry_handled"}
 
@@ -844,18 +1558,138 @@ class ChatService:
             return await self._handle_error_response(e, user.phone_number, "general_inquiry",
                                                      "How can I assist you today?")
 
+    async def _handle_faq_request(self, user: User, message: str) -> Dict[str, Any]:
+        """Handle FAQ requests by providing answers from FAQ service."""
+        try:
+            logger.info(f"Processing FAQ request for user {user.phone_number}: '{message[:50]}...'")
+            
+            # Get FAQ answer from FAQ service
+            faq_answer = await self.faq_service.get_faq_answer(message)
+            
+            if faq_answer:
+                # Send FAQ answer
+                full_response = f"{faq_answer}\n\nWhat can I assist you with next?"
+                await self.whatsapp_service.send_message(user.phone_number, full_response)
+                
+
+                
+
+                return {"status": "faq_handled", "answer_provided": True}
+            else:
+                # No FAQ answer found, provide fallback
+                fallback_message = "I don't have specific information about that. For detailed assistance, please contact our support team."
+                await self.whatsapp_service.send_message(user.phone_number, fallback_message)
+                return {"status": "faq_no_answer", "answer_provided": False}
+
+        except Exception as e:
+            return await self._handle_error_response(e, user.phone_number, "faq_request",
+                                                     "I'm having trouble accessing FAQ information. Please try again or contact support.")
+
+    async def _handle_support_request(self, user: User, message: str) -> Dict[str, Any]:
+        """Handle support requests by providing contact information and menu options."""
+        try:
+            settings = get_settings()
+            support_contact = settings.support_contact_info
+            
+            # Get user role for appropriate menu
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+            
+            # Create support message with contact info
+            support_message = f"For support assistance, please contact us at: {support_contact}"
+            
+            # Role-based button configuration
+            if user_role == "buyer":
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
+                ]
+                header = "What else can I help you with?"
+            elif user_role == "seller":
+                buttons_config = [
+                    {"id": "rfq_status", "title": "Show RFQ status"},
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+                header = "What else would you like to do?"
+            else:
+                buttons_config = [
+                    {"id": "contact_support", "title": "Contact Support"},
+                    {"id": "exit", "title": "Exit"}
+                ]
+                header = "How can I help you?"
+            
+            # Send interactive buttons
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                support_message,
+                buttons_config,
+                header
+            )
+            
+            return {"status": "support_handled"}
+
+        except Exception as e:
+            return await self._handle_error_response(e, user.phone_number, "support_request",
+                                                     "For support, please contact info.support.com")
+
     async def _handle_clarification_request(self, user: User, message: str) -> Dict[str, Any]:
         """Handle ambiguous messages requiring clarification."""
         try:
-            context = ChatServiceHelpers.build_context("clarification", message)
-
-            clarification_questions = [
-                "Could you be more specific about what you're looking for?",
-                "Are you looking to create an RFQ or check product availability?"
-            ]
-
-            response = await self.response_helpers.generate_clarification_response(clarification_questions, 0, context)
-            await self.whatsapp_service.send_message(user.phone_number, response)
+            # Check user role to provide appropriate menu
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+            
+            if user_role == "buyer":
+                # Buyer fallback with buttons
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "What can I assist you with today?",
+                    buttons_config,
+                    "Please choose an option:"
+                )
+            elif user_role == "seller":
+                # Seller fallback with buttons
+                buttons_config = [
+                    {"id": "rfq_status", "title": "Check RFQ status"},
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    f"Hi {user.name}! What would you like to do today?",
+                    buttons_config,
+                    "Please choose an option:"
+                )
+            else:
+                # Fallback based on user role
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                if user_role == "buyer":
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                elif user_role == "seller":
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQs Status"},
+                        {"id": "contact_support", "title": "Contact Support"}
+                    ]
+                else:
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "How can I help you with your procurement needs today?",
+                    buttons_config,
+                    "Please choose an option:"
+                )
+            
             return {"status": "clarification_sent"}
 
         except Exception as e:
@@ -865,36 +1699,282 @@ class ChatService:
     async def _handle_fallback(self, user: User, message: str) -> Dict[str, Any]:
         """Handle messages that don't fit other categories."""
         try:
-            context = ChatServiceHelpers.build_context("fallback", message)
-
-            fallback_questions = ["How can I help you with your procurement needs?"]
-
-            await self._send_contextual_response(user.phone_number, context, fallback_questions, "fallback")
+            # Check user role to provide appropriate menu
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+            
+            if user_role == "buyer":
+                # Buyer fallback with buttons
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "What can I assist you with today?",
+                    buttons_config,
+                    "Please choose an option:"
+                )
+            elif user_role == "seller":
+                # Seller fallback with buttons
+                buttons_config = [
+                    {"id": "rfq_status", "title": "🔍 Check RFQ status"},
+                    {"id": "get_support", "title": "💬 Get Support Info"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "What would you like to do today?",
+                    buttons_config,
+                    "Please choose an option:"
+                )
+            else:
+                # Fallback based on user role
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                if user_role == "buyer":
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                elif user_role == "seller":
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQs Status"},
+                        {"id": "contact_support", "title": "Contact Support"}
+                    ]
+                else:
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    "How can I help you with your procurement needs today?",
+                    buttons_config,
+                    "Please choose an option:"
+                )
+            
             return {"status": "fallback_handled"}
 
         except Exception as e:
             return await self._handle_error_response(e, user.phone_number, "fallback_handler",
                                                      "How can I assist you today?")
 
+    async def _handle_account_switch_intent(self, user: User, session: ConversationSession, message: str, intent_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle account switch intent."""
+        try:
+            from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
+
+            # Extract target role from context analysis
+            context_analysis = intent_result.get("context_analysis", {})
+            account_switch_details = context_analysis.get("account_switch_details", {})
+            target_role = account_switch_details.get("target_role", "buyer")
+            switch_type = account_switch_details.get("switch_type", "unclear")
+
+            logger.info(f"Handling account switch intent: target_role={target_role}, switch_type={switch_type}")
+
+            auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
+
+            # Check current user role
+            current_role = user.role.value if hasattr(user.role, 'value') else user.role
+
+            if target_role != current_role:
+                # Cross-role switch (buyer -> seller or seller -> buyer)
+                result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, target_role)
+            else:
+                # Same-role switch (buyer -> different buyer, seller -> different seller)
+                result = await auth_reg_switch.handle_account_switch_confirmation(user, session, message, target_role)
+
+            await self.session_manager.save_session(session, self._get_workflow_or_default(session))
+            return result
+
+        except Exception as e:
+            logger.error(f"Error handling account switch intent: {e}")
+            return await self._handle_error_response(e, user.phone_number, "account_switch_error",
+                                                     "I had trouble processing your account switch request. Please try again.")
+
+    async def _check_for_enhanced_account_selection(self, user: User, session: ConversationSession, message: str, target_intent: str) -> Dict[str, Any]:
+        """
+        Check if we should use enhanced account selection for same-role switches.
+
+        This method checks the cached user data to see if the user has multiple accounts
+        for the target intent and shows them actual account options instead of generic choices.
+
+        Args:
+            user: Current user
+            session: Current session
+            message: User's message
+            target_intent: Target intent (buy_something/sell_something)
+
+        Returns:
+            Dict with status and result - 'handled' if enhanced selection was used, 'not_applicable' otherwise
+        """
+        try:
+            from app.services.user_cache_service import get_user_cache_service
+            from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
+
+            current_role = user.role.value if hasattr(user.role, 'value') else user.role
+            target_role = "buyer" if target_intent == "buy_something" else "seller"
+            current_email = getattr(user, 'email', None) or getattr(user, 'username', None)
+
+            logger.info(f"Enhanced account selection check: current_role={current_role}, target_role={target_role}, target_intent={target_intent}")
+
+            # Only apply enhanced selection for same-role switches
+            if current_role != target_role:
+                logger.info("Cross-role switch detected - enhanced selection not applicable")
+                return {"status": "not_applicable", "reason": "cross_role_switch"}
+
+            # Check if we have cached user data
+            user_cache_service = get_user_cache_service()
+            account_options = await user_cache_service.get_account_options_for_intent_switch(
+                user.phone_number, target_intent, current_email
+            )
+
+            if not account_options or not account_options.get("success"):
+                logger.info("No cached data available - enhanced selection not applicable")
+                return {"status": "not_applicable", "reason": "no_cached_data"}
+
+            has_target_accounts = account_options.get("has_target_accounts", False)
+
+            if not has_target_accounts:
+                logger.info("No target accounts available - enhanced selection not applicable")
+                return {"status": "not_applicable", "reason": "no_target_accounts"}
+
+            # We have target accounts - use enhanced account selection
+            logger.info("Enhanced account selection applicable - showing actual account options")
+
+            auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
+            result = await auth_reg_switch.handle_account_switch_confirmation(user, session, message, target_role)
+
+            await self.session_manager.save_session(session, self._get_workflow_or_default(session))
+
+            return {"status": "handled", "result": result}
+
+        except Exception as e:
+            logger.error(f"Error in enhanced account selection check: {e}")
+            return {"status": "error", "error": str(e)}
+
     async def _handle_button_response(self, user: User, session: ConversationSession, button_id: str) -> Dict[
         str, Any]:
         """Handle button interaction responses."""
-        logger.info(f"Button response from {user.phone_number}: {button_id}")
+        # Handle new menu buttons
+        if button_id == "new_rfq" or button_id == "raise_rfq" or button_id == "create_rfq":
+            # Check if we have a tracked meaningful message from auth/registration flow
+            workflow_state = session.workflow_state or {}
+            tracked_message = workflow_state.get("last_meaningful_message")
+            tracked_intent_result = workflow_state.get("last_meaningful_intent_result")
+
+            if tracked_message and tracked_intent_result:
+                logger.info(f"Using tracked meaningful message instead of button synthetic message: '{str(tracked_message)[:50]}...'")
+                # Clear the tracked message since we're using it
+                workflow_state.pop("last_meaningful_message", None)
+                workflow_state.pop("last_meaningful_intent_result", None)
+
+                message_to_process = tracked_message
+                intent_result = tracked_intent_result
+            else:
+                logger.info(f"No tracked meaningful message found - using default RFQ creation message")
+                message_to_process = "I want to create a new RFQ"
+                intent_result = {"intent": "buy_something", "confidence": 95}
+
+            # Trigger RFQ creation flow with the appropriate message
+            return await self.purchase_intent_handler.handle_purchase_intent(
+                user, session, message_to_process, intent_result,
+                self._should_use_summary_aware_extraction
+            )
         
+        elif button_id == "search_bfs":
+            # Handle BFS search coming soon with profile selection message
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+            user_email = getattr(user, 'email', 'your profile')
+            
+            # Create the profile selection message
+            profile_message = (
+                "Got it! You’re looking to check if items are available in stock.\n\n"
+                "🔍 *BFS Search coming soon!*"
+            )
+
+            if user_role == "buyer":
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+            else:  # seller or other roles
+                buttons_config = [
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+            
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                profile_message,
+                buttons_config
+            )
+            
+            return {"status": "bfs_coming_soon_handled"}
+        
+        elif button_id == "rfq_status" or button_id == "check_rfqs":
+            # Trigger RFQ status check flow
+            return await self._handle_rfq_status_inquiry(user, "Check my RFQ status", session)
+        
+        elif button_id == "view_rfqs":
+            # Trigger seller RFQ view flow
+            return await self._handle_seller_flow(user, session, "View available RFQs")
+        
+        elif button_id == "check_submissions":
+            # Trigger seller submission check flow
+            return await self._handle_seller_flow(user, session, "Check my previous submissions")
+        
+        elif button_id == "contact_support" or button_id == "other_support" or button_id == "get_support":
+            # Trigger support flow
+            return await self._handle_support_request(user, "I need support")
+        
+        elif button_id == "exit":
+            # Trigger exit flow
+            user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+            exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+            await self.session_manager.save_session(session, WorkflowType.user_exit)
+            return exit_result
+
+        # Handle cancel workflow confirmation buttons
+        elif button_id in ["confirm_cancel", "decline_cancel"]:
+            return await self._handle_cancel_confirmation_button(user, session, button_id)
+
         # Handle modify button by simulating "modify" message
-        if button_id == "no_rfq":
+        elif button_id == "no_rfq":
             return await self._process_text_message(user, session, "modify")
         
+        # Handle continue button from optional fields
+        elif button_id == "continue_rfq":
+            result = await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
+
+            # CRITICAL: Save session after continue button to persist pending_rfq/pending_combined_rfq
+            # The confirmation handler moves from pending_optional_* to pending_* but doesn't save
+            # Without this save, the next "Confirm" click will fail because pending_rfq won't exist
+            await self.session_manager.save_session(session)
+            logger.info(f"Session saved after continue button handling for {user.phone_number}")
+
+            return result
+
         # Check if this is a confirmation button response
-        if button_id == "confirm_rfq":
+        elif button_id == "confirm_rfq":
             # Route to confirmation handler
-            return await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
-        
+            result = await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
+
+            # Save session after confirmation handling to persist any session clearing
+            # This ensures that when RFQ is successfully created, the cleared workflow_state
+            # is saved to the database so the next request starts fresh
+            await self.session_manager.save_session(session)
+            logger.info(f"Session saved after confirmation button handling for {user.phone_number}")
+
+            return result
+
         # Check if this is an email confirmation button response during authentication
-        if button_id in ["confirm_email", "reject_email"]:
+        elif button_id in ["confirm_email", "reject_email"]:
             # Route to authentication email confirmation handler
             return await self._handle_authentication_email_button(user, session, button_id)
-        
+
         # Default button handling
         return {"status": "button_handled", "button_id": button_id}
 
@@ -918,6 +1998,36 @@ class ChatService:
                 
         except Exception as e:
             logger.error(f"Error handling authentication email button: {e}")
+            return {"status": "error", "error": str(e)}
+
+    async def _handle_cancel_confirmation_button(self, user: User, session: ConversationSession, button_id: str) -> Dict[str, Any]:
+        """Handle cancel workflow confirmation button responses."""
+        logger.info(f"Cancel confirmation button response from {user.phone_number}: {button_id}")
+
+        try:
+            user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+
+            # Map button ID to confirmation result
+            # confirm_cancel -> Yes, decline_cancel -> No
+            is_confirmed = button_id == "confirm_cancel"
+
+            cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed)
+
+            if cancel_result.get("status") == "cancelled":
+                # Workflow was cancelled, save session and return
+                await self.session_manager.save_session(session, session.workflow_type)
+                return cancel_result
+            elif cancel_result.get("status") == "cancelled_aborted":
+                # User declined, save session and continue with normal flow
+                await self.session_manager.save_session(session, session.workflow_type)
+                # Don't return - let the message processing continue
+                logger.info("User declined cancel via button - would need to re-process as normal message")
+                # Since this is a button response, we can't continue the flow here
+                # We need to return a special status to trigger the workflow to continue
+                return cancel_result
+
+        except Exception as e:
+            logger.error(f"Error handling cancel confirmation button: {e}")
             return {"status": "error", "error": str(e)}
 
     async def _handle_list_response(self, user: User, session: ConversationSession, list_id: str) -> Dict[
@@ -949,13 +2059,15 @@ class ChatService:
     Dict[str, Any]:
         """Handle common error response pattern."""
         logger.error(f"Error in {error_type}: {error}")
-        error_context = {"error_type": error_type, "conversation_stage": "error"}
-        error_response = await self.response_helpers.generate_contextual_response(
-            error_context,
-            [fallback_message],
-            "error"
+        
+        # Use technical failure handler for clean exit
+        from app.utils.technical_failure_handler import handle_technical_failure
+        await handle_technical_failure(
+            user_phone=user_phone,
+            error_message=f"{error_type}: {str(error)}",
+            error_type=error_type
         )
-        await self.whatsapp_service.send_message(user_phone, error_response)
+        
         return {"status": "error", "error": str(error)}
 
     async def _save_session(self, session: ConversationSession, workflow_type: str) -> ConversationSession:
@@ -1142,8 +2254,8 @@ class ChatService:
 
                     # Update session workflow type based on result
                     if workflow_step in ["display_rfqs_to_seller", "show_subscription_plans"]:
-                        session.workflow_type = "seller_rfq_view"
-                        await self.session_manager.save_session(session, "seller_rfq_view")
+                        WorkflowManager.set_workflow_type(session, WorkflowType.seller_rfq_view, caller='seller_flow_init')
+                        await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
                 # Send response message if provided and not already sent
                 response_message = result.get("message")
@@ -1232,7 +2344,7 @@ class ChatService:
             candidate_ids = {str(r.get("rfq_id")) for r in candidate_rfqs if r.get("rfq_id") is not None}
 
             # Use existing AI extraction pipeline to parse RFQ IDs from free text
-            extraction = self.openai_service.extract_entities(message=message, workflow_type="rfq_status_check")
+            extraction = await self.openai_service.extract_entities(message=message, workflow_type="rfq_status_check")
             extracted_ids = extraction.get("rfq_id") or []
 
             # Normalize and filter to candidates
@@ -1264,7 +2376,7 @@ class ChatService:
             workflow_state["seller_selected_rfq_ids"] = selected_ids
             workflow_state["seller_next_step"] = None
             session.workflow_state = workflow_state
-            await self.session_manager.save_session(session, "seller_flow")
+            await self.session_manager.save_session(session, WorkflowType.general_inquiry)  # seller_flow not in enum
 
             # Acknowledge selection
             ack = f"Thanks! Noted RFQ ID(s): {', '.join(selected_ids)}. We will proceed accordingly."
@@ -1436,18 +2548,18 @@ class ChatService:
 
     async def _handle_contextual_interaction(self, user: User, session: ConversationSession, message: str, intent_result: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Handle contextual interactions with comprehensive session management.
-        
+        Handle contextual interactions with SAFE session management.
+
         This method processes contextual intents like session_inquiry, contextual_reference,
-        workflow_rejection, and alternative_request by executing AI-determined actions
-        and updating session state accordingly.
-        
+        and alternative_request. CRITICAL: Uses WorkflowManager to prevent
+        accidental data loss.
+
         Args:
             user: User making the request
             session: Current conversation session
             message: User's contextual message
             intent_result: Result from intent classification with contextual data
-            
+
         Returns:
             Dict with status and result information
         """
@@ -1456,76 +2568,118 @@ class ChatService:
             contextual_response = intent_result.get('contextual_response', 'I understand your request.')
             contextual_actions = intent_result.get('contextual_actions', [])
             context_understanding = intent_result.get('context_understanding', {})
-            
-            logger.info(f"Handling contextual interaction - Intent: {context_understanding.get('user_intent', 'unknown')}, Actions: {len(contextual_actions)}")
-            
-            # Process each contextual action
+
+            logger.info(f"[CONTEXTUAL_INTERACTION] Intent: {context_understanding.get('user_intent', 'unknown')}, "
+                       f"Actions: {len(contextual_actions)}, "
+                       f"Current workflow: {WorkflowManager.get_workflow_type(session)}")
+
+            # Check if user has active RFQ data that would be lost
+            has_active_data = bool(
+                session.workflow_state and (
+                    session.workflow_state.get('extracted_entities') or
+                    WorkflowManager.has_any_pending_confirmation(session)
+                )
+            )
+
+            # Process each contextual action WITH SAFEGUARDS
             session_updated = False
+            destructive_action_blocked = False
+
             for action in contextual_actions:
                 action_type = action.get('type')
                 action_description = action.get('description', '')
-                
-                logger.info(f"Processing contextual action: {action_type} - {action_description}")
-                
+
+                logger.info(f"[CONTEXTUAL_ACTION] Type: {action_type} - {action_description}")
+
+                # SAFE ACTIONS (No data loss risk)
                 if action_type == 'show_session_summary':
                     # Generate session summary and replace the contextual response entirely
                     session_summary = await self._generate_session_summary(session)
                     if session_summary:
                         contextual_response = session_summary  # Replace, don't append
-                    
-                elif action_type == 'change_workflow_state':
-                    session_updated = True
-                    # Default to collecting state for most cases
-                    session.workflow_state = session.workflow_state or {}
-                    session.workflow_state['stage'] = 'collecting'
-                    session.workflow_state.pop('pending_combined_rfq', None)
-                    session.workflow_state.pop('pending_rfq', None)
-                    logger.info(f"Changed workflow state to: collecting")
-                    
-                elif action_type == 'change_workflow_type':
-                    session_updated = True
-                    # Default to general inquiry for workflow changes
-                    session.workflow_type = 'general_inquiry'
-                    logger.info(f"Changed workflow type to: general_inquiry")
-                    
-                elif action_type == 'rollback_to_previous':
-                    session_updated = True
-                    await self._rollback_to_stage(session, 'collecting')
-                    
-                elif action_type == 'clear_session_data':
-                    session_updated = True
-                    await self._clear_session_fields(session, ['extracted_entities', 'pending_combined_rfq', 'pending_rfq'])
-                    
-                elif action_type == 'restart_workflow':
-                    session_updated = True
-                    await self._restart_workflow(session)
-                    
+
                 elif action_type == 'suggest_alternatives':
                     # Add common alternatives to response
                     alt_text = "\n\n**Search BFS Inventory** - Check immediate availability\n**Product Information** - Get details about our services\n**General Inquiry** - Ask questions about the process"
                     contextual_response += alt_text
-                    
+
                 elif action_type == 'update_entities' or action_type == 'modify_existing_data':
                     # This would need more complex parsing from the original message
                     # For now, just acknowledge that we understand they want to modify something
                     contextual_response += "\n\nI understand you want to modify the information. Please let me know specifically what you'd like to change."
-                    
+
+                # DESTRUCTIVE ACTIONS (Require validation)
+                elif action_type in ['change_workflow_state', 'change_workflow_type', 'rollback_to_previous',
+                                    'clear_session_data', 'restart_workflow']:
+
+                    # CRITICAL: Block destructive actions if user has active data
+                    if has_active_data:
+                        logger.warning(f"[DESTRUCTIVE_ACTION_BLOCKED] Blocked '{action_type}' - User has active RFQ data. "
+                                     f"This prevents data loss bug. User should explicitly confirm if they want to reset.")
+                        destructive_action_blocked = True
+
+                        # Instead of destroying data, inform user
+                        contextual_response = ("I see you have an active RFQ in progress. " +
+                                             contextual_response +
+                                             "\n\nWould you like to:\n1. Continue with your current request\n2. Start a new request (this will clear your current data)")
+                    else:
+                        # Safe to execute - no data to lose
+                        session_updated = True
+
+                        if action_type == 'change_workflow_state':
+                            # Use WorkflowManager for safe state changes
+                            WorkflowManager.set_stage(session, WorkflowStage.COLLECTING, caller='contextual_interaction')
+                            WorkflowManager.clear_pending(session, PendingFlag.COMBINED_RFQ, PendingFlag.RFQ,
+                                                         caller='contextual_interaction')
+                            logger.info(f"[SAFE_STATE_CHANGE] Changed workflow state to: collecting")
+
+                        elif action_type == 'change_workflow_type':
+                            # Use WorkflowManager with validation
+                            WorkflowManager.transition_workflow(
+                                session,
+                                WorkflowType.general_inquiry,
+                                validate=True,
+                                caller='contextual_interaction'
+                            )
+                            logger.info(f"[SAFE_TRANSITION] Changed workflow type to: general_inquiry")
+
+                        elif action_type == 'rollback_to_previous':
+                            await self._rollback_to_stage(session, 'collecting')
+
+                        elif action_type == 'clear_session_data':
+                            # Use safe clearing that preserves critical data
+                            WorkflowManager.clear_all_rfq_pending(session, caller='contextual_interaction')
+
+                        elif action_type == 'restart_workflow':
+                            # Use safe reset that preserves conversation history
+                            WorkflowManager.safe_reset_workflow_state(
+                                session,
+                                preserve_fields=['conversation_history'],
+                                caller='contextual_interaction'
+                            )
+
                 else:
-                    logger.info(f"Processed contextual action: {action_type}")
-            
+                    logger.info(f"[UNKNOWN_ACTION] Processed contextual action: {action_type}")
+
+            # Log if destructive action was blocked
+            if destructive_action_blocked:
+                logger.warning(f"[DATA_LOSS_PREVENTED] Blocked AI-triggered destructive action for session {session.session_id}. "
+                             f"This prevents the 'fields asked repeatedly' bug.")
+
             # Send the contextual response to user
             await self.session_manager.send_and_track_message(user.phone_number, contextual_response, session)
-            
+
             # Save session if any updates were made
             if session_updated:
-                workflow_type = session.workflow_type if hasattr(session, 'workflow_type') and session.workflow_type else 'general_inquiry'
-                await self.session_manager.save_session(session, workflow_type)
-                logger.info("Session updated and saved after contextual interaction")
-            
+                current_workflow = WorkflowManager.get_workflow_type(session)
+                await self.session_manager.save_session(session, current_workflow)
+                logger.info("[CONTEXTUAL_INTERACTION] Session updated and saved")
+
             return {
                 "status": "contextual_interaction_handled",
                 "user_intent": context_understanding.get('user_intent', 'unknown'),
                 "actions_performed": len(contextual_actions),
+                "destructive_blocked": destructive_action_blocked,
                 "confidence": context_understanding.get('confidence', 0)
             }
             
@@ -1638,8 +2792,179 @@ class ChatService:
                 'stage': 'collecting',
                 'last_activity_at': utc_now().isoformat()
             }
-            session.workflow_type = 'general_inquiry'
+            WorkflowManager.set_workflow_type(session, WorkflowType.general_inquiry, caller='restart_workflow')
             logger.info("Restarted workflow - cleared session data")
             
         except Exception as e:
             logger.error(f"Error restarting workflow: {e}")
+
+    def _update_last_user_message_with_intent(self, session: ConversationSession, intent: str, confidence: float) -> None:
+        """Update the last user message in conversation history with intent classification results."""
+        try:
+            if not session.conversation_history or not isinstance(session.conversation_history, dict):
+                return
+
+            messages = session.conversation_history.get('messages', [])
+            if not messages:
+                return
+
+            # Find the last user message and update it with intent data
+            for i in range(len(messages) - 1, -1, -1):  # Iterate backwards
+                message = messages[i]
+                if message.get("sender") == "user":
+                    message["intent"] = intent
+                    message["confidence"] = confidence
+                    logger.info(f"Updated user message with intent: {intent} (confidence: {confidence})")
+                    break
+
+        except Exception as e:
+            logger.error(f"Error updating last user message with intent: {e}")
+
+    def _track_meaningful_message_during_auth_flow(self, session: ConversationSession, message_content: str, intent_result: Dict[str, Any]) -> None:
+        """Track the last meaningful message for processing after auth/registration completes."""
+        try:
+            if not intent_result:
+                return
+
+            intent = intent_result.get('intent')
+            confidence = intent_result.get('confidence', 0)
+
+            # Check if this is a meaningful message that should be processed after auth/registration
+            meaningful_intents = [
+                "buy_something", "sell_something", "general_inquiry",
+                "modification_request", "reference_request", "rfq_status_check"
+            ]
+
+            # Skip OTP-like messages and auth/registration flow responses
+            if self._is_auth_flow_response(message_content, intent, session):
+                logger.info(f"Skipping auth/registration flow response: '{str(message_content)[:50]}...' with intent: {intent}")
+                return
+
+            # Skip account selection responses during role switch
+            if session.workflow_state and session.workflow_state.get("pending_role_switch"):
+                logger.info(f"Skipping account selection response during role switch: '{str(message_content)[:50]}...'")
+                return
+
+            # Skip profile selection responses (e.g., "1", "2") during authentication
+            if session.workflow_state and session.workflow_state.get("profile_selection_stage"):
+                logger.info(f"Skipping profile selection response during auth: '{str(message_content)[:50]}...'")
+                return
+
+            # Check if we already have a meaningful message preserved (e.g., after options presented)
+            existing_meaningful = session.workflow_state.get("last_meaningful_message") if session.workflow_state else None
+
+            # Track meaningful messages, but preserve existing ones in post-auth state
+            if intent in meaningful_intents and confidence > 50:
+                session.workflow_state = session.workflow_state or {}
+
+                # Check if this is a button response to options (which should be ignored)
+                # vs a new meaningful business request (which should replace existing)
+                is_button_response = (
+                    existing_meaningful and 
+                    session.workflow_type not in [WorkflowType.authentication, WorkflowType.registration] and
+                    message_content.lower().strip() in ["1", "2", "3", "create new rfq", "check rfq status", "search stocks", "get_support"]
+                )
+                
+                if is_button_response:
+                    logger.info(f"Preserving existing meaningful message '{str(existing_meaningful)[:50]}...' (ignoring button response '{str(message_content)[:50]}...')")
+                else:
+                    # Normal case or new meaningful message: track/update the meaningful message
+                    session.workflow_state["last_meaningful_message"] = message_content
+                    session.workflow_state["last_meaningful_intent_result"] = intent_result
+                    logger.info(f"Tracked meaningful message: '{str(message_content)[:50]}...' with intent: {intent} (confidence: {confidence}%)")
+
+        except Exception as e:
+            logger.error(f"Error tracking meaningful message: {e}")
+
+    def _is_auth_flow_response(self, message_content: str, intent: str, session: ConversationSession = None) -> bool:
+        """Check if this message is an auth/registration flow response that shouldn't be processed as business intent."""
+        try:
+            # Handle non-string message content (like interactive button responses)
+            if not isinstance(message_content, str):
+                return False
+
+            message_lower = message_content.lower().strip()
+
+            # OTP patterns (4-6 digits, possibly with spaces)
+            import re
+            if re.match(r'^\s*\d{4,6}\s*$', message_content.strip()):
+                return True
+
+            # Confirmation responses - BUT NOT if we have pending optional fields or confirmations
+            # These responses might be answers to optional field questions or RFQ confirmations
+            if message_lower in ["yes", "y", "no", "n", "confirm", "correct", "ok", "restart", "wrong", "incorrect", "skip", "exit"]:
+                # Check if user has active workflow with pending optional fields or confirmations
+                if session and session.workflow_state:
+                    has_pending_optional = bool(
+                        session.workflow_state.get("pending_optional_rfq") or
+                        session.workflow_state.get("pending_optional_combined_rfq")
+                    )
+                    has_pending_confirmations = bool(
+                        session.workflow_state.get("pending_combined_rfq") or
+                        session.workflow_state.get("pending_rfq")
+                    )
+
+                    # If there are pending optional fields or confirmations, this is NOT an auth flow response
+                    if has_pending_optional or has_pending_confirmations:
+                        logger.info(f"Message '{message_lower}' detected with pending optional/confirmation - NOT treating as auth flow response")
+                        return False
+
+                # Otherwise, treat as auth flow response
+                return True
+
+            # Email addresses (during email confirmation)
+            if "@" in message_content and "." in message_content:
+                return True
+
+            # Resend requests
+            if message_lower in ["resend", "send again", "retry"]:
+                return True
+
+            # If classified as register_account but looks like OTP, it's probably misclassified
+            if intent == "register_account" and re.search(r'\d{4,6}', message_content):
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Error checking auth flow response: {e}")
+            return False
+
+    def _get_meaningful_message_after_auth(self, session: ConversationSession, current_message: str, current_intent_result: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+        """Get the most meaningful message to process after auth/registration completes."""
+        try:
+            # Check if we have a tracked meaningful message from during the auth/registration flow
+            workflow_state = session.workflow_state or {}
+            tracked_message = workflow_state.get("last_meaningful_message")
+            tracked_intent_result = workflow_state.get("last_meaningful_intent_result")
+
+            if tracked_message and tracked_intent_result:
+                logger.info(f"Using tracked meaningful message: '{str(tracked_message)[:50]}...' with intent: {tracked_intent_result.get('intent')}")
+
+                # Clean up the tracked message since we're using it now
+                workflow_state.pop("last_meaningful_message", None)
+                workflow_state.pop("last_meaningful_intent_result", None)
+
+                return tracked_message, tracked_intent_result
+            else:
+                # No tracked message - check if current message is an auth flow response
+                current_intent = current_intent_result.get('intent', '')
+                if self._is_auth_flow_response(current_message, current_intent, session):
+                    logger.info(f"No meaningful message tracked and current message is auth flow response. Creating default general inquiry.")
+                    # Return a default general inquiry since user completed auth/registration without meaningful business request
+                    default_message = "What can I assist you with today?"
+                    default_intent_result = {
+                        "intent": "general_inquiry",
+                        "confidence": 75,
+                        "context_analysis": {"conversation_stage": "post_auth_default", "show_buttons": True}
+                    }
+                    return default_message, default_intent_result
+                else:
+                    # Current message is meaningful, use it
+                    logger.info(f"No tracked meaningful message found, using current message: '{str(current_message)[:50]}...'")
+                    return current_message, current_intent_result
+
+        except Exception as e:
+            logger.error(f"Error getting meaningful message after auth: {e}")
+            # Fallback to current message
+            return current_message, current_intent_result

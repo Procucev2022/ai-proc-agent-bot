@@ -1,0 +1,11 @@
+{
+  "scenario_id": 10,
+  "to": "support@procucev.com",
+  "cc": "",
+  "bcc": "",
+  "subject": "Procurement API Service Failure – Immediate Attention Required",
+  "body": "Dear Support Team,\n\nAn error has occurred in one of the Procurement API services (authentication, registration, OTP validation, RFQ creation, etc.). Immediate attention is required to resolve the issue.\nMessage: {error_message}\nPlease review the logs and respond accordingly.",
+  "signature": "Regards\nQUA",
+  "supports_buyer": true,
+  "supports_seller": true
+}

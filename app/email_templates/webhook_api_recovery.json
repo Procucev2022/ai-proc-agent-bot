@@ -1,0 +1,11 @@
+{
+  "scenario_id": "webhook_api_recovery",
+  "subject": "RESOLVED: ICS WhatsApp API Restored",
+  "to": "{alert_recipients}",
+  "cc": "",
+  "bcc": "",
+  "body": "GOOD NEWS: The ICS WhatsApp API has been restored and is operating normally.\n\nRecovery Time: {recovery_time}\nTotal Downtime: {total_downtime}\nCurrent Response Time: {current_response_time}\n\nSTATUS:\n- API health checks are passing consistently\n- Response times are within normal thresholds\n- WhatsApp communications have been restored\n- System is fully operational\n\nNEXT STEPS:\n1. Monitor for stability over the next few hours\n2. Review incident logs for root cause analysis\n3. Check for any queued messages that need attention\n4. Notify stakeholders that service is restored\n\nThe monitoring system will continue to track API health and alert if any issues recur.",
+  "signature": "Regards,\nProcuCEV Monitoring System",
+  "supports_buyer": true,
+  "supports_seller": true
+}

@@ -6,7 +6,8 @@ extracted from the main ChatService class for better organization.
 """
 
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union
+from app.utils.rfq_message_formatter import format_rfq_response_message
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class ResponseHelpers:
                 enhanced_context["has_historical_context"] = True
                 print(f"ResponseHelpers: Enhanced context with {len(chat_summaries)} chat summaries")
             
-            return self.openai_service.generate_contextual_response(enhanced_context, base_questions, conversation_stage)
+            return await self.openai_service.generate_contextual_response(enhanced_context, base_questions, conversation_stage)
         except Exception as e:
             logger.error(f"Error generating contextual response: {e}")
             if base_questions:
@@ -70,14 +71,14 @@ class ResponseHelpers:
     async def generate_rfq_status_contextual_response(self, context: dict) -> str:
         """Generate contextual response using OpenAI."""
         try:
-            return self.openai_service.generate_rfq_status_response(context)
+            return await self.openai_service.generate_rfq_status_response(context)
         except Exception as e:
             logger.error(f"Error generating contextual response: {e}")
 
     async def generate_seller_contextual_intent_response(self, context: dict) -> str:
         """Generate contextual response using OpenAI."""
         try:
-            return self.openai_service.generate_seller_intent(context)
+            return await self.openai_service.generate_seller_intent(context)
         except Exception as e:
             logger.error(f"Error generating contextual response: {e}")
 
@@ -103,6 +104,8 @@ class ResponseHelpers:
                 return await self._generate_email_processing_response(context)
             elif workflow_state == "rfq_email_status":
                 return await self._generate_email_status_response(context)
+            elif workflow_state == "rfq_email_status_with_errors":
+                return await self._generate_rfq_email_status_with_errors_response(context)
             elif workflow_state == "invalid_rfq_selection":
                 return await self._generate_invalid_rfq_response(context)
             elif workflow_state == "invalid_plan_selection":
@@ -133,8 +136,63 @@ class ResponseHelpers:
 
         except Exception as e:
             logger.error(f"Error generating seller contextual response: {e}")
-            return self._get_fallback_message(context.get("workflow_state"))
+            fallback_result = self._get_fallback_message(context.get("workflow_state"), context.get("user_role"))
+            return fallback_result["message"] if isinstance(fallback_result, dict) else fallback_result
 
+    # Add these new workflow states to your response_helpers.py
+
+    async def _generate_rfq_email_status_with_errors_response(self, context: Dict[str, Any]) -> str:
+        """Generate response for RFQ email status with error code handling."""
+        return await self._generate_common_seller_response(
+            "rfq_email_status_with_errors", "general_assistance", context,
+            self._get_email_status_with_errors_openai_fallback(context)
+        )
+
+    def _get_email_status_with_errors_openai_fallback(self, context: Dict[str, Any]) -> str:
+        """Fallback for email status response with error code handling."""
+        successful = context.get("successful_emails", 0)
+        total = context.get("total_requested", 0)
+        error_analysis = context.get("error_analysis", {})
+
+        if successful == total:
+            return f"Successfully sent all {successful} RFQ details to your email!"
+
+        message = f"Email Status Summary:\n"
+        message += f"Successful: {successful}\n"
+        message += f"Failed: {error_analysis.get('total_failed', 0)}\n\n"
+
+        # Handle specific error codes
+        error_counts = error_analysis.get("error_counts", {})
+        error_categories = error_analysis.get("error_categories", {})
+
+        if error_counts.get("NO_CREDITS", 0) > 0:
+            no_credit_rfqs = error_categories.get("NO_CREDITS", [])
+            message += f"Insufficient Credits ({len(no_credit_rfqs)} RFQs):\n"
+            message += f"RFQ IDs: {', '.join(no_credit_rfqs)}\n"
+            message += "Please purchase more credits to access these RFQs.\n\n"
+
+        if error_counts.get("RFQ_NOT_FOUND", 0) > 0:
+            not_found_rfqs = error_categories.get("RFQ_NOT_FOUND", [])
+            message += f"RFQs Not Found ({len(not_found_rfqs)} RFQs):\n"
+            message += f"RFQ IDs: {', '.join(not_found_rfqs)}\n"
+            message += "These RFQs may have expired or been withdrawn.\n\n"
+
+        if error_counts.get("API_ERROR", 0) > 0:
+            api_error_rfqs = error_categories.get("API_ERROR", [])
+            message += f"Technical Issues ({len(api_error_rfqs)} RFQs):\n"
+            message += f"RFQ IDs: {', '.join(api_error_rfqs)}\n"
+            message += "Please try again later or contact support.\n\n"
+
+        if error_counts.get("UNKNOWN", 0) > 0:
+            unknown_error_rfqs = error_categories.get("UNKNOWN", [])
+            message += f"Unknown Errors ({len(unknown_error_rfqs)} RFQs):\n"
+            message += f"RFQ IDs: {', '.join(unknown_error_rfqs)}\n"
+            message += "Please contact support@procurev.com for assistance.\n\n"
+
+        if successful > 0:
+            message += f"{successful} RFQ details were sent successfully to your email."
+
+        return message.strip()
     async def _generate_end_of_flow_reminder_response(self, context: Dict[str, Any]) -> str:
         """Generate end-of-flow reminder response showing open RFQs."""
         return await self._generate_common_seller_response(
@@ -287,12 +345,12 @@ class ResponseHelpers:
         """Generate fallback response for unknown states."""
         return await self._generate_common_seller_response(
             context.get("workflow_state", "unknown"), "general_assistance", context,
-            "I'm here to help with your RFQ needs. You can request RFQ details, view subscription plans, or contact support@procurev.com."
+            self._get_fallback_message(context.get("workflow_state"), context.get("user_role"))
         )
 
     # Fallback methods for when AI generation fails
-    def _get_fallback_message(self, workflow_state: str) -> str:
-        """Get appropriate fallback message based on workflow state."""
+    def _get_fallback_message(self, workflow_state: str, user_role: str = None) -> Dict[str, Any]:
+        """Get appropriate fallback message based on workflow state and user role."""
         fallbacks = {
             "display_rfqs_to_seller": "Here are the available RFQs in your category. Please let me know which ones interest you.",
             "display_rfqs_no_credits": "You have 0 credits available. Please choose a subscription plan to access RFQ details.",
@@ -303,7 +361,34 @@ class ResponseHelpers:
             "rfq_email_status": "Your RFQ details have been processed. Please check your email.",
             "error": "I apologize for the technical issue. Please contact support@procurev.com."
         }
-        return fallbacks.get(workflow_state, "How can I help you with your RFQ needs today?")
+        
+        default_message = fallbacks.get(workflow_state)
+        if default_message:
+            return {"message": default_message, "buttons": None}
+            
+        # For default fallback, show appropriate menu based on user role
+        if user_role and user_role.lower() == "buyer":
+
+            buttons_config = [
+                {"id": "create_rfq", "title": "Create new RFQ"},
+                {"id": "rfq_status", "title": "Check RFQ Status"},
+                {"id": "search_bfs", "title": "Search Stocks"}
+            ]
+            message = (
+                "What can I assist you with today?"
+            )
+            return {"message": message, "buttons": buttons_config}
+        elif user_role and user_role.lower() == "seller":
+            buttons_config = [
+                {"id": "rfq_status", "title": "Show RFQ status"},
+                {"id": "get_support", "title": "Get Support Info"}
+            ]
+            message = (
+                "What would you like to do today?"
+            )
+            return {"message": message, "buttons": buttons_config}
+        else:
+            return {"message": "How can I help you with your procurement needs today?", "buttons": None}
 
     def _get_rfq_display_fallback(self, context: Dict[str, Any]) -> str:
         """Fallback for RFQ display."""
@@ -389,29 +474,52 @@ class ResponseHelpers:
         """Generate completion response using OpenAI."""
         try:
             rfq_data = rfq_schema.dict() if hasattr(rfq_schema, 'dict') else {}
-            return self.openai_service.generate_completion_response(rfq_data, context)
+            return await self.openai_service.generate_completion_response(rfq_data, context)
         except Exception as e:
             logger.error(f"Error generating completion response: {e}")
             return "Excellent! Your RFQ is now complete. I'll process this request and get back to you soon."
     
     async def generate_clarification_response(self, questions: list, completeness: float, context: dict, chat_summaries: list = None) -> str:
-        """Generate clarification response using OpenAI with optional chat summary context."""
+        """Generate clarification response using enhanced entity display format."""
         try:
-            # Check for date validation errors in context
+            # Get date validation errors (already formatted)
             date_validation_errors = self._extract_date_validation_errors(context)
-            if date_validation_errors:
-                # Prepend date validation errors to questions
-                date_error_messages = [error for error in date_validation_errors]
-                questions = date_error_messages + questions
             
-            # Enhance context with chat summaries if available
-            enhanced_context = context.copy()
-            if chat_summaries:
-                enhanced_context["chat_summaries"] = chat_summaries
-                enhanced_context["has_historical_context"] = True
-                print(f"ResponseHelpers: Enhanced clarification context with {len(chat_summaries)} chat summaries")
+            # Get pincode validation errors (already formatted)
+            pincode_validation_errors = self._extract_pincode_validation_errors(context)
+
+            # Combine only the actual questions
+            all_questions = date_validation_errors + pincode_validation_errors + questions
+
+            if not all_questions:
+                return "Thank you for the information! Let me process your RFQ."
+
+            # Check if we have extracted entities to show
+            extracted_entities = context.get("extracted_entities", [])
+            if not isinstance(extracted_entities, list):
+                extracted_entities = [extracted_entities] if extracted_entities else []
+
+            # Debug logging
+            logger.info(f"Clarification response - extracted_entities: {extracted_entities}")
+            logger.info(f"Clarification response - all_questions: {all_questions}")
             
-            return self.openai_service.generate_clarification_response(questions, completeness, enhanced_context)
+            # Use enhanced formatting if we have entities
+            has_entities_with_descriptions = extracted_entities and any(entity.get('description') for entity in extracted_entities if isinstance(entity, dict))
+            logger.info(f"Clarification response - has_entities_with_descriptions: {has_entities_with_descriptions}")
+            
+            if has_entities_with_descriptions:
+                logger.info("Using enhanced RFQ entities formatting")
+                return self.format_rfq_entities_message(extracted_entities, all_questions)
+            
+            # Fallback to simple format
+            logger.info("Using simple format for clarification response")
+            questions_text = "\n".join(f"• {q}" for q in all_questions)
+            
+            if completeness > 0:
+                return f"Please provide the following:\n\n{questions_text}"
+            else:
+                return f"Please provide the following:\n\n{questions_text}"
+
         except Exception as e:
             logger.error(f"Error generating clarification response: {e}")
             questions_text = "\n".join(f"• {q}" for q in questions)
@@ -435,7 +543,7 @@ class ResponseHelpers:
                 print(f"ResponseHelpers: Enhanced RFQ summary context with {len(chat_summaries)} chat summaries")
             
             # Use specialized RFQ confirmation generation
-            return self.openai_service.generate_rfq_confirmation(
+            return await self.openai_service.generate_rfq_confirmation(
                 rfq_schema.dict() if hasattr(rfq_schema, 'dict') else {},
                 summary_context
             )
@@ -473,12 +581,12 @@ class ResponseHelpers:
                 logger.error(f"Error generating RFQ failure response: {e}")
                 return f"There was an issue creating your RFQ: {gmt_result.get('error', 'Unknown error')}. Please try again."
     
-    def generate_registration_confirmation(self, entities: Dict[str, Any], context: Dict[str, Any]) -> str:
+    async def generate_registration_confirmation(self, entities: Dict[str, Any], context: Dict[str, Any]) -> str:
         """Generate registration confirmation message using OpenAI."""
         try:
-            return self.openai_service.generate_contextual_response(
-                context, 
-                ["Please confirm your registration details"], 
+            return await self.openai_service.generate_contextual_response(
+                context,
+                ["Please confirm your registration details"],
                 "registration_confirmation"
             )
         except Exception as e:
@@ -503,7 +611,7 @@ class ResponseHelpers:
     async def generate_registration_clarification(self, missing_fields: List[str], completeness: float, context: Dict[str, Any]) -> str:
         """Generate registration clarification message using OpenAI."""
         try:
-            return self.openai_service.generate_clarification_response(
+            return await self.openai_service.generate_clarification_response(
                 missing_fields, completeness, context
             )
         except Exception as e:
@@ -528,18 +636,62 @@ class ResponseHelpers:
             else:
                 return "Please provide the remaining registration details."
     
+    def format_rfq_entities_message(self, extracted_entities: List[Dict[str, Any]], missing_fields: List[str]) -> str:
+        """Format RFQ message showing extracted entities and asking for missing details.
+        
+        Args:
+            extracted_entities: List of extracted product entities
+            missing_fields: List of missing field descriptions
+            
+        Returns:
+            Formatted message string
+        """
+        try:
+            logger.info(f"Formatting RFQ entities message with {len(extracted_entities)} entities and {len(missing_fields)} missing fields")
+            
+            # Extract global fields from entities if they exist
+            global_fields = {}
+            if extracted_entities:
+                first_entity = extracted_entities[0] if isinstance(extracted_entities[0], dict) else {}
+                delivery_date = first_entity.get('deliveryDate')
+                # Format date for display if it exists
+                if delivery_date:
+                    try:
+                        from datetime import datetime
+                        if isinstance(delivery_date, str) and len(delivery_date) == 10:  # YYYY-MM-DD format
+                            date_obj = datetime.strptime(delivery_date, '%Y-%m-%d')
+                            delivery_date = date_obj.strftime('%d %b %Y')  # Format as "28 Oct 2025"
+                    except:
+                        pass  # Keep original format if parsing fails
+                
+                global_fields = {
+                    'deliveryDate': delivery_date,
+                    'state': first_entity.get('state'),
+                    'city': first_entity.get('city'),
+                    'pincode': first_entity.get('pincode')
+                }
+            
+            # Use the new conversational formatter
+            result = format_rfq_response_message(extracted_entities, global_fields, missing_fields)
+            
+            logger.info(f"Formatted message result: {result[:100]}...")
+            return result
+        except Exception as e:
+            logger.error(f"Error formatting RFQ entities message: {e}")
+            return format_rfq_response_message([], {}, missing_fields)
+
     def _extract_date_validation_errors(self, context: dict) -> list:
         """Extract date validation error messages from context."""
-        date_errors = []
+        date_errors = set()  # Use set to automatically handle duplicates
         
         # Check extracted entities for date validation errors
         extracted_entities = context.get("extracted_entities", [])
         if isinstance(extracted_entities, list):
             for entity in extracted_entities:
                 if isinstance(entity, dict) and entity.get("date_validation_error"):
-                    date_errors.append(entity["date_validation_error"])
+                    date_errors.add(entity["date_validation_error"])
         elif isinstance(extracted_entities, dict) and extracted_entities.get("date_validation_error"):
-            date_errors.append(extracted_entities["date_validation_error"])
+            date_errors.add(extracted_entities["date_validation_error"])
         
         # Check products in context
         if context.get("products"):
@@ -547,6 +699,31 @@ class ResponseHelpers:
             if isinstance(products, list):
                 for product in products:
                     if isinstance(product, dict) and product.get("date_validation_error"):
-                        date_errors.append(product["date_validation_error"])
+                        date_errors.add(product["date_validation_error"])
         
-        return date_errors
+        # Convert set back to list
+        return list(date_errors)
+
+    def _extract_pincode_validation_errors(self, context: dict) -> list:
+        """Extract pincode validation error messages from context."""
+        pincode_errors = set()  # Use set to automatically handle duplicates
+        
+        # Check extracted entities for pincode validation errors
+        extracted_entities = context.get("extracted_entities", [])
+        if isinstance(extracted_entities, list):
+            for entity in extracted_entities:
+                if isinstance(entity, dict) and entity.get("pincode_validation_error"):
+                    pincode_errors.add(entity["pincode_validation_error"])
+        elif isinstance(extracted_entities, dict) and extracted_entities.get("pincode_validation_error"):
+            pincode_errors.add(extracted_entities["pincode_validation_error"])
+        
+        # Check products in context
+        if context.get("products"):
+            products = context["products"]
+            if isinstance(products, list):
+                for product in products:
+                    if isinstance(product, dict) and product.get("pincode_validation_error"):
+                        pincode_errors.add(product["pincode_validation_error"])
+        
+        # Convert set back to list
+        return list(pincode_errors)

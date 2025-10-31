@@ -38,6 +38,20 @@ Message: "Same specs as the printers I ordered, but make it 20 units"
 Summary: "Previous RFQ: HP LaserJet printers, A4 printing, network enabled"
 Result: Extract printer specifications from summary + quantity 20
 
+Scenario 3:
+Message: "Exide Batteries and JCB motors" (when user has pending products: 200 pcs batteries, 200 pcs motors)
+IMPORTANT: When user provides brands for multiple products in format "Brand1 ProductType1 and Brand2 ProductType2":
+- Parse EACH brand-product pair separately
+- Match brands to their corresponding products by description
+Result: Extract batteries with brand "Exide" + motors with brand "JCB"
+
+Scenario 4:
+Message: "Dell for laptops and Acer for mouse and keyboard" (when user has pending products)
+IMPORTANT: Parse product-specific brands carefully:
+- "Dell for laptops" → laptop gets brand "Dell"
+- "Acer for mouse and keyboard" → mouse gets brand "Acer", keyboard gets brand "Acer"
+Result: Each product gets its corresponding brand based on the user's specification
+
 IMPORTANT GUIDELINES:
 - If multiple summaries contain similar data, prefer the most recent one
 - If a reference cannot be clearly resolved, extract it as null but note the reference attempt

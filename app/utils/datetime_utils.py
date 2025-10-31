@@ -66,6 +66,45 @@ def format_date_for_validation_error(date_str: str) -> str:
         # If parsing fails, return as-is
         return date_str
 
+def add_business_days(start_date: datetime, business_days: int) -> datetime:
+    """
+    Add business days (Monday-Friday) to a date, skipping weekends.
+    
+    Args:
+        start_date: Starting date
+        business_days: Number of business days to add
+        
+    Returns:
+        Date after adding business days
+    """
+    if start_date is None or business_days <= 0:
+        return start_date
+    
+    current_date = start_date
+    days_added = 0
+    
+    while days_added < business_days:
+        current_date += timedelta(days=1)
+        # Monday = 0, Sunday = 6
+        if current_date.weekday() < 5:  # Monday to Friday
+            days_added += 1
+    
+    return current_date
+
+def calculate_working_days_from_now(working_days: int) -> str:
+    """
+    Calculate date that is N working days from now.
+    
+    Args:
+        working_days: Number of working days to add
+        
+    Returns:
+        Date string in YYYY-MM-DD format
+    """
+    current_date = datetime.now().date()
+    result_date = add_business_days(datetime.combine(current_date, datetime.min.time()), working_days)
+    return result_date.strftime("%Y-%m-%d")
+
 def is_expired(last_activity: datetime, timeout_hours: int) -> tuple[bool, datetime, datetime]:
     """
     Check if session is expired using UTC comparison.

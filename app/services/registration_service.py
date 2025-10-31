@@ -9,17 +9,26 @@ Handles complete user registration flow including:
 """
 
 import logging
-from typing import Dict, Any, List
-from app.models import User, ConversationSession, UserType
+from typing import Dict, Any, List, Optional
+from app.schemas.user import User
+from app.models import ConversationSession, UserType, WorkflowType
 from app.services.whatsapp_service import WhatsAppService
 from app.services.openai_service import OpenAIService
 from app.services.entity_service import EntityService
 from app.services.helpers.response_helpers import ResponseHelpers
+from app.services.confirmation_service import ConfirmationService
+from app.services.workflow_manager import WorkflowManager
 from app.procucev_apis.register_apis import RegisterAPIService
-from app.schemas.user import BuyerRegistrationSchema, SellerRegistrationSchema, UserDetailsSchema
+from app.schemas.user import User, BuyerRegistrationSchema, SellerRegistrationSchema, normalize_phone_number
+from app.services.helpers.authentication_helpers import AuthenticationHelpers
 from app.utils.datetime_utils import utc_now
 from app.redis_db import get_auth_redis_service
-import re
+from app.services.support_notification_service import SupportNotificationService
+from app.services.domain_check_service import DomainCheckService
+from app.services.otp_service import OTPService
+from app.utils.pincode_lookup import get_location_from_pincode_async
+from datetime import datetime
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,14 +39,23 @@ class RegistrationService:
                  openai_service: OpenAIService = None,
                  entity_service: EntityService = None,
                  response_helpers: ResponseHelpers = None,
+                 confirmation_service: ConfirmationService = None,
                  session_manager=None):
         self.whatsapp_service = whatsapp_service or WhatsAppService()
         self.openai_service = openai_service or OpenAIService()
         self.entity_service = entity_service or EntityService()
         self.response_helpers = response_helpers or ResponseHelpers(self.openai_service)
+        self.confirmation_service = confirmation_service
         self.register_api_service = RegisterAPIService()
         self.auth_redis_service = get_auth_redis_service()
-        self.session_manager = session_manager  # Will be injected from ChatService
+        self.support_notification_service = SupportNotificationService()
+        self.session_manager = session_manager  # Set this first
+        self.domain_check_service = DomainCheckService(self.openai_service, self.whatsapp_service, self.session_manager)
+        self.authentication_helpers = AuthenticationHelpers()
+        self.otp_service = OTPService(self.register_api_service, self.whatsapp_service, self.support_notification_service)
+        # Import here to avoid circular imports
+        from app.procucev_apis.auth_apis import AuthAPIService
+        self.auth_api_service = AuthAPIService()
     
     async def initiate_registration(self, user_phone: str, session: ConversationSession,
                                   user_type: str, message: str = "") -> Dict[str, Any]:
@@ -51,31 +69,26 @@ class RegistrationService:
             message: Optional initial message from user
         """
         try:
-            logger.info(f"RegistrationService: Initiating registration for user_type: {user_type}")
-            logger.info(f"RegistrationService: Session workflow_state: {session.workflow_state}")
-            
             session.user_type = UserType.buyer if user_type == "buyer" else UserType.seller
-            logger.info(f"RegistrationService: Set session.user_type to: {session.user_type}")
-            
+
             if user_type == "buyer":
-                intro_message = await self._get_buyer_introduction_message()
+                intro_message = self.authentication_helpers.generate_registration_message(BuyerRegistrationSchema, "Buyer", False)
             else:  # seller
-                intro_message = await self._get_seller_introduction_message()
-            
-            logger.info(f"RegistrationService: Sending intro message: {intro_message}")
+                intro_message = self.authentication_helpers.generate_registration_message(SellerRegistrationSchema, "Seller", False)
+
             if self.session_manager:
                 await self.session_manager.send_and_track_message(user_phone, intro_message, session)
             else:
                 await self.whatsapp_service.send_message(user_phone, intro_message)
-            
+
             result = {
                 "status": "registration_initiated",
                 "user_type": user_type,
                 "stage": "data_collection",
                 "message": "Registration flow started"
             }
-            
-            logger.info(f"RegistrationService: Registration initiated successfully: {result}")
+
+            logger.info(f"Registration initiated for {user_phone} as {user_type}")
             return result
             
         except Exception as e:
@@ -87,103 +100,93 @@ class RegistrationService:
         """Handle registration data collection using entity extraction with context awareness."""
         try:
             user_type = session.workflow_state.get("user_type", "buyer")
-            logger.info(f"Starting registration data collection for {user_phone}, user_type: {user_type}")
-            logger.info(f"Current workflow_state: {session.workflow_state}")
-            logger.info(f"Message content: {message_content}")
-            
+
+            # Check for exit commands first
+            if await self._check_exit_command(message_content):
+                return await self._handle_registration_exit(user_phone, session)
+
+            # Initialize registration_entities if not exists
+            if "registration_entities" not in session.workflow_state:
+                session.workflow_state["registration_entities"] = {}
+
+            # Get existing entities from session
+            existing_entities = session.workflow_state.get("registration_entities", {})
+
             # Build context from conversation history for better entity extraction
             conversation_context = self._build_registration_context(session, message_content)
-            logger.info(f"Built conversation context: {conversation_context}")
-            
-            # Extract entities from user message with full context
-            workflow_type = f"registration_{user_type}"  # Fix naming: registration_buyer, registration_seller
-            logger.info(f"Calling entity extraction with workflow_type: {workflow_type}")
-            entity_result = self.entity_service.extract_entities(
-                message_content, 
+
+            # Extract entities from user message with full context including existing entities
+            workflow_type = f"registration_{user_type}"
+            entity_result = await self.entity_service.extract_entities(
+                message_content,
                 context={
                     "workflow_type": workflow_type,
                     "conversation_history": conversation_context,
-                    "registration_stage": "data_collection"
+                    "registration_stage": "data_collection",
+                    "existing_entities": existing_entities
                 },
                 workflow_type=workflow_type
             )
-            logger.info(f"Step 3 Complete: Entity extraction result: {entity_result}")
-            
-            # Step 1: Session pre-context - Initialize registration_entities if not exists
-            if "registration_entities" not in session.workflow_state:
-                session.workflow_state["registration_entities"] = {}
-                logger.info("Step 1: Initialized registration_entities in workflow_state")
-            
-            # Step 2: Merging - Get existing entities from session
-            existing_entities = session.workflow_state.get("registration_entities", {})
-            logger.info(f"Step 2: Existing entities before merge: {existing_entities}")
-            
-            # Step 3: Entity extraction from user message
-            logger.info(f"Step 3: Calling entity extraction with workflow_type: {user_type}_registration")
-            
-            # Step 2 Continue: Merging extracted entities with existing ones
+
+            # Merge extracted entities with existing ones
             if entity_result.get("entities"):
-                logger.info(f"Step 2: Processing extracted entities: {entity_result['entities']}")
                 # Smart merge - prioritize new data but preserve existing
                 for key, value in entity_result["entities"].items():
                     if value and str(value).strip():  # Only update if new value is meaningful
-                        existing_entities[key] = str(value).strip()
-                        logger.info(f"Step 2: Merged entity {key}: {value}")
+                        # Map products_services to details for seller registration
+                        if key == "products_services" and user_type == "seller":
+                            existing_entities["details"] = str(value).strip()
+                        else:
+                            existing_entities[key] = str(value).strip()
                 session.workflow_state["registration_entities"] = existing_entities
                 session.workflow_state["last_activity_at"] = utc_now().isoformat()
-                logger.info(f"Step 2 Complete: Updated registration entities: {existing_entities}")
             else:
-                logger.warning("Step 3: No entities extracted from message")
-            
-            # Step 4: Mapping completeness
-            if user_type == "buyer":
-                required_fields = ["name", "company_name", "email", "pincode"]
-            else:  # seller - all buyer fields + additional seller fields
-                required_fields = ["full_name", "company_name", "email", "pincode", "location", "gstin", "products_services"]
-            
-            logger.info(f"Step 4: Required fields for {user_type}: {required_fields}")
-            missing_fields = [field for field in required_fields if not existing_entities.get(field)]
-            logger.info(f"Step 4: Missing fields: {missing_fields}")
-            
+                logger.warning("No entities extracted from message")
+
+            # Validate entities (email and pincode) using authentication helper
+            if user_type == 'buyer':
+                entity_schema = BuyerRegistrationSchema
+            else:  # seller
+                entity_schema = SellerRegistrationSchema
+
+            existing_entities, validation_error_message = await self.authentication_helpers.validate_entities(existing_entities, entity_schema)
+            session.workflow_state["registration_entities"] = existing_entities
+
+            # Dynamic schema-based field validation
+            user_schema = BuyerRegistrationSchema if user_type == "buyer" else SellerRegistrationSchema
+            missing_fields = AuthenticationHelpers.get_missing_fields(user_schema, existing_entities)
+
             if missing_fields:
-                # Step 5: Response generation for missing fields
-                logger.info(f"Step 5: Generating response for missing fields")
+                # Generate questions for missing fields with validation errors merged
                 questions = await self._generate_contextual_registration_questions(
-                    missing_fields, user_type, existing_entities, message_content
+                    missing_fields, user_type, existing_entities, message_content, validation_error_message
                 )
-                logger.info(f"Step 5: Generated questions: {questions}")
                 if self.session_manager:
                     await self.session_manager.send_and_track_message(user_phone, questions, session)
                 else:
                     await self.whatsapp_service.send_message(user_phone, questions)
-                
-                # Step 6: Session update - ensure workflow_type stays as registration
-                session.workflow_type = "registration"
+
+                # Update session
+                WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="registration_service")
                 session.workflow_state["registration_stage"] = "data_collection"
                 session.workflow_state["last_activity_at"] = utc_now().isoformat()
-                
-                logger.info(f"Step 6: Session update - data collection in progress")
+
                 return {
                     "status": "data_collection_in_progress",
                     "missing_fields": missing_fields,
                     "collected_entities": existing_entities
                 }
             else:
-                # Step 5: All data collected, show confirmation
-                logger.info(f"Step 5: All data collected, requesting confirmation")
-                confirmation_message = await self._generate_confirmation_message(existing_entities, user_type)
-                if self.session_manager:
-                    await self.session_manager.send_and_track_message(user_phone, confirmation_message, session)
-                else:
-                    await self.whatsapp_service.send_message(user_phone, confirmation_message)
-                
-                # Step 6: Session update - mark as awaiting confirmation
-                session.workflow_type = "registration"
+                # All data collected, show confirmation with buttons
+                await self._send_confirmation_with_buttons(user_phone, existing_entities, user_type, session)
+
+                # Mark as awaiting confirmation
+                WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="registration_service")
                 session.workflow_state["registration_entities"] = existing_entities
                 session.workflow_state["registration_stage"] = "confirmation"
                 session.workflow_state["last_activity_at"] = utc_now().isoformat()
-                logger.info(f"Step 6: Awaiting registration confirmation: {existing_entities}")
-                
+                logger.info(f"Registration data collected for {user_phone}, awaiting confirmation")
+
                 return {
                     "status": "awaiting_confirmation",
                     "collected_entities": existing_entities
@@ -192,74 +195,79 @@ class RegistrationService:
         except Exception as e:
             logger.error(f"Registration data collection error: {e}", exc_info=True)
             return await self._redirect_to_support(user_phone, "registration_data_error", str(e), session)
-    
-    async def _get_buyer_introduction_message(self) -> str:
-        """Get buyer registration introduction message."""
-        return (
-            "Hello Buyer, welcome to QUA.\n To get started, please share\n\n  1. Full name,\n 2. Company name,\n 3. Business email,\n 4. Company pincode.\n\n We’ll have you registered right away."
-        )
-    
-    async def _get_seller_introduction_message(self) -> str:
-        """Get seller registration introduction message."""
-        return (
-            "Hello Seller, welcome to QUA.\n To get started, please share your\n 1.Full name,\n 2. Company name, \n 3. Business email, \n 4. Location with Pincode,\n 5. GSTIN number,\n 6. The products or services you offer. \n\nWe’ll have you registered right away."
-        )
-    
-    def _build_registration_context(self, session: ConversationSession, current_message: str) -> str:
+
+    def _build_registration_context(self, session: ConversationSession, current_message: str,
+                                    history_limit: int = 20 ) -> str:
         """Build context from conversation history for better entity extraction."""
         try:
             messages = session.conversation_history.get("messages", [])
             context_messages = []
-            
-            # Include last few messages for context
-            for msg in messages[-3:]:
-                if msg.get("sender") == "user":
-                    context_messages.append(msg.get("content", ""))
-            
-            # Add current message
-            context_messages.append(current_message)
-            
+
+            # Include last few messages from both user and assistant
+            for msg in messages[-history_limit:]:
+                content = msg.get("content", "").strip()
+                if content:
+                    context_messages.append(content)
+
+            # Add current message if not empty
+            current_message = current_message.strip()
+            if current_message:
+                context_messages.append(current_message)
+
             return " ".join(context_messages)
         except Exception as e:
             logger.error(f"Error building registration context: {e}")
             return current_message
-    
+
     async def _generate_confirmation_message(self, entities: Dict, user_type: str) -> str:
-        """Generate confirmation message showing all collected details."""
-        if user_type == "buyer":
-            message = "Please confirm your registration details:\n\n"
-            message += f"• Name: {entities.get('name', 'N/A')}\n"
-            message += f"• Company: {entities.get('company_name', 'N/A')}\n"
-            message += f"• Email: {entities.get('email', 'N/A')}\n"
-            message += f"• Pincode: {entities.get('pincode', 'N/A')}\n\n"
-        else:
-            message = "Please confirm your registration details:\n\n"
-            message += f"• Name: {entities.get('full_name', 'N/A')}\n"
-            message += f"• Company: {entities.get('company_name', 'N/A')}\n"
-            message += f"• Email: {entities.get('email', 'N/A')}\n"
-            message += f"• Location: {entities.get('location', 'N/A')}\n"
-            message += f"• Pincode: {entities.get('pincode', 'N/A')}\n"
-            message += f"• GSTIN: {entities.get('gstin', 'N/A')}\n"
-            message += f"• Products/Services: {entities.get('products_services', 'N/A')}\n\n"
+        """Generate confirmation message showing all collected details dynamically."""
+        user_schema = BuyerRegistrationSchema if user_type == "buyer" else SellerRegistrationSchema
+        return AuthenticationHelpers.generate_confirmation_message_dynamic(user_schema, entities)
+    
+    async def _send_confirmation_with_buttons(self, user_phone: str, entities: Dict, user_type: str, session: ConversationSession) -> None:
+        """Send confirmation message with interactive buttons."""
+        message = await self._generate_confirmation_message(entities, user_type)
         
-        message += "Reply 'yes' to confirm or 'no' to restart registration."
-        return message
+        buttons = [
+            {"id": "confirm_registration", "title": "Confirm"},
+            {"id": "restart_registration", "title": "Restart"}
+        ]
+        
+        # Try to send with buttons first
+        button_response = await self.whatsapp_service.send_configurable_buttons(
+            user_phone, message, buttons
+        )
+        
+        if not button_response.success:
+            # Fallback to text message if buttons fail
+            fallback_message = message + "\n\nReply 'YES' to confirm or 'NO' to restart registration."
+            if self.session_manager:
+                await self.session_manager.send_and_track_message(user_phone, fallback_message, session)
+            else:
+                await self.whatsapp_service.send_message(user_phone, fallback_message)
     
     async def handle_registration_confirmation(self, user_phone: str, message_content: str,
                                              session: ConversationSession) -> Dict[str, Any]:
-        """Handle user confirmation response."""
+        """Handle user confirmation response from buttons or keywords."""
         try:
+            # Check for exit commands first
+            if await self._check_exit_command(message_content):
+                logger.info(f"Exit keyword detected during registration confirmation: '{message_content}'")
+                return await self._handle_registration_exit(user_phone, session)
+            
             user_type = session.workflow_state.get("user_type", "buyer")
             entities = session.workflow_state.get("registration_entities", {})
             
-            message_lower = message_content.lower().strip()
-            
-            if message_lower in ["yes", "y", "confirm", "correct", "ok"]:
-                # User confirmed, proceed based on user type
-                logger.info(f"User confirmed registration details")
-                
-                # Submit registration first, then OTP verification
-                logger.info(f"Submitting {user_type} registration to API first")
+            # Check for button responses first
+            button_response = self._parse_button_response(message_content)
+            if button_response:
+                confirmation = button_response
+            else:
+                # Fallback to keyword/AI parsing
+                confirmation = await self.confirmation_service.parse_confirmation(message_content) if self.confirmation_service else None
+
+            if confirmation == "yes":
+                # User confirmed, proceed with registration submission
                 result = await self._submit_registration(user_phone, session, entities, user_type)
                 
                 if result.get("status") == "registration_completed":
@@ -270,16 +278,15 @@ class RegistrationService:
                     session.workflow_state["otp_email"] = email
                     session.workflow_state["otp_retry_count"] = 0
                     
-                    session.workflow_type = "registration"
+                    WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="registration_service")
                     
                     # Send OTP for email verification
-                    return await self._send_registration_otp(user_phone, session, email)
+                    return await self.otp_service.send_otp(user_phone, email, session)
                 else:
                     return result
                     
-            elif message_lower in ["no", "n", "restart", "wrong", "incorrect"]:
+            elif confirmation == "no":
                 # User wants to restart
-                logger.info(f"User requested registration restart")
                 session.workflow_state = {
                     "registration_stage": "data_collection",
                     "user_type": user_type,
@@ -287,7 +294,10 @@ class RegistrationService:
                     "last_activity_at": utc_now().isoformat()
                 }
                 
-                restart_message = await self._get_buyer_introduction_message() if user_type == "buyer" else await self._get_seller_introduction_message()
+                if user_type == "buyer":
+                    restart_message = self.authentication_helpers.generate_registration_message(BuyerRegistrationSchema, "Buyer", False)
+                else:
+                    restart_message = self.authentication_helpers.generate_registration_message(SellerRegistrationSchema, "Seller", False)
                 if self.session_manager:
                     await self.session_manager.send_and_track_message(user_phone, restart_message, session)
                 else:
@@ -298,12 +308,8 @@ class RegistrationService:
                     "user_type": user_type
                 }
             else:
-                # Unclear response, ask again
-                clarification_message = "Please reply 'yes' to confirm your details or 'no' to restart registration."
-                if self.session_manager:
-                    await self.session_manager.send_and_track_message(user_phone, clarification_message, session)
-                else:
-                    await self.whatsapp_service.send_message(user_phone, clarification_message)
+                # Unclear response, ask again with buttons
+                await self._send_clarification_with_buttons(user_phone, session)
                 
                 return {
                     "status": "awaiting_confirmation",
@@ -314,94 +320,130 @@ class RegistrationService:
             logger.error(f"Registration confirmation error: {e}")
             return await self._redirect_to_support(user_phone, "confirmation_error", str(e), session)
     
+    def _parse_button_response(self, message_content) -> Optional[str]:
+        """Parse button response from WhatsApp interactive message."""
+        # Handle both string and dictionary inputs
+        if isinstance(message_content, dict):
+            # Extract button ID from interactive message structure
+            button_reply = message_content.get("button_reply", {})
+            button_id = button_reply.get("id", "")
+            if button_id and isinstance(button_id, str):
+                message_lower = button_id.lower().strip()
+            else:
+                return None
+        elif isinstance(message_content, str):
+            message_lower = message_content.lower().strip()
+        else:
+            return None
+        
+        # Check for button IDs or titles
+        if message_lower in ["confirm_registration", "confirm"]:
+            return "yes"
+        elif message_lower in ["restart_registration", "restart"]:
+            return "no"
+        
+        return None
+    
+    async def _send_clarification_with_buttons(self, user_phone: str, session: ConversationSession) -> None:
+        """Send clarification message with buttons."""
+        message = "Please confirm your registration details."
+        
+        buttons = [
+            {"id": "confirm_registration", "title": "Confirm"},
+            {"id": "restart_registration", "title": "Restart"}
+        ]
+        
+        # Try to send with buttons first
+        button_response = await self.whatsapp_service.send_configurable_buttons(
+            user_phone, message, buttons
+        )
+        
+        if not button_response.success:
+            # Fallback to text message if buttons fail
+            fallback_message = "Please reply 'yes' to confirm your details or 'no' to restart registration."
+            if self.session_manager:
+                await self.session_manager.send_and_track_message(user_phone, fallback_message, session)
+            else:
+                await self.whatsapp_service.send_message(user_phone, fallback_message)
+    
     async def _generate_contextual_registration_questions(self, missing_fields: List[str], 
                                                         user_type: str, existing_entities: Dict,
-                                                        current_message: str) -> str:
-        """Generate contextual questions based on what's already collected."""
-        field_questions = {
-            "name": "What's your full name?",
-            "full_name": "What's your full name?",
-            "company_name": "What's your company name?",
-            "email": "What's your business email address?",
-            "pincode": "What's your company's pincode?",
-            "location": "What's your company location (city, state)?",
-            "gstin": "What's your GSTIN number?",
-            "products_services": "What products or services do you offer?"
-        }
-        
-        # Acknowledge what we have
-        acknowledgment = ""
-        if existing_entities:
-            collected = []
-            if existing_entities.get("name") or existing_entities.get("full_name"):
-                name = existing_entities.get("name") or existing_entities.get("full_name")
-                collected.append(f"Name: {name}")
-            if existing_entities.get("company_name"):
-                collected.append(f"Company: {existing_entities['company_name']}")
-            if existing_entities.get("email"):
-                collected.append(f"Email: {existing_entities['email']}")
-            if existing_entities.get("pincode"):
-                collected.append(f"Pincode: {existing_entities['pincode']}")
-            
-            if collected:
-                acknowledgment = f"Great! I have: {', '.join(collected)}\n\n"
-        
-        # Ask for ALL missing fields at once
-        questions = []
-        for field in missing_fields:  # Ask all missing fields
-            if field in field_questions:
-                questions.append(f"• {field_questions[field]}")
-        
-        if questions:
-            return acknowledgment + "I still need:\n\n" + "\n".join(questions)
-        else:
-            return acknowledgment + "Please provide the remaining registration details."
+                                                        current_message: str, validation_error_message: Optional[str] = None) -> str:
+        """Generate contextual questions dynamically based on schema with validation errors."""
+        user_schema = BuyerRegistrationSchema if user_type == "buyer" else SellerRegistrationSchema
+        return AuthenticationHelpers.generate_registration_questions_dynamic(
+            user_schema, existing_entities, missing_fields, validation_error_message
+        )
     
     async def _submit_registration(self, user_phone: str, session: ConversationSession,
                                  entities: Dict, user_type: str) -> Dict[str, Any]:
-        """Submit registration to API."""
+        """Submit registration to API using dynamic schema-based payload generation."""
         try:
-            # Prepare registration data
-            registration_data = {
-                "organizationPhonenumber": user_phone,
-                "whatsApp": True
-            }
+            # Get schema dynamically based on user type
+            user_schema = BuyerRegistrationSchema if user_type == "buyer" else SellerRegistrationSchema
             
+            # Handle field mapping for seller registration
+            mapped_entities = entities.copy()
+            if user_type == "seller" and "products_services" in mapped_entities:
+                mapped_entities["details"] = mapped_entities.pop("products_services")
+            
+            # Build payload dynamically from schema
+            registration_data = AuthenticationHelpers.build_registration_payload_dynamic(
+                user_schema, mapped_entities, user_phone
+            )
+            
+            # Call appropriate API based on user type
             if user_type == "buyer":
-                registration_data.update({
-                    "name": entities.get("name"),
-                    "companyName": entities.get("company_name"),
-                    "email": entities.get("email"),
-                    "zipCode": entities.get("pincode"),
-                    "details": f"Registered via WhatsApp bot"
-                })
-                
                 result = await self.register_api_service.register_buyer(registration_data)
             else:
-                registration_data.update({
-                    "companyName": entities.get("company_name"),
-                    "email": entities.get("email"),
-                    "gstin": entities.get("gstin"),
-                    "address1": entities.get("location"),
-                    "details": entities.get("products_services"),
-                    "pan": "",  # Optional
-                    "crn": "",  # Optional
-                    "india": "true"
-                })
-                
                 result = await self.register_api_service.register_seller(registration_data)
             
             if result.get("statusCode") in ["1001", "200"] or result.get("status") == "Success":
-                # Registration successful - send confirmation message and continue to OTP
-                logger.info(f"{user_type.title()} registration API successful, continuing to OTP flow")
+                # Registration successful - extract user_id and org_id from response and store them
+                logger.info(f"{user_type.title()} registration completed for {user_phone}")
+
+                # Extract user_id and org_id from API response if available
+                user_id = None
+                org_id = None
+                if result.get("data") and isinstance(result["data"], dict):
+                    user_id = result["data"].get("userId") or result["data"].get("id")
+                    org_id = result["data"].get("orgId")
+                elif result.get("type") and isinstance(result["type"], dict):
+                    user_id = result["type"].get("userId") or result["type"].get("id")
+                    org_id = result["type"].get("orgId")
+
+                # Store user_id and org_id in entities for later use
+                if user_id:
+                    entities["user_id"] = user_id
+                else:
+                    logger.warning(f"No user_id found in registration response: {result}")
+
+                if org_id:
+                    entities["org_id"] = org_id
+                else:
+                    logger.warning(f"No org_id found in registration response: {result}")
+                
+                # Update session with both user_id and org_id
+                session.workflow_state["registration_entities"] = entities
+                
                 return {
                     "status": "registration_completed",
                     "user_type": user_type,
-                    "continue_to_otp": True
+                    "continue_to_otp": True,
+                    "user_id": user_id
                 }
             else:
                 # Registration failed
                 error_msg = result.get("message", "Registration failed")
+                
+                # Send email notification to support team for registration failure
+                await self.support_notification_service.notify_registration_failed(
+                    entities.get("name") or entities.get("full_name", "User"),
+                    entities.get("email", "unknown"),
+                    user_phone,
+                    user_type
+                )
+                
                 if "already exists" in error_msg.lower():
                     return await self._redirect_to_support(user_phone, "user_already_exists", error_msg, session)
                 else:
@@ -411,185 +453,281 @@ class RegistrationService:
             logger.error(f"Registration submission error: {e}")
             return await self._redirect_to_support(user_phone, "registration_submission_error", str(e), session)
     
-    async def _send_registration_otp(self, user_phone: str, session: ConversationSession, email: str) -> Dict[str, Any]:
-        """Send OTP for registration flow using real API."""
-        try:
-            logger.info(f"Sending OTP to email: {email} for phone: {user_phone}")
-            
-            # Call the actual OTP send API
-            otp_response = await self.register_api_service.send_otp(email, user_phone)
-            logger.info(f"OTP API response: {otp_response}")
-            
-            if otp_response.get("statusCode") in ["1001", "200"] or otp_response.get("status") == "Success":
-                session.workflow_state["otp_retry_count"] = session.workflow_state.get("otp_retry_count", 0) + 1
-                
-                session.workflow_type = "registration"
-                
-                message = f"OTP sent to your email: {email}\n\nPlease enter the OTP you received, or reply 'RESEND' to get a new OTP:"
-                if self.session_manager:
-                    await self.session_manager.send_and_track_message(user_phone, message, session)
-                else:
-                    await self.whatsapp_service.send_message(user_phone, message)
-                
-                return {
-                    "status": "otp_sent",
-                    "stage": "email_otp",
-                    "email": email
-                }
-            else:
-                error_msg = otp_response.get("message", "Failed to send OTP")
-                logger.error(f"OTP send failed: {error_msg}")
-                if self.session_manager:
-                    await self.session_manager.send_and_track_message(user_phone, f"Failed to send OTP: {error_msg}. Please contact support.", session)
-                else:
-                    await self.whatsapp_service.send_message(user_phone, f"Failed to send OTP: {error_msg}. Please contact support.")
-                return await self._redirect_to_support(user_phone, "otp_send_failed", error_msg, session)
-            
-        except Exception as e:
-            logger.error(f"Registration OTP send error: {e}")
-            return await self._redirect_to_support(user_phone, "otp_send_error", str(e), session)
+
 
     async def handle_registration_otp_validation(self, user_phone: str, message_content: str,
                                                session: ConversationSession) -> Dict[str, Any]:
         """Handle OTP validation for registration."""
         try:
-            session.workflow_type = "registration"
-            
-            otp_email = session.workflow_state.get("otp_email")
-            retry_count = session.workflow_state.get("otp_retry_count", 0)
-            
-            # Check for resend request
-            if message_content.strip().upper() == "RESEND" and retry_count < 3:
-                return await self._send_registration_otp(user_phone, session, otp_email)
-            
-            # Extract and validate OTP using real API
-            
-            digits = re.findall(r'\d+', message_content.strip())
-            
-            if digits and len(digits[0]) >= 4:
-                otp = digits[0]
-                logger.info(f"Validating OTP: {otp} for email: {otp_email}")
-                
-                # Call real OTP validation API
-                validation_response = await self.register_api_service.validate_otp(otp_email, otp, user_phone)
-                logger.info(f"OTP validation response: {validation_response}")
-                
-                if validation_response.get("statusCode") in ["1001", "200"] or validation_response.get("status") == "Success":
-                    # OTP valid - complete registration based on user type
-                    entities = session.workflow_state.get("pending_registration_data", {})
-                    user_type = session.workflow_state.get("user_type", "buyer")
-                    
-                    # Store user session token after successful registration
+            # Check for exit commands first
+            if await self._check_exit_command(message_content):
+                return await self._handle_registration_exit(user_phone, session)
+
+            WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="registration_service")
+
+            # Use OTP service for validation
+            otp_result = await self.otp_service.handle_user_message(user_phone, message_content, session)
+
+            # If OTP is valid, complete registration
+            if otp_result.get("status") == "otp_valid":
+                entities = session.workflow_state.get("pending_registration_data", {})
+                user_type = session.workflow_state.get("user_type", "buyer")
+
+                # Fetch complete user data from API after successful registration and OTP validation
+                auth_response = await self.auth_api_service.authenticate_user(user_phone)
+
+                if auth_response.get("success") and auth_response.get("data"):
+                    # Use the fresh API data which includes org_id
+
+                    # IMPORTANT: User may have multiple profiles (buyer + seller)
+                    # We need to select the CORRECT profile that was just registered
+
+                    all_users = auth_response["data"]
+                    logger.info(f"REGISTRATION_SERVICE: API returned {len(all_users)} user profiles for {user_phone}")
+
+                    # Strategy 1: Match by user_id (most reliable if available from registration)
+                    user_id_from_registration = entities.get("user_id")
+                    fresh_user_data = None
+
+                    if user_id_from_registration:
+                        logger.info(f"REGISTRATION_SERVICE: Looking for user with ID: {user_id_from_registration}")
+                        matching_by_id = [u for u in all_users if u.get("id") == user_id_from_registration]
+                        if matching_by_id:
+                            fresh_user_data = matching_by_id[0]
+                            logger.info(f"REGISTRATION_SERVICE: ✓ Found user by ID match: {fresh_user_data.get('username')}")
+
+                    # Strategy 2: Match by registration email (fallback)
+                    if not fresh_user_data:
+                        registration_email = entities.get("email")
+                        if registration_email:
+                            logger.info(f"REGISTRATION_SERVICE: Looking for user with email: {registration_email}")
+                            matching_by_email = [u for u in all_users if u.get("username") == registration_email]
+                            if matching_by_email:
+                                fresh_user_data = matching_by_email[0]
+                                logger.info(f"REGISTRATION_SERVICE: ✓ Found user by email match: {fresh_user_data.get('username')}")
+
+                    # Strategy 3: Match by selfClient field matching user_type (fallback)
+                    if not fresh_user_data:
+                        expected_self_client = (user_type == "buyer")
+                        logger.info(f"REGISTRATION_SERVICE: Looking for user with selfClient={expected_self_client} (user_type={user_type})")
+                        matching_by_type = [u for u in all_users if u.get("selfClient") == expected_self_client]
+                        if matching_by_type:
+                            fresh_user_data = matching_by_type[0]
+                            logger.info(f"REGISTRATION_SERVICE: ✓ Found user by selfClient match: {fresh_user_data.get('username')}")
+
+                    # Final fallback: Use first user (with warning)
+                    if not fresh_user_data:
+                        fresh_user_data = all_users[0] if all_users else {}
+                        logger.warning(f"REGISTRATION_SERVICE: ⚠ Could not match user by ID/email/type, using first profile: {fresh_user_data.get('username')}")
+
+                    logger.info(f"REGISTRATION_SERVICE: Selected user profile - username: {fresh_user_data.get('username')}, selfClient: {fresh_user_data.get('selfClient')}, orgId: {fresh_user_data.get('orgId')}")
+
+                    # Store user session with complete API data
+                    user_obj = User.from_api_response(fresh_user_data)
+                    logger.info(f"REGISTRATION_SERVICE: Created User object - role: {user_obj.role.value}, email: {user_obj.email}")
+                    session_stored = await self.store_user_session(user_phone, user_obj)
+
+                    if not session_stored:
+                        logger.error(f"Failed to store user session for {user_type} {user_phone}")
+                else:
+                    logger.warning(f"Failed to fetch fresh user data, using registration entities for {user_phone}")
+                    # Fallback to original method
                     session_stored = await self._store_user_session_after_registration(user_phone, entities, user_type)
-                    
-                    if session_stored:
-                        logger.info(f"User session stored successfully for {user_type} {user_phone} after registration")
-                    else:
-                        logger.error(f"Failed to store user session for {user_type} {user_phone} after registration")
-                    
-                    if user_type == "buyer":
-                        # Buyers: Domain matching
-                        email = entities.get("email")
-                        domain_result = await self._check_domain_approval(email, entities)
-                        
+
+                    if not session_stored:
+                        logger.error(f"Failed to store user session for {user_type} {user_phone}")
+
+                if user_type == "buyer":
+                    # Check domain approval after email verification
+                    user_id = entities.get("user_id")
+                    if user_id:
+                        from app.services.verification_check_service import VerificationCheckService
+                        verification_service = VerificationCheckService(None, self.otp_service, self.whatsapp_service)
+                        # Pass the fresh user data from API for domain check
+                        user_data_for_domain_check = fresh_user_data if 'fresh_user_data' in locals() else entities
+                        domain_result = await verification_service._check_domain_approval(user_id, False, user_data_for_domain_check)
+
+
                         if domain_result.get("approved"):
-                            success_message = (
-                                "Registration successful—thank you! How can I help you today? "
-                                "Want to raise an RFQ or any other support?"
+                            logger.info(f"Buyer registration completed for {user_phone} - domain approved")
+                            
+
+                            # Check for stored intent to determine next action
+                            stored_intent_result = session.workflow_state.get("current_intent_result", {})
+                            intent = stored_intent_result.get("intent", "general_inquiry")
+
+                            logger.info(f"intet in handle registration otp validation is :{intent}")
+                            
+                            # if intent == "buy_something":
+                            logger.info(f"entitiies:{entities}")
+                            # Show buying options with buttons
+                            buying_message = (
+                                "Your OTP has been verified successfully, and your account is now active and ready to use.\n\n"
+                                f"Let's continue with your *Buyer profile ({entities.get('email', 'your profile')})*.\n"
+                                "What would you like to do today?\n"
+                                "You can choose from the options below or type your request."
                             )
-                        else:
-                            success_message = (
-                                "Registration successful—thank you! Our team will get in touch with you "
-                                "shortly to complete your onboarding so that you can raise RFQs. "
-                                "In the meantime please let us know if you want us to support you with anything else?"
+
+                            name = entities.get('name', 'there').split()[0].title()
+                            header = f"Hello {name},"
+                            buttons_config = [
+                                {"id": "create_rfq", "title": "Create new RFQ"},
+                                {"id": "rfq_status", "title": "Check RFQ Status"},
+                                {"id": "search_bfs", "title": "Search Stocks"}
+                            ]
+
+                            await self.whatsapp_service.send_configurable_buttons(
+                                user_phone,
+                                buying_message,
+                                buttons_config,
+                                header
                             )
-                        
-                        if self.session_manager:
-                            await self.session_manager.send_and_track_message(user_phone, success_message, session)
+
+                            return {
+                                "status": "buyer_options_presented",
+                                "user_type": "buyer",
+                                "email": entities.get('email')
+                            }
                         else:
-                            await self.whatsapp_service.send_message(user_phone, success_message)
-                        
-                        session.workflow_type = None
-                        session.workflow_state = {
-                            "recently_completed_registration": True,
-                            "registration_completion_time": utc_now().isoformat(),
-                            "user_type": "buyer",
-                            "approved": domain_result.get("approved", False)
-                        }
-                        
-                        return {
-                            "status": "registration_completed",
-                            "user_type": "buyer",
-                            "approved": domain_result.get("approved", False),
-                            "redirect_to_main_flow": domain_result.get("approved", False)
-                        }
+                            logger.info(f"Buyer registration completed for {user_phone} - domain not approved, awaiting manual approval")
+                            # Domain not approved - send pending message
+                            pending_message = "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
+
+                            
+                            # Send email notification to support team
+                            await self.support_notification_service.notify_buyer_registration_not_approved(
+                                entities.get("name", "User"),
+                                entities.get("email", "unknown"),
+                                user_phone
+                            )
+                            
+                            # Domain not approved - send pending message
+                            pending_message = (
+                                "*Registration received—thank you!*\n\n"
+                                "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                                "Our team will get in touch shortly to complete the process, and once verified, "
+                                "you’ll be able to access your account and start raising RFQs."
+                            )
+
+                            if self.session_manager:
+                                await self.session_manager.send_and_track_message(user_phone, pending_message, session)
+                            else:
+                                await self.whatsapp_service.send_message(user_phone, pending_message)
+                            
+                            
+                            
+                            return {
+                                "status": "redirect_to_support",
+                                "reason": "domain_not_approved",
+                                "exit_completed": True
+                            }
                     else:
-                        # Sellers: Complete registration
-                        success_message = (
-                            "Registration successful! Our team will contact you shortly to complete "
-                            "your onboarding. How can I help you in the meantime?"
+                        logger.warning(f"Buyer registration completed for {user_phone} - missing user_id")
+                        # No user_id found - redirect to support
+                        pending_message = "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
+
+                        
+                        # Send email notification to support team
+                        await self.support_notification_service.notify_buyer_registration_not_approved(
+                            entities.get("name", "User"),
+                            entities.get("email", "unknown"),
+                            user_phone
                         )
                         
+                        # No user_id found - redirect to support
+                        pending_message = (
+                            "*Registration received—thank you!*\n\n"
+                            "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                            "Our team will get in touch shortly to complete the process, and once verified, "
+                            "you’ll be able to access your account and start raising RFQs."
+                        )
+
                         if self.session_manager:
-                            await self.session_manager.send_and_track_message(user_phone, success_message, session)
+                            await self.session_manager.send_and_track_message(user_phone, pending_message, session)
                         else:
-                            await self.whatsapp_service.send_message(user_phone, success_message)
+                            await self.whatsapp_service.send_message(user_phone, pending_message)
                         
-                        session.workflow_type = None
-                        session.workflow_state = {
-                            "recently_completed_registration": True,
-                            "registration_completion_time": utc_now().isoformat(),
-                            "user_type": "seller"
-                        }
+
                         
                         return {
-                            "status": "registration_completed",
-                            "user_type": "seller",
-                            "redirect_to_main_flow": True
+                            "status": "redirect_to_support",
+                            "reason": "missing_user_id",
+                            "exit_completed": True
                         }
                 else:
-                    # OTP invalid
-                    if retry_count >= 3:
-                        return await self._redirect_to_support(user_phone, "max_otp_retries", "Maximum OTP attempts exceeded", session)
+                    logger.info(f"Seller registration completed for {user_phone}")
+                    # Sellers: Email verified successfully, proceed to main flow
                     
-                    message = "Invalid OTP. Please enter the correct OTP or reply 'RESEND' to get a new OTP:"
-                    if self.session_manager:
-                        await self.session_manager.send_and_track_message(user_phone, message, session)
-                    else:
-                        await self.whatsapp_service.send_message(user_phone, message)
+                    # Check for stored intent to determine next action
+                    stored_intent_result = session.workflow_state.get("current_intent_result", {})
+                    intent = stored_intent_result.get("intent", "general_inquiry")
                     
+
+                    # Show seller options
+                    selling_message = (
+                        f"Got it, you'd like to sell items!\n"
+                        f"Let's continue with your Seller profile ({entities.get('email', 'your profile')}).\n"
+                    )
+                    name = entities.get('name', 'there').split()[0].title()
+                    header = f"Hi {name}! Your OTP has been verified successfully."
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "get_support", "title": "Get Support Info"}
+                    ]
+
+                    await self.whatsapp_service.send_configurable_buttons(
+                        user_phone,
+                        selling_message,
+                        buttons_config,
+                        header
+                    )
+
                     return {
-                        "status": "otp_invalid",
-                        "stage": "email_otp",
-                        "retry_count": retry_count
+                        "status": "seller_options_presented",
+                        "user_type": "seller",
+                        "email": entities.get('email')
                     }
-            else:
-                # Invalid OTP format
-                if retry_count >= 3:
-                    return await self._redirect_to_support(user_phone, "max_otp_retries", "Maximum OTP attempts exceeded")
-                
-                message = "Please enter a valid OTP  or reply 'RESEND' to get a new OTP:"
-                if self.session_manager:
-                    await self.session_manager.send_and_track_message(user_phone, message, session)
-                else:
-                    await self.whatsapp_service.send_message(user_phone, message)
-                
-                return {
-                    "status": "otp_invalid",
-                    "stage": "email_otp",
-                    "retry_count": retry_count
-                }
+            
+            # Handle OTP service redirect to support
+            elif otp_result.get("status") == "redirect_to_support":
+                logger.warning(f"OTP validation failed for {user_phone}: {otp_result.get('reason')}")
+                return await self._redirect_to_support(user_phone, otp_result.get("reason", "otp_error"), "OTP validation failed", session)
+
+            return otp_result
                 
         except Exception as e:
-            logger.error(f"Registration OTP validation error: {e}")
+            logger.error(f"Registration OTP validation error for {user_phone}: {e}")
             return await self._redirect_to_support(user_phone, "otp_validation_error", str(e), session)
 
+    async def store_user_session(self, user_phone: str, user_details: User) -> bool:
+        """Store user session data in Redis."""
+        try:
+            # Normalize phone number (remove + prefix for consistent Redis keys)
+            normalized_phone = user_phone.lstrip('+')
+            session_data = user_details.dict()
+            session_data["authenticated_at"] = datetime.now().isoformat()
+
+            # Token expires after 12 hours of inactivity
+            success = await self.auth_redis_service.store(normalized_phone, session_data, expiry_seconds=43200)  # 12 hours
+
+            if not success:
+                logger.error(f"Failed to store session in Redis for user {normalized_phone}")
+
+            return success
+        except Exception as e:
+            logger.error(f"Session storage error for {user_phone}: {e}")
+            return False
+    
     async def _store_user_session_after_registration(self, user_phone: str, entities: Dict, user_type: str) -> bool:
         """Store user session token after successful registration."""
         try:
-            # Create UserDetailsSchema from registration data
-            user_details = UserDetailsSchema(
-                id=f"reg_{user_phone}_{int(utc_now().timestamp())}",  # Generate unique ID
+            # Get the actual user_id and org_id from the registration API response if available
+            user_id = entities.get("user_id") or f"reg_{user_phone}_{int(utc_now().timestamp())}"
+            org_id = entities.get("org_id")  # This should be set from registration API response
+            
+            # Create User from registration data with proper org_id
+            user_details = User(
+                id=user_id,
                 name=entities.get("name") or entities.get("full_name", ""),
                 email=entities.get("email", ""),
                 phone_number=user_phone,
@@ -597,7 +735,8 @@ class RegistrationService:
                 role=user_type,
                 is_registered=True,
                 company_name=entities.get("company_name", ""),
-                unique_id=f"reg_{user_phone}"
+                unique_id=f"reg_{user_phone}",
+                org_id=org_id  # Include org_id from registration response
             )
             
             # Store session data in Redis
@@ -606,10 +745,8 @@ class RegistrationService:
             session_data["registration_source"] = "whatsapp_bot"
             
             success = await self.auth_redis_service.store(user_phone, session_data, expiry_seconds=86400)  # 24 hours
-            
-            if success:
-                logger.info(f"User session stored successfully for {user_phone} after registration")
-            else:
+
+            if not success:
                 logger.error(f"Failed to store user session for {user_phone} after registration")
             
             return success
@@ -618,32 +755,12 @@ class RegistrationService:
             logger.error(f"Error storing user session after registration: {e}")
             return False
     
-    async def _check_domain_approval(self, email: str, entities: Dict) -> Dict[str, Any]:
-        """Check if email domain matches company for approval."""
-        try:
-            domain = email.split('@')[1] if '@' in email else ""
-            company_name = entities.get("company_name", "").lower()
-            
-            domain_parts = domain.lower().split('.')
-            company_parts = company_name.replace(" ", "").replace("-", "").replace("_", "")
-            
-            approved = any(part in company_parts for part in domain_parts if len(part) > 2)
-            
-            return {
-                "approved": approved,
-                "domain": domain,
-                "company_name": company_name,
-                "reason": "Domain match" if approved else "Domain mismatch"
-            }
-            
-        except Exception as e:
-            logger.error(f"Domain approval check error: {e}")
-            return {"approved": False, "error": str(e)}
+
 
     async def _redirect_to_support(self, user_phone: str, issue_type: str, error_details: str, session: ConversationSession = None) -> Dict[str, Any]:
         """Redirect user to support team."""
         try:
-            support_message = "Our support team will contact you shortly to assist with your registration."
+            support_message = "We could not complete your registration at this time. Our support team will reach out to you soon to help finalize your onboarding. If you need immediate assistance, please contact us at info@procucev.com."
             if self.session_manager and session:
                 await self.session_manager.send_and_track_message(user_phone, support_message, session)
             else:
@@ -660,3 +777,111 @@ class RegistrationService:
         except Exception as e:
             logger.error(f"Support redirect error: {e}")
             return {"status": "error", "error": "Failed to redirect to support"}
+    
+    async def _check_exit_command(self, message_content) -> bool:
+        """Check if user wants to exit registration."""
+        # Handle both string and dictionary inputs
+        if isinstance(message_content, dict):
+            # For interactive messages, check button ID
+            button_reply = message_content.get("button_reply", {})
+            button_id = button_reply.get("id", "")
+            if button_id:
+                return button_id.lower().strip() in ["exit", "quit", "stop", "cancel"]
+            return False
+        elif isinstance(message_content, str):
+            return message_content.lower().strip() in ["exit", "quit", "stop", "cancel"]
+        else:
+            return False
+    
+    async def _handle_registration_exit(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
+        """Handle exit during registration."""
+        from app.services.exit_service import ExitService
+        exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
+        return await exit_service.handle_exit_intent(user_phone, session, show_message=False)
+    
+    async def _handle_neutral_greeting(self, user_phone: str, profiles: List[Dict],
+                                     session: ConversationSession) -> Dict[str, Any]:
+        """Handle Case 1: Neutral/Greeting Start."""
+        try:
+            # Group profiles by role
+            buyer_profiles = [p for p in profiles if p.get('role') == 'buyer']
+            seller_profiles = [p for p in profiles if p.get('role') == 'seller']
+            
+            # Get user's name and determine greeting
+            if len(profiles) == 1:
+                user_name = self._extract_user_name(profiles)
+                greeting = f"👋 Hi {user_name}!"
+            else:
+                greeting = "👋 Hi there!"
+            
+            message_parts = [
+                greeting,
+                "I can help you with both Buying (creating/checking RFQs) and Selling (responding to buyer requests).",
+                "",
+                "Please select your profile to continue:"
+            ]
+            
+            profile_options = []
+            option_num = 1
+            
+            # Add all buyer profiles
+            for profile in buyer_profiles:
+                message_parts.append(f" {option_num}. {profile['email']} — Buyer")
+                profile_options.append({
+                    "number": option_num,
+                    "profile": profile,
+                    "display": f"{profile['email']} — Buyer"
+                })
+                option_num += 1
+            
+            # Add all seller profiles
+            for profile in seller_profiles:
+                message_parts.append(f" {option_num}. {profile['email']} — Seller")
+                profile_options.append({
+                    "number": option_num,
+                    "profile": profile,
+                    "display": f"{profile['email']} — Seller"
+                })
+                option_num += 1
+            
+            # Add registration option
+            message_parts.append(f" {option_num}. Add or Register a new profile")
+            profile_options.append({
+                "number": option_num,
+                "action": "register_new",
+                "display": "Add or Register a new profile"
+            })
+            
+            message_parts.extend([
+                "",
+                "Reply with the number corresponding to your account to continue."
+            ])
+            
+            # Store in session for later reference
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state['profile_options'] = profile_options
+            session.workflow_state['profile_selection_stage'] = 'neutral_greeting'
+            
+            # Send profile selection message
+            full_message = "\n".join(message_parts)
+            await self.whatsapp_service.send_message(user_phone, full_message)
+            
+            return {
+                "status": "profile_selection_sent",
+                "profiles_count": len(profiles),
+                "selection_type": "neutral_greeting"
+            }
+        except Exception as e:
+            logger.error(f"Error handling neutral greeting for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    def _extract_user_name(self, profiles: List[Dict]) -> str:
+        """Extract user name from profiles """
+        if len(profiles) == 1:
+            profile = profiles[0]
+            name = profile.get('fullName') or profile.get('name')
+            if name:
+                # Extract first name only and capitalize first letter
+                first_name = name.strip().split()[0]
+                return first_name.capitalize()
+        return "there"

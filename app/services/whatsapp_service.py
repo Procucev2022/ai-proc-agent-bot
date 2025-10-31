@@ -18,6 +18,7 @@ Key responsibilities:
 import requests
 import json
 import logging
+import re
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 
@@ -60,7 +61,7 @@ class WhatsAppService:
     async def send_message(self, recipient_id: str, message: str) -> MessageResponse:
         """
         Send text message to WhatsApp user with retry mechanism.
-        
+
         Sends formatted text message with API authentication,
         message formatting, error handling, and automatic retries.
         """
@@ -68,19 +69,30 @@ class WhatsAppService:
             if self.mock_mode:
                 logger.info(f"[MOCK] Sending message to {recipient_id}: {message}")
                 return MessageResponse(success=True, message_id="mock_message_id")
-            
+
+            # Format phone number for WhatsApp API
+            logger.info(f"Original recipient_id: {recipient_id}")
+            formatted_recipient = self._format_phone_number(recipient_id)
+            logger.info(f"Formatted recipient: {formatted_recipient}")
+            if not formatted_recipient:
+                logger.error(f"Invalid phone number format: {recipient_id}")
+                return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}")
+
             payload = {
                 "user": self.username,
                 "pass": self.password,
                 "sessiondata": {
                     "from": self.from_number,
-                    "to": recipient_id,
+                    "to": formatted_recipient,
                     "type": "text",
                     "message": {
                         "text": message
                     }
                 }
             }
+
+            logger.info(f"WhatsApp payload - from: {self.from_number}, to: {formatted_recipient}")
+            logger.info(f"FROM_NUMBER config: {self.from_number}")
             
             response = requests.post(
                 f"{self.base_url}/sessioncomm",
@@ -111,20 +123,28 @@ class WhatsAppService:
             if self.mock_mode:
                 logger.info(f"[MOCK] Sending template '{template_name}' to {recipient_id} with params: {parameters}")
                 return MessageResponse(success=True, message_id="mock_template_id")
-            
+
+            # Format phone number for WhatsApp API
+            logger.info(f"Original recipient_id: {recipient_id}")
+            formatted_recipient = self._format_phone_number(recipient_id)
+            logger.info(f"Formatted recipient: {formatted_recipient}")
+            if not formatted_recipient:
+                logger.error(f"Invalid phone number format: {recipient_id}")
+                return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}")
+
             # Build placeholder dict for template
             placeholders = {}
             for i, param in enumerate(parameters):
                 placeholders[str(i)] = param
-            
+
             payload = {
                 "user": self.username,
                 "pass": self.password,
                 "whatsapptosend": [{
                     "from": self.from_number,
-                    "to": recipient_id,
+                    "to": formatted_recipient,
                     "templateid": template_name,
-                    "smsgid": f"rfq_{recipient_id}_{template_name}",
+                    "smsgid": f"rfq_{formatted_recipient}_{template_name}",
                     "placeholders": [placeholders] if placeholders else [],
                     "buttons": []
                 }]
@@ -157,17 +177,27 @@ class WhatsAppService:
             message_type: 'button' or 'list'
             content: Message content with interactive elements
         """
+        # Force interactive messages to be sent even in mock mode for testing
         if self.mock_mode:
-            logger.info(f"[MOCK] Sending {message_type} message to {recipient_id}: {content}")
-            return MessageResponse(success=True, message_id="mock_interactive_id")
-        
+            logger.info(f"[MOCK MODE] Attempting to send {message_type} message to {recipient_id}")
+            logger.info(f"[MOCK MODE] Content: {content}")
+            # Continue to actual sending instead of returning mock response
+
         try:
+            # Format phone number for WhatsApp API
+            logger.info(f"Original recipient_id: {recipient_id}")
+            formatted_recipient = self._format_phone_number(recipient_id)
+            logger.info(f"Formatted recipient: {formatted_recipient}")
+            if not formatted_recipient:
+                logger.error(f"Invalid phone number format: {recipient_id}")
+                return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}")
+
             payload = {
                 "user": self.username,
                 "pass": self.password,
                 "sessiondata": {
                     "from": self.from_number,
-                    "to": recipient_id,
+                    "to": formatted_recipient,
                     "type": "interactive",
                     "message": {
                         "interactive": {
@@ -190,6 +220,29 @@ class WhatsAppService:
         except Exception as e:
             logger.error(f"Error sending interactive message: {e}")
             return MessageResponse(success=False, error=str(e))
+    
+    async def send_cta_button_message(self, recipient_id: str, body_text: str, button_text: str, url: str) -> MessageResponse:
+        """
+        Send message with CTA (Call-to-Action) button.
+        
+        Args:
+            recipient_id: WhatsApp number to send to
+            body_text: Main message text
+            button_text: Text displayed on the button
+            url: URL to open when button is clicked
+        """
+        content = {
+            "body": {"text": body_text},
+            "action": {
+                "name": "cta_url",
+                "parameters": {
+                    "display_text": button_text,
+                    "url": url
+                }
+            }
+        }
+        
+        return await self.send_interactive_message(recipient_id, "cta_url", content)
         
     async def send_list_message(self, recipient_id: str, header: str, body: str, items: List[Dict[str, str]]) -> MessageResponse:
         """
@@ -267,12 +320,14 @@ class WhatsAppService:
             logger.error(f"Error sending button message: {e}")
             return MessageResponse(success=False, error=str(e))
     
+
+    
     async def send_configurable_buttons(self, 
                                       recipient_id: str, 
                                       body: str, 
                                       buttons_config: List[Dict[str, str]], 
                                       header: Optional[str] = None,
-                                      footer: str = "Please choose an option") -> MessageResponse:
+                                      footer: str = "(Type ‘Exit’ anytime to end the chat)") -> MessageResponse:
         """
         Send fully configurable button message that can be used anywhere with any button configuration.
         
@@ -282,29 +337,6 @@ class WhatsAppService:
             body: Message body text
             buttons_config: List of button configurations with 'id', 'title', and optional 'action'
             footer: Footer text (optional)
-            
-        Example usage:
-            # Yes/No buttons
-            buttons = [
-                {"id": "confirm_rfq", "title": "Yes"},
-                {"id": "reject_rfq", "title": "No"}
-            ]
-            
-            # Multiple choice buttons  
-            buttons = [
-                {"id": "option_a", "title": "Option A"},
-                {"id": "option_b", "title": "Option B"},
-                {"id": "option_c", "title": "Option C"}
-            ]
-            
-            # Custom workflow buttons
-            buttons = [
-                {"id": "edit_details", "title": "Edit Details"},
-                {"id": "proceed", "title": "Proceed"},
-                {"id": "cancel", "title": "Cancel"}
-            ]
-            
-            await whatsapp_service.send_configurable_buttons(phone, "Please Choose", "What would you like to do?", buttons)
         """
         try:
             if not buttons_config:
@@ -314,11 +346,17 @@ class WhatsAppService:
                 logger.warning(f"WhatsApp supports maximum 3 buttons, trimming to first 3 from {len(buttons_config)} provided")
                 buttons_config = buttons_config[:3]
             
+            # Log button details for debugging
+            button_titles = [btn.get('title', 'Unknown') for btn in buttons_config]
+            logger.info(f"Sending buttons to {recipient_id}: {button_titles}")
+            
             button_list = []
             for i, button in enumerate(buttons_config):
                 if not button.get("title"):
                     raise ValueError(f"Button {i} must have a 'title' field")
-                    
+                
+                # WhatsApp interactive buttons only support reply type
+                # URL buttons are not supported in interactive messages
                 button_list.append({
                     "type": "reply",
                     "reply": {
@@ -471,3 +509,50 @@ class WhatsAppService:
         except Exception as e:
             logger.error(f"Error handling API response: {e}")
             return MessageResponse(success=False, error=str(e))
+
+    def _format_phone_number(self, phone: str) -> str:
+        """
+        Format phone number for WhatsApp API.
+
+        Ensures phone number is in correct international format without + sign.
+        Expected format: country_code + number (e.g., 919876543210)
+        """
+        if not phone:
+            return ""
+
+        # Remove all non-digit characters
+        phone = re.sub(r'\D', '', str(phone))
+
+        # If empty after cleaning, return empty
+        if not phone:
+            return ""
+
+        # Handle different input formats
+        if len(phone) == 10:
+            # Assume Indian number without country code
+            phone = '91' + phone
+        elif len(phone) == 11 and phone.startswith('0'):
+            # Remove leading 0 and add Indian country code
+            phone = '91' + phone[1:]
+        elif len(phone) == 13 and phone.startswith('91'):
+            # Already has Indian country code
+            pass
+        elif len(phone) == 12 and not phone.startswith('91'):
+            # Might have different country code, keep as is
+            pass
+        elif len(phone) < 10:
+            # Too short, invalid
+            logger.warning(f"Phone number too short: {phone}")
+            return ""
+        elif len(phone) > 15:
+            # Too long, invalid (E.164 max is 15 digits)
+            logger.warning(f"Phone number too long: {phone}")
+            return ""
+
+        # Final validation - should be between 10-15 digits
+        if not (10 <= len(phone) <= 15):
+            logger.warning(f"Invalid phone number length: {phone}")
+            return ""
+
+        logger.info(f"Formatted phone number: {phone[:5]}...{phone[-3:]} (length: {len(phone)})")
+        return phone

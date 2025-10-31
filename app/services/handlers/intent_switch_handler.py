@@ -35,13 +35,13 @@ class IntentSwitchHandler:
         4. Not already in intent switch choice state
         """
         # Check if user has active workflow
+        # Note: pending_optional states are NOT considered active workflows
+        # because they're part of the same RFQ collection process
         has_active_workflow = (
             len(session.workflow_state.get("extracted_entities", [])) > 0 or
             bool(session.workflow_state.get("incomplete_products")) or
             bool(session.workflow_state.get("pending_combined_rfq")) or
-            bool(session.workflow_state.get("pending_rfq")) or
-            bool(session.workflow_state.get("pending_optional_rfq")) or
-            bool(session.workflow_state.get("pending_optional_combined_rfq"))
+            bool(session.workflow_state.get("pending_rfq"))
         )
         print("has active workflow", has_active_workflow)
         
@@ -59,9 +59,9 @@ class IntentSwitchHandler:
             logger.info("Intent switch: Already in pending_intent_switch - returning False")
             return False
             
-        # Don't handle if confidence is too low
-        if confidence < 0.9:
-            logger.info(f"Intent switch: Confidence too low ({confidence}) - returning False")
+        # Don't handle if confidence is too low (confidence is 0-100 percentage)
+        if confidence < 90:
+            logger.info(f"Intent switch: Confidence too low ({confidence}%) - returning False")
             return False
         
         # Handle intent switches for different intents
@@ -74,22 +74,43 @@ class IntentSwitchHandler:
             if context_analysis:
                 conversation_stage = context_analysis.get('conversation_stage', 'unknown')
                 references_existing_data = context_analysis.get('references_existing_data', False)
-                
+
                 # If user is in collecting stage and referencing existing data, they're responding to our questions
                 if conversation_stage == 'collecting' and references_existing_data:
                     logger.info(f"User providing details during collection stage - continuing current RFQ")
                     return False
-                
+
+                # If user is in optional_fields stage, they're responding to optional field prompts
+                if conversation_stage == 'optional_fields':
+                    logger.info(f"User in optional_fields stage - responding to optional field prompts")
+                    return False
+
                 # Additional check: if conversation stage is 'collecting' and we have incomplete products,
                 # the user is likely responding to system prompts even if AI doesn't detect references
-                if (conversation_stage == 'collecting' and 
+                if (conversation_stage == 'collecting' and
                     bool(session.workflow_state.get("incomplete_products"))):
                     logger.info(f"User in collecting stage with incomplete products - likely responding to prompts")
                     return False
-                
-                # Otherwise, it's likely a new product request
-                logger.info(f"New product request detected (stage: {conversation_stage}, references_existing: {references_existing_data})")
-                return True
+
+                # Check for pending optional fields - user is responding to optional questions
+                if (bool(session.workflow_state.get("pending_optional_rfq")) or
+                    bool(session.workflow_state.get("pending_optional_combined_rfq"))):
+                    logger.info(f"User has pending optional fields - responding to optional field prompts")
+                    return False
+
+                # If conversation stage is NOT 'unknown' or 'new_request', the user is likely continuing current workflow
+                if conversation_stage not in ['unknown', 'new_request']:
+                    logger.info(f"User in {conversation_stage} stage - continuing current workflow")
+                    return False
+
+                # Only trigger intent switch if explicitly a new request
+                if conversation_stage == 'new_request':
+                    logger.info(f"New product request detected (stage: {conversation_stage}, references_existing: {references_existing_data})")
+                    return True
+
+                # Default: continue current workflow (don't switch)
+                logger.info(f"Defaulting to continue current workflow (stage: {conversation_stage})")
+                return False
             else:
                 # Fallback: if we have incomplete products during collecting, likely continuation
                 if bool(session.workflow_state.get("incomplete_products")):
@@ -155,6 +176,8 @@ class IntentSwitchHandler:
             "intent_switch_choice"
         )
 
+
+
         await self.whatsapp_service.send_message(user.phone_number, choice_response)
         
         return {"status": "intent_switch_choice_presented"}
@@ -181,7 +204,7 @@ class IntentSwitchHandler:
         
         # Use OpenAI to analyze user's intent switch response
         try:
-            analysis_result = self.openai_service.analyze_intent_switch_response(
+            analysis_result = await self.openai_service.analyze_intent_switch_response(
                 message=message,
                 pending_switch_context=pending_switch
             )
@@ -294,7 +317,8 @@ class IntentSwitchHandler:
         logger.info(f"Abandoning current workflow: {session.workflow_type}")
         
         # Mark session as abandoned
-        session.outcome = 'abandoned'
+        from app.models import ConversationOutcome
+        session.outcome = ConversationOutcome.abandoned
         
         # Clear workflow state but keep conversation history
         session.workflow_state = {"extracted_entities": []}

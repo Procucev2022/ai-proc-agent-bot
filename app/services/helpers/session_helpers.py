@@ -7,7 +7,7 @@ ChatService class for better organization.
 
 from datetime import datetime, timedelta
 from app.config import get_settings
-from app.models import ConversationSession
+from app.models import ConversationSession, WorkflowType
 from app.utils.datetime_utils import utc_now, utc_from_naive, is_expired, format_utc_display
 import logging
 from typing import Dict, Any
@@ -137,40 +137,50 @@ class SessionHelpers:
     @staticmethod
     async def handle_session_expiry(session: ConversationSession, db_manager) -> ConversationSession:
         """Properly handle session expiration by refreshing the existing session.
-        
+
         Instead of creating new sessions with different IDs, this method:
-        1. Preserves conversation history and entities in archive
+        1. Completely clears old session data (no archiving to prevent data leakage)
         2. Resets the existing session for a fresh start
         3. Updates timestamps to current time
+
+        IMPORTANT: Old data is NOT preserved to prevent it from appearing in new RFQ workflows.
         """
         if not session:
             return None
-        
+
         current_utc = utc_now()
-        
-        # Archive existing conversation data in workflow_state for reference
-        if not session.workflow_state:
-            session.workflow_state = {}
-            
-        # Store archive of expired session
-        session.workflow_state['session_archive'] = {
-            'expired_at': current_utc.isoformat(),
-            'previous_conversation_history': session.conversation_history,
-            'previous_extracted_entities': session.extracted_entities,
-            'previous_workflow_type': session.workflow_type.value if session.workflow_type else None
+
+        # Preserve profile selection state to prevent infinite loops during authentication
+        preserved_state = {}
+        if session.workflow_state:
+            if 'profile_selection_stage' in session.workflow_state:
+                preserved_state['profile_selection_stage'] = session.workflow_state['profile_selection_stage']
+            if 'profile_options' in session.workflow_state:
+                preserved_state['profile_options'] = session.workflow_state['profile_options']
+
+        # COMPLETELY RESET workflow_state - DO NOT preserve any old data
+        # This prevents old RFQ items from appearing after session timeout
+        session.workflow_state = {
+            'extracted_entities': [],
+            'last_activity_at': current_utc.isoformat(),
+            'session_refreshed': current_utc.isoformat(),
+            **preserved_state  # Restore profile selection state if it existed
         }
-        
+
         # Reset session for fresh start but keep the same ID
-        session.workflow_type = None
+        # But preserve authentication workflow if user is in profile selection
+        if session.workflow_type == WorkflowType.authentication and preserved_state:
+            # Keep authentication workflow active if profile selection was in progress
+            pass
+        else:
+            session.workflow_type = None
         session.outcome = None
         session.conversation_history = {"openai_messages": [], "metadata": []}
         session.extracted_entities = {}
         session.completed_at = None  # Clear completion timestamp
-        
+
         # Update timestamps to current UTC
         session.last_activity_at = current_utc.replace(tzinfo=None)
-        session.workflow_state['last_activity_at'] = current_utc.isoformat()
-        session.workflow_state['session_refreshed'] = current_utc.isoformat()
         
         # Save the refreshed session
         updated_session = db_manager.save_conversation_session({

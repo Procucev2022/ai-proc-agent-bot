@@ -1,20 +1,16 @@
 {
     "type": "function",
     "name": "extract_entities",
-    "description": "Extract structured entities from user message for RFQ creation workflow. Can handle multiple products in a single message. Focus only on entity extraction - completeness checking is handled by the data model.",
+    "description": "Extract structured entities from user message for RFQ creation workflow. Can handle multiple products in a single message. Delivery location and date are GLOBAL fields that apply to all products. Focus only on entity extraction - completeness checking is handled by the data model.",
     "parameters": {
         "type": "object",
         "properties": {
             "products": {
                 "type": "array",
-                "description": "Array of product entities extracted from the message",
+                "description": "Array of product entities extracted from the message. Each product contains item-specific fields only.",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "projectDesc": {
-                            "type": ["string", "null"],
-                            "description": "Project description for the RFQ"
-                        },
                         "description": {
                             "type": ["string", "null"],
                             "description": "Item description"
@@ -27,38 +23,34 @@
                             "type": ["string", "null"],
                             "description": "Unit of measurement: pcs, kg, meters, etc."
                         },
-                        "deliveryDate": {
-                            "type": ["string", "null"],
-                            "description": "Required delivery date"
-                        },
-                        "division": {
-                            "type": ["string", "null"],
-                            "description": "Division: Admin & IT, CAPEX - Equipment & Machinery, Civil & Electrical Works, etc."
-                        },
                         "brand": {
                             "type": ["string", "null"],
-                            "description": "Preferred brand name"
-                        },
-                        "state": {
-                            "type": ["string", "null"],
-                            "description": "Delivery state (e.g., Karnataka, Maharashtra, etc.)"
-                        },
-                        "city": {
-                            "type": ["string", "null"],
-                            "description": "Delivery city (e.g., Bangalore, Mumbai, etc.)"
-                        },
-                        "pincode": {
-                            "type": ["string", "null"],
-                            "description": "Delivery pincode (6-digit postal code)"
+                            "description": "Preferred brand name for this item"
                         },
                         "remarks": {
                             "type": ["string", "null"],
-                            "description": "Additional remarks or requirements"
+                            "description": "Item-specific remarks or requirements"
                         }
                     },
-                    "required": ["projectDesc", "description", "quantity", "unitofMeasures", "deliveryDate", "division", "brand", "state", "city", "pincode", "remarks"],
+                    "required": ["description", "quantity", "unitofMeasures", "brand", "remarks"],
                     "additionalProperties": false
                 }
+            },
+            "deliveryDate": {
+                "type": ["string", "null"],
+                "description": "Required delivery date (applies to all products)"
+            },
+            "state": {
+                "type": ["string", "null"],
+                "description": "Delivery state for all products (e.g., Karnataka, Maharashtra, etc.)"
+            },
+            "city": {
+                "type": ["string", "null"],
+                "description": "Delivery city for all products (e.g., Bangalore, Mumbai, etc.)"
+            },
+            "pincode": {
+                "type": ["string", "null"],
+                "description": "Delivery pincode for all products (6-digit postal code)"
             },
             "confidence": {
                 "type": "number",
@@ -67,7 +59,7 @@
                 "description": "Confidence in the entity extraction accuracy"
             }
         },
-        "required": ["products", "confidence"],
+        "required": ["products", "deliveryDate", "state", "city", "pincode", "confidence"],
         "additionalProperties": false
     },
     "strict": true

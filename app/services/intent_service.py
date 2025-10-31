@@ -15,6 +15,7 @@ import logging
 from typing import Dict, Any
 from app.services.openai_service import OpenAIService
 from app.config import get_settings
+from app.data.faq_config import FULL_FAQ_CONTEXT
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class IntentService:
         self.openai_service = OpenAIService()
         self.settings = get_settings()
         
-    def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
+    async def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
         """
         Classify user message intent using OpenAI with conversation context awareness.
         
@@ -44,7 +45,7 @@ class IntentService:
             
         Returns:
             Dict containing:
-            - intent: classified intent (buy_something, general_inquiry, modification_request, confirmation_response, reference_request, ambiguous, contextual_reference, session_inquiry, workflow_rejection, alternative_request)
+            - intent: classified intent (buy_something, general_inquiry, modification_request, confirmation_response, reference_request, ambiguous, contextual_reference, session_inquiry, exit_system, cancel_workflow, account_switch, register_account, alternative_request, support, faq)
             - confidence: confidence score (0-100)
             - reasoning: explanation of classification including context analysis
             - all_intent_scores: scores for all possible intents
@@ -56,8 +57,8 @@ class IntentService:
             - should_update_entities: whether entities should be updated from contextual reference
         """
         try:
-            # Get classification from OpenAI with context
-            classification_result = self.openai_service.classify_intent(message, context)
+            # Get classification from OpenAI (FAQ intent can be detected from prompt alone, no need for full FAQ context)
+            classification_result = await self.openai_service.classify_intent(message, context)
             
             if not classification_result.get("success", False):
                 logger.warning(f"OpenAI classification failed, using fallback")
@@ -71,8 +72,12 @@ class IntentService:
             logger.info(f"Intent classified: {intent} (confidence: {confidence}%, stage: {context_stage})")
             
             # Handle contextual intents with intelligent responses
-            if intent in ['contextual_reference', 'session_inquiry', 'workflow_rejection', 'alternative_request'] and confidence > 60:
-                return self._handle_contextual_intent(intent, message, context, classification_result)
+            if intent in ['contextual_reference', 'session_inquiry', 'alternative_request'] and confidence > 60:
+                return await self._handle_contextual_intent(intent, message, context, classification_result)
+
+            # Handle exit intent - return immediately without contextual processing
+            if intent == 'exit_system' and confidence > 50:
+                return classification_result
             
             return classification_result
             
@@ -83,18 +88,24 @@ class IntentService:
     def _get_fallback_classification(self, message: str, context: dict = None, error: str = None) -> Dict[str, Any]:
         """
         Provide fallback classification when OpenAI fails.
-        
+
         Uses simple rule-based classification with context awareness as backup.
-        
+
         Args:
-            message: Original user message
+            message: Original user message (can be string or dict for multimodal content)
             context: Optional conversation context
             error: Optional error message
-            
+
         Returns:
             Fallback classification result
         """
-        message_lower = message.lower()
+        # Handle non-string message content (e.g., image data)
+        if isinstance(message, dict):
+            message_lower = "image attachment"
+        elif not isinstance(message, str):
+            message_lower = str(message).lower()
+        else:
+            message_lower = message.lower()
         
         # Default context analysis
         default_context_analysis = {
@@ -106,14 +117,27 @@ class IntentService:
         
         # Context-aware fallback classification
         if context:
-            # Check for modification requests using context
+            # Extract key context information
             has_pending_confirmations = context.get('workflow_state', {}).get('pending_combined_rfq') or context.get('workflow_state', {}).get('pending_rfq')
+            has_incomplete_products = context.get('session_status', {}).get('has_incomplete_products', False)
             existing_entities = context.get('extracted_entities', {}) or context.get('workflow_state', {}).get('extracted_entities', [])
-            
-            # Modification request detection
+            bot_last_message = context.get('bot_last_message', '')
+
+            # Clarification response detection (highest priority)
+            # If user has incomplete products, bot just sent a message, and user isn't using modification language
             modification_keywords = ["change", "modify", "update", "actually", "instead", "make that", "switch to"]
-            if (any(keyword in message_lower for keyword in modification_keywords) and 
-                (existing_entities or has_pending_confirmations)):
+            has_modification_keywords = any(keyword in message_lower for keyword in modification_keywords)
+
+            if (has_incomplete_products and bot_last_message and not has_modification_keywords):
+                intent = "buy_something"  # Continue collection workflow
+                confidence = 85
+                default_context_analysis.update({
+                    "references_existing_data": True,
+                    "conversation_stage": "collecting"
+                })
+
+            # Modification request detection
+            elif (has_modification_keywords and (existing_entities or has_pending_confirmations)):
                 intent = "modification_request"
                 confidence = 70
                 default_context_analysis.update({
@@ -147,10 +171,22 @@ class IntentService:
         all_scores = {
             "buy_something": 20,
             "sell_something": 10,
+            "bfs_search": 10,
+            "account_switch": 5,
+            "register_account": 5,
             "general_inquiry": 20,
             "modification_request": 10,
             "confirmation_response": 10,
-            "rfq_status_check": 10
+            "rfq_status_check": 10,
+            "reference_request": 5,
+            "contextual_reference": 5,
+            "session_inquiry": 5,
+            "exit_system": 5,
+            "cancel_workflow": 5,
+            "alternative_request": 5,
+            "support": 10,
+            "faq": 10,
+            "ambiguous": 20
         }
         all_scores[intent] = confidence
         
@@ -166,18 +202,44 @@ class IntentService:
     
     def _get_general_fallback_intent(self, message_lower: str) -> tuple:
         """Get general intent classification without context."""
-        if any(keyword in message_lower for keyword in ["status", "track", "progress", "update", "rfq id", "reference", "submitted", "pending", "completed", "check my order", "my request", "my rfq", "order status", "quote status", "vendor responses", "response received", "when will i receive"]):
+        # Check for exit keywords first (definitive exit)
+        if any(keyword in message_lower for keyword in ["exit", "quit", "bye", "goodbye", "logout", "log out"]):
+            return "exit_system", 90
+        # Check for cancel keywords (workflow cancellation)
+        elif any(keyword in message_lower for keyword in ["cancel", "start over", "restart", "clear", "forget"]):
+            return "cancel_workflow", 85
+        # Check for greeting messages
+        elif any(keyword in message_lower for keyword in ["hello", "hi", "hey", "good morning", "good afternoon", "good evening", "greetings", "hola", "namaste"]):
+            return "general_inquiry", 80
+        elif any(keyword in message_lower for keyword in ["support", "contact support", "customer service", "technical support", "help me", "need help", "assistance", "contact customer"]):
+            return "support", 80
+        elif any(keyword in message_lower for keyword in ["status", "track", "progress", "update", "rfq id", "reference", "submitted", "pending", "completed", "check my order", "my request", "my rfq", "order status", "quote status", "vendor responses", "response received", "when will i receive"]):
             return "rfq_status_check", 70
-        elif any(keyword in message_lower for keyword in ["do you have", "available", "stock", "inventory", "search", "rfq", "quote", "buy", "purchase", "need to buy", "looking for", "need"]):
+        elif any(keyword in message_lower for keyword in ["do you have", "available", "stock", "inventory", "bfs", "buy from stock", "immediate", "urgent", "right now", "today", "asap", "quick delivery", "buy directly", "purchase now", "direct purchase", "what's in stock", "show me stock", "search inventory"]):
+            return "bfs_search", 70
+        elif any(keyword in message_lower for keyword in ["search", "rfq", "quote", "buy", "purchase", "need to buy", "looking for", "need"]):
             return "buy_something", 60
         elif any(keyword in message_lower for keyword in ["sell", "selling", "offer", "provide", "vendor", "supplier", "want to sell", "have to sell", "we offer", "can supply"]):
             return "sell_something", 60
-        elif any(keyword in message_lower for keyword in ["help", "how", "what can", "explain"]):
+        # Check for FAQ keywords (high priority) - enhanced detection
+        elif any(keyword in message_lower for keyword in [
+            "what is", "how does", "how to", "what are", "explain", "tell me about", 
+            "information about", "details about", "faq", "frequently asked", 
+            "question about", "help with", "is there any charge", "cost to use", 
+            "free to use", "pricing", "fees", "charges", "benefits of", 
+            "how can i", "what can", "do you provide", "tell me more"
+        ]):
+            return "faq", 85
+        elif any(keyword in message_lower for keyword in ["help", "how", "what can"]):
             return "general_inquiry", 60
+        # Check for mixed intent (both buy and sell keywords)
+        elif (any(buy_word in message_lower for buy_word in ["buy", "purchase", "need", "looking for"]) and
+              any(sell_word in message_lower for sell_word in ["sell", "selling", "offer", "provide", "supply"])):
+            return "ambiguous", 70
         else:
             return "ambiguous", 30
     
-    def _handle_contextual_intent(self, intent: str, message: str, context: dict, classification_result: dict) -> Dict[str, Any]:
+    async def _handle_contextual_intent(self, intent: str, message: str, context: dict, classification_result: dict) -> Dict[str, Any]:
         """
         Handle contextual intents by generating intelligent responses and extracting entities.
         
@@ -192,7 +254,7 @@ class IntentService:
         """
         try:
             # Use comprehensive contextual interaction handler for all contextual intents
-            contextual_data = self.openai_service.handle_contextual_interaction(
+            contextual_data = await self.openai_service.handle_contextual_interaction(
                 message=message,
                 conversation_history=context.get('conversation_history', {}),
                 workflow_state=context.get('workflow_state', {}),

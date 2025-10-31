@@ -8,10 +8,12 @@ Extracted from ChatService to reduce complexity.
 
 import logging
 from typing import Dict, Any
-from app.models import User, ConversationSession
+from app.models import WorkflowType, User, ConversationSession
 from app.services.whatsapp_service import WhatsAppService
+from app.services.workflow_manager import WorkflowManager
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.utils.datetime_utils import utc_now
+from app.utils.rfq_message_formatter import format_rfq_response_message
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +30,17 @@ class PurchaseIntentHandler:
         self.products_array_handler = products_array_handler
         self.session_manager = session_manager
     
-    async def handle_purchase_intent(self, user: User, session: ConversationSession, 
+    async def handle_purchase_intent(self, user: User, session: ConversationSession,
                                    message: str, intent_result: Dict[str, Any] = None,
                                    should_use_summary_aware_extraction_func=None) -> Dict[str, Any]:
         """Handle purchase intent with data model driven orchestration."""
         try:
+            # DEFENSIVE CLEANUP: Remove any lingering session_archive from timeout
+            # This prevents old RFQ data from leaking into new workflows
+            if session.workflow_state and 'session_archive' in session.workflow_state:
+                logger.warning(f"[CLEANUP] Removing lingering session_archive from workflow_state")
+                del session.workflow_state['session_archive']
+
             # 1. Extract entities using EntityService (focused service)
             # Include both existing entities and incomplete products in context
             existing_entities = session.workflow_state.get("extracted_entities", [])
@@ -75,6 +83,7 @@ class PurchaseIntentHandler:
                 "intent_result": intent_result,  # Pass intent result to avoid duplicate OpenAI calls
                 "chat_summaries": chat_summaries,  # Add summaries for smart entity extraction
             }
+            logger.info(f"entity extraction results in handle purchase intent:{entity_context}")
             print(f"PurchaseIntentHandler: Passing context to EntityService - has pending confirmations: {bool(session.workflow_state.get('pending_combined_rfq'))}")
             print(f"PurchaseIntentHandler: Debug session.workflow_state keys: {list(session.workflow_state.keys()) if session.workflow_state else 'None'}")
             print(f"PurchaseIntentHandler: Debug pending_combined_rfq: {session.workflow_state.get('pending_combined_rfq') if session.workflow_state else 'No workflow_state'}")
@@ -91,10 +100,13 @@ class PurchaseIntentHandler:
             # Use summary-aware entity extraction if we have summaries, otherwise use standard extraction
             if chat_summaries and should_use_summary_aware_extraction_func and should_use_summary_aware_extraction_func(message):
                 print(f"PurchaseIntentHandler: Using summary-aware entity extraction")
-                entity_result = self.entity_service.extract_entities_with_summary_context(message, context=entity_context, workflow_type=workflow_type)
+                logger.info(f"PurchaseIntentHandler: Using summary aware entity extraction data to be passed for entity extraction message={message}, context={entity_context}, workflow_type={workflow_type} ")
+
+                entity_result = await self.entity_service.extract_entities_with_summary_context(message, context=entity_context, workflow_type=workflow_type)
             else:
                 print(f"PurchaseIntentHandler: Using standard entity extraction")
-                entity_result = self.entity_service.extract_entities(message, context=entity_context, workflow_type=workflow_type)
+                logger.info(f"PurchaseIntentHandler: Using standard entity extraction data to be passed for entity extraction message={message}, context={entity_context}, workflow_type={workflow_type} ")
+                entity_result = await self.entity_service.extract_entities(message, context=entity_context, workflow_type=workflow_type)
             logger.info(f"EntityService result: {entity_result}")
             
             # Debug: Check which path we're taking
@@ -140,18 +152,47 @@ class PurchaseIntentHandler:
             "user_message": message,
             "modification_context": True
         }
-        
-        # Generate AI-powered clarification response
-        clarification_questions = ["What would you like to change it to?"]
-        response = await self.response_helpers.generate_clarification_response(
-            clarification_questions, 
-            completeness=50,  # We know what they want to change, just need the value
-            context=modification_context,
-            chat_summaries=chat_summaries
-        )
-        
-        await self.whatsapp_service.send_message(user.phone_number, response)
-        await self.session_manager.save_session(session, 'rfq_creation')
+
+
+
+        # --- Generate AI-powered clarification response for modification context ---
+        existing_products = modification_context.get("existing_products", [])
+        if existing_products:
+            entities = existing_products[0].get("entities", {})
+            global_fields = {
+                "deliveryDate": entities.get("deliveryDate"),
+                "city": entities.get("city"),
+                "state": entities.get("state"),
+                "pincode": entities.get("pincode")
+            }
+
+            # Generate formatted summary from extracted entities + global fields
+            # format_rfq_response_message expects a list of entities, not a single entity
+            summary_message = format_rfq_response_message(
+                extracted_entities=[entities],  # Wrap in list
+                global_fields=global_fields,
+                missing_fields=[]
+            )
+
+
+            # Build final clarification message with helpful examples
+            clarification_questions = (
+                f"{summary_message}\n\n"
+                "If you feel you need to modify any details or if you missed adding any item, you can do it now.\n\n"
+                "Here are a few examples you can follow:\n\n"
+                "• To add an item you missed:  Add 10 motors\n"
+                "• To remove an item you added:  Remove Desktop\n"
+                "• To change the quantity of an item:  Change laptops to 20\n"
+                "• To change the delivery date:  Change delivery date to 30 Dec\n"
+                "• To change the delivery location:  Change delivery location to 411005"
+            )
+
+        else:
+            clarification_questions = "What would you like to change it to?"
+
+        await self.whatsapp_service.send_message(user.phone_number, clarification_questions)
+
+        await self.session_manager.save_session(session, WorkflowType.rfq_creation)
         
         return {
             "status": "modification_clarification_sent",
@@ -163,16 +204,16 @@ class PurchaseIntentHandler:
         """Handle single product entities (backward compatibility)."""
         current_entities = session.workflow_state.get("extracted_entities", [])
         new_entities = entity_result.get("entities", {})
-        
+
         # Convert single entity to array format
         if new_entities and not isinstance(current_entities, list):
             current_entities = [current_entities] if current_entities else []
-        
+
         # Add new entities as a product
         if new_entities:
             current_entities.append(new_entities)
             session.workflow_state["extracted_entities"] = current_entities
-            
+
             # Track categories from extracted entities in product_items
             category = new_entities.get('category') or new_entities.get('description')
             if category:
@@ -185,15 +226,41 @@ class PurchaseIntentHandler:
                     'added_at': utc_now().isoformat()
                 }
                 session.product_items.append(product_info)
-            
+
             # Process this as a single product array
             date_validation_error = entity_result.get("date_validation_error", False)
             return await self.products_array_handler.handle_products_array(user, session, message, current_entities, chat_summaries, date_validation_error)
-        
-        # If no new entities, just continue with existing flow
+
+        # If no new entities extracted - check if this is a modification request with no data to modify
+        # Check workflow_state for pending confirmations or existing products
+        has_pending_products = bool(
+            session.workflow_state.get("pending_combined_rfq") or
+            session.workflow_state.get("pending_rfq") or
+            session.workflow_state.get("pending_optional_combined_rfq") or
+            session.workflow_state.get("pending_optional_rfq") or
+            current_entities
+        )
+
+        # If workflow is modification but no data exists, send helpful message
+        workflow_type = session.workflow_state.get("workflow_type") or session.workflow_type
+        if workflow_type == "modification_request" and not has_pending_products:
+            logger.warning(f"[BUG#2_FIX] Modification request detected but no data to modify for session {session.session_id}")
+            helpful_message = "I couldn't find any product details to modify. Could you please tell me what product you'd like to purchase? For example, 'I need 5 laptops'."
+            await self.whatsapp_service.send_message(user.phone_number, helpful_message)
+            await self.session_manager.save_session(session, WorkflowType.general_inquiry)
+            return {
+                "status": "modification_request_no_data",
+                "message": "Sent helpful message for modification request with no data"
+            }
+
+        # If no new entities but not a modification request, send general clarification
+        clarification_message = "Could you provide more details about what you need? For example, what product and how many?"
+        await self.whatsapp_service.send_message(user.phone_number, clarification_message)
+        await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+
         return {
             "status": "no_new_entities",
-            "message": "Could you provide more details about what you need?"
+            "message": "Requested more details from user"
         }
     
     async def _handle_error_response(self, error: Exception, phone_number: str) -> Dict[str, Any]:

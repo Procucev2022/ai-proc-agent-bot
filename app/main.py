@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -30,14 +31,15 @@ from app.config import get_settings
 from app.api.webhook import router as webhook_router
 from app.database import init_database
 from app.services.chat_service import ChatService
+from app.services.global_error_handler import handle_server_error
+from app.context.middleware import ContextMiddleware
+from app.utils.logging_utils import setup_basic_logging, CustomFormatter
+import gc
 
 
-# Get settings and configure logging
+# Get settings and configure logging with custom formatter
 settings = get_settings()
-logging.basicConfig(
-    level=logging.INFO if not settings.DEBUG else logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+setup_basic_logging(level="DEBUG" if settings.DEBUG else "INFO")
 logger = logging.getLogger(__name__)
 
 # Initialize rate limiter
@@ -58,15 +60,15 @@ class IPRestrictionMiddleware(BaseHTTPMiddleware):
             client_ip = request.client.host
             x_forwarded_for = request.headers.get("x-forwarded-for")
             x_real_ip = request.headers.get("x-real-ip")
-            
+
             real_ip = x_real_ip or (x_forwarded_for.split(",")[0] if x_forwarded_for else client_ip)
-            
+
             if real_ip not in self.allowed_ips:
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "Access forbidden: IP not allowed"}
                 )
-        
+
         response = await call_next(request)
         return response
 
@@ -84,9 +86,71 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize database: {e}")
         raise
     
+    # Start message queue background tasks
+    message_queue_tasks = []
+    try:
+        from app.api.webhook import message_queue_service
+        
+        # Start batch poller (creates batches from incoming messages)
+        poller_task = asyncio.create_task(message_queue_service.run_batch_poller())
+        message_queue_tasks.append(poller_task)
+        logger.info("Message queue batch poller started")
+        
+        # Start monitoring loop (acknowledgments and please-wait messages)
+        monitor_task = asyncio.create_task(message_queue_service.run_monitoring_loop())
+        message_queue_tasks.append(monitor_task)
+        logger.info("Message queue monitoring loop started")
+        
+    except Exception as e:
+        logger.error(f"Failed to start message queue background tasks: {e}")
+        raise
+    
+    # Start webhook health monitoring
+    webhook_monitor_task = None
+    webhook_monitor = None
+    if settings.webhook_health_monitoring_enabled:
+        try:
+            from app.services.webhook_health_monitor_service import WebhookHealthMonitorService
+            webhook_monitor = WebhookHealthMonitorService()
+            webhook_monitor_task = asyncio.create_task(webhook_monitor.start_monitoring())
+            logger.info("Webhook health monitoring started")
+        except Exception as e:
+            logger.error(f"Failed to start webhook health monitoring: {e}")
+            # Continue without monitoring rather than failing startup
+    
     yield
     
     logger.info("Shutting down AI Procurement Agent application")
+    
+    # Shutdown message queue service gracefully
+    try:
+        from app.api.webhook import message_queue_service
+        await message_queue_service.shutdown()
+        logger.info("Message queue service shut down successfully")
+    except Exception as e:
+        logger.error(f"Error shutting down message queue service: {e}")
+    
+    # Stop webhook health monitoring gracefully
+    if webhook_monitor_task and webhook_monitor:
+        try:
+            webhook_monitor.stop_monitoring()
+            await asyncio.wait_for(webhook_monitor_task, timeout=5.0)
+            logger.info("Webhook health monitoring stopped")
+        except asyncio.TimeoutError:
+            logger.warning("Health monitoring shutdown timeout")
+            webhook_monitor_task.cancel()
+        except Exception as e:
+            logger.error(f"Error stopping health monitoring: {e}")
+    
+    # Cleanup any remaining aiohttp sessions
+    import aiohttp
+    for obj in gc.get_objects():
+        if isinstance(obj, aiohttp.ClientSession) and not obj.closed:
+            try:
+                await obj.close()
+                logger.info("Closed remaining aiohttp session")
+            except Exception as e:
+                logger.warning(f"Error closing session: {e}")
 
 
 # Initialize FastAPI application
@@ -102,6 +166,41 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Add global exception handler for unhandled server errors
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle unhandled exceptions globally."""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    
+    # Extract user info from request if available
+    user_phone = None
+    try:
+        if hasattr(request, 'json'):
+            body = await request.json()
+            user_phone = body.get('phone') or body.get('from')
+    except:
+        pass
+    
+    # Notify support team about server error
+    try:
+        await handle_server_error(
+            error_message=f"Unhandled exception: {str(exc)}",
+            user_phone=user_phone,
+            current_flow=f"{request.method} {request.url.path}"
+        )
+    except Exception as notify_error:
+        logger.error(f"Failed to notify support team about server error: {notify_error}")
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal server error. Our team has been notified.",
+            "error_id": str(id(exc))
+        }
+    )
+
+# Add context middleware (must be first)
+app.add_middleware(ContextMiddleware)
 # Add IP restriction middleware
 if settings.allowed_ips:
     app.add_middleware(IPRestrictionMiddleware, allowed_ips=settings.allowed_ips)
@@ -126,8 +225,8 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # Include API routers
 app.include_router(webhook_router, prefix="/webhook", tags=["webhook"])
 
-# Initialize chat service
-chat_service = ChatService()
+# Don't create global ChatService - create per-request with proper session management
+# chat_service = ChatService()  # REMOVED: Causes database connection leaks
 
 # Pydantic models for chat API
 from typing import Union
@@ -171,42 +270,63 @@ async def chat_page(request: Request):
 @limiter.limit(settings.rate_limit_chat)
 async def process_chat_message(request: Request, chat_message: ChatMessage):
     """Process chat message through ChatService - works exactly like test_multi_turn_conversation.py"""
-    try:
-        # Store captured WhatsApp messages (same as terminal test)
-        whatsapp_messages = []
-        
-        # Mock the WhatsApp service to capture messages (same pattern as terminal test)
-        async def mock_send_message(recipient_id, message):
-            whatsapp_messages.append(message)
-            return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
-        
-        # Determine message type based on content structure
-        message_type = "text"
-        content = chat_message.message
-        
-        # Check if message contains image data (from UI image upload)
-        if isinstance(content, dict) and "image" in content:
-            message_type = "image"
-        
-        # Process message through ChatService with mocked WhatsApp (same as terminal test)
-        from unittest.mock import patch
-        with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message):
-            chat_result = await chat_service.process_message(chat_message.phone, content, message_type)
-        
-        return {
-            "success": True,
-            "responses": whatsapp_messages,
-            "status": chat_result.get("status", "processed"),
-            "debug_info": chat_result
-        }
-        
-    except Exception as e:
-        logger.error(f"Error processing chat message: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "responses": ["Sorry, there was an error processing your message."]
-        }
+    from app.utils.logging_utils import UserPhoneContext
+
+    # Set phone number context for all logs in this request
+    async with UserPhoneContext(chat_message.phone):
+        try:
+            # Store captured WhatsApp messages (same as terminal test)
+            whatsapp_messages = []
+
+            # Mock the WhatsApp service to capture messages (same pattern as terminal test)
+            async def mock_send_message(recipient_id, message):
+                whatsapp_messages.append(message)
+                return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
+
+            # Determine message type based on content structure
+            message_type = "text"
+            content = chat_message.message
+
+            # Check if message contains image data (from UI image upload)
+            if isinstance(content, dict) and "image" in content:
+                message_type = "image"
+
+            # Create ChatService per-request with proper session management
+            from app.database import get_db_session_context
+            from unittest.mock import patch
+
+            with get_db_session_context() as db:
+                chat_service = ChatService(db_session=db)
+
+                # Process message through ChatService with mocked WhatsApp (same as terminal test)
+                with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message):
+                    chat_result = await chat_service.process_message(chat_message.phone, content, message_type)
+
+            return {
+                "success": True,
+                "responses": whatsapp_messages,
+                "status": chat_result.get("status", "processed"),
+                "debug_info": chat_result
+            }
+
+        except Exception as e:
+            logger.error(f"Error processing chat message: {e}")
+
+            # Notify support team about chat processing error
+            try:
+                await handle_server_error(
+                    error_message=f"Chat processing error: {str(e)}",
+                    user_phone=chat_message.phone,
+                    current_flow="Chat Processing"
+                )
+            except Exception as notify_error:
+                logger.error(f"Failed to notify support team: {notify_error}")
+
+            return {
+                "success": False,
+                "error": str(e),
+                "responses": ["Sorry, there was an error processing your message."]
+            }
 
 
 @app.post("/api/upload-excel")
@@ -238,7 +358,7 @@ async def upload_excel_file(
         
         # Mock the validation service to use direct content
         from app.services.excel_validation_service import ExcelValidationService
-        
+
         async def mock_validate(self, file_url, filename):
             return {
                 'valid': True,
@@ -247,13 +367,19 @@ async def upload_excel_file(
                 'size': len(file_content),
                 'format': 'xlsx'
             }
-        
-        # Process through ChatService with mocked services
+
+        # Create ChatService per-request with proper session management
+        from app.database import get_db_session_context
         from unittest.mock import patch
-        with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message), \
-             patch.object(ExcelValidationService, 'validate_excel_file_from_url', mock_validate):
-            
-            chat_result = await chat_service.process_message(phone, document_content, "excel_upload")
+
+        with get_db_session_context() as db:
+            chat_service = ChatService(db_session=db)
+
+            # Process through ChatService with mocked services
+            with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message), \
+                 patch.object(ExcelValidationService, 'validate_excel_file_from_url', mock_validate):
+
+                chat_result = await chat_service.process_message(phone, document_content, "excel_upload")
         
         return {
             "success": True,
@@ -266,6 +392,17 @@ async def upload_excel_file(
         
     except Exception as e:
         logger.error(f"Error processing Excel upload: {e}")
+        
+        # Notify support team about Excel processing error
+        try:
+            await handle_server_error(
+                error_message=f"Excel processing error: {str(e)}",
+                user_phone=phone,
+                current_flow="Excel Upload Processing"
+            )
+        except Exception as notify_error:
+            logger.error(f"Failed to notify support team: {notify_error}")
+        
         return {
             "success": False,
             "error": str(e),

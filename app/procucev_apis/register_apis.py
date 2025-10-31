@@ -31,41 +31,32 @@ class RegisterAPIService:
         """
         try:
             seller_url = "/partialvendor/sellerRegistration"
-            # Prepare request payload
-            payload = {
-                "companyName": seller_data.get("companyName", ""),
-                "organizationPhonenumber": seller_data.get("organizationPhonenumber", ""),
-                "email": seller_data.get("email", ""),
-                "pan": seller_data.get("pan", ""),
-                "gstin": seller_data.get("gstin", ""),
-                "address1": seller_data.get("address1", ""),
-                "details": seller_data.get("details", ""),
-                "india": seller_data.get("india", "true"),
-                "crn": seller_data.get("crn", "")
-            }
+            # Use seller_data directly - no manual mapping
+            payload = seller_data
             
             response = await self.api_client.post(
                 endpoint=seller_url,
-                json_data=payload
+                json_data=payload,
+                api_title="register_seller"
             )
-            
-            if response["success"]:
+
+            if response["status"] == "Success" and response['statusCode'] == 200:
                 return {
-                    "statusCode": "200",
-                    "message": "Thanks for your interest with procucev, our vendor partner will connect with you",
-                    "errorMsg": None,
-                    "timestamp": response["timestamp"],
-                    "status": "Success",
-                    "type": None
+                    "statusCode": response.get("statusCode", "200"),
+                    "message": response.get("data", {}).get("message", "Registration successful"),
+                    "errorMsg": response.get("data", {}).get("error", None),
+                    "timestamp": response.get("timestamp", None),
+                    "status": response.get("status", "Success"),
+                    "type": response.get("data", None)
                 }
             else:
                 return {
-                    "statusCode": response["status_code"],
+                    "statusCode": response.get("statusCode", "400"),
                     "message": response.get("data", {}).get("message", "Registration failed"),
                     "errorMsg": response.get("data", {}).get("error", None),
-                    "timestamp": response["timestamp"],
-                    "status": "Failure",
-                    "type": None
+                    "timestamp": response.get("timestamp", None),
+                    "status": response.get("status", "Failure"),
+                    "type": response.get("data", None)
                 }
                         
         except Exception as e:
@@ -86,39 +77,32 @@ class RegisterAPIService:
         """
         try:
             buyer_url = "/partialvendor/buyerRegistration"
-            # Prepare request payload
-            payload = {
-                "companyName": buyer_data.get("companyName", ""),
-                "organizationPhonenumber": buyer_data.get("organizationPhonenumber", ""),
-                "email": buyer_data.get("email", ""),
-                "name": buyer_data.get("name", ""),
-                "zipCode": buyer_data.get("zipCode", ""),
-                "details": buyer_data.get("details", ""),
-                "whatsApp": buyer_data.get("whatsApp", True)
-            }
+            # Use buyer_data directly - no manual mapping
+            payload = buyer_data
             
             response = await self.api_client.post(
                 endpoint=buyer_url,
-                json_data=payload
+                json_data=payload,
+                api_title="register_buyer"
             )
-            
-            if response["success"]:
+
+            if response["status"] == "Success" and response['statusCode'] == 200:
                 return {
-                    "statusCode": "200",
-                    "message": "Thanks for your interest with procucev, our client partner will connect with you",
-                    "errorMsg": None,
-                    "timestamp": response["timestamp"],
-                    "status": "Success",
-                    "type": None
+                    "statusCode": response.get("statusCode", "200"),
+                    "message": response.get("data", {}).get("message", "Registration successful"),
+                    "errorMsg": response.get("data", {}).get("error", None),
+                    "timestamp": response.get("timestamp", None),
+                    "status": response.get("status", "Success"),
+                    "type": response.get("data", None)
                 }
             else:
                 return {
-                    "statusCode": response["status_code"],
+                    "statusCode": response.get("statusCode", "400"),
                     "message": response.get("data", {}).get("message", "Registration failed"),
                     "errorMsg": response.get("data", {}).get("error", None),
-                    "timestamp": response["timestamp"],
-                    "status": "Failure",
-                    "type": None
+                    "timestamp": response.get("timestamp", None),
+                    "status": response.get("status", "Failure"),
+                    "type": response.get("data", None)
                 }
                         
         except Exception as e:
@@ -146,18 +130,19 @@ class RegisterAPIService:
             
             response = await self.api_client.post(
                 endpoint=sendOTP_url,
-                json_data=payload ,
-                require_auth=True
+                json_data=payload,
+                require_auth=True,
+                api_title="send_otp"
             )
             
             # Check success based on status field
-            if response.get("status") == "Success":
+            if response.get("status") == "Success" and response['statusCode'] == 200:
                 return {
-                    "statusCode": "200",
+                    "statusCode": response.get("statusCode", "200"),
                     "message": response.get("message", "OTP sent successfully"),
                     "errorMsg": response.get("errorMsg"),
                     "timestamp": response.get("timestamp"),
-                    "status": "Success",
+                    "status": response.get("status", "Success"),
                     "type": response.get("type")
                 }
             else:
@@ -166,7 +151,7 @@ class RegisterAPIService:
                     "message": response.get("message", "Failed to send OTP"),
                     "errorMsg": response.get("errorMsg"),
                     "timestamp": response.get("timestamp"),
-                    "status": "Failure",
+                    "status": response.get("status", "Failure"),
                     "type": response.get("type")
                 }
                         
@@ -188,26 +173,32 @@ class RegisterAPIService:
         """
         try:
             validateOTP_url = "/rest/users/validateOtp"
+            # Ensure phone number format is consistent
+            phone_formatted = phone_number if phone_number else ""
+            if phone_formatted and not phone_formatted.startswith("+"):
+                phone_formatted = f"+{phone_formatted}"
+
             payload = {
                 "email": username,
                 "emailOtp": otp,
-                "organizationPhonenumber": phone_number or ""
+                "organizationPhonenumber": phone_formatted
             }
             
             response = await self.api_client.post(
                 endpoint=validateOTP_url,
                 json_data=payload,
-                require_auth=True
+                require_auth=True,
+                api_title="validate_otp"
             )
             
             # Check success based on status field
-            if response.get("status") == "Success":
+            if response.get("status") == "Success" and response['statusCode'] == 200:
                 return {
-                    "statusCode": "200",
+                    "statusCode": response.get("statusCode", "200"),
                     "message": response.get("message", "OTP validated successfully"),
                     "errorMsg": response.get("errorMsg"),
                     "timestamp": response.get("timestamp"),
-                    "status": "Success",
+                    "status": response.get("status", "Success"),
                     "type": response.get("type")
                 }
             else:
@@ -216,7 +207,7 @@ class RegisterAPIService:
                     "message": response.get("message", "Invalid OTP"),
                     "errorMsg": response.get("errorMsg"),
                     "timestamp": response.get("timestamp"),
-                    "status": "Failure",
+                    "status": response.get("status", "Failure"),
                     "type": response.get("type")
                 }
                         
@@ -241,26 +232,27 @@ class RegisterAPIService:
             response = await self.api_client.post(
                 endpoint=user_approval_url,
                 json_data=payload,
-                require_auth=True
+                require_auth=True,
+                api_title="user_approval"
             )
             
-            if response["success"]:
+            if response["status"] == "Success" and response['statusCode'] == 200:
                 return {
-                    "statusCode": "200",
-                    "message": "User approved successfully",
-                    "errorMsg": None,
-                    "timestamp": response["timestamp"],
-                    "status": "Success",
-                    "type": None
+                    "statusCode": response.get("statusCode", "200"),
+                    "message": response.get("message", "User approved successfully"),
+                    "errorMsg": response.get("errorMsg", None),
+                    "timestamp": response.get("timestamp", None),
+                    "status": response.get("status", "Success"),
+                    "type": response.get("data", None)
                 }
             else:
                 return {
-                    "statusCode": response["status_code"],
-                    "message": "Failed to approve user",
-                    "errorMsg": response["message"],
-                    "timestamp": response["timestamp"],
-                    "status": "Failure",
-                    "type": None
+                    "statusCode": response.get("statusCode", "400"),
+                    "message": response.get("message", "Failed to approve user"),
+                    "errorMsg": response.get("errorMsg", None),
+                    "timestamp": response.get("timestamp"),
+                    "status": response.get("status", "Failure"),
+                    "type": response.get("data", None)
                 }
         
         except Exception as e:

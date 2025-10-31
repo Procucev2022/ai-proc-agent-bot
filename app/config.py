@@ -55,6 +55,7 @@ class Settings:
         self.WHATSAPP_PASSWORD = os.getenv("WHATSAPP_PASSWORD", "test_password")
         self.WHATSAPP_FROM_NUMBER = os.getenv("WHATSAPP_FROM_NUMBER", "918147745000")
         self.WHATSAPP_BASE_URL = os.getenv("WHATSAPP_BASE_URL", "https://media.sendmsg.in")
+        self.WHATSAPP_MEDIA_DOWNLOAD_URL = os.getenv("WHATSAPP_MEDIA_DOWNLOAD_URL", "https://download.sendmsg.in/whatsapp-mediadownloader")
         self.WHATSAPP_TEMPLATE_BASE_URL = os.getenv("WHATSAPP_TEMPLATE_BASE_URL", "https://wsapi.sendmsg.in")
         self.WHATSAPP_WEBHOOK_URL = os.getenv("WHATSAPP_WEBHOOK_URL")
         self.WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "test_verify_token")
@@ -68,7 +69,7 @@ class Settings:
         
         # Redis configuration
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        self.redis_expiry_seconds = int(os.getenv("REDIS_EXPIRY_SECONDS", "86400"))  # 12 hours default
+        self.redis_expiry_seconds = int(os.getenv("REDIS_EXPIRY_SECONDS", "43200"))  # 12 hours default for token inactivity
         
         # Security configuration
         self.secret_key = os.getenv("SECRET_KEY")
@@ -148,10 +149,24 @@ class Settings:
         # RFQ Status settings
         self.rfq_max_allowed = int(os.getenv("RFQ_MAX_ALLOWED", "5"))
         self.rfq_followup_note = os.getenv("RFQ_FOLLOWUP_NOTE",
-                                           "If you want to know the status for any other RFQ number or visit the link for details: https://p2pdevuiindia.azurewebsites.net/login")
+                                           "https://p2pdevuiindia.azurewebsites.net/login")
 
         # Fetch RFQ limit
         self.rfq_fetch_limit = int(os.getenv("RFQ_FETCH_LIMIT", "3"))
+        
+        # Email configuration
+        self.support_email = os.getenv("SUPPORT_EMAIL", "support@procucev.com")
+        self.email_signature = os.getenv("EMAIL_SIGNATURE", "Regards\nQUA")
+        self.email_templates_path = os.getenv("EMAIL_TEMPLATES_PATH", os.path.join("app", "email_templates"))
+        
+        # Error handling configuration
+        self.enable_error_notifications = os.getenv("ENABLE_ERROR_NOTIFICATIONS", "true").lower() == "true"
+        self.error_notification_cooldown_minutes = int(os.getenv("ERROR_NOTIFICATION_COOLDOWN_MINUTES", "5"))
+        
+        # Support configuration
+        self.support_contact_info = os.getenv("SUPPORT_CONTACT_INFO", "info@procucev.com")
+        self.support_team_email = os.getenv("SUPPORT_TEAM_EMAILS", "priya.soni@mohap.ai")
+        self.support_team_numbers = os.getenv("SUPPORT_TEAM_NUMBERS", "8824242260").split(",")
 
         # Seller Workflow Configuration
         self.seller_rfq_fetch_limit: int = 3
@@ -183,8 +198,57 @@ class Settings:
         self.rfq_max_allowed: int = 5  # Used for seller RFQ selection limit
         self.rfq_fetch_limit: int = 3  # Used for buyer RFQ creation, seller uses seller_rfq_fetch_limit
 
+        # Queue Configuration
+        self.batch_window_seconds: int = int(os.getenv("BATCH_WINDOW_SECONDS", "3"))
+        self.please_wait_threshold_seconds: int = int(os.getenv("PLEASE_WAIT_THRESHOLD_SECONDS", "15"))
+
+        # Webhook Health Monitoring Configuration
+        self.webhook_health_monitoring_enabled = os.getenv(
+            "WEBHOOK_HEALTH_MONITORING_ENABLED", "true"
+        ).lower() == "true"
+        
+        self.webhook_health_check_interval_seconds = int(
+            os.getenv("WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS", "300")
+        )
+        
+        self.webhook_api_response_threshold_seconds = float(
+            os.getenv("WEBHOOK_API_RESPONSE_THRESHOLD_SECONDS", "5.0")
+        )
+        
+        self.webhook_api_timeout_seconds = float(
+            os.getenv("WEBHOOK_API_TIMEOUT_SECONDS", "10.0")
+        )
+        
+        self.webhook_failure_grace_period_seconds = int(
+            os.getenv("WEBHOOK_FAILURE_GRACE_PERIOD_SECONDS", "900")
+        )
+        
+        self.webhook_recovery_confirmations = int(
+            os.getenv("WEBHOOK_RECOVERY_CONFIRMATIONS", "3")
+        )
+        
+        self.webhook_warning_consecutive_threshold = int(
+            os.getenv("WEBHOOK_WARNING_CONSECUTIVE_THRESHOLD", "3")
+        )
+        
+        # Webhook alert recipients - NO fallback, must be explicitly configured
+        webhook_recipients = os.getenv("WEBHOOK_ALERT_RECIPIENTS", "")
+        self.webhook_alert_recipients = self._parse_webhook_recipients(webhook_recipients)
+        
+        self.webhook_alert_state_ttl_seconds = int(
+            os.getenv("WEBHOOK_ALERT_STATE_TTL_SECONDS", "3600")
+        )
+
         # Validate configuration
         self.validate_config()
+    
+    def _parse_webhook_recipients(self, recipients: str) -> list:
+        """
+        Parse a comma-separated string of webhook recipients, stripping whitespace and removing empty entries.
+        """
+        if not recipients:
+            return []
+        return [r.strip() for r in recipients.split(",") if r.strip()]
         
     def get_database_url(self) -> str:
         """Get database connection URL based on selected mode."""
@@ -234,7 +298,9 @@ class Settings:
         return {
             "access_token": self.whatsapp_access_token,
             "verify_token": self.whatsapp_verify_token,
-            "webhook_url": self.whatsapp_webhook_url
+            "webhook_url": self.whatsapp_webhook_url,
+            "media_download_url": self.WHATSAPP_MEDIA_DOWNLOAD_URL,
+            "from_number": self.WHATSAPP_FROM_NUMBER
         }
         
     def get_logging_config(self) -> Dict[str, Any]:
@@ -270,7 +336,6 @@ class Settings:
             raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
         
         # Validate numeric configurations        
-        # Validate numeric configurations        
         if self.session_timeout_minutes <= 0:
             raise ValueError("SESSION_TIMEOUT_MINUTES must be positive")
         
@@ -286,6 +351,42 @@ class Settings:
         
         if self.otp_max_attempts <= 0 or self.otp_max_attempts > 5:
             raise ValueError("OTP_MAX_ATTEMPTS must be between 1 and 5")
+        
+        # Validate support team numbers
+        if self.support_team_numbers:
+            self.support_team_numbers = [num.strip() for num in self.support_team_numbers if num.strip()]
+        
+        # Validate webhook health monitoring configuration
+        if self.webhook_health_monitoring_enabled:
+            # Ensure check interval is greater than timeout (timeout must complete before next check)
+            if self.webhook_health_check_interval_seconds <= self.webhook_api_timeout_seconds:
+                raise ValueError(
+                    "WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS must be greater than WEBHOOK_API_TIMEOUT_SECONDS. "
+                    f"Got interval={self.webhook_health_check_interval_seconds}s, timeout={self.webhook_api_timeout_seconds}s"
+                )
+            
+            # Ensure check interval is less than grace period (need multiple checks within grace period)
+            if self.webhook_health_check_interval_seconds >= self.webhook_failure_grace_period_seconds:
+                raise ValueError(
+                    "WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS must be less than WEBHOOK_FAILURE_GRACE_PERIOD_SECONDS. "
+                    f"Got interval={self.webhook_health_check_interval_seconds}s, grace_period={self.webhook_failure_grace_period_seconds}s"
+                )
+            
+            # Ensure response threshold is less than timeout
+            if self.webhook_api_response_threshold_seconds >= self.webhook_api_timeout_seconds:
+                raise ValueError(
+                    "WEBHOOK_API_RESPONSE_THRESHOLD_SECONDS must be less than WEBHOOK_API_TIMEOUT_SECONDS. "
+                    f"Got threshold={self.webhook_api_response_threshold_seconds}s, timeout={self.webhook_api_timeout_seconds}s"
+                )
+            
+            # Ensure positive values
+            if self.webhook_recovery_confirmations < 1:
+                raise ValueError("WEBHOOK_RECOVERY_CONFIRMATIONS must be at least 1")
+            
+            if self.webhook_warning_consecutive_threshold < 1:
+                raise ValueError("WEBHOOK_WARNING_CONSECUTIVE_THRESHOLD must be at least 1")
+            
+            # Note: webhook_alert_recipients is optional - if not configured, alerts will only be logged
     
     def get_rfq_status_config(self) -> Dict[str, Any]:
         """Get configuration for RFQ status logic."""
