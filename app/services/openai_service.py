@@ -3225,11 +3225,6 @@ If multiple emails and user selected a number, include selection."""
                     )
                     
                     # Log extracted entities for debugging with detailed information
-                    extracted_rfqs = result["rfqs"]
-                    logger.info(f"Extracted entities from OpenAI: {len(extracted_rfqs)} RFQs \n , Data : {extracted_rfqs}")
-                                        
-                    logger.info(f"Excel processing successful: {len(result['rfqs'])} RFQs, confidence: {result['confidence']}")
-                    logger.info(f"Processing Summary: {json.dumps(result.get('processing_summary', {}), indent=4)}")
                     logger.info(f"Complete Result JSON: {json.dumps(result, indent=2)}")
                     return result
             
