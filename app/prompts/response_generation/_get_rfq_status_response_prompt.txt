@@ -20,10 +20,6 @@ show different messages based on `user_role`:
 - If `user_role` = "buyer":
   It looks like you haven’t created any RFQs yet with this profile (*{{user_email}}*).
 
-  If you’re looking for a specific RFQ, please share the *RFQ ID* to continue
-  or visit this link to view more RFQs:
-  https://p2pdevuiindia.azurewebsites.net/login
-
 - If `user_role` = "seller":
   Currently, there are no active RFQs available in your chosen categories.
   Most RFQs usually close within *3–5 days*, so keep visiting this space to check for new opportunities.
