@@ -49,7 +49,7 @@ def format_rfq_response_message(
             remarks_list.append(f"{remarks.strip()}")
 
     # Start with acknowledgment
-    message = "Got it!"
+    message = "*Got it!*"
 
     # --- Check for validation errors first ---
     validation_errors = set()  # Use set to avoid duplicates
@@ -100,13 +100,13 @@ def format_rfq_response_message(
         else:
             # For manual input, ask for quantities
             if len(items) == 1 and not has_quantity:
-                questions.append("• Quantity")
+                questions.append("Quantity")
             elif len(items) > 1:
-                questions.append("• Quantity?")
+                questions.append("Quantity?")
 
     # Only ask for delivery date if no date error and no date provided
     if not global_fields.get("deliveryDate") and not has_date_error:
-        questions.append("• Delivery Date")
+        questions.append("Delivery Date")
     
     # Only ask for location if no pincode error and location not complete
     # if not all(global_fields.get(k) for k in ["city", "state", "pincode"]) and not has_pincode_error:
@@ -126,15 +126,15 @@ def format_rfq_response_message(
 
         # If all missing → ask for overall location
         if missing_city and missing_state and missing_pincode:
-            questions.append("• Delivery Pincode?")
+            questions.append("Delivery Pincode?")
 
         # Otherwise, ask for specific missing fields
         elif missing_pincode:
-            questions.append("• Delivery Pincode?")
+            questions.append("Delivery Pincode?")
         elif missing_city:
-            questions.append("• Delivery City?")
+            questions.append("Delivery City?")
         elif missing_state:
-            questions.append("• Delivery State?")
+            questions.append("Delivery State?")
 
     # Combine validation errors and questions
     all_issues = validation_errors + questions
