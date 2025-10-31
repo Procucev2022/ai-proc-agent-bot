@@ -80,13 +80,16 @@ class RFQService:
             "rfq_ids": rfq_ids or [],
             "has_results": bool(rfq_data),
             "max_allowed": self.settings.rfq_max_allowed,
-            "followup_note": self.settings.rfq_followup_note
+            "followup_note": self.settings.rfq_followup_note,
+            "user_role":user.role,
+            "user_email":user.email
         }
 
         # Step 4: Generate AI Response for the fetched results
         response_message = await self.response_helpers.generate_rfq_status_contextual_response(
             context=context
         )
+        logger.info(f"user role while checking rfq status:{user.role}")
 
         return {
             "status": "rfq_status_found" if rfq_ids else "recent_rfqs_found",

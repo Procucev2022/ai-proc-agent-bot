@@ -7,7 +7,7 @@ Utility functions for authentication workflow.
 import logging
 from typing import Dict, Any, List, Optional, Type
 import re
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from ...utils.pincode_lookup import get_location_from_pincode_async
 
 logger = logging.getLogger(__name__)
@@ -256,42 +256,71 @@ class AuthenticationHelpers:
             }
     
     @staticmethod
-    async def validate_pincode(entities: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[str]]:
+    async def validate_entities(entities: Dict[str, Any], SchemaModel: Type[BaseModel]) -> tuple[Dict[str, Any], Optional[str]]:
         """
-        Validate pincode in entities using API-based lookup.
+        Validate and normalize entity data using schema and external checks.
         
         Args:
-            entities: Dict of extracted entities
-            
+            entities: Dict of extracted entities.
+            SchemaModel: BuyerRegistrationSchema or SellerRegistrationSchema.
+
         Returns:
-            tuple: (updated_entities, validation_error_message)
+            (validated_entities, validation_error_message)
         """
         validated_entities = entities.copy()
         validation_error_message = None
-        # Check both possible field names for backward compatibility
-        pincode = entities.get("zipCode") or entities.get("pincode")
-        pincode_field = "zipCode" if "zipCode" in entities else "pincode"
-        
+
+        # --- 1. Auto-format fields before validation ---
+        if "name" in validated_entities and validated_entities["name"]:
+            validated_entities["name"] = validated_entities["name"].strip().title()
+
+        if "companyName" in validated_entities and validated_entities["companyName"]:
+            validated_entities["companyName"] = validated_entities["companyName"].strip().title()
+
+        if "email" in validated_entities and validated_entities["email"]:
+            validated_entities["email"] = validated_entities["email"].strip().lower()
+
+        if "organizationPhonenumber" in validated_entities and validated_entities["organizationPhonenumber"]:
+            validated_entities["organizationPhonenumber"] = re.sub(r"\s+", "", validated_entities["organizationPhonenumber"])
+
+        if "zipCode" in validated_entities and validated_entities["zipCode"]:
+            validated_entities["zipCode"] = str(validated_entities["zipCode"]).strip()
+
+        if "address" in validated_entities and validated_entities["address"]:
+            validated_entities["address"] = validated_entities["address"].strip().title()
+
+        if "gstin" in validated_entities and validated_entities["gstin"]:
+            validated_entities["gstin"] = validated_entities["gstin"].strip().upper()
+
+        # --- 2. Schema-based validation (Pydantic) ---
+        try:
+            from pydantic import ValidationError
+            validated_model = SchemaModel(**validated_entities)
+            validated_entities = validated_model.model_dump()
+        except ValidationError as e:
+            # Collect first validation error message
+            first_error = e.errors()[0]
+            field_name = first_error.get('loc', [''])[0]
+            error_msg = first_error.get('msg', '')
+            validation_error_message = f"{field_name}: {error_msg}"
+            logger.warning(f"Schema validation failed: {validation_error_message}")
+            return validated_entities, validation_error_message
+
+        # --- 3. External validation: pincode existence check ---
+        pincode = validated_entities.get("zipCode")
         if pincode:
             try:
-                # Clean and validate pincode format
-                clean_pincode = str(pincode).strip()
-                if not clean_pincode.isdigit() or len(clean_pincode) != 6:
-                    logger.info(f"Invalid pincode format: {pincode}")
-                    validated_entities[pincode_field] = None
-                    validation_error_message = "Pincode does not exist. Please provide a valid Indian pincode."
+                if not pincode.isdigit() or len(pincode) != 6:
+                    validation_error_message = "Pincode must be a 6-digit number."
+                    validated_entities["zipCode"] = None
                 else:
-                    # Use API to validate pincode existence
-                    location_data = await get_location_from_pincode_async(clean_pincode)
+                    location_data = await get_location_from_pincode_async(pincode)
                     if not location_data:
-                        logger.info(f"Pincode {pincode} does not exist")
-                        validated_entities[pincode_field] = None
                         validation_error_message = "Pincode does not exist. Please provide a valid Indian pincode."
-                    else:
-                        logger.info(f"Pincode {pincode} is valid")
+                        validated_entities["zipCode"] = None
             except Exception as e:
                 logger.error(f"Error validating pincode {pincode}: {e}")
-                validated_entities[pincode_field] = None
-                validation_error_message = "Pincode does not exist. Please provide a valid Indian pincode."
-        
+                validation_error_message = "Error verifying pincode. Please recheck and try again."
+                validated_entities["zipCode"] = None
+
         return validated_entities, validation_error_message

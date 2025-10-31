@@ -1,7 +1,7 @@
 {
     "type": "function",
     "name": "extract_seller_registration_entities",
-    "description": "Extract seller registration information from user message with context awareness",
+    "description": "Extract and validate seller registration information from user message with validation errors for invalid or multiple values",
     "parameters": {
         "type": "object",
         "properties": {
@@ -26,15 +26,15 @@
                     },
                     "zipCode": {
                         "type": ["string", "null"],
-                        "description": "6-digit pincode"
+                        "description": "6-digit Indian pincode"
                     },
                     "gstin": {
                         "type": ["string", "null"],
-                        "description": "GSTIN number - must be exactly 15 characters"
+                        "description": "15-character GSTIN number"
                     },
                     "details": {
                         "type": ["string", "null"],
-                        "description": "Products or services offered (mapped to 'details' in API)"
+                        "description": "Products or services offered"
                     }
                 },
                 "required": ["name", "companyName", "email", "address", "zipCode", "gstin", "details"],
@@ -44,21 +44,26 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
-                "description": "Percentage of required fields collected"
+                "description": "Percentage of required fields successfully extracted"
             },
             "missing_fields": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "List of missing required fields"
+                "description": "List of required fields not found in user input"
+            },
+            "validation_errors": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of validation errors for invalid or multiple values (not for missing fields)"
             },
             "confidence": {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
-                "description": "Confidence in extracted entities (0-100)"
+                "description": "Overall confidence score for extraction accuracy"
             }
         },
-        "required": ["entities", "completeness", "missing_fields", "confidence"],
+        "required": ["entities", "completeness", "missing_fields", "validation_errors", "confidence"],
         "additionalProperties": false
     },
     "strict": true

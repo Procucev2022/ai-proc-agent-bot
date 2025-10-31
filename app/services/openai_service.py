@@ -529,14 +529,16 @@ class OpenAIService:
                             "success": True
                         }
                     elif mapped_workflow in ["registration_buyer", "registration_seller"]:
-                        # Registration extraction format
+                        # Registration extraction format - raw data will be post-processed
                         print(f"OpenAI: Using registration format for {mapped_workflow}")
                         result = {
                             "entities": args.get("entities", {}),
                             "completeness": args.get("completeness", 0),
                             "missing_fields": args.get("missing_fields", []),
+                            "validation_errors": args.get("validation_errors", []),
                             "confidence": args.get("confidence", 0),
-                            "success": True
+                            "success": True,
+                            "raw_extraction": True  # Flag to indicate this needs post-processing
                         }
                     else:
                         # Backward compatibility for old single entity format
@@ -609,7 +611,7 @@ class OpenAIService:
                 error_message="No function call in response",
                 model_used=self.default_model
             )
-            return {"products": [], "completeness": 0, "missing_fields": [], "confidence": 0, "next_questions": [], "success": False}
+            return {"products": [], "completeness": 0, "missing_fields": [], "validation_errors": [], "confidence": 0, "next_questions": [], "success": False}
             
         except (APIError, APITimeoutError, RateLimitError, APIConnectionError) as e:
             error_msg = str(e)
@@ -629,7 +631,7 @@ class OpenAIService:
             )
             
             logger.error(f"Entity extraction failed: {error_msg}")
-            return {"products": [], "completeness": 0, "missing_fields": [], "confidence": 0, "next_questions": [], "success": False}
+            return {"products": [], "completeness": 0, "missing_fields": [], "validation_errors": [], "confidence": 0, "next_questions": [], "success": False}
         except Exception as e:
             error_msg = str(e)
 
@@ -645,7 +647,7 @@ class OpenAIService:
             )
             
             logger.error(f"Entity extraction failed: {error_msg}")
-            return {"products": [], "completeness": 0, "missing_fields": [], "confidence": 0, "next_questions": [], "success": False}
+            return {"products": [], "completeness": 0, "missing_fields": [], "validation_errors": [], "confidence": 0, "next_questions": [], "success": False}
         
     @log_service_method("openai_service")
     async def extract_entities_with_summary_context(self, message: str, chat_summaries: List[Dict], workflow_type: str = "rfq_creation", existing_products: List[Dict] = None) -> Dict[str, Any]:
@@ -2794,11 +2796,13 @@ Determine the best category for the input item based on the similar items and th
             if user_type == "buyer":
                 tool_file = "entity_extraction_registration_buyer.json"
                 function_name = "extract_buyer_registration_entities"
-                prompt_file = "buyer_entity_extraction"
+                prompt_category = "entity_extraction"
+                prompt_name = "_get_entity_system_prompt_registration_buyer"
             else:
                 tool_file = "entity_extraction_registration_seller.json"
                 function_name = "extract_seller_registration_entities"
-                prompt_file = "seller_entity_extraction"
+                prompt_category = "entity_extraction"
+                prompt_name = "_get_entity_system_prompt_registration_seller"
             
             with open(self.tools_dir / tool_file, 'r') as f:
                 registration_tool = json.load(f)
@@ -2811,10 +2815,13 @@ Determine the best category for the input item based on the similar items and th
                 context_text += f"Already collected: {json.dumps(existing_entities, indent=2)}\n\n"
             context_text += "Extract and validate new information from the message. Set invalid fields to null."
 
+            # Track this OpenAI call
+            self._track_openai_call("registration_entity_extraction")
+
             response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": context_text}],
-                instructions=self._load_prompt("registration", prompt_file),
+                instructions=self._load_prompt(prompt_category, prompt_name),
                 tools=[registration_tool],
                 tool_choice={"type": "function", "name": function_name}
             )
@@ -2825,14 +2832,24 @@ Determine the best category for the input item based on the similar items and th
                 function_call = response.output[0]
                 if function_call.type == "function_call":
                     args = json.loads(function_call.arguments)
+                    print(f"OpenAI registration extraction args: {args}")
+                    
+                    # Extract the response data - will be post-processed by EntityService
+                    entities = args.get("entities", {})
+                    completeness = args.get("completeness", 0)
+                    missing_fields = args.get("missing_fields", [])
+                    validation_errors = args.get("validation_errors", [])
+                    confidence = args.get("confidence", 0)
                     
                     result = {
-                        "entities": validated_entities,
+                        "entities": entities,
                         "completeness": completeness,
                         "missing_fields": missing_fields,
-                        "confidence": args.get("confidence", 0),
+                        "validation_errors": validation_errors,
+                        "confidence": confidence,
                         "success": True,
-                        "extracted_fields": [k for k, v in validated_entities.items() if v is not None]
+                        "extracted_fields": [k for k, v in entities.items() if v is not None],
+                        "raw_extraction": True  # Flag for post-processing
                     }
                     
                     # Log successful extraction
@@ -2848,11 +2865,11 @@ Determine the best category for the input item based on the similar items and th
                     
                     return result
             
-            return {"entities": {}, "completeness": 0, "missing_fields": [], "confidence": 0, "success": False, "extracted_fields": []}
+            return {"entities": {}, "completeness": 0, "missing_fields": [], "validation_errors": [], "confidence": 0, "success": False, "extracted_fields": []}
                 
         except Exception as e:
             logger.error(f"Registration entity extraction error: {e}")
-            return {"entities": {}, "completeness": 0, "missing_fields": [], "confidence": 0, "success": False, "extracted_fields": []}
+            return {"entities": {}, "completeness": 0, "missing_fields": [], "validation_errors": [], "confidence": 0, "success": False, "extracted_fields": []}
     
     async def parse_email_confirmation(self, message: str, emails: list) -> Dict[str, Any]:
         """Parse email confirmation response using OpenAI function calling."""
@@ -3148,3 +3165,119 @@ If multiple emails and user selected a number, include selection."""
                 model_used=self.default_model
             )
             raise e
+    @log_service_method("openai_service")
+    async def process_excel_to_rfqs(self, excel_text: str, filename: str) -> Dict[str, Any]:
+        """
+        Process Excel data directly to multiple RFQ format using OpenAI.
+        
+        Args:
+            excel_text: String representation of Excel data
+            filename: Name of the Excel file
+            
+        Returns:
+            Dict with RFQ processing results
+        """
+        start_time = time.time()
+        
+        try:
+            # Load Excel RFQ processing tool
+            with open(self.tools_dir / "excel_rfq_processing.json", 'r') as f:
+                excel_tool = json.load(f)
+            
+            # Load system prompt for Excel processing
+            system_prompt = self._load_prompt("excel_analysis", "_get_excel_rfq_processing_prompt")
+            
+            # Track this OpenAI call
+            self._track_openai_call("excel_rfq_processing")
+            
+            response = await self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": excel_text}],
+                instructions=system_prompt,
+                tools=[excel_tool],
+                tool_choice={"type": "function", "name": "process_excel_to_rfqs"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    
+                    result = {
+                        "success": True,
+                        "rfqs": args.get("rfqs", []),
+                        "processing_summary": args.get("processing_summary", {}),
+                        "confidence": args.get("confidence", 0)
+                    }
+                    
+                    # Log successful Excel processing
+                    self.interaction_logger.log_entity_extraction(
+                        user_input=f"Excel file: {filename}",
+                        entities={"rfqs": result["rfqs"]},
+                        completeness=result["confidence"],
+                        workflow_type="excel_rfq_processing",
+                        model_used=self.default_model,
+                        processing_time=processing_time,
+                        missing_fields=[]
+                    )
+                    
+                    # Log extracted entities for debugging with detailed information
+                    extracted_rfqs = result["rfqs"]
+                    logger.info(f"Extracted entities from OpenAI: {len(extracted_rfqs)} RFQs \n , Data : {extracted_rfqs}")
+                    for i, rfq in enumerate(extracted_rfqs, 1):
+                        products = rfq.get("products", [])
+                        logger.info(f"  RFQ {i}: {len(products)} products")
+                        logger.info(f"    RFQ Details: deliveryDate={rfq.get('deliveryDate', 'N/A')}, city={rfq.get('city', 'N/A')}, state={rfq.get('state', 'N/A')}")
+                        
+                        for j, product in enumerate(products, 1):  # Show all products
+                            logger.info(f"    Product {j}: {product.get('description', 'N/A')} - {product.get('quantity', 'N/A')} {product.get('unitofMeasures', 'N/A')}")
+                            logger.info(f"      Specification: {product.get('specification', 'N/A')}")
+                            logger.info(f"      Category: {product.get('category', 'N/A')}")
+                            logger.info(f"      Raw Product JSON: {json.dumps(product, indent=10)}")
+                        
+                        logger.info(f"    Raw RFQ JSON: {json.dumps(rfq, indent=8)}")
+                    
+                    logger.info(f"Excel processing successful: {len(result['rfqs'])} RFQs, confidence: {result['confidence']}")
+                    logger.info(f"Processing Summary: {json.dumps(result.get('processing_summary', {}), indent=4)}")
+                    logger.info(f"Complete Result JSON: {json.dumps(result, indent=2)}")
+                    return result
+            
+            # Log failed processing
+            self.interaction_logger.log_error(
+                interaction_type="excel_rfq_processing",
+                user_input=f"Excel file: {filename}",
+                error_message="No function call in response",
+                model_used=self.default_model
+            )
+            
+            return {
+                "success": False,
+                "error": "No function call in response",
+                "rfqs": [],
+                "processing_summary": {},
+                "confidence": 0
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            processing_time = time.time() - start_time
+            
+            # Log error
+            self.interaction_logger.log_error(
+                interaction_type="excel_rfq_processing",
+                user_input=f"Excel file: {filename}",
+                error_message=error_msg,
+                model_used=self.default_model
+            )
+            
+            logger.error(f"Excel RFQ processing failed: {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "rfqs": [],
+                "processing_summary": {},
+                "confidence": 0
+            }
