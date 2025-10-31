@@ -21,7 +21,7 @@ Map Excel columns to these RFQ fields:
 
 **Required Fields (per product):**
 - description: Must be non-empty string
-- quantity: Must be positive number
+- quantity: Must be positive number (SKIP PRODUCT IF MISSING OR ZERO)
 - unitofMeasures: Must be non-empty string (default to "pcs" if missing)
 
 **Optional Fields:**
@@ -36,7 +36,7 @@ Map Excel columns to these RFQ fields:
 1. **Detect Headers**: Look for row with text labels (not numbers/data)
 2. **Map Columns**: Match Excel headers to RFQ fields using fuzzy matching
 3. **Extract Data**: Process each data row into product object
-4. **Skip Invalid Rows**: Skip rows missing required fields (description, quantity)
+4. **Skip Invalid Rows**: Skip rows missing required fields (description, quantity). IMPORTANT: Skip any product where quantity is missing, empty, zero, or non-numeric
 5. **Group Products**: For now, put all products in a single RFQ
 6. **Validate Data**: Check data types and business rules
 
@@ -46,6 +46,7 @@ Return structured data with:
 - **rfqs**: Array containing single RFQ with all products
 - **processing_summary**: Detailed processing information
 - **confidence**: Overall processing confidence (0-100)
+- **combined_error**: Error message if file should be rejected (when significant data loss occurs)
 
 ## EXAMPLE PROCESSING
 
@@ -82,6 +83,7 @@ Output:
   "processing_summary": {
     "total_rows_processed": 2,
     "total_products_extracted": 2,
+    "skipped_rows": 0,
     "header_row_detected": 1,
     "column_mappings": {
       "ItemDescription": "description",
@@ -91,7 +93,7 @@ Output:
       "Remarks": "remarks"
     },
     "validation_issues": [],
-    "skipped_rows": []
+    "skipped_products": []
   },
   "confidence": 95
 }
@@ -102,5 +104,13 @@ Output:
 - If no valid data rows: Return empty products array
 - If column mapping fails: Use best-effort mapping, note in validation_issues
 - If required fields missing: Skip row, add to skipped_rows
+- If significant data loss occurs (many rows skipped): Set combined_error with explanation
+
+## FILE REJECTION CRITERIA
+
+Set combined_error field when:
+- More than 30% of rows are skipped due to missing quantities
+- Critical data extraction failures occur
+- File structure prevents proper processing
 
 Process the Excel data efficiently and accurately, ensuring all valid products are extracted into the proper RFQ structure.
