@@ -35,7 +35,7 @@ async def extract_phone_from_request(request):
             if mobile:
                 return mobile
     except Exception as e:
-        logger.info("Middleware Phone setting", e)
+        logger.error(f"Phone extraction error: {e}")
         pass
     return None
 
