@@ -244,19 +244,20 @@ class ConfirmationHandler:
             session = SessionHelpers.calculate_session_averages(session)
         
         # Clear session AFTER summarization data is captured
-        # Only clear workflow if RFQ creation was successful
-
         logger.info(f"successful count is :{successful_count}")
+
+        from app.models import ConversationOutcome
         if successful_count > 0:
-            from app.models import ConversationOutcome
             session.outcome = ConversationOutcome.completed
             session.workflow_type = None
             session.workflow_state = {}
             logger.info(f"Cleared workflow_type and workflow_state after successful RFQ creation")
         else:
-            # DON'T clear workflow_state when RFQ creation fails!
-            # Keep pending_rfq/pending_combined_rfq so we can debug or retry
-            logger.warning(f"RFQ creation failed, keeping workflow_state intact for debugging/retry")
+            # Clear workflow state after failure (error message already sent to user)
+            session.outcome = ConversationOutcome.abandoned
+            session.workflow_type = None
+            session.workflow_state = {}
+            logger.warning(f"RFQ creation failed, cleared workflow_type and workflow_state after sending error message to user")
 
         return {"status": "multiple_rfqs_created", "successful_count": successful_count}
     
@@ -487,7 +488,22 @@ class ConfirmationHandler:
     async def _send_completion_response(self, user: User, rfq_results: List[Dict], successful_count: int):
         """Send completion response to user."""
         if successful_count == 0:
+            # Send error message to user when RFQ creation fails
+            error_messages = []
+            for result in rfq_results:
+                if not result.get("success"):
+                    error_msg = result.get("error", "Unknown error occurred")
+                    error_messages.append(error_msg)
+
+            error_details = "\n".join(error_messages) if error_messages else "Unable to create RFQ at this time."
+            response = (
+                "❌ *RFQ Creation Failed*\n\n"
+                f"We encountered an issue while creating your RFQ:\n{error_details}\n\n"
+                "Please try again or contact support if the issue persists."
+            )
+            await self.whatsapp_service.send_message(user.phone_number, response)
             return
+
         rfq_ids = []
         for result in rfq_results:
             if result.get("success") and result.get("rfq_id"):
