@@ -79,13 +79,23 @@ class IPRestrictionMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     logger.info("Starting AI Procurement Agent application")
-    
+
     # Initialize database on startup
     try:
         init_database()
         logger.info("Database initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
+        raise
+
+    # Initialize global ProcucevAPIClient
+    try:
+        from app.procucev_apis.procucev_api_client import init_procucev_api_client
+        await init_procucev_api_client()
+        logger.info("ProcucevAPIClient initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize ProcucevAPIClient: {e}")
+        # Continue without failing startup - API calls will fail gracefully
         raise
     
     # Start message queue background tasks
@@ -123,7 +133,15 @@ async def lifespan(app: FastAPI):
     yield
     
     logger.info("Shutting down AI Procurement Agent application")
-    
+
+    # Shutdown ProcucevAPIClient gracefully
+    try:
+        from app.procucev_apis.procucev_api_client import close_procucev_api_client
+        await close_procucev_api_client()
+        logger.info("ProcucevAPIClient shut down successfully")
+    except Exception as e:
+        logger.error(f"Error shutting down ProcucevAPIClient: {e}")
+
     # Shutdown message queue service gracefully
     try:
         from app.api.webhook import message_queue_service
@@ -141,8 +159,19 @@ async def lifespan(app: FastAPI):
         except asyncio.TimeoutError:
             logger.warning("Health monitoring shutdown timeout")
             webhook_monitor_task.cancel()
+            # Extra safety: ensure session is closed even after timeout
+            try:
+                await webhook_monitor._close_session()
+                logger.info("Webhook monitor session closed after timeout")
+            except Exception as session_error:
+                logger.warning(f"Error closing webhook monitor session: {session_error}")
         except Exception as e:
             logger.error(f"Error stopping health monitoring: {e}")
+            # Ensure session cleanup even on exception
+            try:
+                await webhook_monitor._close_session()
+            except Exception:
+                pass
     
     # Cleanup any remaining aiohttp sessions
     import aiohttp

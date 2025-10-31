@@ -20,6 +20,53 @@ from app.utils.procucev_api_logger import manual_log_api_call
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Global singleton instance
+_global_client: Optional['ProcucevAPIClient'] = None
+
+def get_procucev_api_client() -> 'ProcucevAPIClient':
+    """
+    Get the global ProcucevAPIClient singleton instance.
+
+    Returns:
+        The shared ProcucevAPIClient instance
+
+    Raises:
+        RuntimeError: If client hasn't been initialized via init_procucev_api_client()
+    """
+    global _global_client
+    if _global_client is None:
+        raise RuntimeError(
+            "ProcucevAPIClient not initialized. "
+            "Call init_procucev_api_client() during application startup."
+        )
+    return _global_client
+
+async def init_procucev_api_client() -> 'ProcucevAPIClient':
+    """
+    Initialize the global ProcucevAPIClient singleton.
+    Should be called once during application startup.
+
+    Returns:
+        The initialized ProcucevAPIClient instance
+    """
+    global _global_client
+    if _global_client is None:
+        _global_client = ProcucevAPIClient()
+        await _global_client.create_session()
+        logger.info("Global ProcucevAPIClient initialized")
+    return _global_client
+
+async def close_procucev_api_client():
+    """
+    Close the global ProcucevAPIClient singleton.
+    Should be called once during application shutdown.
+    """
+    global _global_client
+    if _global_client is not None:
+        await _global_client.close_session()
+        _global_client = None
+        logger.info("Global ProcucevAPIClient closed")
+
 class ProcucevAPIClient:
     """
     General asynchronous API client with pooled session, auth token management,
