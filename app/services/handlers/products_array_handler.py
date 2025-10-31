@@ -147,15 +147,10 @@ class ProductsArrayHandler:
         existing_incomplete = session.workflow_state.get("incomplete_products", [])
         if self._no_products_mentioned(products) and not existing_incomplete:
             no_products_message = (
-                "To proceed with your request, we will create a Request for Quotation (RFQ).\n\n"
                 "Please provide the item details in the following format:\n\n"
-                "• List each item as: Item Name Quantity Brand Specification\n"
-                "• Separate multiple items with commas.\n"
+                "• Delivery Location Pincode, Delivery Date, Item 1 Details, Item 2 Details …..Item n Details as per the example below \n"
                 "• Example:\n"
-                "  Laptop 5 Dell Inspiron 15, Printer 2 HP LaserJet, 10 Desktops HP\n\n"
-                "Also, please provide:\n"
-                "• Delivery date\n"
-                "• Delivery location pincode (6-digit)\n\n"
+                "  Pincode 411005, Delivery Date 22 Nov, Laptop Dell Inspiron - 5, Printer HP LaserJet - 2,  Desktops HP 17’’  -10\n\n"
                 "You can type these details here or attach an Excel file with columns for Item, Quantity, Brand, Specification, Delivery Date, and Pincode.\n\n"
                 "Once I have these details, I can help raise your RFQ and ensure timely processing."
             )

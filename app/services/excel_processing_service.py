@@ -23,15 +23,15 @@ class ExcelProcessingService:
         self.target_columns = ['S.No', 'ItemDescription', 'Specification', 'Uom', 'Quantity', 'Remarks']
     
     async def process_excel_file(self, content: bytes, filename: str) -> Dict[str, Any]:
-        """Process Excel file and extract items data using OpenAI for intelligent analysis."""
-        logger.info(f"[EXCEL-PROCESS] Starting processing for {filename}, size: {len(content)} bytes")
+        """Process Excel file directly to multiple RFQ format using streamlined OpenAI processing."""
+        logger.info(f"[EXCEL-PROCESS] Starting streamlined processing for {filename}, size: {len(content)} bytes")
         try:
-            # Validate file size (10MB limit)
-            max_size = 3 * 1024 * 1024  # 10MB in bytes
+            # Validate file size (3MB limit)
+            max_size = 3 * 1024 * 1024  # 3MB in bytes
             if len(content) > max_size:
                 return {
                     'success': False,
-                    'error': f'File size ({len(content)} bytes) exceeds maximum allowed size of {max_size} bytes (10MB)'
+                    'error': f'File size ({len(content)} bytes) exceeds maximum allowed size of {max_size} bytes (3MB)'
                 }
             
             # Validate file format
@@ -80,89 +80,46 @@ class ExcelProcessingService:
                 }
             
             logger.info(f"DEBUG: Excel file shape: {df.shape}")
-            logger.info(f"DEBUG: First 3 rows: {df.head(3).values.tolist()}")
             
-            # Get first 10 rows for enhanced header detection
-            sample_rows = df.head(10).values.tolist()
+            # Use new streamlined OpenAI processing
+            processing_result = await self._process_excel_with_openai(df, filename)
             
-            # Use OpenAI to detect header row with extended range
-            header_result = await self.openai_service.detect_excel_header_row(sample_rows)
-            header_row_index = header_result.get('header_row_index')
-            
-            logger.info(f"DEBUG: Header detection result: {header_result}")
-            
-            if header_row_index is None or header_row_index < 0:
-                # No clear header found, use first row as data
-                headers = [f"Column_{i+1}" for i in range(df.shape[1])]
-                data_df = df
-            else:
-                # Extract headers and data
-                headers = df.iloc[header_row_index].astype(str).tolist()
-                data_df = df.iloc[header_row_index + 1:].reset_index(drop=True)
-            
-            # Clean up headers by trimming whitespace
-            headers = [header.strip() for header in headers]
-            
-            logger.info(f"DEBUG: Extracted headers: {headers}")
-            logger.info(f"DEBUG: Data shape after header extraction: {data_df.shape}")
-            
-            # Use OpenAI to map columns to target format
-            mapping_result = await self.openai_service.map_excel_columns(headers)
-            column_mapping = mapping_result.get('column_mapping', {})
-            
-            logger.info(f"[EXCEL-PROCESS] Column mapping result: {mapping_result}")
-            logger.info(f"[EXCEL-PROCESS] Column mapping: {column_mapping}")
-            
-            # Fallback: If OpenAI returns empty mapping, create direct mapping for exact matches
-            if not column_mapping:
-                logger.warning(f"[EXCEL-PROCESS] OpenAI returned empty column mapping, using fallback direct mapping")
-                column_mapping = self._create_fallback_mapping(headers)
-                logger.info(f"[EXCEL-PROCESS] Fallback column mapping: {column_mapping}")
-            
-            # Extract items using the mapping
-            logger.info(f"[EXCEL-PROCESS] Extracting items using column mapping")
-            extraction_result = self._extract_items_with_mapping(data_df, headers, column_mapping)
-            
-            # Check if extraction failed due to special characters
-            if not extraction_result.get('success', True):
-                logger.error(f"[EXCEL-PROCESS] Extraction failed: {extraction_result.get('error')}")
+            if not processing_result.get('success'):
                 return {
                     'success': False,
-                    'error': extraction_result.get('error'),
-                    'special_char_errors': extraction_result.get('special_char_errors', [])
+                    'error': processing_result.get('error', 'Failed to process Excel data')
                 }
             
-            items = extraction_result.get('items', [])
-            logger.info(f"[EXCEL-PROCESS] Extracted {len(items)} items")
-            if items:
-                logger.info(f"[EXCEL-PROCESS] First item: {items[0]}")
-            else:
-                logger.warning(f"[EXCEL-PROCESS] No items extracted from {filename}")
+            # Extract results from OpenAI processing
+            rfqs = processing_result.get('rfqs', [])
+            processing_summary = processing_result.get('processing_summary', {})
             
-            # Enhanced validation for GMT API requirements and business rules
-            logger.info(f"[EXCEL-PROCESS] Validating {len(items)} items for GMT API requirements")
-            validation_result = self._validate_items_comprehensive(items)
-            logger.info(f"[EXCEL-PROCESS] Validation result: valid={validation_result.get('valid', False)}, errors={len(validation_result.get('errors', []))}, warnings={len(validation_result.get('warnings', []))}")
+            # Convert to legacy format for compatibility
+            items = []
+            for rfq in rfqs:
+                for product in rfq.get('products', []):
+                    # Convert to legacy item format
+                    item = {
+                        'S.No': len(items) + 1,
+                        'ItemDescription': product.get('description', ''),
+                        'Specification': product.get('brand', ''),
+                        'Uom': product.get('unitofMeasures', 'pcs'),
+                        'Quantity': product.get('quantity'),
+                        'Remarks': product.get('remarks', '')
+                    }
+                    items.append(item)
             
-            # Additional business rule validation
-            business_validation = self._validate_business_rules(items)
-            if not business_validation['valid']:
-                validation_result['valid'] = False
-                validation_result['errors'].extend(business_validation['errors'])
-                validation_result['warnings'].extend(business_validation.get('warnings', []))
+            logger.info(f"[EXCEL-PROCESS] Processed {len(items)} items from {len(rfqs)} RFQs")
             
             return {
                 'success': True,
                 'filename': filename,
                 'items': items,
                 'total_items': len(items),
-                'headers': headers,
-                'column_mapping': column_mapping,
-                'header_row_index': header_row_index,
-                'header_detection': header_result,
-                'mapping_details': mapping_result,
-                'validation_result': validation_result,
-                'summary': f"Found {len(items)} items in {filename}"
+                'rfqs': rfqs,  # New structured format
+                'processing_summary': processing_summary,
+                'confidence': processing_result.get('confidence', 85),
+                'summary': f"Processed {processing_summary.get('total_products_extracted', len(items))} products from {filename}"
             }
             
         except Exception as e:
@@ -172,6 +129,38 @@ class ExcelProcessingService:
             return {
                 'success': False,
                 'error': f'Failed to process Excel: {str(e)}'
+            }
+    
+    async def _process_excel_with_openai(self, df: pd.DataFrame, filename: str) -> Dict[str, Any]:
+        """Process Excel DataFrame directly using OpenAI for streamlined RFQ creation."""
+        logger.info(f"[EXCEL-PROCESS] Starting OpenAI streamlined processing for {filename}")
+        try:
+            # Convert DataFrame to dict format for OpenAI processing
+            excel_data = df.fillna('').astype(str).to_dict(orient='records')
+            
+            # Create readable string for OpenAI input
+            excel_text = "\n".join([f"Row {i+1}: {row}" for i, row in enumerate(excel_data[:50])])  # Limit to 50 rows
+            
+            logger.info(f"[EXCEL-PROCESS] Sending {min(len(excel_data), 50)} rows to OpenAI for processing")
+            
+            # Use OpenAI to process Excel data directly
+            result = await self.openai_service.process_excel_to_rfqs(excel_text, filename)
+            
+            if result.get('success'):
+                logger.info(f"[EXCEL-PROCESS] OpenAI processing successful: {result.get('processing_summary', {})}")
+                return result
+            else:
+                logger.error(f"[EXCEL-PROCESS] OpenAI processing failed: {result.get('error')}")
+                return {
+                    'success': False,
+                    'error': result.get('error', 'OpenAI processing failed')
+                }
+                
+        except Exception as e:
+            logger.error(f"[EXCEL-PROCESS] Error in OpenAI processing: {e}")
+            return {
+                'success': False,
+                'error': f'OpenAI processing error: {str(e)}'
             }
     
     def _create_fallback_mapping(self, headers: List[str]) -> Dict[str, str]:
@@ -224,7 +213,10 @@ class ExcelProcessingService:
         logger.info(f"[EXCEL-EXTRACT] Headers: {headers}")
         logger.info(f"[EXCEL-EXTRACT] Mappings: {column_mapping}")
         items = []
-        special_char_errors = []
+        removed_rows = 0
+        
+        # Define mandatory fields
+        mandatory_fields = ['Specification', 'Quantity']
         
         try:
             for index, row in df.iterrows():
@@ -245,27 +237,29 @@ class ExcelProcessingService:
                             value = row.iloc[col_index]
                             logger.debug(f"[EXCEL-EXTRACT] Extracting header '{header}' -> '{target_col}', value: '{value}'")
                             if pd.notna(value) and str(value).strip():
-                                # Check for special characters during extraction
                                 value_str = str(value).strip()
-                                special_chars = ['@', '#', '$', '%', '^', '&', '*', '~', '`', '|', '\\', '<', '>', '?', '/', ':', ';', '"', "'"]
-                                found_chars = [char for char in special_chars if char in value_str]
-                                
-                                if found_chars:
-                                    error_msg = f"Row {index + 2}, Column '{header}': '{value_str}' contains invalid characters: {', '.join(found_chars)}"
-                                    logger.error(f"[EXCEL-EXTRACT] SPECIAL CHARACTER DETECTED in {error_msg}")
-                                    special_char_errors.append(error_msg)
-                                    # Don't add the item with special characters
-                                    continue
-                                else:
-                                    item[target_col] = value_str
+                                item[target_col] = value_str
                                 has_data = True
                             else:
                                 logger.debug(f"[EXCEL-EXTRACT] Empty/NaN value for '{header}' -> '{target_col}': '{value}'")
                     else:
                         logger.debug(f"[EXCEL-EXTRACT] Header '{header}' not in column mapping")
                 
-                # Add serial number if missing
+                # Check if row has mandatory fields before adding
                 if has_data:
+                    # Check for mandatory fields
+                    missing_mandatory = []
+                    for field in mandatory_fields:
+                        if field not in item or not str(item[field]).strip():
+                            missing_mandatory.append(field)
+                    
+                    # Skip row if missing mandatory fields
+                    if missing_mandatory:
+                        removed_rows += 1
+                        logger.info(f"[EXCEL-EXTRACT] Removed row {index + 1} - missing mandatory fields: {missing_mandatory}")
+                        continue
+                    
+                    # Add serial number if missing
                     if 'S.No' not in item:
                         item['S.No'] = str(len(items) + 1)
                     
@@ -278,21 +272,11 @@ class ExcelProcessingService:
                 else:
                     logger.debug(f"[EXCEL-EXTRACT] Skipped row {index} - no data found")
             
-            # Return error if special characters found
-            if special_char_errors:
-                logger.error(f"[EXCEL-EXTRACT] Extraction failed due to {len(special_char_errors)} special character errors")
-                return {
-                    'success': False,
-                    'items': [],
-                    'special_char_errors': special_char_errors,
-                    'error': f"Excel contains invalid special characters in {len(special_char_errors)} location(s). Please remove special characters and reupload."
-                }
-            
-            logger.info(f"[EXCEL-EXTRACT] Successfully extracted {len(items)} items")
+            logger.info(f"[EXCEL-EXTRACT] Successfully extracted {len(items)} items, removed {removed_rows} incomplete rows")
             return {
                 'success': True,
                 'items': items,
-                'special_char_errors': []
+                'removed_rows': removed_rows
             }
             
         except Exception as e:
@@ -302,7 +286,6 @@ class ExcelProcessingService:
             return {
                 'success': False,
                 'items': [],
-                'special_char_errors': [],
                 'error': f"Failed to extract items: {str(e)}"
             }
     
@@ -406,10 +389,7 @@ class ExcelProcessingService:
             if uom in ['each', 'per item', 'item']:
                 validation_result['warnings'].append(f"Item {i}: Consider using standard UOM like 'pcs' instead of '{uom}'")
             
-            # Check for special characters in product names
-            desc = item.get('ItemDescription', '')
-            if desc and any(char in desc for char in ['@', '#', '$', '%', '^', '&', '*']):
-                validation_result['warnings'].append(f"Item {i}: Product name contains special characters")
+
         
         return validation_result
     

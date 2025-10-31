@@ -363,7 +363,11 @@ class ChatService:
             welcome_service = get_welcome_service()
             welcome_sent = False
             if await welcome_service.should_send_welcome(user_phone):
-                welcome_text = "Hello 👋, I'm QUA – your Procurement Assistant. Kindly wait while we check your registered profile. Will be with you shortly."
+                welcome_text = (
+                    "Hello Namaste 🙏, I'm Qua – Your Procurement Partner.\n"
+                    "Thank you for contacting me. Let me check if you have visited us earlier..."
+                )
+
                 message_response = await self.whatsapp_service.send_message(user_phone, welcome_text)
                 if message_response.success:
                     await welcome_service.mark_welcome_sent(user_phone)
@@ -1429,29 +1433,6 @@ class ChatService:
                 filename=filename
             )
 
-            if not processing_result.get('success'):
-                processing_error = processing_result.get('error', 'Failed to process Excel file')
-                special_char_errors = processing_result.get('special_char_errors', [])
-                
-                # Handle special character errors specifically
-                if special_char_errors:
-                    error_details = "\n".join([f"• {error}" for error in special_char_errors[:5]])  # Show max 5 errors
-                    if len(special_char_errors) > 5:
-                        error_details += f"\n• ... and {len(special_char_errors) - 5} more errors"
-                    
-                    error_message = f"❌ Excel file contains invalid special characters:\n\n{error_details}\n\nPlease remove all special characters (@, #, $, %, etc.) from your Excel file and reupload."
-                else:
-                    error_message = f"Error processing Excel: {processing_error}"
-                
-                error_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'processing_failed',
-                                 'error': processing_error, 'special_char_errors': special_char_errors}
-                error_response = await self.response_helpers.generate_contextual_response(
-                    error_context,
-                    [error_message],
-                    "processing_failed"
-                )
-                await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
-                return {"status": "handled", "response": "processing_failed"}
 
             # Prepare context using helpers
             excel_context = ExcelHelpers.prepare_excel_context(processing_result, user.phone_number)
@@ -1465,18 +1446,6 @@ class ChatService:
             completeness = excel_context['completeness']
             items = processing_result.get('items', [])
 
-            # Check for special character errors before proceeding
-            special_char_errors = processing_result.get('special_char_errors', [])
-            if special_char_errors:
-                logger.error(f"[EXCEL-REDIRECT] Blocking redirect due to {len(special_char_errors)} special character errors")
-                error_details = "\n".join([f"• {error}" for error in special_char_errors[:5]])  # Show max 5 errors
-                if len(special_char_errors) > 5:
-                    error_details += f"\n• ... and {len(special_char_errors) - 5} more errors"
-                
-                error_message = f"❌ Excel file contains invalid special characters:\n\n{error_details}\n\nPlease remove all special characters (@, #, $, %, etc.) from your Excel file and reupload."
-                await self.session_manager.send_and_track_message(user.phone_number, error_message, session)
-                return {"status": "handled", "response": "special_characters_detected"}
-            
             # Always redirect to multiple RFQ flow for Excel uploads with valid items
             if items and len(items) > 0:
                 logger.info(f"[EXCEL-REDIRECT] Redirecting {len(items)} Excel items to multiple RFQ creation flow")
@@ -1508,7 +1477,11 @@ class ChatService:
             session.workflow_state.pop('excel_data', None)
             
             # Send acknowledgment message first
-            success_message = f"✅ Successfully extracted {len(products)} items from your Excel file!\n\nProcessing your RFQ..."
+            removed_rows = processing_result.get('removed_rows', 0)
+            if removed_rows > 0:
+                success_message = f"✅ Successfully extracted {len(products)} valid items from your Excel file!\n\n📝 Note: {removed_rows} incomplete rows were automatically removed (missing mandatory fields: Specification or Quantity).\n\nProcessing your RFQ..."
+            else:
+                success_message = f"✅ Successfully extracted {len(products)} items from your Excel file!\n\nProcessing your RFQ..."
             await self.session_manager.send_and_track_message(user.phone_number, success_message, session)
             
             # Use existing products array handler for multiple RFQ creation
@@ -1517,7 +1490,12 @@ class ChatService:
             )
 
         except Exception as e:
-            logger.error(f"Error handling complete Excel: {e}")
+            logger.error(f"[EXCEL-COMPLETE-ERROR] Error handling complete Excel: {e}")
+            logger.error(f"[EXCEL-COMPLETE-ERROR] Error type: {type(e)}")
+            logger.error(f"[EXCEL-COMPLETE-ERROR] Processing result at error: {processing_result}")
+            import traceback
+            logger.error(f"[EXCEL-COMPLETE-ERROR] Full traceback: {traceback.format_exc()}")
+            
             error_context = {'error': str(e), 'workflow_type': 'excel_rfq_upload'}
             error_response = await self.response_helpers.generate_contextual_response(
                 error_context,
@@ -1529,14 +1507,14 @@ class ChatService:
     
     def _convert_excel_items_to_products_array(self, excel_items: List[Dict]) -> List[Dict]:
         """Convert Excel items to products array format for existing multiple RFQ flow."""
+        logger.info(f"[EXCEL-CONVERSION-START] Converting {len(excel_items)} Excel items to products array")
+        logger.info(f"[EXCEL-CONVERSION-INPUT] Raw excel_items: {excel_items}")
+        
         products = []
         
         for i, item in enumerate(excel_items, 1):
-            # Skip items with special characters (they shouldn't reach here, but safety check)
-            if any(key.endswith('_has_special_chars') for key in item.keys()):
-                logger.warning(f"[EXCEL-CONVERSION] Skipping item {i} due to special characters: {item}")
-                continue
-                
+            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing item: {item}")
+            
             # Map Excel columns to entity format expected by products array handler
             product_entity = {
                 'description': item.get('ItemDescription', ''),
@@ -1552,28 +1530,58 @@ class ChatService:
                 'division': None
             }
             
+            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Mapped product_entity: {product_entity}")
+            
             # Clean up empty values but keep structure for validation
             cleaned_entity = {}
             for k, v in product_entity.items():
-                if v is not None and str(v).strip():
-                    # Keep quantity as string but ensure it's valid
-                    if k == 'quantity':
-                        try:
-                            # Validate it's a valid number but keep as string
-                            float(str(v).strip())
-                            cleaned_entity[k] = str(v).strip()
-                        except ValueError:
-                            cleaned_entity[k] = None
+                logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing field '{k}': value={v}, type={type(v)}")
+                
+                try:
+                    if v is not None:
+                        # Convert to string first
+                        v_str = str(v)
+                        logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Field '{k}': converted to string='{v_str}'")
+                        
+                        # Check if it has content (str() already gives clean representation)
+                        if v_str and v_str.strip():
+                            # Keep quantity as string but ensure it's valid
+                            if k == 'quantity':
+                                logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing quantity field: '{v_str}'")
+                                try:
+                                    # Validate it's a valid number but keep as string
+                                    float(v_str)
+                                    cleaned_entity[k] = v_str
+                                    logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Quantity validated and set: '{v_str}'")
+                                except ValueError as ve:
+                                    logger.error(f"[EXCEL-CONVERSION-ITEM-{i}] Quantity validation failed: {ve}")
+                                    cleaned_entity[k] = None
+                            else:
+                                # Only strip if it's actually a string that needs stripping
+                                logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing non-quantity field '{k}': original_type={type(v)}, is_string={isinstance(v, str)}")
+                                if isinstance(v, str):
+                                    cleaned_entity[k] = v_str.strip()
+                                    logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] String field '{k}' stripped: '{cleaned_entity[k]}'")
+                                else:
+                                    cleaned_entity[k] = v_str
+                                    logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Non-string field '{k}' used as-is: '{cleaned_entity[k]}'")
+                        else:
+                            cleaned_entity[k] = None  # Keep None for empty strings
+                            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Field '{k}' set to None (empty after strip)")
                     else:
-                        cleaned_entity[k] = str(v).strip()
-                else:
-                    cleaned_entity[k] = None  # Keep None for missing required fields
+                        cleaned_entity[k] = None  # Keep None for missing required fields
+                        logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Field '{k}' set to None (was None)")
+                        
+                except Exception as field_error:
+                    logger.error(f"[EXCEL-CONVERSION-ITEM-{i}] ERROR processing field '{k}': {field_error}")
+                    logger.error(f"[EXCEL-CONVERSION-ITEM-{i}] Field details - value: {v}, type: {type(v)}")
+                    raise field_error
             
             products.append(cleaned_entity)
-            logger.info(f"[EXCEL-CONVERSION] Item {i}: {item.get('ItemDescription', 'Unknown')} -> {cleaned_entity}")
+            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Final cleaned_entity: {cleaned_entity}")
             
-        logger.info(f"[EXCEL-CONVERSION] Successfully converted {len(excel_items)} Excel items to products array")
-        logger.info(f"[EXCEL-CONVERSION] Sample product: {products[0] if products else 'None'}")
+        logger.info(f"[EXCEL-CONVERSION-SUCCESS] Successfully converted {len(excel_items)} Excel items to products array")
+        logger.info(f"[EXCEL-CONVERSION-RESULT] Final products: {products}")
         return products
 
     async def _handle_incomplete_excel(self, user: User, session: ConversationSession, excel_context: Dict) -> Dict[
@@ -2079,8 +2087,11 @@ class ChatService:
             user_email = getattr(user, 'email', 'your profile')
             
             # Create the profile selection message
-            profile_message = f"Got it, you're looking to check if items are available in stock.\nLet's continue with your {user_role.title()} profile ({user_email}).\n\nBFS Search coming soon!\nPlease confirm what you'd like to do next:"
-            
+            profile_message = (
+                "Got it! You’re looking to check if items are available in stock.\n\n"
+                "🔍 *BFS Search coming soon!*"
+            )
+
             if user_role == "buyer":
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
