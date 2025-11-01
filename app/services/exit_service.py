@@ -130,8 +130,17 @@ class ExitService:
             settings = get_settings()
             if settings.redis_session_storage_enabled:
                 redis_session = get_session_redis_service()
-                await redis_session.delete_session(session.session_id)
-                logger.info(f"Session {session.session_id} deleted from Redis after exit")
+
+                # Delete session from Redis
+                delete_result = await redis_session.delete_session(session.session_id)
+                logger.info(f"Session {session.session_id} Redis delete result: {delete_result}")
+
+                # Verify deletion by checking if key still exists
+                still_exists = await redis_session.session_exists(session.session_id)
+                if still_exists:
+                    logger.error(f"⚠️ BUG: Session {session.session_id} STILL EXISTS in Redis after delete!")
+                else:
+                    logger.info(f"✓ Session {session.session_id} successfully deleted from Redis (verified)")
 
             return True
 

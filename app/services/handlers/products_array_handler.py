@@ -186,23 +186,35 @@ class ProductsArrayHandler:
         
         # Keep questions as a list for proper bullet formatting
         print(f"  Final clarification questions: {all_questions}")
-        
-        # Build context and send response directly
-        context = ChatServiceHelpers.build_context("clarification", message, {}, completeness,
-            missing_fields=all_missing_fields,
-            total_products=len(products),
-            incomplete_products=len(incomplete_products)
+
+        # Use consistent formatting with optional questions - show ALL products (complete + incomplete)
+        # Build combined list: complete products first, then incomplete
+        all_products_entities = []
+        for prod in complete_products:
+            all_products_entities.append(prod["entities"])
+        for prod in incomplete_products:
+            all_products_entities.append(prod["entities"])
+
+        # Extract global fields from first product (if available)
+        global_fields = {}
+        if all_products_entities:
+            first_entity = all_products_entities[0]
+            global_fields = {
+                'deliveryDate': first_entity.get('deliveryDate'),
+                'state': first_entity.get('state'),
+                'city': first_entity.get('city'),
+                'pincode': first_entity.get('pincode')
+            }
+
+        # Format response using the same formatter as optional questions for consistency
+        formatted_message = format_rfq_response_message(
+            all_products_entities,
+            global_fields,
+            all_questions,  # Pass mandatory questions instead of optional
+            include_optional=False  # This is for mandatory fields
         )
-        
-        # Add products to context for date validation error extraction
-        context["products"] = products
-        context["date_validation_error"] = date_validation_error
-        
-        # Add extracted entities to context for enhanced formatting
-        context["extracted_entities"] = [prod["entities"] for prod in incomplete_products]
-        
-        response = await self.response_helpers.generate_clarification_response(all_questions, completeness, context, chat_summaries)
-        await self.whatsapp_service.send_message(user.phone_number, response)
+
+        await self.whatsapp_service.send_message(user.phone_number, formatted_message)
         
         return {
             "status": "products_incomplete",
@@ -617,7 +629,36 @@ class ProductsArrayHandler:
                 else:
                     existing_entities.append(existing_prod)
 
-            # Check if new products are re-extractions of existing products or genuinely new ones
+            # Check if we should use positional matching (similar to EntityService logic)
+            # Count existing products without descriptions
+            existing_without_desc_count = sum(1 for e in existing_entities if not (e.get("description") or e.get("projectDesc")))
+            new_with_desc_count = sum(1 for p in new_products if (p.get("description") or p.get("projectDesc")))
+
+            # Use positional matching if counts match and all existing lack descriptions
+            use_positional_matching = (
+                existing_without_desc_count > 0 and
+                new_with_desc_count > 0 and
+                existing_without_desc_count == len(existing_entities) and  # ALL existing lack descriptions
+                new_with_desc_count == len(new_products) and  # ALL new have descriptions
+                existing_without_desc_count == new_with_desc_count  # Counts match
+            )
+
+            if use_positional_matching:
+                print(f"ProductsArrayHandler: Using positional matching - {len(existing_entities)} existing products without descriptions, {len(new_products)} new products with descriptions")
+                # Positionally merge: match by index order
+                merged_products = []
+                for i, (existing_entity, new_product) in enumerate(zip(existing_entities, new_products)):
+                    merged_entity = existing_entity.copy()
+                    print(f"ProductsArrayHandler: Positionally merging new product '{new_product.get('description')}' into existing product at index {i}")
+                    for key, value in new_product.items():
+                        if value is not None:
+                            merged_entity[key] = value
+                    merged_products.append(merged_entity)
+
+                print(f"ProductsArrayHandler: Final positionally merged result: {len(merged_products)} total products")
+                return merged_products
+
+            # Standard merge logic (description-based matching)
             new_products_with_descriptions = []
             supplementary_data = {}
 

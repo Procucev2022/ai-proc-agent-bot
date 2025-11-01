@@ -28,9 +28,9 @@ def format_rfq_response_message(
     for entity in extracted_entities:
         desc = entity.get('description', '').strip()
         qty = entity.get('quantity')
-        unit = entity.get('unitofMeasures', '')
-        brand = entity.get('brand')
-        remarks = entity.get('remarks')
+        unit = entity.get('unitofMeasures', '').strip()
+        brand = entity.get('brand', '').strip()
+        remarks = entity.get('remarks', '').strip()
 
         # Combine brand inline with item name
         if desc:
@@ -44,12 +44,29 @@ def format_rfq_response_message(
                     items.append(f"{qty} {desc_text}")
             else:
                 items.append(desc_text)
+        elif brand and qty:
+            # If no description but have brand and quantity, show brand
+            if unit:
+                items.append(f"{qty} {unit} {brand} brand")
+            else:
+                items.append(f"{qty} {brand} brand")
 
-        if remarks and remarks.strip():
-            remarks_list.append(f"{remarks.strip()}")
+        if remarks:
+            remarks_list.append(remarks)
 
     # Start with acknowledgment
     message = "*Got it!*"
+
+    # Show extracted items if we have any
+    if items:
+        if len(items) <= MAX_ITEMS_TO_SHOW:
+            items_text = ", ".join(items)
+            message += f" You need {items_text}."
+        else:
+            # Show first few items and indicate there are more
+            shown_items = ", ".join(items[:MAX_ITEMS_TO_SHOW])
+            remaining = len(items) - MAX_ITEMS_TO_SHOW
+            message += f" You need {shown_items}, and {remaining} more items."
 
     # --- Check for validation errors first ---
     validation_errors = set()  # Use set to avoid duplicates
@@ -84,11 +101,19 @@ def format_rfq_response_message(
     has_quantity = any(e.get('quantity') for e in extracted_entities)
     has_date_error = any(e.get('date_validation_error') for e in extracted_entities)
     has_pincode_error = any(e.get('pincode_validation_error') for e in extracted_entities)
-    
+
+    # Check for missing descriptions
+    missing_descriptions = [e for e in extracted_entities if not e.get('description', '').strip()]
+    if missing_descriptions:
+        if len(extracted_entities) == 1:
+            questions.append("What is the item description?")
+        else:
+            questions.append("What are the item descriptions?")
+
     # Check if this is from Excel upload (has multiple items) and missing quantities
     is_excel_upload = len(extracted_entities) > 3  # Assume Excel if more than 3 items
     missing_quantities = [e for e in extracted_entities if not e.get('quantity')]
-    
+
     if missing_quantities:
         if is_excel_upload:
             # For Excel uploads with missing quantities, suggest re-upload
