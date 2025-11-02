@@ -12,11 +12,19 @@ def format_rfq_response_message(
     extracted_entities: List[Dict[str, Any]],
     global_fields: Dict[str, Any],
     missing_fields: List[str],
-    include_optional: bool = False
+    include_optional: bool = False,
+    show_only_collected: bool = False
 ) -> str:
     """
     Generate a conversational RFQ response message without angle brackets for qty/items.
     Shows brand inline, remarks as a paragraph, and missing details as bullet points.
+
+    Args:
+        extracted_entities: List of product entities
+        global_fields: Global delivery information
+        missing_fields: List of missing field descriptions
+        include_optional: Whether to include optional questions
+        show_only_collected: If True, only show collected info without asking for missing fields (for modification clarification)
     """
 
     items = []
@@ -67,6 +75,39 @@ def format_rfq_response_message(
             shown_items = ", ".join(items[:MAX_ITEMS_TO_SHOW])
             remaining = len(items) - MAX_ITEMS_TO_SHOW
             message += f" You need {shown_items}, and {remaining} more items."
+
+    # Show collected delivery information if available
+    delivery_info = []
+    if global_fields.get("deliveryDate"):
+        delivery_date = global_fields["deliveryDate"]
+        # Format date nicely
+        if isinstance(delivery_date, datetime):
+            formatted_date = delivery_date.strftime("%d %b %Y")
+        else:
+            formatted_date = str(delivery_date)
+        delivery_info.append(f"*Delivery Date:* {formatted_date}")
+
+    if global_fields.get("city") or global_fields.get("state") or global_fields.get("pincode"):
+        location_parts = []
+        if global_fields.get("city"):
+            location_parts.append(global_fields["city"])
+        if global_fields.get("state"):
+            location_parts.append(global_fields["state"])
+        if global_fields.get("pincode"):
+            location_parts.append(global_fields["pincode"])
+        location_text = ", ".join(location_parts)
+        delivery_info.append(f"*Delivery Location:* {location_text}")
+
+    if delivery_info:
+        message += "\n\n" + "\n".join(delivery_info)
+
+    # Show remarks if available (consolidated from all products)
+    if remarks_list:
+        # Combine all remarks, truncate if too long
+        combined_remarks = "; ".join(remarks_list)
+        if len(combined_remarks) > MAX_REMARKS_LENGTH:
+            combined_remarks = combined_remarks[:MAX_REMARKS_LENGTH] + "..."
+        message += f"\n*Remarks:* {combined_remarks}"
 
     # --- Check for validation errors first ---
     validation_errors = set()  # Use set to avoid duplicates

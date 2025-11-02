@@ -2062,7 +2062,17 @@ class ChatService:
             tracked_message = workflow_state.get("last_meaningful_message")
             tracked_intent_result = workflow_state.get("last_meaningful_intent_result")
 
-            if tracked_message and tracked_intent_result:
+            # CRITICAL: Only use tracked message if session has NO existing RFQ data
+            # This prevents using stale messages after RFQ creation/exit
+            has_existing_rfq_data = bool(
+                workflow_state.get("pending_rfq") or
+                workflow_state.get("pending_combined_rfq") or
+                workflow_state.get("extracted_entities") or
+                workflow_state.get("incomplete_products") or
+                workflow_state.get("complete_products")
+            )
+
+            if tracked_message and tracked_intent_result and not has_existing_rfq_data:
                 logger.info(f"Using tracked meaningful message instead of button synthetic message: '{str(tracked_message)[:50]}...'")
                 # Clear the tracked message since we're using it
                 workflow_state.pop("last_meaningful_message", None)
@@ -2071,7 +2081,15 @@ class ChatService:
                 message_to_process = tracked_message
                 intent_result = tracked_intent_result
             else:
-                logger.info(f"No tracked meaningful message found - using default RFQ creation message")
+                if has_existing_rfq_data:
+                    logger.info(f"Ignoring tracked message - session has existing RFQ data, starting fresh")
+                else:
+                    logger.info(f"No tracked meaningful message found - using default RFQ creation message")
+
+                # Clear any stale meaningful message
+                workflow_state.pop("last_meaningful_message", None)
+                workflow_state.pop("last_meaningful_intent_result", None)
+
                 message_to_process = "I want to create a new RFQ"
                 intent_result = {"intent": "buy_something", "confidence": 95}
 
@@ -2157,6 +2175,8 @@ class ChatService:
         elif button_id == "confirm_no_changes":
             result = await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
             # Session will be cleared by confirmation handler after RFQ creation
+            # CRITICAL: Save session to persist the cleared workflow_state to Redis
+            await self.session_manager.save_session(session)
             logger.info(f"Handled confirm_no_changes button for {user.phone_number}")
 
             return result
