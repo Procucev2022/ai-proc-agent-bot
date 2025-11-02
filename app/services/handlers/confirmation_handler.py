@@ -56,7 +56,12 @@ class ConfirmationHandler:
             # User clicked "Continue" from optional fields - proceed to confirmation
             logger.info(f"Confirmation service: Button 'continue_rfq' - proceeding to confirmation from {user.phone_number}")
             return await self._proceed_to_confirmation_from_optional(user, session, "Continue")
-        
+
+        elif button_id == "confirm_no_changes":
+            # User clicked "Continue" from modification clarification - treat as acceptance
+            logger.info(f"Confirmation service: Button 'confirm_no_changes' - user confirmed no changes needed from {user.phone_number}")
+            return await self._handle_rfq_acceptance(user, session, "Continue")
+
         return {"status": "unknown_button", "button_id": button_id}
     
     async def handle_pending_confirmations(self, user: User, session: ConversationSession, 

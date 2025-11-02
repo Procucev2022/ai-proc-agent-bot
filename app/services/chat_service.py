@@ -2153,6 +2153,12 @@ class ChatService:
             await self.session_manager.save_session(session)
             logger.info(f"Session saved after continue button handling for {user.phone_number}")
 
+        # Handle continue button from modification clarification (confirms no changes needed)
+        elif button_id == "confirm_no_changes":
+            result = await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
+            # Session will be cleared by confirmation handler after RFQ creation
+            logger.info(f"Handled confirm_no_changes button for {user.phone_number}")
+
             return result
 
         # Check if this is a confirmation button response
