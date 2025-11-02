@@ -122,18 +122,27 @@ class CancelService:
                 del session.workflow_state["cancel_pending"]
 
             if confirmed:
+                # Get user type from cache BEFORE clearing
+                from app.services.user_cache_service import get_user_cache_service
+                user_cache_service = get_user_cache_service()
+                user_data_list = await user_cache_service.get_user_data(user_phone)
+                user_type = None
+                if user_data_list and len(user_data_list) > 0:
+                    # selfClient: True = buyer, False = seller
+                    is_self_client = user_data_list[0].get('selfClient', False)
+                    user_type = "buyer" if is_self_client else "seller"
+                logger.info(f"Retrieved user_type from cache (selfClient): {user_type}")
+
                 # Perform cancellation
                 cancellation_result = await self._clear_workflow_state(session)
                 logger.info(f"Workflow state cleared: {cancellation_result}")
 
                 # Clear meaningful message cache (user is starting fresh)
-                from app.services.user_cache_service import get_user_cache_service
-                user_cache_service = get_user_cache_service()
                 meaningful_cleared = await user_cache_service.clear_meaningful_message(user_phone)
                 logger.info(f"Meaningful message cleared: {meaningful_cleared}")
 
-                # Send cancellation success message
-                message_sent = await self._send_cancellation_message(user_phone)
+                # Send cancellation success message with buyer buttons
+                message_sent = await self._send_cancellation_message(user_phone, user_type)
                 logger.info(f"Cancellation message sent: {message_sent}")
 
                 return {
@@ -251,12 +260,13 @@ class CancelService:
             logger.error(f"Error sending confirmation message to {user_phone}: {e}")
             return False
 
-    async def _send_cancellation_message(self, user_phone: str) -> bool:
+    async def _send_cancellation_message(self, user_phone: str, user_type=None) -> bool:
         """
-        Send cancellation success message to user.
+        Send cancellation success message to user with buyer buttons if user is a buyer.
 
         Args:
             user_phone: User's phone number
+            user_type: User type (string from cache, optional)
 
         Returns:
             True if message sent successfully
@@ -266,7 +276,31 @@ class CancelService:
                 "Your request has been cancelled. What can I assist you with next?"
             )
 
-            await self.whatsapp_service.send_message(user_phone, cancellation_message)
+            # Check if user is a buyer and send buttons accordingly
+            logger.info(f"User type from parameter: {user_type} (type: {type(user_type)})")
+
+            # Check if user is a buyer (user_type from cache is a string)
+            is_buyer = user_type and user_type.lower() == "buyer"
+
+            logger.info(f"Is buyer: {is_buyer}, user_type: {user_type}")
+
+            if is_buyer:
+                buttons_config = [
+                    {"id": "create_rfq", "title": "Create new RFQ"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Stocks"}
+                ]
+                logger.info(f"Sending cancellation with buyer buttons to {user_phone}")
+                await self.whatsapp_service.send_configurable_buttons(
+                    recipient_id=user_phone,
+                    body=cancellation_message,
+                    buttons_config=buttons_config
+                )
+            else:
+                # Default - just send message without buttons
+                logger.info(f"Sending cancellation without buttons to {user_phone}")
+                await self.whatsapp_service.send_message(user_phone, cancellation_message)
+
             logger.info(f"Cancellation message sent to {user_phone}")
             return True
 

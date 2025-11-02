@@ -178,19 +178,21 @@ class PurchaseIntentHandler:
             # Build final clarification message with helpful examples
             clarification_questions = (
                 f"{summary_message}\n\n"
-                "If you feel you need to modify any details or if you missed adding any item, you can do it now.\n\n"
-                "Here are a few examples you can follow:\n\n"
-                "• To add an item you missed:  Add 10 motors\n"
-                "• To remove an item you added:  Remove Desktop\n"
-                "• To change the quantity of an item:  Change laptops to 20\n"
-                "• To change the delivery date:  Change delivery date to 30 Dec\n"
-                "• To change the delivery location:  Change delivery location to 411005"
+                "If you'd like to make any updates, please use these keywords:\n"
+                "• New – to add new items (e.g., New 10 motors)\n"
+                "• Remove – to delete an item (e.g., Remove desktop)\n"
+                "• Change – to modify quantity, delivery date, or location (e.g., Change laptops to 20, Change date to 30 Dec)\n\n"
+                "If everything looks good, just click Continue to proceed."
             )
 
         else:
             clarification_questions = "What would you like to change it to?"
 
-        await self.whatsapp_service.send_message(user.phone_number, clarification_questions)
+        await self.whatsapp_service.send_configurable_buttons(
+            recipient_id=user.phone_number,
+            body=clarification_questions,
+            buttons_config=[{"id": "continue_rfq", "title": "Continue"}]
+        )
 
         await self.session_manager.save_session(session, WorkflowType.rfq_creation)
         

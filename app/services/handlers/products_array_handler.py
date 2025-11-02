@@ -147,12 +147,9 @@ class ProductsArrayHandler:
         existing_incomplete = session.workflow_state.get("incomplete_products", [])
         if self._no_products_mentioned(products) and not existing_incomplete:
             no_products_message = (
-                "Please provide the item details in the following format:\n\n"
-                "• Delivery Location Pincode, Delivery Date, Item 1 Details, Item 2 Details …..Item n Details as per the example below \n"
-                "• Example:\n"
-                "  Pincode 411005, Delivery Date 22 Nov, Laptop Dell Inspiron - 5, Printer HP LaserJet - 2,  Desktops HP 17’’  -10\n\n"
-                "You can type these details here or attach an Excel file with columns for Item, Quantity, Brand, Specification, Delivery Date, and Pincode.\n\n"
-                "Once I have these details, I can help raise your RFQ and ensure timely processing."
+                "Please share the items for your RFQ with name, brand/specs (if any), and quantity — you can add multiple items together in one message.\n\n"
+                "📝 Example:\n"
+                "Laptop Dell Inspiron - 5, Printer HP LaserJet - 2, Desktop HP 17\" - 10"
             )
             await self.whatsapp_service.send_message(user.phone_number, no_products_message)
             return {
@@ -214,8 +211,12 @@ class ProductsArrayHandler:
             include_optional=False  # This is for mandatory fields
         )
 
-        await self.whatsapp_service.send_message(user.phone_number, formatted_message)
-        
+        await self.whatsapp_service.send_configurable_buttons(
+            recipient_id=user.phone_number,
+            body=formatted_message,
+            buttons_config=[{"id": "confirm_cancel", "title": "Restart"}]
+        )
+
         return {
             "status": "products_incomplete",
             "total_products": len(products),
