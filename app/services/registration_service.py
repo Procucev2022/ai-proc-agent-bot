@@ -445,23 +445,45 @@ class RegistrationService:
                     "user_id": user_id
                 }
             else:
-                logger.info(f"handling else condition in registartion:{result}")
-                # Registration failed
+                # Registration failed - check for specific error codes
                 error_msg = result.get("message", "Registration failed")
+                status_code = result.get("status_code", result.get("statusCode"))
                 
-                # Send email notification to support team for registration failure
-                await self.support_notification_service.notify_registration_failed(
-                    entities.get("name") or entities.get("full_name", "User"),
-                    entities.get("email", "unknown"),
-                    user_phone,
-                    user_type
-                )
-                
-                if "already exists" in error_msg.lower():
-                    logger.info("User already exists")
-                    return await self._redirect_to_support(user_phone, "user_already_exists", error_msg, session)
+                # Handle 409 Conflict - User already exists
+                if status_code == 409 or "already exists" in error_msg.lower():
+                    logger.info(f"User already exists: {error_msg}")
+                    user_exists_message = (
+                        "A user with this email address and phone number already exists. "
+                        "Please use a different email or contact support at support@procucev.com if you need assistance."
+                    )
+                    
+                    if self.session_manager:
+                        await self.session_manager.send_and_track_message(user_phone, user_exists_message, session)
+                    else:
+                        await self.whatsapp_service.send_message(user_phone, user_exists_message)
+                    
+                    # Call exit function without showing exit message
+                    from app.services.exit_service import ExitService
+                    exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
+                    await exit_service.handle_exit_intent(user_phone, session, show_message=False)
+                    
+                    return {
+                        "status": "user_already_exists",
+                        "message": error_msg,
+                        "exit_completed": True
+                    }
                 else:
-                    logger.info("registation failed")
+                    # Other registration failures
+                    logger.info(f"Registration failed: {error_msg}")
+                    
+                    # Send email notification to support team for registration failure
+                    await self.support_notification_service.notify_registration_failed(
+                        entities.get("name") or entities.get("full_name", "User"),
+                        entities.get("email", "unknown"),
+                        user_phone,
+                        user_type
+                    )
+                    
                     return await self._redirect_to_support(user_phone, "registration_failed", error_msg, session)
                     
         except Exception as e:
@@ -775,12 +797,8 @@ class RegistrationService:
     async def _redirect_to_support(self, user_phone: str, issue_type: str, error_details: str, session: ConversationSession = None) -> Dict[str, Any]:
         """Redirect user to support team with issue-specific messages."""
         try:
-            # Handle specific issue types with appropriate messages
-            if issue_type == "user_already_exists":
-                support_message = "A user with this email address already exists. Please use a different email or contact support at support@procucev.com if you need assistance."
-            else:
-                # Default message for other issues
-                support_message = "We could not complete your registration at this time. Our support team will reach out to you soon to help finalize your onboarding. If you need immediate assistance, please contact us at info@procucev.com."
+            # Default message for registration issues
+            support_message = "We could not complete your registration at this time. Our support team will reach out to you soon to help finalize your onboarding. If you need immediate assistance, please contact us at info@procucev.com."
             
             if self.session_manager and session:
                 await self.session_manager.send_and_track_message(user_phone, support_message, session)
@@ -792,7 +810,8 @@ class RegistrationService:
             return {
                 "status": "redirected_to_support",
                 "issue_type": issue_type,
-                "support_ticket_created": True
+                "support_ticket_created": True,
+                "exit_completed": True
             }
             
         except Exception as e:
