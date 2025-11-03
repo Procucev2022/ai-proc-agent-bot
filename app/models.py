@@ -374,22 +374,33 @@ class CategoryMapping(Base):
 class AutoCategorizationLog(Base):
     """
     Log table for auto-categorization attempts and results.
-    
+
     Tracks each auto-categorization attempt for monitoring and improvement.
+    Stores both client category results and learning taxonomy matches.
     """
     __tablename__ = "auto_categorization_log"
-    
+
     id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     rfq_id = Column(CHAR(36), nullable=True)
     session_id = Column(String(255), nullable=True)
     user_id = Column(String(255), nullable=False)
     input_description = Column(Text, nullable=False)
-    predicted_category = Column(String(255), nullable=True)
+    predicted_category = Column(String(255), nullable=True)  # Client category returned
     confidence_score = Column(DECIMAL(5,4), default=0.0)
     similarity_score = Column(DECIMAL(5,4), nullable=True)  # For vector search
     method_used = Column(String(50), default="vector_search")  # vector_search, ai_fallback
     processing_time_ms = Column(Integer, default=0)
     user_confirmed_category = Column(String(255), nullable=True)
+
+    # Learning taxonomy match information
+    learning_item_id = Column(String(100), nullable=True)  # ID from vector store
+    learning_level_1 = Column(String(255), nullable=True)  # Level 1 category match
+    learning_level_2 = Column(String(255), nullable=True)  # Level 2 category match
+    learning_level_3 = Column(String(255), nullable=True)  # Level 3 category match
+    learning_category_path = Column(String(500), nullable=True)  # Full path: level1 > level2 > level3
+    learning_match_level = Column(String(10), nullable=True)  # Which level matched: "level_1", "level_2", "level_3"
+    learning_confidence = Column(DECIMAL(5,4), nullable=True)  # Confidence from learning system
+
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
 
 class SystemLog(Base):

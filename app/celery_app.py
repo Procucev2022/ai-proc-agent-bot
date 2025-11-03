@@ -1,62 +1,30 @@
 """
-Celery application configuration for background tasks.
+Celery application instance and configuration.
 
-This module initializes and configures Celery for handling asynchronous
-and scheduled tasks in the AI Procurement Agent application.
-
-Key responsibilities:
-- Celery app initialization
-- Redis broker and backend configuration
-- Task routing and scheduling
-- Beat schedule for periodic tasks
+This module initializes the Celery application for background task processing
+including auto-categorization and seller matching jobs.
 """
 
 from celery import Celery
-from celery.schedules import crontab
 from app.config import get_settings
 
-# Get settings
 settings = get_settings()
 
-# Initialize Celery app
+# Create Celery instance
 celery_app = Celery(
-    "procucev_proc_agent",
+    'procucev_agent',
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.categorization_tasks"]
+    include=[
+        'app.tasks.auto_categorization_task',
+        'app.tasks.seller_matching_task',
+        'app.tasks.daily_aggregation_task'
+    ]
 )
 
-# Celery configuration
-celery_app.conf.update(
-    task_serializer="json",
-    accept_content=["json"],
-    result_serializer="json",
-    timezone="UTC",
-    enable_utc=True,
-    task_track_started=True,
-    task_time_limit=30 * 60,  # 30 minutes
-    task_soft_time_limit=25 * 60,  # 25 minutes
-    worker_prefetch_multiplier=1,
-    worker_max_tasks_per_child=1000,
-)
+# Configure Celery
+celery_app.config_from_object('app.celery_config')
 
-# Beat schedule for periodic tasks
-celery_app.conf.beat_schedule = {
-    "run-enhanced-categorization-every-5-minutes": {
-        "task": "app.tasks.categorization_tasks.update_vector_store_task",
-        "schedule": 300.0,  # 5 minutes in seconds (can also use crontab)
-        # Alternative using crontab:
-        # "schedule": crontab(minute="*/5"),
-        "options": {
-            "expires": 280.0,  # Task expires after 4 minutes 40 seconds
-        }
-    },
-}
-
-# Optional: Route different tasks to different queues
-celery_app.conf.task_routes = {
-    "app.tasks.categorization_tasks.*": {"queue": "categorization"},
-}
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     celery_app.start()
+
