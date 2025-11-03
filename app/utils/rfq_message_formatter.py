@@ -34,11 +34,11 @@ def format_rfq_response_message(
 
     # --- Collect entities ---
     for entity in extracted_entities:
-        desc = (entity.get('description') or '').strip()
-        qty = (entity.get('quantity') or '').strip()
-        unit = (entity.get('unitofMeasures') or '').strip()
-        brand = (entity.get('brand') or '').strip()
-        remarks = (entity.get('remarks') or '').strip()
+        desc = str(entity.get('description') or '').strip()
+        qty = str(entity.get('quantity') or '').strip()
+        unit = str(entity.get('unitofMeasures') or '').strip()
+        brand = str(entity.get('brand') or '').strip()
+        remarks = str(entity.get('remarks') or '').strip()
 
         # Combine brand and remarks inline with item name
         if desc:
@@ -75,14 +75,17 @@ def format_rfq_response_message(
 
     # Show extracted items if we have any
     if items:
+        message += "\n"
         if len(items) <= MAX_ITEMS_TO_SHOW:
-            items_text = ", ".join(items)
-            message += f"\nYou need {items_text}."
+            # Show all items as bullet points
+            for item in items:
+                message += f"• {item}\n"
         else:
             # Show first few items and indicate there are more
-            shown_items = ", ".join(items[:MAX_ITEMS_TO_SHOW])
+            for item in items[:MAX_ITEMS_TO_SHOW]:
+                message += f"• {item}\n"
             remaining = len(items) - MAX_ITEMS_TO_SHOW
-            message += f"\nYou need {shown_items}, and {remaining} more items."
+            message += f"• ...and {remaining} more items\n"
 
     # Show collected delivery information if available
     delivery_info = []
@@ -107,7 +110,7 @@ def format_rfq_response_message(
         delivery_info.append(f"*Delivery Location:* {location_text}")
 
     if delivery_info:
-        message += "\n\n" + "\n".join(delivery_info)
+        message += "\n" + "\n".join(delivery_info)
 
     # --- Check for validation errors first ---
     validation_errors = set()  # Use set to avoid duplicates

@@ -267,11 +267,30 @@ class ProductsArrayHandler:
 
         print(f"  All products have same missing fields: {all_same_missing}")
 
-        if all_same_missing and len(incomplete_products) > 1:
-            # All products missing the same fields - ask once for all
+        # Define product-specific fields that should always be asked per product
+        product_specific_fields = {'item_0_quantity', 'item_0_description', 'project_desc', 'preferred_brand'}
+
+        # Check if any missing field is product-specific
+        has_product_specific_missing = any(
+            field in product_specific_fields
+            for field in first_missing
+        )
+
+        print(f"  Has product-specific missing fields: {has_product_specific_missing}")
+
+        # Only use combined questions for delivery-related fields
+        # For product-specific fields (quantity, description, brand), always ask individually per product
+        if has_product_specific_missing:
+            # Missing product-specific fields - always ask individually per product
+            print(f"  Using individual questions because of product-specific fields")
+            await self._generate_individual_questions(incomplete_products, all_questions, all_missing_fields, has_date_error, total_products)
+        elif all_same_missing and len(incomplete_products) > 1:
+            # All products missing only the same delivery-related fields - ask once for all
+            print(f"  Using combined questions for delivery-related fields")
             await self._generate_combined_questions(incomplete_products, all_questions, all_missing_fields, has_date_error)
         else:
             # Products have different missing fields - ask individually
+            print(f"  Using individual questions due to different missing fields")
             await self._generate_individual_questions(incomplete_products, all_questions, all_missing_fields, has_date_error, total_products)
 
         # Remove duplicate questions while preserving order
@@ -289,8 +308,8 @@ class ProductsArrayHandler:
             product_names = []
             for i, prod in enumerate(incomplete_products):
                 description = prod["entities"].get("description")
-                if description and description.strip():
-                    product_names.append(description)
+                if description and str(description).strip():
+                    product_names.append(str(description))
                 else:
                     # Use index from prod dict, or fallback to list index
                     index = prod.get("index", i + 1)
@@ -334,8 +353,8 @@ class ProductsArrayHandler:
             product_names = []
             for i, prod in enumerate(incomplete_products):
                 description = prod["entities"].get("description")
-                if description and description.strip():
-                    product_names.append(description)
+                if description and str(description).strip():
+                    product_names.append(str(description))
                 else:
                     # Use index from prod dict, or fallback to list index
                     index = prod.get("index", i + 1)
@@ -454,17 +473,19 @@ class ProductsArrayHandler:
             }
         
         # Generate confirmation (either optional fields were completed or user declined)
-        summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
+        summary_content = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
             "user_message": message,
             "extracted_entities": product_info["entities"]
         }, chat_summaries)
 
-        summary_response += (
-            "\n\nPlease review the above details carefully. "
+        # Add prefix and suffix to the summary
+        summary_response = (
+            f"RFQ Summary:\n\n{summary_content}\n\n"
+            "Please review the above details carefully. "
             'If everything is correct, kindly click "Confirm" to proceed with the RFQ creation. '
             'If you wish to make any changes, click "Add or Modify."'
         )
-        
+
         # Send confirmation message with buttons
         buttons_config = [
             {"id": "confirm_rfq", "title": "Confirm"},

@@ -292,8 +292,8 @@ class ProfileSelectionService:
                     "Let's check your registered Buyer profiles...\n\n"
                     "I don't see any Buyer profiles linked to your number or email.\n"
                     "Would you like to create one now?\n\n"
-                    "1️⃣ Register as Buyer\n"
-                    "2️⃣ Exit"
+                    "1.Register as Buyer\n"
+                    "2.Exit"
                 )
                 
                 profile_options = [
@@ -324,7 +324,7 @@ class ProfileSelectionService:
             option_num = 1
 
             for profile in buyer_profiles:
-                message_parts.append(f"{option_num}️⃣ {profile['email']}")
+                message_parts.append(f"{option_num} {profile['email']}")
                 profile_options.append({
                     "number": option_num,
                     "profile": profile,
@@ -333,7 +333,7 @@ class ProfileSelectionService:
                 option_num += 1
 
             # Add registration option
-            message_parts.append(f"{option_num}️⃣ ➕ Add or Register a new Buyer profile")
+            message_parts.append(f"{option_num}️Add or Register a new Buyer profile")
             profile_options.append({
                 "number": option_num,
                 "action": "register_buyer",
