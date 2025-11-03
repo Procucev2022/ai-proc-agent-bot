@@ -198,7 +198,7 @@ class RFQAPIService:
             for i, item in enumerate(items):
                 rfq_item = {
                     "brand": item.get("brand", rfq_data.get("preferred_brand", "Generic")),
-                    "unitofMeasures": item.get("unit_of_measures", "pcs"),
+                    "unitofMeasures": item.get("unit_of_measures") or "pcs",  # Default to pcs if not provided
                     "quantity": str(item.get("quantity", 1)),
                     "description": item.get("description", f"Item {i+1}"),
                     "category": None,
@@ -213,7 +213,7 @@ class RFQAPIService:
             # Single item case (legacy compatibility)
             rfq_item = {
                 "brand": rfq_data.get("preferred_brand", "Generic"),
-                "unitofMeasures": rfq_data.get("unit_of_measure", "pcs"),
+                "unitofMeasures": rfq_data.get("unit_of_measure") or "pcs",  # Default to pcs if not provided
                 "quantity": rfq_data.get("quantity", 1),
                 "description": rfq_data.get("product_name", "Product"),
                 "category": None,
