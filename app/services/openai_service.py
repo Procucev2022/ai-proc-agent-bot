@@ -3280,6 +3280,7 @@ If multiple emails and user selected a number, include selection."""
                         products = rfq.get('products', [])
                         logger.info(f"[DEBUG-RFQS] RFQ {i+1} has {len(products)} products")
                         for j, product in enumerate(products):
+                            logger.info(f"[DEBUG-RFQS] Product {j+1}: {product.get('product_name', 'Unknown')}")
                     
                     # Log successful Excel processing
                     self.interaction_logger.log_entity_extraction(
