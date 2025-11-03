@@ -58,7 +58,10 @@ class ExcelProcessingService:
                 sheet_names = excel_file.sheet_names
                 
                 if len(sheet_names) > 1:
-                    logger.info(f"DEBUG: Multiple sheets found: {sheet_names}. Using first sheet: {sheet_names[0]}")
+                    return {
+                        'success': False,
+                        'error': f'Excel file contains {len(sheet_names)} worksheets. Only 1 worksheet is allowed. Please use a single sheet and reupload.'
+                    }
                 
                 # Use the first sheet
                 df = pd.read_excel(file_obj, sheet_name=0, header=None)
