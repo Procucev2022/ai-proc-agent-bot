@@ -39,15 +39,40 @@ GLOBAL FIELDS (extract once for all products):
 
 ITEM-SPECIFIC FIELDS (extract for each product):
 - **description**: Product type/category (e.g., "laptop", "chairs", "printers") - keep this generic
-- **quantity**: Number of units needed for this item
-- **unitofMeasures**: Unit of measurement for this item (pcs, kg, meters, etc.)
+- **quantity**: Number of units needed - ONLY extract clear quantity values. DO NOT confuse specifications/ratings with quantity!
+- **unitofMeasures**: Unit of measurement - EXTRACT from context if mentioned (meters, kg, liters, boxes, sets, etc.). Use empty string ONLY if no unit is mentioned. DO NOT default to "pcs" unless explicitly stated.
 - **brand**: Preferred brand name for this item (e.g., "Acer", "HP", "Dell")
 - **remarks**: Technical specifications, detailed requirements, configurations for this item (e.g., "18gb RAM, 1tb SSD", "ergonomic design", "A4 printing capacity")
 
-IMPORTANT: When user provides specifications like "18gb RAM, 1tb SSD":
-- These are technical specs and should go in the item's "remarks" field
-- Do NOT overwrite the "description" field with specifications
-- Keep product type separate from technical details
+CRITICAL EXTRACTION RULES:
+
+1. **Quantity vs Specifications**: DO NOT confuse specs/ratings with quantity
+   - "Motors 1000KV" → quantity: "", remarks: "1000KV" (1000KV is a spec, NOT quantity)
+   - "Batteries 5000mAh" → quantity: "", remarks: "5000mAh" (5000mAh is capacity, NOT quantity)
+   - "100 Motors 1000KV" → quantity: 100, remarks: "1000KV" (100 is quantity, 1000KV is spec)
+
+2. **Unit of Measure Extraction**: Extract UOM from user's message context
+   - "25 meters cables" → unitofMeasures: "meters", remarks: "25 meters length"
+   - "50kg rice" → unitofMeasures: "kg"
+   - "100 boxes" → unitofMeasures: "boxes"
+   - "10 laptops" → unitofMeasures: "pcs" (countable items can use pcs)
+   - "motors" (no unit mentioned) → unitofMeasures: "" (empty, will be asked)
+
+3. **Measurement vs Quantity (CRITICAL)**:
+   - A measurement (meters, kg, liters) is NOT the same as quantity/count
+   - "25 meters of rope" does NOT mean 25 ropes - it means ONE item measuring 25 meters
+   - NEVER assume the measurement value is the quantity count
+   - If ONLY measurement is provided (no explicit count):
+     → Set quantity to "" (empty) so system asks for actual count
+     → Put measurement in remarks as a specification
+   - Example: "25 meters of rope, 15 mm thick" → quantity: "", unitofMeasures: "meters", remarks: "25 meters length, 15 mm thickness"
+   - Example: "50kg rice" → quantity: "", unitofMeasures: "kg", remarks: "50kg per unit"
+
+4. **Specifications in Remarks**: Technical details always go to remarks
+   - "18gb RAM, 1tb SSD" → remarks field, NOT description
+   - "1000KV rating" → remarks field
+   - "25 meters length" → remarks field
+   - Keep product type (description) separate from technical details
 
 EXTRACTION EXAMPLES:
 
@@ -115,6 +140,65 @@ Products: [
   {{description: "", quantity: 20, unitofMeasures: "pcs", brand: "Dell", remarks: ""}},
   {{description: "", quantity: 15, unitofMeasures: "pcs", brand: "HP", remarks: ""}},
   {{description: "", quantity: 10, unitofMeasures: "pcs", brand: "Lenovo", remarks: ""}}
+]
+
+Example 8: "Motors 1000KV"
+CRITICAL: DO NOT confuse rating/specification with quantity
+- 1000KV is a motor rating specification, NOT quantity
+- Set quantity to "" (empty, missing) so system asks for it
+- Put the rating in remarks
+Global fields: deliveryDate="", state="", city="", pincode=""
+Products: [
+  {{description: "motors", quantity: "", unitofMeasures: "", brand: "", remarks: "1000KV"}}
+]
+
+Example 9: "100 Motors 1000KV"
+CORRECT: 100 is quantity, 1000KV is specification
+Global fields: deliveryDate="", state="", city="", pincode=""
+Products: [
+  {{description: "motors", quantity: 100, unitofMeasures: "pcs", brand: "", remarks: "1000KV"}}
+]
+
+Example 10: "25 meters cables, 100 quantity"
+CRITICAL: Extract correct UOM from context
+- "25 meters" indicates the unit is meters, not pcs
+- "100 quantity" is the actual quantity needed
+- "25 meters" is a length specification
+Global fields: deliveryDate="", state="", city="", pincode=""
+Products: [
+  {{description: "cables", quantity: 100, unitofMeasures: "meters", brand: "", remarks: "25 meters length"}}
+]
+
+Example 11: "50kg rice bags"
+CORRECT: Extract kg as unit from context
+- "50kg" is a measurement specification, NOT quantity/count
+- Don't know if user wants 1 bag of 50kg, or 10 bags of 5kg each, etc
+- quantity: "" (EMPTY - will ask user)
+- unitofMeasures: "kg"
+Global fields: deliveryDate="", state="", city="", pincode=""
+Products: [
+  {{description: "rice bags", quantity: "", unitofMeasures: "kg", brand: "", remarks: "50kg per unit"}}
+]
+
+Example 12: "Batteries 5000mAh, need 200"
+CRITICAL: 5000mAh is capacity spec, NOT quantity
+- "need 200" is the actual quantity
+- 5000mAh goes to remarks as specification
+Global fields: deliveryDate="", state="", city="", pincode=""
+Products: [
+  {{description: "batteries", quantity: 200, unitofMeasures: "pcs", brand: "", remarks: "5000mAh"}}
+]
+
+Example 13: "25 meters of rope, 15 mm thickness"
+CRITICAL: Measurement is NOT quantity - leave quantity empty to ask user
+- "25 meters of rope" means the rope measures 25 meters (a specification, NOT count)
+- unitofMeasures: "meters" (the unit)
+- quantity: "" (EMPTY - we don't know if they want 1 roll, 5 pieces, etc)
+- BOTH "25 meters length" AND "15 mm thickness" go to remarks
+- System will ask: "How many units/pieces/rolls of rope do you need?"
+Global fields: deliveryDate="", state="", city="", pincode=""
+Products: [
+  {{description: "rope", quantity: "", unitofMeasures: "meters", brand: "", remarks: "25 meters length, 15 mm thickness"}}
 ]
 
 Required fields for RFQ:

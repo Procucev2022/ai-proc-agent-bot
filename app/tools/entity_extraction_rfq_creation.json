@@ -17,11 +17,11 @@
                         },
                         "quantity": {
                             "type": ["number", "null"],
-                            "description": "Required quantity - numeric value. Use null if not provided."
+                            "description": "Required quantity - numeric value ONLY. Do NOT confuse specifications with quantity. If uncertain, use null. Examples: '100 laptops' -> 100, 'Motors 1000KV' -> null (1000KV is spec, not quantity), '25 meters cable, 100 qty' -> 100."
                         },
                         "unitofMeasures": {
                             "type": "string",
-                            "description": "Unit of measurement: pcs, kg, meters, etc. Use empty string if not provided."
+                            "description": "Unit of measurement extracted from context: pcs, kg, meters, liters, boxes, sets, etc. Extract from user's message if explicitly mentioned (e.g., '25 meters cables' -> 'meters', '50kg rice' -> 'kg'). Use empty string ONLY if no unit is mentioned AND cannot be inferred. DO NOT default to 'pcs' unless explicitly stated or clearly implied for countable items."
                         },
                         "brand": {
                             "type": "string",
