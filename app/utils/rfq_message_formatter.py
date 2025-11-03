@@ -110,7 +110,7 @@ def format_rfq_response_message(
         delivery_info.append(f"*Delivery Location:* {location_text}")
 
     if delivery_info:
-        message += "\n\n" + "\n".join(delivery_info)
+        message += "\n" + "\n".join(delivery_info)
 
     # --- Check for validation errors first ---
     validation_errors = set()  # Use set to avoid duplicates
