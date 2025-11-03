@@ -3284,23 +3284,6 @@ If multiple emails and user selected a number, include selection."""
                     )
                     
                     # Log extracted entities for debugging with detailed information
-                    extracted_rfqs = result["rfqs"]
-                    logger.info(f"Extracted entities from OpenAI: {len(extracted_rfqs)} RFQs \n , Data : {extracted_rfqs}")
-                    for i, rfq in enumerate(extracted_rfqs, 1):
-                        products = rfq.get("products", [])
-                        logger.info(f"  RFQ {i}: {len(products)} products")
-                        logger.info(f"    RFQ Details: deliveryDate={rfq.get('deliveryDate', 'N/A')}, city={rfq.get('city', 'N/A')}, state={rfq.get('state', 'N/A')}")
-                        
-                        for j, product in enumerate(products, 1):  # Show all products
-                            logger.info(f"    Product {j}: {product.get('description', 'N/A')} - {product.get('quantity', 'N/A')} {product.get('unitofMeasures', 'N/A')}")
-                            logger.info(f"      Specification: {product.get('specification', 'N/A')}")
-                            logger.info(f"      Category: {product.get('category', 'N/A')}")
-                            logger.info(f"      Raw Product JSON: {json.dumps(product, indent=10)}")
-                        
-                        logger.info(f"    Raw RFQ JSON: {json.dumps(rfq, indent=8)}")
-                    
-                    logger.info(f"Excel processing successful: {len(result['rfqs'])} RFQs, confidence: {result['confidence']}")
-                    logger.info(f"Processing Summary: {json.dumps(result.get('processing_summary', {}), indent=4)}")
                     logger.info(f"Complete Result JSON: {json.dumps(result, indent=2)}")
                     return result
             
