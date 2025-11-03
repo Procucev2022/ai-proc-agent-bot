@@ -217,16 +217,32 @@ class SessionManagementService:
             # Check if session is freshly created (no messages yet)
             messages = session.conversation_history.get("messages", []) if session.conversation_history else []
             if len(messages) == 0:
-                # Fresh session - check if there's a previous abandoned/timed-out session in DB
-                # This DB GET only happens once when user returns after timeout/exit - acceptable
-                db_session = self.db_manager.get_conversation_session(session.session_id)
-                if db_session and db_session.outcome in [ConversationOutcome.timeout, ConversationOutcome.abandoned]:
-                    # Previous session was abandoned or timed out - send welcome back message
-                    logger.info(f"Session {session.session_id} is fresh, found previous {db_session.outcome.value} session - sending welcome back")
-                    await self.whatsapp_service.send_message(
-                        user_phone,
-                        "Welcome back! Kindly wait while I verify your profile to proceed."
-                    )
+                # IMPORTANT: Only show "welcome back" if user actually needs re-authentication
+                # Check if auth token exists - if it does, user is still authenticated
+                from app.redis_db import get_auth_redis_service
+                auth_redis_service = get_auth_redis_service()
+                normalized_phone = user_phone.lstrip('+')
+                has_auth_token = await auth_redis_service.is_authenticated(normalized_phone)
+
+                if has_auth_token:
+                    # User is still authenticated - don't show welcome back message
+                    logger.info(f"Session {session.session_id} has 0 messages but user {normalized_phone} is still authenticated - skipping welcome back")
+                else:
+                    # User has no auth token - check if there's a previous session in DB
+                    # This DB GET only happens once when user returns after timeout/exit - acceptable
+                    db_session = self.db_manager.get_conversation_session(session.session_id)
+                    if db_session and db_session.outcome == ConversationOutcome.timeout:
+                        # Previous session timed out - send welcome back message
+                        logger.info(f"Session {session.session_id} is fresh, found previous timeout session, no auth token - sending welcome back")
+                        await self.whatsapp_service.send_message(
+                            user_phone,
+                            "Welcome back! Kindly wait while I verify your profile to proceed."
+                        )
+                    elif db_session and db_session.outcome == ConversationOutcome.abandoned:
+                        # User explicitly exited - don't show welcome back, just proceed with re-auth silently
+                        logger.info(f"Session {session.session_id} is fresh, found previous abandoned (exit) session - proceeding with silent re-auth (no welcome back)")
+                    else:
+                        logger.info(f"Session {session.session_id} has 0 messages, no auth token, but no previous timeout/abandoned session in DB - skipping welcome back")
 
         # For Redis-disabled mode: Use old logic
         elif not self.redis_enabled:
