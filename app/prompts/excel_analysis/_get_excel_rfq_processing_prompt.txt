@@ -17,6 +17,14 @@ Map Excel columns to these RFQ fields:
 - **brand**: Brand or detailed specifications (Brand, Specification, Spec, Make, Model, etc.)
 - **remarks**: Additional notes (Remarks, Notes, Comments, Description, etc.)
 
+## DUPLICATE COLUMN HANDLING
+
+**When duplicate column names exist:**
+1. Use the FIRST occurrence of each column type for mapping
+2. Ignore subsequent duplicate columns completely
+3. Example: If "Item Code" appears 3 times, only use the first one
+4. Focus on extracting clean, unique data from the most relevant columns
+
 ## DATA VALIDATION RULES
 
 **Required Fields (per product):**
@@ -65,7 +73,15 @@ Row 1: S.No, ItemDescription, Specification, Uom, Quantity, Remarks
 Row 2: 1, Laptop, Dell Inspiron 15, pcs, 10, For office use
 Row 3: 2, Mouse, Wireless optical, pcs, 20, USB receiver
 
-**Example 2 - With Skipped Items:**
+**Example 2 - With Duplicate Columns:**
+Input Excel:
+Row 0: Item Code, Item Name, Description, Unit of Measure, Quantity, Unit Cost, Supplier Name, Category, Location, Reorder Level, Item Code, Item Name, Item Code, Item Name, Description, Unit of Measure
+Row 1: PM001, Cardboard Box, 12x12x12 double wall, pcs, 500, 0.50, ABC Packaging, Cartons & Boxes, WH-1, 100, PM001, Cardboard Box, PM001, Cardboard Box, 12x12x12 double wall, pcs
+Row 2: PM002, Bubble Wrap Roll, 50m roll, roll, 200, 2, WrapCo Ltd, Cushioning, WH-1, 50, PM002, Bubble Wrap Roll, PM002, Bubble Wrap Roll, 50m roll, roll
+
+**Processing:** Use first occurrence of each column type, ignore duplicates
+
+**Example 3 - With Skipped Items:**
 Input Excel:
 Row 0: [empty]
 Row 1: S.No, ItemDescription, Specification, Uom, Quantity, Remarks
@@ -74,7 +90,7 @@ Row 3: 2, Mouse, Wireless optical, pcs, , USB receiver  // Missing quantity
 Row 4: 3, Delivery Date, 15-Dec-2024, , , 
 Row 5: 4, Pincode, 560001, , ,
 
-**Output for Example 2 (with skipped items):**
+**Output for Example 3 (with skipped items):**
 {
   "rfqs": [{
     "products": [

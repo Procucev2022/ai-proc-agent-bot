@@ -283,9 +283,14 @@ class ExcelValidationService:
             try:
                 workbook = load_workbook(file_obj, read_only=False)
                 
-                # Check 1: Multiple worksheets (warn but allow)
+                # Check 1: Only allow single worksheet
                 if len(workbook.worksheets) > 1:
-                    logger.info(f"Multiple worksheets detected ({len(workbook.worksheets)}). Using first sheet only.")
+                    workbook.close()
+                    return {
+                        'valid': False,
+                        'error': f"Your Excel file contains {len(workbook.worksheets)} worksheets. Only 1 worksheet is allowed. Please use a single sheet and reupload.",
+                        'error_type': 'multiple_worksheets'
+                    }
                 
                 worksheet = workbook.active
                 

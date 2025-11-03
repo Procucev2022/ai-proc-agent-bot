@@ -58,7 +58,10 @@ class ExcelProcessingService:
                 sheet_names = excel_file.sheet_names
                 
                 if len(sheet_names) > 1:
-                    logger.info(f"DEBUG: Multiple sheets found: {sheet_names}. Using first sheet: {sheet_names[0]}")
+                    return {
+                        'success': False,
+                        'error': f'Excel file contains {len(sheet_names)} worksheets. Only 1 worksheet is allowed. Please use a single sheet and reupload.'
+                    }
                 
                 # Use the first sheet
                 df = pd.read_excel(file_obj, sheet_name=0, header=None)
@@ -70,13 +73,16 @@ class ExcelProcessingService:
                     'error': f'Failed to read Excel file: {str(e)}'
                 }
             
-            # Remove completely empty rows
+            # Remove completely empty rows (only rows where ALL columns are NaN)
+            initial_count = len(df)
             df = df.dropna(how='all')
+            removed_count = initial_count - len(df)
+            logger.info(f"[DEBUG-MAIN] Removed {removed_count} completely empty rows from {initial_count} total rows")
             
             if df.empty:
                 return {
                     'success': False,
-                    'error': 'No data found in Excel file'
+                    'error': '❌ File rejected: The uploaded Excel file contains no data. Please provide a valid Excel file containing the required data for the RFQ.'
                 }
             
             logger.info(f"DEBUG: Excel file shape: {df.shape}")
@@ -98,6 +104,14 @@ class ExcelProcessingService:
                 products = rfqs[0].get('products', [])
             processing_summary = processing_result.get('processing_summary', {})
             
+            # Validate date and location consistency
+            date_location_validation = self._validate_date_location_consistency(products)
+            if not date_location_validation['valid']:
+                return {
+                    'success': False,
+                    'error': date_location_validation['error']
+                }
+
             # Use RFQs directly from OpenAI processing result
             rfqs = processing_result.get('rfqs', [])
             if not rfqs and products:
@@ -128,7 +142,7 @@ class ExcelProcessingService:
             
             # Reject file if ANY rows are skipped
             if identified_rows > 0 and skipped_rows > 0:
-                combined_error = f"File processing incomplete: {skipped_rows} rows skipped out of {identified_rows} total product rows. Only {extracted_rows} products extracted successfully."
+                combined_error = f"❌ File rejected: File processing incomplete: {skipped_rows} rows skipped out of {identified_rows} total product rows. Only {extracted_rows} products extracted successfully.\n\n{processing_summary.get('skipped_items_summary', '2 rows were skipped due to missing quantities.')}\n\nPlease fix your Excel file and upload again."
                 return {
                     'success': False,
                     'error': combined_error,
@@ -140,7 +154,8 @@ class ExcelProcessingService:
                        
             # Convert to legacy format for compatibility
             items = []
-            for product in products:
+            for i, product in enumerate(products):
+                logger.info(f"[DEBUG-CONVERSION] Converting product {i+1}: {product}")
                 item = {
                     'S.No': len(items) + 1,
                     'ItemDescription': product.get('description', ''),
@@ -157,7 +172,7 @@ class ExcelProcessingService:
             if skipped_rows > 0:
                 success_summary += f" ({skipped_rows} rows skipped: {skipped_summary})"
             
-            return {
+            final_result = {
                 'success': True,
                 'filename': filename,
                 'items': items,
@@ -170,6 +185,9 @@ class ExcelProcessingService:
                 'skipped_items_summary': skipped_summary,
                 'should_skip_rfq_creation': False
             }
+            
+            
+            return final_result
             
         except Exception as e:
             logger.error(f"[EXCEL-PROCESS] Error processing Excel file {filename}: {e}")
@@ -184,8 +202,21 @@ class ExcelProcessingService:
         """Process Excel DataFrame directly using OpenAI for streamlined RFQ creation."""
         logger.info(f"[EXCEL-PROCESS] Starting OpenAI streamlined processing for {filename}")
         try:
+            # Preprocess DataFrame to handle duplicates
+            df_clean = self._preprocess_excel_data(df)
+            logger.info(f"[DEBUG-FLOW] After preprocessing shape: {df_clean.shape}")
+            
+            # Log first few rows to see actual data
+            for i, row in df_clean.head(5).iterrows():
+                logger.info(f"[DEBUG-FLOW] Row {i}: {row.to_dict()}")
+            
             # Convert DataFrame to dict format for OpenAI processing
-            excel_data = df.fillna('').astype(str).to_dict(orient='records')
+            excel_data = df_clean.fillna('').astype(str).to_dict(orient='records')
+            logger.info(f"[DEBUG-FLOW] Converted to {len(excel_data)} records for OpenAI")
+            
+            # Log the data being sent to OpenAI
+            for i, record in enumerate(excel_data[:3]):
+                logger.info(f"[DEBUG-FLOW] OpenAI Record {i+1}: {record}")
             
             # Create readable string for OpenAI input
             excel_text = "\n".join([f"Row {i+1}: {row}" for i, row in enumerate(excel_data[:50])])  
@@ -194,6 +225,8 @@ class ExcelProcessingService:
             result = await self.openai_service.process_excel_to_rfqs(excel_text, filename)
             
             if result.get('success'):
+                if result.get('rfqs'):
+                    logger.info(f"[DEBUG-FLOW] First RFQ has {len(result['rfqs'][0].get('products', []))} products")
                 return result
             else:
                 logger.error(f"[EXCEL-PROCESS] OpenAI processing failed: {result.get('error')}")
@@ -504,6 +537,99 @@ class ExcelProcessingService:
         
         return {"valid": len(issues) == 0, "issues": issues}
     
+    def _preprocess_excel_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Preprocess Excel data to handle duplicate columns and clean data."""
+        try:
+            
+            # Log first few rows before processing
+            for i, row in df.head(10).iterrows():
+                logger.info(f"[DEBUG-PREPROCESS] Original Row {i}: {row.tolist()}")
+            
+            # Handle duplicate column names by keeping only the first occurrence
+            # Pandas automatically renames duplicates with .1, .2, etc.
+            seen_base_columns = set()
+            columns_to_keep = []
+            
+            for col in df.columns:
+                col_str = str(col).strip()
+                
+                # Skip completely unnamed columns
+                if 'unnamed:' in col_str.lower():
+                    continue
+                
+                # Extract base column name (remove .1, .2, etc. suffixes)
+                base_col = col_str
+                if '.' in col_str and col_str.split('.')[-1].isdigit():
+                    base_col = '.'.join(col_str.split('.')[:-1])
+                
+                # Normalize for comparison
+                normalized_base = base_col.strip().lower()
+                
+                # Keep first occurrence of each unique column type
+                if normalized_base not in seen_base_columns:
+                    seen_base_columns.add(normalized_base)
+                    columns_to_keep.append(col)
+                    logger.info(f"[EXCEL-PREPROCESS] Keeping column: {col} (base: {base_col})")
+                else:
+                    logger.info(f"[EXCEL-PREPROCESS] Skipping duplicate column: {col} (base: {base_col})")
+            
+            # Select only unique columns
+            df_clean = df[columns_to_keep].copy()
+            logger.info(f"[DEBUG-PREPROCESS] After column dedup shape: {df_clean.shape}")
+            
+            # Log ALL rows before any removal to debug the blank row issue
+            logger.info(f"[DEBUG-PREPROCESS] ALL rows before empty removal:")
+            for i, row in df_clean.iterrows():
+                is_empty = row.isna().all()
+                has_data = not row.isna().all() and any(str(val).strip() for val in row if pd.notna(val))
+                logger.info(f"[DEBUG-PREPROCESS] Row {i} (empty: {is_empty}, has_data: {has_data}): {row.tolist()}")
+            
+            # CRITICAL FIX: Only remove rows that are completely empty (all NaN)
+            # Do NOT remove rows with blank cells that might have data in other columns
+            initial_row_count = len(df_clean)
+            df_clean = df_clean.dropna(how='all')  # Only remove rows where ALL columns are NaN
+            removed_empty_rows = initial_row_count - len(df_clean)
+            
+            logger.info(f"[DEBUG-PREPROCESS] Removed {removed_empty_rows} completely empty rows")
+            logger.info(f"[DEBUG-PREPROCESS] After empty row removal shape: {df_clean.shape}")
+            
+            # Log rows after empty removal to verify blank rows with data are preserved
+            logger.info(f"[DEBUG-PREPROCESS] Rows after empty removal:")
+            for i, row in df_clean.iterrows():
+                logger.info(f"[DEBUG-PREPROCESS] Preserved Row {i}: {row.tolist()}")
+            
+            # CRITICAL FIX: Be more careful with duplicate removal
+            # Only remove exact duplicates, not rows that might have slight differences
+            initial_rows = len(df_clean)
+            
+            # Create a more conservative duplicate check
+            # Only consider rows duplicates if they have identical non-null values
+            df_for_dup_check = df_clean.copy()
+            
+            # Fill NaN with a unique placeholder for duplicate detection
+            df_for_dup_check = df_for_dup_check.fillna('__BLANK__')
+            
+            # Remove duplicates based on filled data
+            df_clean = df_clean[~df_for_dup_check.duplicated(keep='first')]
+            removed_duplicates = initial_rows - len(df_clean)
+            
+            if removed_duplicates > 0:
+                logger.info(f"[EXCEL-PREPROCESS] Removed {removed_duplicates} duplicate rows")
+            
+            logger.info(f"[EXCEL-PREPROCESS] Final cleaned DataFrame shape: {df_clean.shape}")
+            logger.info(f"[EXCEL-PREPROCESS] Final cleaned columns: {df_clean.columns.tolist()}")
+            
+            # Log final rows to verify all product rows are preserved
+            logger.info(f"[DEBUG-PREPROCESS] Final rows after all processing:")
+            for i, row in df_clean.iterrows():
+                logger.info(f"[DEBUG-PREPROCESS] Final Row {i}: {row.to_dict()}")
+            
+            return df_clean
+            
+        except Exception as e:
+            logger.error(f"[EXCEL-PREPROCESS] Error preprocessing data: {e}")
+            return df  # Return original if preprocessing fails
+    
     def create_standard_template(self, items: List[Dict[str, Any]]) -> bytes:
         """Create standardized Excel template for GMT API."""
         try:
@@ -610,7 +736,7 @@ class ExcelProcessingService:
                     logger.error(f"[EXCEL-STRUCTURE] Too many filled rows: {filled_rows} > {MAX_ROWS}")
                     return {
                         'valid': False,
-                        'error': f"Your Excel file contains {filled_rows} rows with data, but only 50 rows are allowed per upload. Please reduce to 50 rows and reupload."
+                        'error': f"❌ File rejected: Your Excel file contains {filled_rows} rows, but only 50 rows are allowed per upload. Could you please reduce the file to 50 rows and reupload it for processing?"
                     }
                 
                 # Check 2: Merged cells validation
@@ -621,7 +747,7 @@ class ExcelProcessingService:
                     logger.error(f"[EXCEL-STRUCTURE] Merged cells found: {merged_ranges}")
                     return {
                         'valid': False,
-                        'error': "Your Excel file contains merged cells. Please unmerge all cells and reupload."
+                        'error': "Your Excel file contains merged cells. Please unmerge all cells and reupload the file to proceed with your RFQ submission."
                     }
                 
                 workbook.close()
@@ -640,7 +766,7 @@ class ExcelProcessingService:
                         logger.error(f"[EXCEL-STRUCTURE-FALLBACK] Too many filled rows: {filled_rows} > {MAX_ROWS}")
                         return {
                             'valid': False,
-                            'error': f"Your Excel file contains {filled_rows} rows with data, but only 50 rows are allowed per upload. Please reduce to 50 rows and reupload."
+                            'error': f"❌ File rejected: Your Excel file contains {filled_rows} rows, but only 50 rows are allowed per upload. Could you please reduce the file to 50 rows and reupload it for processing?"
                         }
                     # Can't check merged cells with pandas, so assume valid
                     return {'valid': True}
@@ -661,3 +787,41 @@ class ExcelProcessingService:
             'boqFileName': filename,
             'boqfile': base64.b64encode(excel_bytes).decode('utf-8')
         }
+    
+    def _validate_date_location_consistency(self, products: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Validate that all products have the same date and location."""
+        if not products:
+            return {'valid': True}
+        
+        # Extract dates and locations from products
+        dates = set()
+        locations = set()
+        
+        for product in products:
+            date = product.get('date', '').strip() if product.get('date') else ''
+            location = product.get('location', '').strip() if product.get('location') else ''
+            
+            if date:
+                dates.add(date)
+            if location:
+                locations.add(location)
+        
+        # Check if there are multiple dates or locations
+        has_multiple_dates = len(dates) > 1
+        has_multiple_locations = len(locations) > 1
+        
+        if has_multiple_dates or has_multiple_locations:
+            error_parts = []
+            if has_multiple_dates:
+                error_parts.append(f"different dates ({', '.join(sorted(dates))})")
+            if has_multiple_locations:
+                error_parts.append(f"different locations ({', '.join(sorted(locations))})")
+            
+            error_message = f"❌ File rejected due to {' and '.join(error_parts)}. Please correct the file to have consistent date and location for all items, then reupload."
+            
+            return {
+                'valid': False,
+                'error': error_message
+            }
+        
+        return {'valid': True}

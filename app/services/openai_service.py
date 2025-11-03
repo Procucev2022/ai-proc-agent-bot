@@ -3267,6 +3267,15 @@ If multiple emails and user selected a number, include selection."""
                         "confidence": args.get("confidence", 0)
                     }
                     
+                    
+                    # Debug: Log each RFQ and its products
+                    rfqs = result["rfqs"]
+                    logger.info(f"[DEBUG-RFQS] Number of RFQs returned: {len(rfqs)}")
+                    for i, rfq in enumerate(rfqs):
+                        products = rfq.get('products', [])
+                        logger.info(f"[DEBUG-RFQS] RFQ {i+1} has {len(products)} products")
+                        for j, product in enumerate(products):
+                    
                     # Log successful Excel processing
                     self.interaction_logger.log_entity_extraction(
                         user_input=f"Excel file: {filename}",
@@ -3278,8 +3287,6 @@ If multiple emails and user selected a number, include selection."""
                         missing_fields=[]
                     )
                     
-                    # Log extracted entities for debugging with detailed information
-                    logger.info(f"Complete Result JSON: {json.dumps(result, indent=2)}")
                     return result
             
             # Log failed processing
