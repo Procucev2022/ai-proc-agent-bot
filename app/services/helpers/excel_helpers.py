@@ -23,15 +23,20 @@ class ExcelHelpers:
             logger.info(f"Converting {len(items)} Excel items to entities")
             for i, item in enumerate(items, 1):
                 try:
-                    logger.info(f"Processing item {i}: {item}")
+                    # Helper function to safely clean fields
+                    def safe_clean(value, default=''):
+                        if value is None:
+                            return default
+                        cleaned = str(value).strip()
+                        return cleaned if cleaned else default
+                    
                     entity = {
-                        'description': str(item.get('ItemDescription', '')).strip(),
-                        'specification': str(item.get('Specification', '')).strip(),
-                        'quantity': str(item.get('Quantity', '1')).strip(),
-                        'unit_of_measure': str(item.get('Uom', 'pcs')).strip(),
-                        'remarks': str(item.get('Remarks', '')).strip()
+                        'description': safe_clean(item.get('ItemDescription')),
+                        'specification': safe_clean(item.get('Specification')),
+                        'quantity': safe_clean(item.get('Quantity'), '1'),
+                        'unit_of_measure': safe_clean(item.get('Uom'), 'pcs'),
+                        'remarks': safe_clean(item.get('Remarks'))
                     }
-                    logger.info(f"Converted entity {i}: {entity}")
                     entities.append(entity)
                 except Exception as item_error:
                     logger.error(f"Error processing item {i}: {item_error}")
@@ -53,20 +58,17 @@ class ExcelHelpers:
                 logger.info("No items provided for completeness calculation")
                 return 0
             
-            logger.info(f"Calculating completeness for {len(items)} items")
             required_fields = ['ItemDescription', 'Quantity']
             total_checks = len(items) * len(required_fields)
             passed_checks = 0
             
             for i, item in enumerate(items, 1):
                 try:
-                    logger.info(f"Checking item {i}: {item}")
                     for field in required_fields:
                         try:
                             value = item.get(field)
                             if value is not None and str(value).strip():
                                 passed_checks += 1
-                                logger.info(f"Item {i} field '{field}' passed: '{value}'")
                             else:
                                 logger.info(f"Item {i} field '{field}' failed: '{value}'")
                         except Exception as field_error:
@@ -173,11 +175,12 @@ class ExcelHelpers:
     def prepare_excel_context(processing_result: Dict, user_phone: str) -> Dict[str, Any]:
         """Prepare context for Excel-based chat workflow."""
         try:
-            logger.info(f"Preparing Excel context for user: {user_phone}")
-            logger.info(f"Processing result type: {type(processing_result)}")
-            logger.info(f"Processing result: {processing_result}")
-            
-            items = processing_result.get('items', [])
+            # Check if processing failed due to skipped rows
+            if not processing_result.get('success', True):
+                logger.info(f"Processing failed: {processing_result.get('error', 'Unknown error')}")
+                items = []
+            else:
+                items = processing_result.get('items', [])
             logger.info(f"Extracted {len(items)} items from processing result")
             
             # Convert entities with error handling
@@ -204,6 +207,21 @@ class ExcelHelpers:
                 logger.error(f"Error identifying missing fields: {missing_error}")
                 missing_fields = []
             
+            # Extract date and location from OpenAI RFQ results
+            delivery_date = None
+            pincode = None
+            state = None
+            city = None
+            
+            rfqs = processing_result.get('rfqs', [])
+            if rfqs and len(rfqs) > 0:
+                first_rfq = rfqs[0]
+                delivery_date = first_rfq.get('deliveryDate')
+                pincode = first_rfq.get('pincode')
+                state = first_rfq.get('state')
+                city = first_rfq.get('city')
+                logger.info(f"Extracted from RFQ: date={delivery_date}, pincode={pincode}, state={state}, city={city}")
+            
             context = {
                 'workflow_type': 'excel_rfq_upload',
                 'excel_data': processing_result,
@@ -214,7 +232,12 @@ class ExcelHelpers:
                 'user_phone': user_phone,
                 'upload_timestamp': datetime.now().isoformat(),
                 'filename': processing_result.get('filename', ''),
-                'total_items': processing_result.get('total_items', 0)
+                'total_items': processing_result.get('total_items', 0),
+                # Preserve date and location from OpenAI extraction
+                'delivery_date': delivery_date,
+                'pincode': pincode,
+                'state': state,
+                'city': city
             }
             
             logger.info(f"Successfully prepared Excel context with {len(extracted_entities)} entities")
@@ -238,7 +261,11 @@ class ExcelHelpers:
                 'user_phone': user_phone,
                 'upload_timestamp': datetime.now().isoformat(),
                 'filename': processing_result.get('filename', '') if isinstance(processing_result, dict) else '',
-                'total_items': 0
+                'total_items': 0,
+                'delivery_date': None,
+                'pincode': None,
+                'state': None,
+                'city': None
             }
     
     @staticmethod

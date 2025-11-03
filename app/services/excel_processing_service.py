@@ -91,25 +91,71 @@ class ExcelProcessingService:
                 }
             
             # Extract results from OpenAI processing
+            # OpenAI returns 'rfqs' array, extract products from first RFQ
             rfqs = processing_result.get('rfqs', [])
+            products = []
+            if rfqs and len(rfqs) > 0:
+                products = rfqs[0].get('products', [])
             processing_summary = processing_result.get('processing_summary', {})
             
+            # Use RFQs directly from OpenAI processing result
+            rfqs = processing_result.get('rfqs', [])
+            if not rfqs and products:
+                # Fallback: create RFQ format if OpenAI didn't return rfqs structure
+                rfqs = [{
+                    'products': products,
+                    'deliveryDate': processing_result.get('deliveryDate', ''),
+                    'state': processing_result.get('state', ''),
+                    'city': processing_result.get('city', ''),
+                    'pincode': processing_result.get('pincode', '')
+                }]
+            
+            # Calculate processing statistics
+            total_rows = processing_summary.get('total_rows_processed', 0)
+            identified_rows = processing_summary.get('total_products', 0)  # Use total_products instead of identified_for_rfq
+            extracted_rows = processing_summary.get('total_products_extracted', 0)
+            skipped_rows = processing_summary.get('skipped_rows', 0)
+            
+            # Create detailed statistics for confirmation message
+            processing_stats = {
+                'total_rows': total_rows,
+                'identified_for_rfq': identified_rows,
+                'extracted': extracted_rows,
+                'skipped': skipped_rows,
+                'has_missing_items': skipped_rows > 0,
+                'skipped_items_summary': processing_summary.get('skipped_items_summary', '')
+            }
+            
+            # Reject file if ANY rows are skipped
+            if identified_rows > 0 and skipped_rows > 0:
+                combined_error = f"File processing incomplete: {skipped_rows} rows skipped out of {identified_rows} total product rows. Only {extracted_rows} products extracted successfully."
+                return {
+                    'success': False,
+                    'error': combined_error,
+                    'combined_error': combined_error,
+                    'processing_summary': processing_summary,
+                    'processing_stats': processing_stats,
+                    'should_skip_rfq_creation': True
+                }
+                       
             # Convert to legacy format for compatibility
             items = []
-            for rfq in rfqs:
-                for product in rfq.get('products', []):
-                    # Convert to legacy item format
-                    item = {
-                        'S.No': len(items) + 1,
-                        'ItemDescription': product.get('description', ''),
-                        'Specification': product.get('brand', ''),
-                        'Uom': product.get('unitofMeasures', 'pcs'),
-                        'Quantity': product.get('quantity'),
-                        'Remarks': product.get('remarks', '')
-                    }
-                    items.append(item)
-            
-            logger.info(f"[EXCEL-PROCESS] Processed {len(items)} items from {len(rfqs)} RFQs")
+            for product in products:
+                item = {
+                    'S.No': len(items) + 1,
+                    'ItemDescription': product.get('description', ''),
+                    'Specification': product.get('brand', ''),
+                    'Uom': product.get('unitofMeasures', 'pcs'),
+                    'Quantity': product.get('quantity'),
+                    'Remarks': product.get('remarks', '')
+                }
+                items.append(item)
+                      
+            # Include skipped items summary in success response for user feedback
+            skipped_summary = processing_summary.get('skipped_items_summary', '')
+            success_summary = f"Processed {processing_summary.get('total_products_extracted', len(items))} products from {filename}"
+            if skipped_rows > 0:
+                success_summary += f" ({skipped_rows} rows skipped: {skipped_summary})"
             
             return {
                 'success': True,
@@ -118,8 +164,11 @@ class ExcelProcessingService:
                 'total_items': len(items),
                 'rfqs': rfqs,  # New structured format
                 'processing_summary': processing_summary,
+                'processing_stats': processing_stats,  # Add detailed statistics
                 'confidence': processing_result.get('confidence', 85),
-                'summary': f"Processed {processing_summary.get('total_products_extracted', len(items))} products from {filename}"
+                'summary': success_summary,
+                'skipped_items_summary': skipped_summary,
+                'should_skip_rfq_creation': False
             }
             
         except Exception as e:
@@ -139,15 +188,12 @@ class ExcelProcessingService:
             excel_data = df.fillna('').astype(str).to_dict(orient='records')
             
             # Create readable string for OpenAI input
-            excel_text = "\n".join([f"Row {i+1}: {row}" for i, row in enumerate(excel_data[:50])])  # Limit to 50 rows
-            
-            logger.info(f"[EXCEL-PROCESS] Sending {min(len(excel_data), 50)} rows to OpenAI for processing")
+            excel_text = "\n".join([f"Row {i+1}: {row}" for i, row in enumerate(excel_data[:50])])  
             
             # Use OpenAI to process Excel data directly
             result = await self.openai_service.process_excel_to_rfqs(excel_text, filename)
             
             if result.get('success'):
-                logger.info(f"[EXCEL-PROCESS] OpenAI processing successful: {result.get('processing_summary', {})}")
                 return result
             else:
                 logger.error(f"[EXCEL-PROCESS] OpenAI processing failed: {result.get('error')}")
@@ -268,11 +314,9 @@ class ExcelProcessingService:
                         item['Uom'] = 'pcs'
                     
                     items.append(item)
-                    logger.info(f"[EXCEL-EXTRACT] Added item {len(items)}: {item}")
                 else:
                     logger.debug(f"[EXCEL-EXTRACT] Skipped row {index} - no data found")
             
-            logger.info(f"[EXCEL-EXTRACT] Successfully extracted {len(items)} items, removed {removed_rows} incomplete rows")
             return {
                 'success': True,
                 'items': items,
@@ -467,7 +511,6 @@ class ExcelProcessingService:
             template_data = []
             
             for i, item in enumerate(items, 1):
-                logger.info(f"DEBUG: Processing item {i}: {item}")
                 
                 # Convert numeric fields to proper types
                 try:
@@ -488,7 +531,6 @@ class ExcelProcessingService:
                     'Quantity': quantity,  # Keep as integer
                     'Remarks': str(item.get('Remarks', ''))
                 }
-                logger.info(f"DEBUG: Template row {i}: {row}")
                 template_data.append(row)
             
             # Create Excel file with exact format expected by GMT API

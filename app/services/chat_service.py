@@ -1446,13 +1446,14 @@ class ChatService:
             completeness = excel_context['completeness']
             items = processing_result.get('items', [])
 
-            # Always redirect to multiple RFQ flow for Excel uploads with valid items
-            if items and len(items) > 0:
+            # Check if processing was successful
+            if processing_result.get('success') and items and len(items) > 0:
                 logger.info(f"[EXCEL-REDIRECT] Redirecting {len(items)} Excel items to multiple RFQ creation flow")
                 # Set workflow type for RFQ creation
                 WorkflowManager.set_workflow_type(session, WorkflowType.rfq_creation, caller='excel_upload_complete')
                 return await self._handle_complete_excel(user, session, processing_result)
             else:
+                # Processing failed or no items extracted
                 return await self._handle_incomplete_excel(user, session, excel_context)
 
         except Exception as e:
@@ -1476,13 +1477,19 @@ class ChatService:
             session.workflow_state.pop('complete_products', None)
             session.workflow_state.pop('excel_data', None)
             
-            # Send acknowledgment message first
-            removed_rows = processing_result.get('removed_rows', 0)
-            if removed_rows > 0:
-                success_message = f"✅ Successfully extracted {len(products)} valid items from your Excel file!\n\n📝 Note: {removed_rows} incomplete rows were automatically removed (missing mandatory fields: Specification or Quantity).\n\nProcessing your RFQ..."
+            # Send acknowledgment message with processing summary
+            processing_summary = processing_result.get('processing_summary', {})
+            skipped_rows = processing_summary.get('skipped_rows', 0)
+            skipped_items_summary = processing_result.get('skipped_items_summary', '')
+            
+            if skipped_rows > 0:
+                success_message = f"✅ Successfully extracted {len(products)} valid items from your Excel file!\n\n📝 Processing Summary:\n{skipped_items_summary}"
             else:
-                success_message = f"✅ Successfully extracted {len(products)} items from your Excel file!\n\nProcessing your RFQ..."
+                success_message = f"✅ Successfully extracted {len(products)} items from your Excel file!"
+            
+            # Send the success message first
             await self.session_manager.send_and_track_message(user.phone_number, success_message, session)
+            
             
             # Use existing products array handler for multiple RFQ creation
             return await self.products_array_handler.handle_products_array(
@@ -1507,14 +1514,10 @@ class ChatService:
     
     def _convert_excel_items_to_products_array(self, excel_items: List[Dict]) -> List[Dict]:
         """Convert Excel items to products array format for existing multiple RFQ flow."""
-        logger.info(f"[EXCEL-CONVERSION-START] Converting {len(excel_items)} Excel items to products array")
-        logger.info(f"[EXCEL-CONVERSION-INPUT] Raw excel_items: {excel_items}")
-        
         products = []
         
         for i, item in enumerate(excel_items, 1):
-            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing item: {item}")
-            
+           
             # Map Excel columns to entity format expected by products array handler
             product_entity = {
                 'description': item.get('ItemDescription', ''),
@@ -1529,48 +1532,35 @@ class ChatService:
                 'pincode': None,
                 'division': None
             }
-            
-            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Mapped product_entity: {product_entity}")
-            
+                        
             # Clean up empty values but keep structure for validation
             cleaned_entity = {}
             for k, v in product_entity.items():
-                logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing field '{k}': value={v}, type={type(v)}")
                 
                 try:
                     if v is not None:
                         # Convert to string first
-                        v_str = str(v)
-                        logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Field '{k}': converted to string='{v_str}'")
-                        
+                        v_str = str(v)                        
                         # Check if it has content (str() already gives clean representation)
                         if v_str and v_str.strip():
                             # Keep quantity as string but ensure it's valid
                             if k == 'quantity':
-                                logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing quantity field: '{v_str}'")
                                 try:
                                     # Validate it's a valid number but keep as string
                                     float(v_str)
                                     cleaned_entity[k] = v_str
-                                    logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Quantity validated and set: '{v_str}'")
                                 except ValueError as ve:
-                                    logger.error(f"[EXCEL-CONVERSION-ITEM-{i}] Quantity validation failed: {ve}")
                                     cleaned_entity[k] = None
                             else:
                                 # Only strip if it's actually a string that needs stripping
-                                logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing non-quantity field '{k}': original_type={type(v)}, is_string={isinstance(v, str)}")
                                 if isinstance(v, str):
                                     cleaned_entity[k] = v_str.strip()
-                                    logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] String field '{k}' stripped: '{cleaned_entity[k]}'")
                                 else:
                                     cleaned_entity[k] = v_str
-                                    logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Non-string field '{k}' used as-is: '{cleaned_entity[k]}'")
                         else:
                             cleaned_entity[k] = None  # Keep None for empty strings
-                            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Field '{k}' set to None (empty after strip)")
                     else:
                         cleaned_entity[k] = None  # Keep None for missing required fields
-                        logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Field '{k}' set to None (was None)")
                         
                 except Exception as field_error:
                     logger.error(f"[EXCEL-CONVERSION-ITEM-{i}] ERROR processing field '{k}': {field_error}")
@@ -1578,7 +1568,6 @@ class ChatService:
                     raise field_error
             
             products.append(cleaned_entity)
-            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Final cleaned_entity: {cleaned_entity}")
             
         logger.info(f"[EXCEL-CONVERSION-SUCCESS] Successfully converted {len(excel_items)} Excel items to products array")
         logger.info(f"[EXCEL-CONVERSION-RESULT] Final products: {products}")
@@ -1590,6 +1579,24 @@ class ChatService:
         try:
             processing_result = excel_context['excel_data']
             missing_fields = excel_context['missing_fields']
+            
+            # Check if this is a rejection due to skipped rows
+            if processing_result.get('should_skip_rfq_creation') and processing_result.get('processing_summary'):
+                processing_summary = processing_result['processing_summary']
+                skipped_items_summary = processing_summary.get('skipped_items_summary', '')
+                
+                # Show rejection message with skipped items details
+                rejection_message = f"❌ File rejected: {processing_result.get('error', 'File processing incomplete')}\n\n{skipped_items_summary}\n\nPlease fix your Excel file and upload again."
+                await self.session_manager.send_and_track_message(user.phone_number, rejection_message, session)
+                
+                # Update session state - waiting for excel reupload
+                session.workflow_state = session.workflow_state or {}
+                session.workflow_state['stage'] = 'excel_reupload_required'
+                session.workflow_state['pending_excel_reupload'] = True
+                session.workflow_state['last_excel_issues'] = [processing_result.get('error', 'File processing incomplete')]
+                await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+                
+                return {"status": "excel_rejected", "response": "excel_rejection_sent"}
 
             # Generate reupload instructions using helper
             instructions = ExcelHelpers.generate_reupload_instructions(missing_fields, excel_context)
