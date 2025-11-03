@@ -289,8 +289,8 @@ class ProductsArrayHandler:
             product_names = []
             for i, prod in enumerate(incomplete_products):
                 description = prod["entities"].get("description")
-                if description and description.strip():
-                    product_names.append(description)
+                if description and str(description).strip():
+                    product_names.append(str(description))
                 else:
                     # Use index from prod dict, or fallback to list index
                     index = prod.get("index", i + 1)
@@ -334,8 +334,8 @@ class ProductsArrayHandler:
             product_names = []
             for i, prod in enumerate(incomplete_products):
                 description = prod["entities"].get("description")
-                if description and description.strip():
-                    product_names.append(description)
+                if description and str(description).strip():
+                    product_names.append(str(description))
                 else:
                     # Use index from prod dict, or fallback to list index
                     index = prod.get("index", i + 1)
