@@ -9,7 +9,7 @@ import logging
 from typing import Dict, Any, List
 from datetime import datetime
 
-from app.procucev_apis.procucev_api_client import ProcucevAPIClient
+from app.procucev_apis.procucev_api_client import get_procucev_api_client
 from app.schemas.user import APIUserSchema
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ class AuthAPIService:
     """
 
     def __init__(self):
-        self.api_client = ProcucevAPIClient()
+        self.api_client = get_procucev_api_client()
 
     
     async def authenticate_user(self, phone_number: str) -> Dict[str, Any]:

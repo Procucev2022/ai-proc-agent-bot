@@ -224,35 +224,50 @@ class SellerService:
             logger.error(f"Error handling RFQ selection: {e}")
             return await self._handle_workflow_error(user, session, str(e))
 
-    async def _generate_ambiguous_seller_response(self, context: Dict[str, Any]) -> str:
+    async def _generate_ambiguous_seller_response(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Generate response for ambiguous seller messages."""
         try:
             response_message = await self.response_helpers.generate_seller_contextual_response({
                 "workflow_state": "ambiguous_seller_response",
                 **context
             })
-            
+
             return {
+                "success": True,
                 "workflow_step": "awaiting_general_response",
                 "message": response_message,
             }
 
         except Exception as e:
             logger.error(f"Error generating ambiguous seller response: {e}")
-            return f"I want to make sure I understand correctly. Could you clarify what you'd like help with?\n\nI can assist with:\n• RFQ details and access\n• Subscription plans\n• General questions\n\nWhat would be most helpful?"
+            return {
+                "success": True,
+                "workflow_step": "awaiting_general_response",
+                "message": "I want to make sure I understand correctly. Could you clarify what you'd like help with?\n\nI can assist with:\n• RFQ details and access\n• Subscription plans\n• General questions\n\nWhat would be most helpful?"
+            }
 
 
-    async def _generate_general_seller_response(self, context: Dict[str, Any]) -> str:
+    async def _generate_general_seller_response(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Generate response for general seller queries."""
         try:
-            return await self.response_helpers.generate_seller_contextual_response({
+            response_message = await self.response_helpers.generate_seller_contextual_response({
                 "workflow_state": "general_seller_response",
                 **context
             })
 
+            return {
+                "success": True,
+                "workflow_step": "general_seller_response",
+                "message": response_message
+            }
+
         except Exception as e:
             logger.error(f"Error generating general seller response: {e}")
-            return "I'm here to help! You can request RFQ details, view subscription plans, or ask any questions about our services."
+            return {
+                "success": True,
+                "workflow_step": "general_seller_response",
+                "message": "I'm here to help! You can request RFQ details, view subscription plans, or ask any questions about our services."
+            }
 
 
     async def _handle_general_seller_response(self, user: User, session: ConversationSession,

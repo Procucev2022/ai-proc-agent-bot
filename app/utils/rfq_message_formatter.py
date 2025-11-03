@@ -12,11 +12,19 @@ def format_rfq_response_message(
     extracted_entities: List[Dict[str, Any]],
     global_fields: Dict[str, Any],
     missing_fields: List[str],
-    include_optional: bool = False
+    include_optional: bool = False,
+    show_only_collected: bool = False
 ) -> str:
     """
     Generate a conversational RFQ response message without angle brackets for qty/items.
     Shows brand inline, remarks as a paragraph, and missing details as bullet points.
+
+    Args:
+        extracted_entities: List of product entities
+        global_fields: Global delivery information
+        missing_fields: List of missing field descriptions
+        include_optional: Whether to include optional questions
+        show_only_collected: If True, only show collected info without asking for missing fields (for modification clarification)
     """
 
     items = []
@@ -28,9 +36,9 @@ def format_rfq_response_message(
     for entity in extracted_entities:
         desc = entity.get('description', '').strip()
         qty = entity.get('quantity')
-        unit = entity.get('unitofMeasures', '')
-        brand = entity.get('brand')
-        remarks = entity.get('remarks')
+        unit = entity.get('unitofMeasures', '').strip()
+        brand = entity.get('brand', '').strip()
+        remarks = entity.get('remarks', '').strip()
 
         # Combine brand inline with item name
         if desc:
@@ -44,12 +52,62 @@ def format_rfq_response_message(
                     items.append(f"{qty} {desc_text}")
             else:
                 items.append(desc_text)
+        elif brand and qty:
+            # If no description but have brand and quantity, show brand
+            if unit:
+                items.append(f"{qty} {unit} {brand} brand")
+            else:
+                items.append(f"{qty} {brand} brand")
 
-        if remarks and remarks.strip():
-            remarks_list.append(f"{remarks.strip()}")
+        if remarks:
+            remarks_list.append(remarks)
 
     # Start with acknowledgment
     message = "*Got it!*"
+
+    # Show extracted items if we have any
+    if items:
+        if len(items) <= MAX_ITEMS_TO_SHOW:
+            items_text = ", ".join(items)
+            message += f" You need {items_text}."
+        else:
+            # Show first few items and indicate there are more
+            shown_items = ", ".join(items[:MAX_ITEMS_TO_SHOW])
+            remaining = len(items) - MAX_ITEMS_TO_SHOW
+            message += f" You need {shown_items}, and {remaining} more items."
+
+    # Show collected delivery information if available
+    delivery_info = []
+    if global_fields.get("deliveryDate"):
+        delivery_date = global_fields["deliveryDate"]
+        # Format date nicely
+        if isinstance(delivery_date, datetime):
+            formatted_date = delivery_date.strftime("%d %b %Y")
+        else:
+            formatted_date = str(delivery_date)
+        delivery_info.append(f"*Delivery Date:* {formatted_date}")
+
+    if global_fields.get("city") or global_fields.get("state") or global_fields.get("pincode"):
+        location_parts = []
+        if global_fields.get("city"):
+            location_parts.append(global_fields["city"])
+        if global_fields.get("state"):
+            location_parts.append(global_fields["state"])
+        if global_fields.get("pincode"):
+            location_parts.append(global_fields["pincode"])
+        location_text = ", ".join(location_parts)
+        delivery_info.append(f"*Delivery Location:* {location_text}")
+
+    if delivery_info:
+        message += "\n\n" + "\n".join(delivery_info)
+
+    # Show remarks if available (consolidated from all products)
+    if remarks_list:
+        # Combine all remarks, truncate if too long
+        combined_remarks = "; ".join(remarks_list)
+        if len(combined_remarks) > MAX_REMARKS_LENGTH:
+            combined_remarks = combined_remarks[:MAX_REMARKS_LENGTH] + "..."
+        message += f"\n*Remarks:* {combined_remarks}"
 
     # --- Check for validation errors first ---
     validation_errors = set()  # Use set to avoid duplicates
@@ -84,11 +142,19 @@ def format_rfq_response_message(
     has_quantity = any(e.get('quantity') for e in extracted_entities)
     has_date_error = any(e.get('date_validation_error') for e in extracted_entities)
     has_pincode_error = any(e.get('pincode_validation_error') for e in extracted_entities)
-    
+
+    # Check for missing descriptions
+    missing_descriptions = [e for e in extracted_entities if not e.get('description', '').strip()]
+    if missing_descriptions:
+        if len(extracted_entities) == 1:
+            questions.append("What is the item description?")
+        else:
+            questions.append("What are the item descriptions?")
+
     # Check if this is from Excel upload (has multiple items) and missing quantities
     is_excel_upload = len(extracted_entities) > 3  # Assume Excel if more than 3 items
     missing_quantities = [e for e in extracted_entities if not e.get('quantity')]
-    
+
     if missing_quantities:
         if is_excel_upload:
             # For Excel uploads with missing quantities, suggest re-upload

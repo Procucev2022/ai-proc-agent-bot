@@ -110,10 +110,41 @@ class ChatSummaryService:
                 db.add(summary)
                 db.commit()
                 db.refresh(summary)
-                
+
                 logger.info(f"Created summary for session {session.session_id}")
+
+                # APPEND session to database (preserves history across workflows)
+                from app.database import DatabaseManager
+                db_manager = DatabaseManager(session=db)
+                session_data = {
+                    'session_id': session.session_id,
+                    'external_user_id': session.external_user_id,
+                    'workflow_type': session.workflow_type.value if hasattr(session.workflow_type, 'value') else session.workflow_type,
+                    'outcome': session.outcome.value if hasattr(session.outcome, 'value') else session.outcome,
+                    'workflow_state': session.workflow_state,
+                    'conversation_history': session.conversation_history,  # Appended to existing
+                    'extracted_entities': session.extracted_entities,
+                    'rfq_ids': rfq_list,  # Appended to existing
+                    'product_items': product_items,  # Appended to existing
+                    'retention_date': session.retention_date,
+                    'last_activity_at': session.last_activity_at,
+                    'completed_at': session.completed_at
+                }
+                db_manager.append_session_data(session_data)
+                logger.info(f"Appended session {session.session_id} to database (completion with full history preserved)")
+
+                # Delete from Redis (session is now complete)
+                from app.redis_db import get_session_redis_service
+                from app.config import get_settings
+                settings = get_settings()
+                if settings.redis_session_storage_enabled:
+                    redis_session = get_session_redis_service()
+                    import asyncio
+                    asyncio.create_task(redis_session.delete_session(session.session_id))
+                    logger.info(f"Deleted session {session.session_id} from Redis after summary generation")
+
                 return summary
-                
+
         except Exception as e:
             logger.error(f"Error generating summary for {session.session_id}: {e}")
             return None

@@ -159,9 +159,102 @@ class AuthRedisService(BaseRedisService):
         return False
 
 
+class SessionRedisService(BaseRedisService):
+    """Specialized async Redis service for conversation session storage."""
+
+    def __init__(self):
+        super().__init__()
+        self.settings = get_settings()
+        self.default_ttl = self.settings.redis_session_ttl_seconds  # 1800 (30 min)
+
+    async def store_session(self, session_id: str, session_data: Dict[str, Any], ttl: Optional[int] = None) -> bool:
+        """
+        Store session in Redis with TTL.
+
+        Args:
+            session_id: Unique session identifier
+            session_data: Session data dictionary
+            ttl: Time to live in seconds (defaults to 30 minutes)
+
+        Returns:
+            True if stored successfully
+        """
+        key = f"session:{session_id}"
+        ttl = ttl or self.default_ttl
+        return await self.set(key, session_data, ex=ttl)
+
+    async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve session from Redis.
+
+        Args:
+            session_id: Unique session identifier
+
+        Returns:
+            Session data dictionary if found, None otherwise
+        """
+        key = f"session:{session_id}"
+        return await self.get(key, as_json=True)
+
+    async def refresh_ttl(self, session_id: str, ttl: Optional[int] = None) -> bool:
+        """
+        Refresh session TTL on activity.
+
+        Args:
+            session_id: Unique session identifier
+            ttl: New TTL in seconds (defaults to 30 minutes)
+
+        Returns:
+            True if TTL refreshed successfully
+        """
+        key = f"session:{session_id}"
+        ttl = ttl or self.default_ttl
+        return await self.expire(key, ttl)
+
+    async def delete_session(self, session_id: str) -> bool:
+        """
+        Delete session from Redis.
+
+        Args:
+            session_id: Unique session identifier
+
+        Returns:
+            True if deleted successfully
+        """
+        key = f"session:{session_id}"
+        return await self.delete(key)
+
+    async def session_exists(self, session_id: str) -> bool:
+        """
+        Check if session exists in Redis.
+
+        Args:
+            session_id: Unique session identifier
+
+        Returns:
+            True if session exists
+        """
+        key = f"session:{session_id}"
+        return await super().exists(key)
+
+    async def get_session_ttl(self, session_id: str) -> Optional[int]:
+        """
+        Get remaining TTL for a session.
+
+        Args:
+            session_id: Unique session identifier
+
+        Returns:
+            Remaining seconds, or None if key doesn't exist
+        """
+        key = f"session:{session_id}"
+        return await self.ttl(key)
+
+
 # Singleton instances
 _redis_service: Optional[BaseRedisService] = None
 _auth_service: Optional[AuthRedisService] = None
+_session_service: Optional[SessionRedisService] = None
 
 def get_redis_service() -> BaseRedisService:
     """Get base Redis service singleton."""
@@ -171,7 +264,15 @@ def get_redis_service() -> BaseRedisService:
     return _redis_service
 
 def get_auth_redis_service() -> AuthRedisService:
+    """Get auth Redis service singleton."""
     global _auth_service
     if _auth_service is None:
         _auth_service = AuthRedisService()
     return _auth_service
+
+def get_session_redis_service() -> SessionRedisService:
+    """Get session Redis service singleton."""
+    global _session_service
+    if _session_service is None:
+        _session_service = SessionRedisService()
+    return _session_service

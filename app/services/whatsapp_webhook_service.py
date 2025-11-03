@@ -38,6 +38,15 @@ class WhatsAppWebhookService:
         """
         self.chat_service = ChatService(db_session=db_session)
         self.opt_out_service = OptOutService()
+
+    async def cleanup(self):
+        """Cleanup resources - close ChatService to prevent connection leaks."""
+        try:
+            if self.chat_service is not None:
+                await self.chat_service.cleanup()
+                logger.debug("WhatsAppWebhookService: ChatService cleaned up")
+        except Exception as e:
+            logger.warning(f"WhatsAppWebhookService: Error during cleanup: {e}")
     
     async def process_webhook(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """

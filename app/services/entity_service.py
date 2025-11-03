@@ -171,6 +171,8 @@ class EntityService:
                 merged_products = self._apply_supplementary_data_to_existing_products(existing_context, global_fields)
 
             validated_products, has_date_validation_error = await self._validate_dates_in_products(merged_products, message)
+            # Clean up invalid descriptions (units of measure, generic terms, etc.)
+            validated_products = self._clean_invalid_descriptions(validated_products)
             # Auto-fill city and state from pincode
             validated_products = await self._auto_fill_location_from_pincode(validated_products)
 
@@ -286,6 +288,8 @@ class EntityService:
                 )
                 # Validate dates in final products
                 validated_products, has_date_validation_error = await self._validate_dates_in_products(modified_products, message)
+                # Clean up invalid descriptions
+                validated_products = self._clean_invalid_descriptions(validated_products)
                 # Auto-fill city and state from pincode
                 validated_products = await self._auto_fill_location_from_pincode(validated_products)
 
@@ -861,6 +865,8 @@ class EntityService:
             # Validate dates in the final products
             if "products" in response:
                 validated_products, has_date_validation_error = await self._validate_dates_in_products(response["products"], message)
+                # Clean up invalid descriptions
+                validated_products = self._clean_invalid_descriptions(validated_products)
                 # Auto-fill city and state from pincode
                 validated_products = await self._auto_fill_location_from_pincode(validated_products)
                 response["products"] = validated_products
@@ -963,6 +969,7 @@ class EntityService:
 
         Logic:
         - If new products have descriptions that match existing ones, merge the data
+        - If existing products lack descriptions and new products have them, use positional matching
         - If new products are genuinely new, add them to the list
         - Preserve all existing products
         - If new product has no description (None), it's supplementary data for all existing products
@@ -975,14 +982,47 @@ class EntityService:
         Returns:
             Merged list of products
         """
-        # Get descriptions from existing products for matching
-        existing_descriptions = {}
+        # Identify existing products without valid descriptions
+        products_without_desc = []
+        products_with_desc = {}
+
         for i, existing_prod in enumerate(existing_products):
             desc = existing_prod.get("description")
             if desc and isinstance(desc, str):
                 desc_lower = desc.lower().strip()
                 if desc_lower:
-                    existing_descriptions[desc_lower] = i
+                    products_with_desc[desc_lower] = i
+                else:
+                    products_without_desc.append(i)
+            else:
+                products_without_desc.append(i)
+
+        # Check if we should use positional matching
+        # Condition: existing products without descriptions, new products with descriptions, same count
+        new_products_with_desc = [p for p in new_products if p.get("description")]
+        use_positional_matching = (
+            len(products_without_desc) > 0 and
+            len(new_products_with_desc) > 0 and
+            len(products_without_desc) == len(new_products_with_desc) and
+            len(new_products) == len(new_products_with_desc)  # All new products have descriptions
+        )
+
+        if use_positional_matching:
+            print(f"EntityService: Using positional matching - {len(products_without_desc)} existing products without descriptions, {len(new_products_with_desc)} new products with descriptions")
+            # Positional merge: match by index order
+            merged_products = [prod.copy() for prod in existing_products]
+
+            for existing_idx, new_prod in zip(products_without_desc, new_products_with_desc):
+                print(f"EntityService: Positionally merging new product '{new_prod.get('description')}' into existing product at index {existing_idx}")
+                for key, value in new_prod.items():
+                    if value is not None:
+                        merged_products[existing_idx][key] = value
+                        print(f"  Updated {key}={value}")
+
+            return merged_products
+
+        # Standard merge logic (description-based matching)
+        existing_descriptions = products_with_desc
 
         # Start with copies of existing products
         merged_products = [prod.copy() for prod in existing_products]
@@ -1081,13 +1121,71 @@ class EntityService:
             print(f"Schema file not found: {schema_path}")
             return {}
 
+    def _clean_invalid_descriptions(self, products: list) -> list:
+        """
+        Remove descriptions that are actually units of measure, generic terms, or otherwise invalid.
+
+        This ensures that invalid descriptions extracted by OpenAI are cleared so they can be
+        properly requested from the user during validation.
+
+        Args:
+            products: List of product entities
+
+        Returns:
+            Updated products list with invalid descriptions set to None
+        """
+        # Same invalid description sets as in RFQValidationSchema for consistency
+        UNIT_KEYWORDS = {
+            'pcs', 'pc', 'pieces', 'piece',
+            'kg', 'kgs', 'kilogram', 'kilograms',
+            'g', 'grams', 'gram',
+            'liters', 'liter', 'l', 'lt',
+            'meters', 'meter', 'm', 'mt',
+            'boxes', 'box',
+            'sets', 'set',
+            'units', 'unit',
+            'sqft', 'sqm'
+        }
+
+        GENERIC_TERMS = {
+            'item', 'items',
+            'product', 'products',
+            'thing', 'things',
+            'stuff',
+            'something'
+        }
+
+        cleaned_products = []
+
+        for product in products:
+            cleaned_product = product.copy()
+            desc = product.get("description", "")
+
+            if desc:
+                desc_lower = desc.lower().strip()
+
+                # Check if description is invalid
+                is_invalid = (
+                    desc_lower.isdigit() or  # Just a number
+                    desc_lower in UNIT_KEYWORDS or  # Unit of measure
+                    desc_lower in GENERIC_TERMS  # Too generic
+                )
+
+                if is_invalid:
+                    cleaned_product["description"] = None
+                    print(f"EntityService: Cleared invalid description '{desc}' (unit of measure or generic term)")
+
+            cleaned_products.append(cleaned_product)
+
+        return cleaned_products
+
     async def _auto_fill_location_from_pincode(self, products: list) -> list:
         """
         Auto-fill city and state from pincode using direct API lookup.
-        
+
         Args:
             products: List of product entities
-            
+
         Returns:
             Updated products list with city and state filled from pincode lookup
         """

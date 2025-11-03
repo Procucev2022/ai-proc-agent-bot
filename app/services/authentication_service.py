@@ -139,8 +139,15 @@ class AuthenticationService:
             logger.error(f"Session storage error for {user_phone}: {e}")
             return False
     
-    async def clear_user_token(self, user_phone: str) -> bool:
-        """Clear user token/session and cached user data from Redis."""
+    async def clear_user_token(self, user_phone: str, preserve_meaningful_message: bool = True) -> bool:
+        """
+        Clear user token/session and cached user data from Redis.
+
+        Args:
+            user_phone: User's phone number
+            preserve_meaningful_message: If True, preserves meaningful message for post-auth processing.
+                                        If False (e.g., on exit), completely clears everything.
+        """
         try:
             # Normalize phone number (remove + prefix for consistent Redis keys)
             normalized_phone = user_phone.lstrip('+')
@@ -149,7 +156,7 @@ class AuthenticationService:
             auth_success = await self.auth_redis_service.delete_auth(normalized_phone)
 
             # Clear cached user data (user_cache_service normalizes internally)
-            cache_success = await self.user_cache_service.clear_user_data(user_phone)
+            cache_success = await self.user_cache_service.clear_user_data(user_phone, preserve_meaningful_message)
 
             if not auth_success:
                 logger.warning(f"Failed to clear token for {normalized_phone} or token not found")
