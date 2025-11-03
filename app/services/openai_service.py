@@ -2517,17 +2517,12 @@ Determine the best category for the input item based on the similar items and th
                     logger.info(f"RFQ confirmation LLM output: {json.dumps(args, indent=2)}")
 
                     # Format response with proper spacing and sections
-                    response_parts = []
-
-                    # Summary section
+                    # Only return the summary - prefix/suffix are added by the handler
                     if args.get("summary"):
-                        response_parts.append(f"RFQ Summary:\n\n{args['summary']}")
+                        return args['summary']
 
-                    # Confirmation request section
-                    if args.get("confirmation_request"):
-                        response_parts.append(args["confirmation_request"])
-
-                    return "\n\n".join(response_parts)
+                    # Fallback if no summary
+                    return "No summary generated"
             
             # Fallback response
             return "Here's a summary of your RFQ."
