@@ -82,7 +82,7 @@ class ExcelProcessingService:
             if df.empty:
                 return {
                     'success': False,
-                    'error': 'No data found in Excel file'
+                    'error': '❌ File rejected: The uploaded Excel file contains no data. Please provide a valid Excel file containing the required data for the RFQ.'
                 }
             
             logger.info(f"DEBUG: Excel file shape: {df.shape}")
@@ -104,6 +104,14 @@ class ExcelProcessingService:
                 products = rfqs[0].get('products', [])
             processing_summary = processing_result.get('processing_summary', {})
             
+            # Validate date and location consistency
+            date_location_validation = self._validate_date_location_consistency(products)
+            if not date_location_validation['valid']:
+                return {
+                    'success': False,
+                    'error': date_location_validation['error']
+                }
+
             # Use RFQs directly from OpenAI processing result
             rfqs = processing_result.get('rfqs', [])
             if not rfqs and products:
@@ -739,7 +747,7 @@ class ExcelProcessingService:
                     logger.error(f"[EXCEL-STRUCTURE] Merged cells found: {merged_ranges}")
                     return {
                         'valid': False,
-                        'error': "❌ File rejected: Your Excel file contains merged cells. Please unmerge all cells and reupload it for processing."
+                        'error': "Your Excel file contains merged cells. Please unmerge all cells and reupload the file to proceed with your RFQ submission."
                     }
                 
                 workbook.close()
@@ -779,3 +787,41 @@ class ExcelProcessingService:
             'boqFileName': filename,
             'boqfile': base64.b64encode(excel_bytes).decode('utf-8')
         }
+    
+    def _validate_date_location_consistency(self, products: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Validate that all products have the same date and location."""
+        if not products:
+            return {'valid': True}
+        
+        # Extract dates and locations from products
+        dates = set()
+        locations = set()
+        
+        for product in products:
+            date = product.get('date', '').strip() if product.get('date') else ''
+            location = product.get('location', '').strip() if product.get('location') else ''
+            
+            if date:
+                dates.add(date)
+            if location:
+                locations.add(location)
+        
+        # Check if there are multiple dates or locations
+        has_multiple_dates = len(dates) > 1
+        has_multiple_locations = len(locations) > 1
+        
+        if has_multiple_dates or has_multiple_locations:
+            error_parts = []
+            if has_multiple_dates:
+                error_parts.append(f"different dates ({', '.join(sorted(dates))})")
+            if has_multiple_locations:
+                error_parts.append(f"different locations ({', '.join(sorted(locations))})")
+            
+            error_message = f"❌ File rejected due to {' and '.join(error_parts)}. Please correct the file to have consistent date and location for all items, then reupload."
+            
+            return {
+                'valid': False,
+                'error': error_message
+            }
+        
+        return {'valid': True}
