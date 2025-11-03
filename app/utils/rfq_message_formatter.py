@@ -30,9 +30,7 @@ def format_rfq_response_message(
     """
 
     items = []
-    remarks_list = []
     MAX_ITEMS_TO_SHOW = 5  # Show only first 5 items
-    MAX_REMARKS_LENGTH = 200  # Maximum total length for remarks
 
     # --- Collect entities ---
     for entity in extracted_entities:
@@ -42,11 +40,13 @@ def format_rfq_response_message(
         brand = (entity.get('brand') or '').strip()
         remarks = (entity.get('remarks') or '').strip()
 
-        # Combine brand inline with item name
+        # Combine brand and remarks inline with item name
         if desc:
             desc_text = desc.capitalize()
             if brand:
                 desc_text += f" ({brand} brand)"
+            if remarks:
+                desc_text += f" - {remarks}"
             if qty:
                 if unit:
                     items.append(f"{qty} {unit} {desc_text}")
@@ -56,27 +56,33 @@ def format_rfq_response_message(
                 items.append(desc_text)
         elif brand and qty:
             # If no description but have brand and quantity, show brand
+            item_text = f"{brand} brand"
+            if remarks:
+                item_text += f" - {remarks}"
             if unit:
-                items.append(f"{qty} {unit} {brand} brand")
+                items.append(f"{qty} {unit} {item_text}")
             else:
-                items.append(f"{qty} {brand} brand")
-
-        if remarks:
-            remarks_list.append(remarks)
+                items.append(f"{qty} {item_text}")
 
     # Start with acknowledgment
     message = "*Got it!*"
+
+    # Add product count with nice message if we have items
+    if items:
+        product_count = len(items)
+        product_text = "product" if product_count == 1 else "products"
+        message += f"\n*_I've captured {product_count} {product_text}_*\n"
 
     # Show extracted items if we have any
     if items:
         if len(items) <= MAX_ITEMS_TO_SHOW:
             items_text = ", ".join(items)
-            message += f" You need {items_text}."
+            message += f"\nYou need {items_text}."
         else:
             # Show first few items and indicate there are more
             shown_items = ", ".join(items[:MAX_ITEMS_TO_SHOW])
             remaining = len(items) - MAX_ITEMS_TO_SHOW
-            message += f" You need {shown_items}, and {remaining} more items."
+            message += f"\nYou need {shown_items}, and {remaining} more items."
 
     # Show collected delivery information if available
     delivery_info = []
@@ -102,14 +108,6 @@ def format_rfq_response_message(
 
     if delivery_info:
         message += "\n\n" + "\n".join(delivery_info)
-
-    # Show remarks if available (consolidated from all products)
-    if remarks_list:
-        # Combine all remarks, truncate if too long
-        combined_remarks = "; ".join(remarks_list)
-        if len(combined_remarks) > MAX_REMARKS_LENGTH:
-            combined_remarks = combined_remarks[:MAX_REMARKS_LENGTH] + "..."
-        message += f"\n*Remarks:* {combined_remarks}"
 
     # --- Check for validation errors first ---
     validation_errors = set()  # Use set to avoid duplicates
@@ -146,7 +144,7 @@ def format_rfq_response_message(
     all_issues = validation_errors + questions
 
     # --- Add validation errors and questions with bullet points ---
-    if all_issues:
+    if validation_errors or (questions and not include_optional):
         # Check if any issues are Excel validation errors
         excel_errors = [issue for issue in all_issues if 
                        ("50 rows" in issue and "allowed" in issue) or 
@@ -169,7 +167,7 @@ def format_rfq_response_message(
             # For other validation issues, show as questions
             message += "\n\nI couldn't get everything though — looks like we're still missing:\n\n"
             for issue in all_issues:
-                message += f"{issue}\n"
+                message += f"• {issue}\n"
             message += "\nPlease share to proceed."
     elif include_optional and missing_fields:
         # If no mandatory issues but flag is set, add optional questions
