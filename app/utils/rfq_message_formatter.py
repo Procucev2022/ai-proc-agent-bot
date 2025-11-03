@@ -36,11 +36,11 @@ def format_rfq_response_message(
 
     # --- Collect entities ---
     for entity in extracted_entities:
-        desc = entity.get('description', '').strip()
-        qty = entity.get('quantity')
-        unit = entity.get('unitofMeasures', '').strip()
-        brand = entity.get('brand', '').strip()
-        remarks = entity.get('remarks', '').strip()
+        desc = (entity.get('description') or '').strip()
+        qty = (entity.get('quantity') or '').strip()
+        unit = (entity.get('unitofMeasures') or '').strip()
+        brand = (entity.get('brand') or '').strip()
+        remarks = (entity.get('remarks') or '').strip()
 
         # Combine brand inline with item name
         if desc:
