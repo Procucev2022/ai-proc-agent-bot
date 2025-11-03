@@ -446,7 +446,7 @@ class RegistrationService:
                 )
                 
                 if "already exists" in error_msg.lower():
-                    logger.info("alredy exists")
+                    logger.info("User already exists")
                     return await self._redirect_to_support(user_phone, "user_already_exists", error_msg, session)
                 else:
                     logger.info("registation failed")
@@ -761,9 +761,15 @@ class RegistrationService:
 
 
     async def _redirect_to_support(self, user_phone: str, issue_type: str, error_details: str, session: ConversationSession = None) -> Dict[str, Any]:
-        """Redirect user to support team."""
+        """Redirect user to support team with issue-specific messages."""
         try:
-            support_message = "We could not complete your registration at this time. Our support team will reach out to you soon to help finalize your onboarding. If you need immediate assistance, please contact us at info@procucev.com."
+            # Handle specific issue types with appropriate messages
+            if issue_type == "user_already_exists":
+                support_message = "A user with this email address already exists. Please use a different email or contact support at support@procucev.com if you need assistance."
+            else:
+                # Default message for other issues
+                support_message = "We could not complete your registration at this time. Our support team will reach out to you soon to help finalize your onboarding. If you need immediate assistance, please contact us at info@procucev.com."
+            
             if self.session_manager and session:
                 await self.session_manager.send_and_track_message(user_phone, support_message, session)
             else:

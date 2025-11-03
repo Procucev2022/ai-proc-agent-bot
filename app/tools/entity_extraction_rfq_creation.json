@@ -22,6 +22,7 @@
                         "unitofMeasures": {
                             "type": "string",
                             "description": "Unit of measurement extracted from context: pcs, kg, meters, liters, boxes, sets, etc. Extract from user's message if explicitly mentioned (e.g., '25 meters cables' -> 'meters', '50kg rice' -> 'kg'). Use empty string ONLY if no unit is mentioned AND cannot be inferred. DO NOT default to 'pcs' unless explicitly stated or clearly implied for countable items."
+
                         },
                         "brand": {
                             "type": "string",

@@ -199,6 +199,7 @@ CRITICAL: Measurement is NOT quantity - leave quantity empty to ask user
 Global fields: deliveryDate="", state="", city="", pincode=""
 Products: [
   {{description: "rope", quantity: "", unitofMeasures: "meters", brand: "", remarks: "25 meters length, 15 mm thickness"}}
+
 ]
 
 Required fields for RFQ:
