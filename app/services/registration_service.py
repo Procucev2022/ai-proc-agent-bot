@@ -138,6 +138,10 @@ class RegistrationService:
                             existing_entities["details"] = str(value).strip()
                         else:
                             existing_entities[key] = str(value).strip()
+                
+                # Auto-fill address from pincode if provided
+                await self._auto_fill_address_from_pincode(existing_entities, user_phone, session)
+                
                 session.workflow_state["registration_entities"] = existing_entities
                 session.workflow_state["last_activity_at"] = utc_now().isoformat()
             else:
@@ -149,7 +153,15 @@ class RegistrationService:
             else:  # seller
                 entity_schema = SellerRegistrationSchema
 
+            # Check for pincode error from auto-fill
+            pincode_error = existing_entities.pop("_pincode_error", None)
+            
             existing_entities, validation_error_message = await self.authentication_helpers.validate_entities(existing_entities, entity_schema)
+            
+            # Use pincode error as validation error
+            if pincode_error:
+                validation_error_message = pincode_error
+            
             session.workflow_state["registration_entities"] = existing_entities
 
             # Dynamic schema-based field validation
@@ -801,6 +813,39 @@ class RegistrationService:
             return message_content.lower().strip() in ["exit", "quit", "stop", "cancel"]
         else:
             return False
+    
+    async def _auto_fill_address_from_pincode(self, entities: Dict[str, Any], user_phone: str, session: ConversationSession) -> None:
+        """Auto-fill address from pincode if valid pincode is provided."""
+        try:
+            pincode = entities.get("zipCode")
+            if not pincode or entities.get("address"):  # Skip if no pincode or address already exists
+                return
+            
+            # Validate pincode format
+            if not pincode.isdigit() or len(pincode) != 6:
+                return
+            
+            # Get location details from pincode
+            location_data = await get_location_from_pincode_async(pincode)
+            
+            if location_data:
+                city = location_data.get("city", "")
+                state = location_data.get("state", "")
+                
+                if city and state:
+                    # Auto-fill address with city and state
+                    entities["address"] = f"{city}, {state}"
+                    logger.info(f"Auto-filled address for {user_phone}: {city}, {state} from pincode {pincode}")
+                else:
+                    logger.warning(f"Incomplete location data for pincode {pincode}: {location_data}")
+            else:
+                # Clear invalid pincode and store error message for later display
+                entities["zipCode"] = None
+                entities["_pincode_error"] = f"The pincode {pincode} is invalid or not found. Kindly share a valid Indian pincode."
+                logger.warning(f"Invalid pincode {pincode} provided by {user_phone}")
+                
+        except Exception as e:
+            logger.error(f"Error auto-filling address from pincode: {e}")
     
     async def _handle_registration_exit(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
         """Handle exit during registration."""
