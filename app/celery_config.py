@@ -43,12 +43,7 @@ beat_schedule = {
         'task': 'app.tasks.auto_categorization_task.process_uncategorized_rfqs',
         'schedule': crontab(minute='*/15'),  # Every 15 minutes
         'options': {'expires': 300}  # Task expires after 5 minutes if not picked up
-    },
-    'seller-matching-task': {
-        'task': 'app.tasks.seller_matching_task.process_seller_matching',
-        'schedule': crontab(minute='*/30'),  # Every 30 minutes  
-        'options': {'expires': 600}  # Task expires after 10 minutes if not picked up
-    },
+    }
 }
 
 # Task routing (optional - for when you have multiple workers)

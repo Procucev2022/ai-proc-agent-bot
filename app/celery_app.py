@@ -16,9 +16,7 @@ celery_app = Celery(
     broker=settings.redis_url,
     backend=settings.redis_url,
     include=[
-        'app.tasks.auto_categorization_task',
-        'app.tasks.seller_matching_task',
-        'app.tasks.daily_aggregation_task'
+        'app.tasks.auto_categorization_task'
     ]
 )
 
