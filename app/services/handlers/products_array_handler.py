@@ -39,10 +39,24 @@ class ProductsArrayHandler:
 
             # Check if we have existing incomplete products that need to be merged with new data
             existing_incomplete = session.workflow_state.get("incomplete_products", [])
+            existing_complete = session.workflow_state.get("complete_products", [])
+
             if existing_incomplete:
                 print(f"ProductsArrayHandler: Found {len(existing_incomplete)} existing incomplete products, merging with new data")
                 products = await self._merge_with_existing_incomplete_products(existing_incomplete, products)
                 print(f"ProductsArrayHandler: After merging, processing {len(products)} total products")
+
+                # Also add back the complete products that were stored earlier
+                if existing_complete:
+                    print(f"ProductsArrayHandler: Adding back {len(existing_complete)} complete products")
+                    complete_entities = []
+                    for comp_prod in existing_complete:
+                        if isinstance(comp_prod, dict) and "entities" in comp_prod:
+                            complete_entities.append(comp_prod["entities"])
+                        else:
+                            complete_entities.append(comp_prod)
+                    products = complete_entities + products  # Complete products first, then incomplete
+                    print(f"ProductsArrayHandler: Total products after adding complete: {len(products)}")
 
             # Apply attachment caption as remarks to all products if present
             attachment_caption = session.workflow_state.get("attachment_caption")
