@@ -117,7 +117,8 @@ class ExcelMessageProcessor:
                 error_message = format_rfq_response_message(
                     extracted_entities=excel_entities,
                     global_fields={},
-                    missing_fields=[]
+                    missing_fields=[],
+                    excel_source=True  # This is from Excel upload
                 )
                 
                 await self.whatsapp_service.send_message(user.phone_number, error_message)

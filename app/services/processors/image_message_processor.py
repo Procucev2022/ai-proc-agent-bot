@@ -44,6 +44,7 @@ class ImageMessageProcessor:
                     media_id = content.get("id")
                     mime_type = content.get("mime_type")
                     filename = content.get("filename")  # Only present for DOCUMENT type
+                    caption = content.get("caption")  # Caption text sent with the attachment
 
                     # Auto-generate filename from MIME type if not provided
                     if not filename:
@@ -55,6 +56,8 @@ class ImageMessageProcessor:
                     base64_data = None
 
                     logger.info(f"Processing ICS media - ID: {media_id}, Type: {mime_type}, URL: {file_url}")
+                    if caption:
+                        logger.info(f"Attachment has caption: {caption}")
 
                 # Legacy format support (old nested structure or web UI)
                 elif "image" in content or "document" in content:
@@ -123,6 +126,13 @@ class ImageMessageProcessor:
 
             # Auto-approve the attachment
             AttachmentHelpers.approve_pending_attachment(session)
+
+            # Store caption as pending remark if provided
+            if isinstance(content, dict) and "caption" in content:
+                caption = content.get("caption")
+                if caption:
+                    session.workflow_state["attachment_caption"] = caption
+                    logger.info(f"Stored attachment caption as pending remark: {caption}")
 
             # Acknowledge the attachment with count
             count = add_result.get("count", 1)
@@ -253,6 +263,14 @@ class ImageMessageProcessor:
                     entities["attachments"] = extracted_attachments
                     logger.info(f"Merged {len(extracted_attachments)} attachments for regenerated confirmation")
 
+            # Apply attachment caption as remarks if present
+            attachment_caption = session.workflow_state.get("attachment_caption")
+            if attachment_caption and not entities.get("remarks"):
+                logger.info(f"Applying attachment caption to regenerated confirmation: {attachment_caption}")
+                entities["remarks"] = attachment_caption
+                # Clear the caption after applying
+                del session.workflow_state["attachment_caption"]
+
             # Rebuild RFQ schema with updated attachments
             rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(entities, None)
 
@@ -283,6 +301,21 @@ class ImageMessageProcessor:
         elif session.workflow_state.get("pending_combined_rfq"):
             # Handle combined RFQ case
             combined_data = session.workflow_state["pending_combined_rfq"]
+
+            # Apply attachment caption as remarks to all products if present
+            attachment_caption = session.workflow_state.get("attachment_caption")
+            if attachment_caption:
+                logger.info(f"Applying attachment caption to regenerated combined RFQ: {attachment_caption}")
+                for product in combined_data.get("products", []):
+                    entities = product.get("entities", {})
+                    if not entities.get("remarks"):
+                        entities["remarks"] = attachment_caption
+                # Update the combined schema with the new remarks
+                if "remarks" in combined_data["combined_schema"] and not combined_data["combined_schema"]["remarks"]:
+                    combined_data["combined_schema"]["remarks"] = attachment_caption
+                # Clear the caption after applying
+                del session.workflow_state["attachment_caption"]
+
             combined_schema = RFQValidationSchema(**combined_data["combined_schema"])
 
             # Generate updated confirmation

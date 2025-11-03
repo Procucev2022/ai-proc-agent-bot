@@ -202,10 +202,14 @@ class WebhookHealthMonitorService:
             await self._close_session()
             health_logger.info(f"{self.worker_id}: Health monitoring stopped")
     
-    def stop_monitoring(self):
-        """Stop the health monitoring loop."""
+    async def stop_monitoring(self):
+        """Stop the health monitoring loop and cleanup resources."""
         health_logger.info(f"{self.worker_id}: Stopping health monitoring")
         self._running = False
+
+        # Close aiohttp session
+        await self._close_session()
+        health_logger.info(f"{self.worker_id}: Cleaned up HTTP session")
     
     async def _try_acquire_leader_lock(self) -> bool:
         """

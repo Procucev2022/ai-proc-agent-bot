@@ -39,6 +39,7 @@ class ExcelValidationService:
     # Business validation rules
     REQUIRED_FIELDS = ['ItemDescription', 'Quantity']
     INVALID_UOM_VALUES = {'each', 'per item', 'item', 'piece'}
+    SPECIAL_CHARS_PATTERN = r'[^a-zA-Z0-9\s\-\._()&]'
     
     async def validate_excel_file_from_url(self, file_url: str, filename: str) -> Dict[str, Any]:
         """
@@ -394,32 +395,87 @@ class ExcelValidationService:
             if len(df.columns) > self.MAX_COLUMNS:
                 logger.warning(f"Excel has {len(df.columns)} columns, processing first {self.MAX_COLUMNS} only")
             
-            # Check 3: Special characters in headers
+            # Check 3: Handle files where headers are in first data row
             headers = df.columns.astype(str).tolist()
-            problematic_headers = []
-            for header in headers:
-                if re.search(self.SPECIAL_CHARS_PATTERN, header):
-                    problematic_headers.append(header)
+            actual_headers = [h for h in headers if not h.startswith('Unnamed:')]
             
-            if problematic_headers:
-                return {
-                    'valid': False,
-                    'error': f"Column headers contain special characters: {', '.join(problematic_headers[:3])}. Please use only letters, numbers, spaces, and basic punctuation.",
-                    'error_type': 'invalid_header_characters'
-                }
+            # If we only have Unnamed columns, check if headers are in first data row
+            if not actual_headers:
+                # Check first few rows for potential headers
+                potential_headers = None
+                header_row_index = -1
+                
+                for i in range(min(3, len(df))):
+                    row_values = df.iloc[i].dropna().astype(str).tolist()
+                    # Check if this row looks like headers (text values, not all numeric)
+                    if len(row_values) >= 2:
+                        text_count = sum(1 for val in row_values if val and not val.replace('.', '').replace(',', '').isdigit() and val.lower() not in ['nan', 'none', ''])
+                        if text_count >= 2:  # At least 2 text-like values
+                            potential_headers = row_values
+                            header_row_index = i
+                            break
+                
+                if potential_headers:
+                    # Found headers in data row - validate them for special characters
+                    problematic_headers = []
+                    for header in potential_headers:
+                        if header and re.search(self.SPECIAL_CHARS_PATTERN, header):
+                            problematic_headers.append(header)
+                    
+                    if problematic_headers:
+                        return {
+                            'valid': False,
+                            'error': f"Column headers in row {header_row_index + 1} contain special characters: {', '.join(problematic_headers[:3])}. Please use only letters, numbers, spaces, and basic punctuation in your headers.",
+                            'error_type': 'invalid_header_characters'
+                        }
+                    
+                    # Headers look good, continue validation
+                    logger.info(f"Found valid headers in row {header_row_index + 1}: {potential_headers}")
+                else:
+                    # No meaningful headers found anywhere
+                    has_data = any(len(df.iloc[i].dropna()) >= 2 for i in range(min(3, len(df))))
+                    
+                    if not has_data:
+                        return {
+                            'valid': False,
+                            'error': "Excel file appears to have no data. Please ensure your Excel contains data rows.",
+                            'error_type': 'no_data_found'
+                        }
+                    else:
+                        return {
+                            'valid': False,
+                            'error': "Your Excel file doesn't have proper column headers. Please add clear column headers (e.g., 'Item Name', 'Quantity', 'Description') and reupload.",
+                            'error_type': 'missing_headers'
+                        }
+            else:
+                # Validate column-level headers for special characters
+                problematic_headers = []
+                for header in actual_headers:
+                    if re.search(self.SPECIAL_CHARS_PATTERN, header):
+                        problematic_headers.append(header)
+                
+                if problematic_headers:
+                    return {
+                        'valid': False,
+                        'error': f"Column headers contain special characters: {', '.join(problematic_headers[:3])}. Please use only letters, numbers, spaces, and basic punctuation.",
+                        'error_type': 'invalid_header_characters'
+                    }
             
             # Check 4: Non-English headers detection
-            non_english_headers = []
-            for header in headers:
-                if header and not re.match(r'^[a-zA-Z0-9\s\-\._()]+$', header):
-                    non_english_headers.append(header)
+            headers_to_check = actual_headers if actual_headers else (potential_headers if 'potential_headers' in locals() else [])
             
-            if len(non_english_headers) > len(headers) // 2:  # More than half are non-English
-                return {
-                    'valid': False,
-                    'error': "Excel headers appear to be in a non-English language. Please use English column headers.",
-                    'error_type': 'non_english_headers'
-                }
+            if headers_to_check:
+                non_english_headers = []
+                for header in headers_to_check:
+                    if header and not re.match(r'^[a-zA-Z0-9\s\-\._()]+$', header):
+                        non_english_headers.append(header)
+                
+                if len(non_english_headers) > len(headers_to_check) // 2:  # More than half are non-English
+                    return {
+                        'valid': False,
+                        'error': "Excel headers appear to be in a non-English language. Please use English column headers.",
+                        'error_type': 'non_english_headers'
+                    }
             
 
             
@@ -436,9 +492,10 @@ class ExcelValidationService:
             
         except Exception as e:
             logger.error(f"Error validating data quality: {e}")
+            logger.error(f"DataFrame info: shape={getattr(df, 'shape', 'unknown')}, columns={getattr(df, 'columns', 'unknown')}")
             return {
                 'valid': False,
-                'error': "Failed to validate Excel data quality.",
+                'error': "Failed to validate Excel data quality. Please ensure your file is a valid Excel format.",
                 'error_type': 'data_quality_error'
             }
     
@@ -446,12 +503,24 @@ class ExcelValidationService:
         """Validate data types and detect common issues."""
         issues = []
         
+        # Skip data type validation for files with Unnamed columns (headers likely in data)
+        unnamed_cols = [col for col in df.columns if 'Unnamed:' in str(col)]
+        if len(unnamed_cols) == len(df.columns):
+            # All columns are unnamed - this is likely a file with headers in first row
+            # Skip mixed data type validation as it's expected
+            logger.info("Skipping data type validation for file with headers in data rows")
+            return issues
+        
         for col_idx, column in enumerate(df.columns):
             col_data = df[column].dropna()
             if col_data.empty:
                 continue
             
-            # Check for mixed data types in same column
+            # Skip mixed data type check for unnamed columns
+            if 'Unnamed:' in str(column):
+                continue
+            
+            # Check for mixed data types in same column (only for named columns)
             data_types = set()
             for value in col_data.head(10):  # Check first 10 non-null values
                 if pd.isna(value):
@@ -459,7 +528,7 @@ class ExcelValidationService:
                 if isinstance(value, (int, float)) and not pd.isna(value):
                     data_types.add('numeric')
                 elif isinstance(value, str):
-                    if value.strip().isdigit():
+                    if value.strip().replace('.', '').replace(',', '').isdigit():
                         data_types.add('numeric')
                     else:
                         data_types.add('text')
@@ -469,7 +538,7 @@ class ExcelValidationService:
             if len(data_types) > 1:
                 issues.append(f"Column '{column}' has mixed data types")
             
-            # Check for quantity-like columns with text values
+            # Check for quantity-like columns with text values (only for named columns)
             if any(keyword in str(column).lower() for keyword in ['qty', 'quantity', 'count', 'number']):
                 text_values = []
                 for value in col_data.head(5):

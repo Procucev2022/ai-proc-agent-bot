@@ -123,9 +123,21 @@ class ProfileSelectionService:
                                                 session: ConversationSession) -> Dict[str, Any]:
         """Handle user response to profile selection."""
         try:
+            # Check if we're in neutral greeting stage and handle buy/sell responses
+            if session.workflow_state.get('profile_selection_stage') == 'neutral_greeting':
+                return await self._handle_neutral_greeting_response(user_phone, message, session)
+
             # Check if awaiting registration type choice
             if session.workflow_state.get('awaiting_registration_type'):
                 return await self._handle_registration_type_response(user_phone, message, session)
+
+            # Check if handling buyer intent with no accounts
+            if session.workflow_state.get('profile_selection_stage') == 'buyer_intent_no_accounts':
+                return await self._handle_buyer_no_accounts_response(user_phone, message, session)
+
+            # Check if handling seller intent with no accounts
+            if session.workflow_state.get('profile_selection_stage') == 'seller_intent_no_accounts':
+                return await self._handle_seller_no_accounts_response(user_phone, message, session)
 
             # Check if handling intent mismatch response
             if session.workflow_state.get('profile_selection_stage') == 'intent_mismatch':
@@ -242,154 +254,27 @@ class ProfileSelectionService:
                                        session: ConversationSession) -> Dict[str, Any]:
         """Handle Case 1: Neutral/Greeting Start."""
         try:
-            # Group profiles by role
-            buyer_profiles = [p for p in profiles if p.get('role') == 'buyer']
-            seller_profiles = [p for p in profiles if p.get('role') == 'seller']
-
-            logger.info(f"buyer profile:{buyer_profiles}, seller_profile:{seller_profiles}")
-
-            # Get user's name from the first available profile
-            user_name = self._extract_user_name(profiles)
-
-            logger.info(f"user_name:{user_name}")
-            
-            # Determine greeting based on profile count
-            if len(profiles) == 1 and user_name:
-                greeting = f"👋 Hi {user_name}!"
-            else:
-                greeting = "👋 Hi there!"
-
-            # Case: Only buyer profiles exist
-            if buyer_profiles and not seller_profiles:
-                message_parts = [
-                    greeting,
-                    "I can assist you with both Buying (creating or checking RFQs) and Selling (responding to buyer requests)",
-                    "",
-                    "Please select your profile to continue:"
-                ]
-
-                profile_options = []
-                option_num = 1
-
-                # Add all buyer profiles
-                for profile in buyer_profiles:
-                    message_parts.append(f" {option_num}. {profile['email']} — Buyer")
-                    profile_options.append({
-                        "number": option_num,
-                        "profile": profile,
-                        "display": f"{profile['email']} — Buyer"
-                    })
-                    option_num += 1
-
-                # Add registration option
-                message_parts.append(f" {option_num}. Add or Register a new profile (New Buyer or New Seller)")
-                profile_options.append({
-                    "number": option_num,
-                    "action": "register_new",
-                    "display": "Add or Register a new profile "
-                })
-
-                message_parts.extend([
-                    "",
-                    "Reply with the number corresponding to your account to continue."
-                ])
-
-            # Case: Only seller profiles exist
-            elif seller_profiles and not buyer_profiles:
-                message_parts = [
-                    greeting,
-                    "I can assist you with both Selling (responding to buyer requests) or Buying (creating or checking RFQs)",
-                    "",
-                    "Please select your profile to continue:"
-                ]
-
-                profile_options = []
-                option_num = 1
-
-                # Add all seller profiles
-                for profile in seller_profiles:
-                    message_parts.append(f" {option_num}. {profile['email']} — Seller")
-                    profile_options.append({
-                        "number": option_num,
-                        "profile": profile,
-                        "display": f"{profile['email']} — Seller"
-                    })
-                    option_num += 1
-
-                # Add registration option
-                message_parts.append(f" {option_num}. Add or Register a new profile (New Seller or New Buyer)")
-                profile_options.append({
-                    "number": option_num,
-                    "action": "register_new",
-                    "display": "Add or Register a new profile"
-                })
-
-                message_parts.extend([
-                    "",
-                    "Reply with the number corresponding to your account to continue."
-                ])
-
-            # Case: Both buyer and seller profiles exist
-            else:
-                message_parts = [
-                    greeting,
-                    "I can help you with both Buying (creating/checking RFQs) and Selling (responding to buyer requests).",
-                    "",
-                    "What would you like to start with today, buying or selling?",
-                    "",
-                    "Please select your profile to continue:"
-                ]
-
-                profile_options = []
-                option_num = 1
-
-                # Add buyer profiles
-                for profile in buyer_profiles:
-                    message_parts.append(f" {option_num}. {profile['email']} — Buyer")
-                    profile_options.append({
-                        "number": option_num,
-                        "profile": profile,
-                        "display": f"{profile['email']} — Buyer"
-                    })
-                    option_num += 1
-
-                # Add seller profiles
-                for profile in seller_profiles:
-                    message_parts.append(f" {option_num}. {profile['email']} — Seller")
-                    profile_options.append({
-                        "number": option_num,
-                        "profile": profile,
-                        "display": f"{profile['email']} — Seller"
-                    })
-                    option_num += 1
-
-                # Add registration option
-                message_parts.append(f" {option_num}. Add or Register a new profile (Buyer or Seller)")
-                profile_options.append({
-                    "number": option_num,
-                    "action": "register_new",
-                    "display": "Add or Register a new profile"
-                })
-
-                message_parts.extend([
-                    "",
-                    "Reply with the number corresponding to your account to continue."
-                ])
+            message = (
+                "Hi there! I’m QUA, your Procurement Partner.\n\n"
+                "How can I help you today?\n\n"
+                "Reply with the number or word:\n"
+                "1. Buy — Create or check my RFQs\n"
+                "2. Sell — View or respond to RFQs\n\n"
+                "(Just type 1 or 2, or type 'Buy' or 'Sell' to continue.)"
+            )
 
             # Store in session for later reference
             session.workflow_state = session.workflow_state or {}
-            session.workflow_state['profile_options'] = profile_options
             session.workflow_state['profile_selection_stage'] = 'neutral_greeting'
-
-            # Send profile selection message
-            full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message)
+            session.workflow_state['profiles'] = profiles
+            await self.whatsapp_service.send_message(user_phone, message)
 
             return {
                 "status": "profile_selection_sent",
                 "profiles_count": len(profiles),
                 "selection_type": "neutral_greeting"
             }
+
         except Exception as e:
             logger.error(f"Error handling neutral greeting for {user_phone}: {e}")
             return {"status": "error", "error": str(e)}
@@ -401,88 +286,79 @@ class ProfileSelectionService:
             buyer_profiles = [p for p in profiles if p['role'] == 'buyer']
 
             if not buyer_profiles:
-                # Case 7: Intent Mismatch - User wants to buy but only has Seller account(s)
-                return await self._handle_intent_mismatch(user_phone, session, "buyer", profiles)
-
-            if len(buyer_profiles) == 1:
-                # Single buyer profile - show selection options
-                profile = buyer_profiles[0]
-
-                message_parts = [
-                    "👋 Hi there! I understand you want to buy items. Please choose:"
-                ]
-
+                # No buyer accounts - show registration message
+                message_text = (
+                    "Got it! You'd like to buy or raise an RFQ.\n"
+                    "Let's check your registered Buyer profiles...\n\n"
+                    "I don't see any Buyer profiles linked to your number or email.\n"
+                    "Would you like to create one now?\n\n"
+                    "1.Register as Buyer\n"
+                    "2.Exit"
+                )
+                
                 profile_options = [
-                    {
-                        "number": 1,
-                        "profile": profile,
-                        "display": f"{profile['email']} — Buyer"
-                    },
-                    {
-                        "number": 2,
-                        "action": "register_buyer",
-                        "display": "Register a new Buyer account"
-                    }
+                    {"number": 1, "action": "register_buyer", "display": "Register as Buyer"},
+                    {"number": 2, "action": "exit", "display": "Exit"}
                 ]
-
-                message_parts.append(f" 1. {profile['email']} — Buyer")
-                message_parts.append(f" 2. Register a new Buyer account")
-
-                # Store context in session
+                
                 session.workflow_state = session.workflow_state or {}
-                session.workflow_state['profile_selection_stage'] = 'buyer_intent'
+                session.workflow_state['profile_selection_stage'] = 'buyer_intent_no_accounts'
                 session.workflow_state['profile_options'] = profile_options
-                session.workflow_state['original_message'] = message
-                session.workflow_state['original_intent'] = intent_result
-
-                full_message = "\n".join(message_parts)
-                await self.whatsapp_service.send_message(user_phone, full_message)
-
+                
+                await self.whatsapp_service.send_message(user_phone, message_text)
+                
                 return {
-                    "status": "single_buyer_profile_selection_presented",
+                    "status": "buyer_no_accounts_message_sent",
                     "options_count": len(profile_options)
                 }
 
-            else:
-                # Multiple buyer profiles - show selection
-                message_parts = [
-                    "👋 Hi there! I understand you want to buy items. Please choose which Buyer profile you'd like to continue with:\n"
-                ]
+            # Buyer accounts exist - show them
+            message_parts = [
+                "Got it! You'd like to buy or raise an RFQ.",
+                "Let's check your registered Buyer profiles...",
+                "",
+                "Here are your Buyer profiles:"
+            ]
 
-                profile_options = []
-                option_num = 1
+            profile_options = []
+            option_num = 1
 
-                for profile in buyer_profiles:
-                    message_parts.append(f" {option_num}. {profile['email']} — Buyer")
-                    profile_options.append({
-                        "number": option_num,
-                        "profile": profile,
-                        "display": f"{profile['email']} — Buyer"
-                    })
-                    option_num += 1
-
-                # Add registration option
-                message_parts.append(f" {option_num}. Register a new Buyer account")
+            for profile in buyer_profiles:
+                message_parts.append(f"{option_num} {profile['email']}")
                 profile_options.append({
                     "number": option_num,
-                    "action": "register_buyer",
-                    "display": "Register a new Buyer account"
+                    "profile": profile,
+                    "display": profile['email']
                 })
+                option_num += 1
 
-                # Store context in session
-                session.workflow_state = session.workflow_state or {}
-                session.workflow_state['profile_selection_stage'] = 'buyer_intent'
-                session.workflow_state['profile_options'] = profile_options
-                session.workflow_state['original_message'] = message
-                session.workflow_state['original_intent'] = intent_result
+            # Add registration option
+            message_parts.append(f"{option_num}️Add or Register a new Buyer profile")
+            profile_options.append({
+                "number": option_num,
+                "action": "register_buyer",
+                "display": "Add or Register a new Buyer profile"
+            })
 
-                full_message = "\n".join(message_parts)
-                await self.whatsapp_service.send_message(user_phone, full_message)
+            message_parts.append("")
+            message_parts.append("Reply with the number corresponding to your account to continue.")
 
-                return {
-                    "status": "buyer_profile_selection_presented",
-                    "options_count": len(profile_options)
-                }
+            # Store context in session
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state['profile_selection_stage'] = 'buyer_intent'
+            session.workflow_state['profile_options'] = profile_options
+            session.workflow_state['original_message'] = message
+
+            print("orignal intent", intent_result)
+            session.workflow_state['original_intent'] = intent_result
+
+            full_message = "\n".join(message_parts)
+            await self.whatsapp_service.send_message(user_phone, full_message)
+
+            return {
+                "status": "buyer_profile_selection_presented",
+                "options_count": len(profile_options)
+            }
 
         except Exception as e:
             logger.error(f"Error handling buyer intent for {user_phone}: {e}")
@@ -498,62 +374,50 @@ class ProfileSelectionService:
                 # Case 7: Intent Mismatch - User wants to sell but only has Buyer account(s)
                 return await self._handle_intent_mismatch(user_phone, session, "seller", profiles)
 
-            if len(seller_profiles) == 1:
-                # Single seller profile - auto-select and proceed
-                profile = seller_profiles[0]
 
-                message_parts = [
-                    f"👋 Hi there! You’d like to sell items — great!",
-                    f"Continuing with your Seller profile ({profile['email']}).",
-                ]
 
-                await self.whatsapp_service.send_message(user_phone, "\n".join(message_parts))
+            # Multiple seller profiles - show selection
+            message_parts = [
+                "Got it! You’d like to sell or respond to RFQs.",
+                "Let’s check your registered Seller profiles...",
+                "",
+                "Here are your Seller profiles:"
+            ]
 
-                # Set active profile and proceed to seller flow
-                return await self._set_active_profile_and_proceed(
-                    user_phone, profile, session, message, "sell_something"
-                )
+            profile_options = []
+            option_num = 1
 
-            else:
-                # Multiple seller profiles - show selection
-                message_parts = [
-                    "👋 Hi there! I understand you want to sell items. Please choose which Seller profile you'd like to continue with:\n\n"
-                ]
-
-                profile_options = []
-                option_num = 1
-
-                for profile in seller_profiles:
-                    message_parts.append(f" {option_num}. {profile['email']} — Seller")
-                    profile_options.append({
-                        "number": option_num,
-                        "profile": profile,
-                        "display": f"{profile['email']} — Seller"
-                    })
-                    option_num += 1
-
-                # Add registration option
-                message_parts.append(f" {option_num}. Register a new Seller account")
+            for profile in seller_profiles:
+                message_parts.append(f" {option_num}. {profile['email']} — Seller")
                 profile_options.append({
                     "number": option_num,
-                    "action": "register_seller",
-                    "display": "Register a new Seller account"
+                    "profile": profile,
+                    "display": f"{profile['email']} — Seller"
                 })
+                option_num += 1
 
-                # Store context in session
-                session.workflow_state = session.workflow_state or {}
-                session.workflow_state['profile_selection_stage'] = 'seller_intent'
-                session.workflow_state['profile_options'] = profile_options
-                session.workflow_state['original_message'] = message
-                session.workflow_state['original_intent'] = intent_result
+            # Add registration option
+            message_parts.append(f" {option_num}. Register a new Seller account")
+            profile_options.append({
+                "number": option_num,
+                "action": "register_seller",
+                "display": "Register a new Seller account"
+            })
 
-                full_message = "\n".join(message_parts)
-                await self.whatsapp_service.send_message(user_phone, full_message)
+            # Store context in session
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state['profile_selection_stage'] = 'seller_intent'
+            session.workflow_state['profile_options'] = profile_options
+            session.workflow_state['original_message'] = message
+            session.workflow_state['original_intent'] = intent_result
 
-                return {
-                    "status": "seller_profile_selection_presented",
-                    "options_count": len(profile_options)
-                }
+            full_message = "\n".join(message_parts)
+            await self.whatsapp_service.send_message(user_phone, full_message)
+
+            return {
+                "status": "seller_profile_selection_presented",
+                "options_count": len(profile_options)
+            }
 
         except Exception as e:
             logger.error(f"Error handling seller intent for {user_phone}: {e}")
@@ -943,14 +807,12 @@ class ProfileSelectionService:
                     # Check if authentication was successful or if we should show buying options anyway
                     if result.get('status') == 'profile_selected_and_authenticated' or result.get(
                             'redirect_to_main_flow'):
-                        # Show buying options with buttons
-                        buying_message = (
-                            f"Got it, you'd like to buy items!\n"
-                            f"Let's continue with your Buyer profile ({profile['email']}).\n"
-                            f"What would you like to do?"
-                        )
+                        # Show buying options with the exact buttons requested
+                        buying_message = f"Perfect! Continuing with your Buyer profile ({profile['email']}).\nWhat would you like to do?"
+                        
                         buttons_config = [
                             {"id": "create_rfq", "title": "Create new RFQ"},
+                            {"id": "rfq_status", "title": "Check RFQ Status"},
                             {"id": "search_bfs", "title": "Search Stocks"}
                         ]
 
@@ -969,9 +831,36 @@ class ProfileSelectionService:
                         # Authentication failed or requires additional steps
                         return result
                 elif selection_stage == 'seller_intent':
-                    return await self._set_active_profile_and_proceed(
+                    # Set active profile and show seller options
+                    result = await self._set_active_profile_and_proceed(
                         user_phone, profile, session, original_message, "sell_something"
                     )
+
+                    # Check if authentication was successful or if we should show seller options anyway
+                    if result.get('status') == 'profile_selected_and_authenticated' or result.get(
+                            'redirect_to_main_flow'):
+                        # Show seller options with the exact buttons requested
+                        seller_message = f"Perfect! Continuing with your Seller profile ({profile['email']}).\nWhat would you like to do?"
+                        
+                        buttons_config = [
+                            {"id": "rfq_status", "title": "Check RFQs Status"},
+                            {"id": "contact_support", "title": "Contact Support"}
+                        ]
+
+                        await self.whatsapp_service.send_configurable_buttons(
+                            user_phone,
+                            seller_message,
+                            buttons_config
+                        )
+
+                        return {
+                            "status": "seller_options_presented",
+                            "user_type": profile['role'],
+                            "email": profile['email']
+                        }
+                    else:
+                        # Authentication failed or requires additional steps
+                        return result
                 elif selection_stage == 'rfq_status_check':
                     return await self._set_active_profile_and_proceed(
                         user_phone, profile, session, "check RFQ status", "rfq_status_check"
@@ -1094,8 +983,8 @@ class ProfileSelectionService:
                     name = name.title()
                 else:
                     name = 'there'
-                menu_message = f"Let's continue with your Buyer profile ({email})."
-                header = f"Hi {name}! What would you like to do today?"
+                menu_message = f"Perfect! Continuing with your Buyer profile ({email}).\nWhat would you like to do?"
+                header = f"Hi {name}!"
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
@@ -1142,7 +1031,7 @@ class ProfileSelectionService:
                 "Would you like to register as:\n"
                 "1. Buyer (to create RFQs and purchase items)\n"
                 "2. Seller (to respond to RFQs and sell items)\n\n"
-                "Please let me know which type of account you'd like to create."
+                "Please reply with the number (1, 2) or type Buyer, Seller, or Exit to continue."
             )
 
             await self.whatsapp_service.send_message(user_phone, message)
@@ -1732,4 +1621,125 @@ class ProfileSelectionService:
 
         except Exception as e:
             logger.error(f"Error showing all profiles for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+
+    async def _handle_neutral_greeting_response(self, user_phone: str, message: str,
+                                                session: ConversationSession) -> Dict[str, Any]:
+        """Handle user response to neutral greeting (1/2 or Buy/Sell)."""
+        try:
+            message_lower = message.strip().lower()
+            profiles = session.workflow_state.get('profiles', [])
+
+            # Check for buy intent (1 or buy)
+            if message_lower in ['1', 'buy', 'buyer','buying'] or 'buy' in message_lower:
+                # Clear neutral greeting stage
+                session.workflow_state.pop('profile_selection_stage', None)
+                session.workflow_state.pop('profiles', None)
+                # Create fake intent result for buyer intent
+                intent_result = {'intent': 'buy_something', 'confidence': 100}
+                return await self._handle_buyer_intent(user_phone, profiles, message, session, intent_result)
+
+            # Check for sell intent (2 or sell)
+            elif message_lower in ['2', 'sell', 'seller'] or 'sell' in message_lower:
+                # Clear neutral greeting stage
+                session.workflow_state.pop('profile_selection_stage', None)
+                session.workflow_state.pop('profiles', None)
+                # Create fake intent result for seller intent
+                intent_result = {'intent': 'sell_something', 'confidence': 100}
+                return await self._handle_seller_intent(user_phone, profiles, message, session, intent_result)
+
+            else:
+                # Invalid response - show the greeting again
+                retry_message = (
+                    "Please choose a valid option:\n\n"
+                    "1 - Buy (create or check RFQs)\n"
+                    "2 - Sell (view or respond to RFQs)\n\n"
+                    "Reply with 1 or 2, or type Buy or Sell to continue."
+                )
+                await self.whatsapp_service.send_message(user_phone, retry_message)
+
+                return {
+                    "status": "neutral_greeting_retry_sent"
+                }
+
+        except Exception as e:
+            logger.error(f"Error handling neutral greeting response for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+
+    async def _handle_buyer_no_accounts_response(self, user_phone: str, message: str,
+                                                 session: ConversationSession) -> Dict[str, Any]:
+        """Handle user response when they want to buy but have no buyer accounts."""
+        try:
+            message_lower = message.strip().lower()
+            profile_options = session.workflow_state.get('profile_options', [])
+
+            # Parse user selection
+            selected_option = await self._parse_profile_selection(message, profile_options)
+
+            if selected_option:
+                action = selected_option.get('action')
+
+                if action == 'register_buyer':
+                    # Clear the current stage and redirect to buyer registration
+                    session.workflow_state.pop('profile_selection_stage', None)
+                    session.workflow_state.pop('profile_options', None)
+                    return await self._redirect_to_buyer_registration(user_phone, session, message)
+
+                elif action == 'exit':
+                    return await self._handle_exit_action(user_phone, session)
+
+            # Invalid selection - show options again
+            retry_message = (
+                "Please select a valid option:\n\n"
+                "1 - Register as Buyer\n"
+                "2 - Exit\n\n"
+                "Reply with the number corresponding to your choice."
+            )
+            await self.whatsapp_service.send_message(user_phone, retry_message)
+
+            return {
+                "status": "buyer_no_accounts_retry_sent"
+            }
+
+        except Exception as e:
+            logger.error(f"Error handling buyer no accounts response for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+
+    async def _handle_seller_no_accounts_response(self, user_phone: str, message: str,
+                                                  session: ConversationSession) -> Dict[str, Any]:
+        """Handle user response when they want to sell but have no seller accounts."""
+        try:
+            message_lower = message.strip().lower()
+            profile_options = session.workflow_state.get('profile_options', [])
+
+            # Parse user selection
+            selected_option = await self._parse_profile_selection(message, profile_options)
+
+            if selected_option:
+                action = selected_option.get('action')
+
+                if action == 'register_seller':
+                    # Clear the current stage and redirect to seller registration
+                    session.workflow_state.pop('profile_selection_stage', None)
+                    session.workflow_state.pop('profile_options', None)
+                    return await self._redirect_to_seller_registration(user_phone, session, message)
+
+                elif action == 'exit':
+                    return await self._handle_exit_action(user_phone, session)
+
+            # Invalid selection - show options again
+            retry_message = (
+                "Please select a valid option:\n\n"
+                "1 - Register as Seller\n"
+                "2 - Exit\n\n"
+                "Reply with the number corresponding to your choice."
+            )
+            await self.whatsapp_service.send_message(user_phone, retry_message)
+
+            return {
+                "status": "seller_no_accounts_retry_sent"
+            }
+
+        except Exception as e:
+            logger.error(f"Error handling seller no accounts response for {user_phone}: {e}")
             return {"status": "error", "error": str(e)}

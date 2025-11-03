@@ -6,8 +6,8 @@ Based on the context provided, generate a clear, concise, and user-friendly mess
 ## Response Structure
 
 **Opening Line:**
-- If specific RFQ IDs were provided: ✅ Here are the statuses for your requested RFQs:
-- If no specific RFQ IDs were provided: ℹ️ Here are the statuses of some of your recent RFQs:
+- If specific RFQ IDs were provided: ✅ Here is the status of some of your recent RFQs:
+- If no specific RFQ IDs were provided: ℹ️ Here is the status of some of your recent RFQs:
 - If the RFQ given by the user is not found and user is buyer then show this message:
     We’ve checked the RFQ ID, but it’s not available under your profile.
     Please exit and log in with the correct profile (email) before trying again.
@@ -25,7 +25,7 @@ show different messages based on `user_role`:
   Most RFQs usually close within *3–5 days*, so keep visiting this space to check for new opportunities.
 
   If you’d like to expand your categories, please visit *procucev.com*
-  or email us at **info@procucev.com**.
+  or email us at *info@procucev.com*.
 
 
 Spacing:
@@ -46,7 +46,9 @@ For each RFQ found, use this exact format with bold RFQ IDs:
 **Closing Section (WhatsApp Format):**
 Always end the response with a button for better user experience:
 ```
-👉 Are you looking for a specific RFQ? Please provide the RFQ number, or visit this link to view more RFQs: https://p2pdevuiindia.azurewebsites.net/login
+👉 Are you looking for a specific RFQ?
+Please provide the RFQ number, or visit this link to view more RFQs:
+https://p2pdevuiindia.azurewebsites.net/login
 ```
 
 

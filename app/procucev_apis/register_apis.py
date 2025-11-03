@@ -9,20 +9,20 @@ import logging
 from typing import Dict, Any
 from datetime import datetime
 
-from app.procucev_apis.procucev_api_client import ProcucevAPIClient
+from app.procucev_apis.procucev_api_client import get_procucev_api_client
 
 logger = logging.getLogger(__name__)
 
 class RegisterAPIService:
     """
     Service for handling authentication and registration operations.
-    
+
     Provides methods for user authentication, registration, OTP verification,
     and approval status management for both buyers and sellers.
     """
-    
+
     def __init__(self):
-        self.api_client = ProcucevAPIClient()
+        self.api_client = get_procucev_api_client()
         
     async def register_seller(self, seller_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -40,7 +40,7 @@ class RegisterAPIService:
                 api_title="register_seller"
             )
 
-            if response["status"] == "Success" and response['statusCode'] == 200:
+            if response.get("success") and response.get("status") == "Success" and response.get('statusCode') == 200:
                 return {
                     "statusCode": response.get("statusCode", "200"),
                     "message": response.get("data", {}).get("message", "Registration successful"),
@@ -50,13 +50,26 @@ class RegisterAPIService:
                     "type": response.get("data", None)
                 }
             else:
+                # Handle API client error responses (including 409)
+                status_code = response.get("status_code", response.get("statusCode", "400"))
+                error_data = response.get("data", {})
+                
+                # Extract message from different possible locations
+                message = (
+                    error_data.get("message") or 
+                    response.get("message") or 
+                    error_data.get("error") or 
+                    "Registration failed"
+                )
+                
                 return {
-                    "statusCode": response.get("statusCode", "400"),
-                    "message": response.get("data", {}).get("message", "Registration failed"),
-                    "errorMsg": response.get("data", {}).get("error", None),
+                    "statusCode": status_code,
+                    "status_code": status_code,  # Also include for consistency
+                    "message": message,
+                    "errorMsg": error_data.get("error", None),
                     "timestamp": response.get("timestamp", None),
                     "status": response.get("status", "Failure"),
-                    "type": response.get("data", None)
+                    "type": error_data
                 }
                         
         except Exception as e:
@@ -86,7 +99,7 @@ class RegisterAPIService:
                 api_title="register_buyer"
             )
 
-            if response["status"] == "Success" and response['statusCode'] == 200:
+            if response.get("success") and response.get("status") == "Success" and response.get('statusCode') == 200:
                 return {
                     "statusCode": response.get("statusCode", "200"),
                     "message": response.get("data", {}).get("message", "Registration successful"),
@@ -96,13 +109,26 @@ class RegisterAPIService:
                     "type": response.get("data", None)
                 }
             else:
+                # Handle API client error responses (including 409)
+                status_code = response.get("status_code", response.get("statusCode", "400"))
+                error_data = response.get("data", {})
+                
+                # Extract message from different possible locations
+                message = (
+                    error_data.get("message") or 
+                    response.get("message") or 
+                    error_data.get("error") or 
+                    "Registration failed"
+                )
+                
                 return {
-                    "statusCode": response.get("statusCode", "400"),
-                    "message": response.get("data", {}).get("message", "Registration failed"),
-                    "errorMsg": response.get("data", {}).get("error", None),
+                    "statusCode": status_code,
+                    "status_code": status_code,  # Also include for consistency
+                    "message": message,
+                    "errorMsg": error_data.get("error", None),
                     "timestamp": response.get("timestamp", None),
                     "status": response.get("status", "Failure"),
-                    "type": response.get("data", None)
+                    "type": error_data
                 }
                         
         except Exception as e:

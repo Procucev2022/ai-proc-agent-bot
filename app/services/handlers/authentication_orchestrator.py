@@ -137,13 +137,20 @@ class AuthenticationOrchestrator:
 
 
 
+            # CRITICAL: Check if user is responding to an existing profile selection FIRST
+            if session.workflow_state.get('profile_selection_stage'):
+                logger.info(f"User is responding to existing profile selection (stage: {session.workflow_state.get('profile_selection_stage')})")
+                return await self.profile_selection_service.handle_profile_selection_response(
+                    user_phone, message_content, session
+                )
+
             # Step 5: For ambiguous or low confidence intents, use profile selection service
             if intent == "ambiguous" or confidence < 50:
                 logger.info(f"Using profile selection service for ambiguous/low confidence intent: {intent} ({confidence}%)")
                 return await self.profile_selection_service.handle_profile_selection(
                     user_phone, message_content, session, intent_result
                 )
-            
+
             # Step 6: Use profile selection service for clear intents
             if intent in ["buy_something", "sell_something", "rfq_status_check", "general_inquiry", "register_account"]:
                 logger.info(f"Using profile selection service for intent: {intent} ({confidence}%)")
@@ -186,17 +193,21 @@ class AuthenticationOrchestrator:
             logger.info(f"Starting authentication flow for intent: {intent} (confidence: {confidence}%)")
             
             # Ensure we have a valid intent before proceeding
-            valid_intents = ["buy_something", "sell_something", "general_inquiry", "modification_request", 
-                           "confirmation_response", "rfq_status_check", "ambiguous"]
-            
+            valid_intents = ["buy_something", "sell_something", "general_inquiry", "modification_request",
+                           "confirmation_response", "rfq_status_check", "ambiguous", "register_account"]
+
+            # Workflow control intents should not trigger clarification - they're handled elsewhere
+            workflow_control_intents = ["exit_system", "cancel_workflow", "support"]
+
             # For user-initiated switches (from auth/reg switch choices), accept even low confidence
             user_switch_in_progress = session.workflow_state.get("pending_auth_reg_switch") is not None
 
-            if intent not in valid_intents or (confidence < 50 and intent != "ambiguous"):
-                logger.warning(f"Invalid or low confidence intent in auth flow: {intent} ({confidence}%)")
-                # Allow user-initiated switches and role switches to proceed
-                if not (role_switch_in_progress or user_switch_in_progress):
-                    return await self._handle_auth_clarification_request(user_phone, message_content)
+            if intent not in valid_intents and intent not in workflow_control_intents:
+                if (confidence < 50 and intent != "ambiguous"):
+                    logger.warning(f"Invalid or low confidence intent in auth flow: {intent} ({confidence}%)")
+                    # Allow user-initiated switches and role switches to proceed
+                    if not (role_switch_in_progress or user_switch_in_progress):
+                        return await self._handle_auth_clarification_request(user_phone, message_content)
             
             # Handle ambiguous intent - show all available emails with buyer/seller labels
             if intent == "ambiguous":
@@ -370,9 +381,10 @@ class AuthenticationOrchestrator:
                     user_phone, message_content, session, stored_intent_result
                 )
             else:
-                # No valid auth stage - use stored intent and start new flow
-                logger.info(f"No valid auth stage, starting new flow with stored intent")
-                stored_intent_result = session.workflow_state.get("current_intent_result", {"intent": "general_inquiry", "confidence": 50})
+                # No valid auth stage - use current intent and start new flow
+                logger.info(f"No valid auth stage, starting new flow with current intent")
+                # Use the current intent_result parameter (fresh classification), not stale session data
+                stored_intent_result = intent_result
 
     
 

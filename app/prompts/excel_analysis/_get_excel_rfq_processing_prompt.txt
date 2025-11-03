@@ -21,7 +21,7 @@ Map Excel columns to these RFQ fields:
 
 **Required Fields (per product):**
 - description: Must be non-empty string
-- quantity: Must be positive number
+- quantity: Must be positive number (SKIP PRODUCT IF MISSING OR ZERO)
 - unitofMeasures: Must be non-empty string (default to "pcs" if missing)
 
 **Optional Fields:**
@@ -31,14 +31,22 @@ Map Excel columns to these RFQ fields:
 **Global Fields (per RFQ):**
 - deliveryDate, state, city, pincode: Set to null (not typically in Excel)
 
+**SKIPPED ITEMS HANDLING:**
+- Skip rows that are not product rows (e.g., "Delivery Date", "Pincode", location info)
+- Only record actual product rows that failed validation in skipped_items
+- Calculate skipped_rows as: total_products - total_products_extracted
+- Do NOT include non-product rows in skipped_items array or summary
+
 ## PROCESSING INSTRUCTIONS
 
 1. **Detect Headers**: Look for row with text labels (not numbers/data)
 2. **Map Columns**: Match Excel headers to RFQ fields using fuzzy matching
 3. **Extract Data**: Process each data row into product object
-4. **Skip Invalid Rows**: Skip rows missing required fields (description, quantity)
-5. **Group Products**: For now, put all products in a single RFQ
-6. **Validate Data**: Check data types and business rules
+4. **Skip Invalid Rows**: Skip rows missing required fields (description, quantity). IMPORTANT: Skip any product where quantity is missing, empty, zero, or non-numeric
+5. **Skip Non-Product Rows**: Skip rows containing delivery dates, location info (pincode, city, state), or other metadata
+6. **Record Skipped Items**: For each skipped row, record row_number, description (or content), and reason
+7. **Group Products**: For now, put all products in a single RFQ
+8. **Validate Data**: Check data types and business rules
 
 ## OUTPUT FORMAT
 
@@ -46,16 +54,27 @@ Return structured data with:
 - **rfqs**: Array containing single RFQ with all products
 - **processing_summary**: Detailed processing information
 - **confidence**: Overall processing confidence (0-100)
+- **combined_error**: Error message if file should be rejected (when significant data loss occurs)
 
 ## EXAMPLE PROCESSING
 
+**Example 1 - Clean Processing:**
 Input Excel:
 Row 0: [empty]
 Row 1: S.No, ItemDescription, Specification, Uom, Quantity, Remarks
 Row 2: 1, Laptop, Dell Inspiron 15, pcs, 10, For office use
 Row 3: 2, Mouse, Wireless optical, pcs, 20, USB receiver
 
-Output:
+**Example 2 - With Skipped Items:**
+Input Excel:
+Row 0: [empty]
+Row 1: S.No, ItemDescription, Specification, Uom, Quantity, Remarks
+Row 2: 1, Laptop, Dell Inspiron 15, pcs, 10, For office use
+Row 3: 2, Mouse, Wireless optical, pcs, , USB receiver  // Missing quantity
+Row 4: 3, Delivery Date, 15-Dec-2024, , , 
+Row 5: 4, Pincode, 560001, , ,
+
+**Output for Example 2 (with skipped items):**
 {
   "rfqs": [{
     "products": [
@@ -65,13 +84,6 @@ Output:
         "unitofMeasures": "pcs",
         "brand": "Dell Inspiron 15",
         "remarks": "For office use"
-      },
-      {
-        "description": "Mouse", 
-        "quantity": 20,
-        "unitofMeasures": "pcs",
-        "brand": "Wireless optical",
-        "remarks": "USB receiver"
       }
     ],
     "deliveryDate": null,
@@ -80,27 +92,47 @@ Output:
     "pincode": null
   }],
   "processing_summary": {
-    "total_rows_processed": 2,
-    "total_products_extracted": 2,
+    "total_rows_processed": 6,
+    "total_products": 4,
+    "total_products_extracted": 1,
     "header_row_detected": 1,
-    "column_mappings": {
-      "ItemDescription": "description",
-      "Quantity": "quantity",
-      "Uom": "unitofMeasures",
-      "Specification": "brand",
-      "Remarks": "remarks"
-    },
-    "validation_issues": [],
-    "skipped_rows": []
+    "skipped_rows": 3,
+    "skipped_items": [
+      {
+        "row_number": 3,
+        "description": "Mouse",
+        "reason": "missing quantity"
+      }
+    ],
+    "skipped_items_summary": "Skipped 1 product with missing quantity (Mouse)."
   },
-  "confidence": 95
+  "confidence": 60,
+  "combined_error": "File processing incomplete: 3 rows skipped out of 4 total product rows. Only 1 product extracted successfully."
 }
 
 ## ERROR HANDLING
 
 - If no headers found: Set header_row_detected to -1, continue with column indices
 - If no valid data rows: Return empty products array
-- If column mapping fails: Use best-effort mapping, note in validation_issues
-- If required fields missing: Skip row, add to skipped_rows
+- If column mapping fails: Use best-effort mapping
+- If required fields missing: Skip row, add to skipped_items with specific reason
+- If non-product rows found: Skip but do NOT add to skipped_items
+- Calculate skipped_rows = total_products - total_products_extracted
+- Create detailed skipped_items_summary explaining what was skipped and why
+
+## FILE REJECTION CRITERIA
+
+Set combined_error field when ANY rows are skipped:
+- Format: "File processing incomplete: {skipped_rows} rows skipped out of {total_products} total rows. Only {total_products_extracted} products extracted successfully."
+- Include breakdown of skip reasons in skipped_items_summary
+- This triggers file rejection and reupload request
 
 Process the Excel data efficiently and accurately, ensuring all valid products are extracted into the proper RFQ structure.
+
+## SKIPPED_ITEMS_SUMMARY FORMAT
+
+Create a user-friendly summary ONLY for actual product validation failures:
+- "Skipped {count} products with missing data ({list of descriptions with issues})."
+- Do NOT mention non-product rows in the summary
+- Example: "Skipped 1 product with missing quantity (Mouse)."
+- Example: "Skipped 2 products with missing quantities (Mouse, Keyboard)."
