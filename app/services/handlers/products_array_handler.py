@@ -473,17 +473,19 @@ class ProductsArrayHandler:
             }
         
         # Generate confirmation (either optional fields were completed or user declined)
-        summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
+        summary_content = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
             "user_message": message,
             "extracted_entities": product_info["entities"]
         }, chat_summaries)
 
-        summary_response += (
-            "\n\nPlease review the above details carefully. "
+        # Add prefix and suffix to the summary
+        summary_response = (
+            f"RFQ Summary:\n\n{summary_content}\n\n"
+            "Please review the above details carefully. "
             'If everything is correct, kindly click "Confirm" to proceed with the RFQ creation. '
             'If you wish to make any changes, click "Add or Modify."'
         )
-        
+
         # Send confirmation message with buttons
         buttons_config = [
             {"id": "confirm_rfq", "title": "Confirm"},
