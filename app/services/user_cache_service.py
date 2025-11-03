@@ -127,32 +127,33 @@ class UserCacheService:
             logger.error(f"Error filtering cached user data for {phone_number}: {e}")
             return None
 
-    async def clear_user_data(self, phone_number: str) -> bool:
+    async def clear_user_data(self, phone_number: str, preserve_meaningful_message: bool = True) -> bool:
         """
         Clear cached user data for a phone number.
-        Preserves meaningful message if it exists.
 
         Args:
             phone_number: User's phone number
+            preserve_meaningful_message: If True, preserves meaningful message for post-auth processing.
+                                        If False (e.g., on exit), completely clears everything.
         """
         try:
             cache_key = self._get_cache_key(phone_number)
 
-            # Get existing cache to preserve meaningful message
+            # Get existing cache to preserve meaningful message if requested
             cache_data = await self.redis_service.get(cache_key, as_json=True)
 
             if cache_data and isinstance(cache_data, dict):
-                # Preserve meaningful message fields
-                meaningful_msg = cache_data.get("meaningful_message")
-                meaningful_intent = cache_data.get("meaningful_intent_result")
-                meaningful_cached_at = cache_data.get("meaningful_message_cached_at")
+                # Preserve meaningful message fields only if requested
+                meaningful_msg = cache_data.get("meaningful_message") if preserve_meaningful_message else None
+                meaningful_intent = cache_data.get("meaningful_intent_result") if preserve_meaningful_message else None
+                meaningful_cached_at = cache_data.get("meaningful_message_cached_at") if preserve_meaningful_message else None
 
                 # Delete the cache
                 await self.redis_service.delete(cache_key)
                 logger.info(f"Cleared cached user data for {phone_number}")
 
-                # Restore meaningful message if it existed
-                if meaningful_msg and meaningful_intent:
+                # Restore meaningful message if it existed and preservation is requested
+                if preserve_meaningful_message and meaningful_msg and meaningful_intent:
                     new_cache = {
                         "phone_number": phone_number,
                         "meaningful_message": meaningful_msg,
@@ -162,6 +163,9 @@ class UserCacheService:
                     }
                     await self.redis_service.set(cache_key, new_cache, ex=43200)
                     logger.info(f"Preserved meaningful message after clearing user data for {phone_number}")
+                else:
+                    if not preserve_meaningful_message:
+                        logger.info(f"Completely cleared all user data including meaningful message for {phone_number}")
 
                 return True
             else:

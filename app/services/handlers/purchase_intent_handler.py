@@ -13,7 +13,6 @@ from app.services.whatsapp_service import WhatsAppService
 from app.services.workflow_manager import WorkflowManager
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.utils.datetime_utils import utc_now
-from app.utils.rfq_message_formatter import format_rfq_response_message
 
 logger = logging.getLogger(__name__)
 
@@ -140,57 +139,25 @@ class PurchaseIntentHandler:
             return await self._handle_error_response(e, user.phone_number)
     
     async def _handle_modification_clarification(self, user: User, session: ConversationSession,
-                                               message: str, entity_result: Dict, chat_summaries: list) -> Dict[str, Any]:
+                                               _message: str, _entity_result: Dict, _chat_summaries: list) -> Dict[str, Any]:
         """Handle modification intent that requires clarification."""
         print(f"PurchaseIntentHandler: Modification intent detected but missing values, generating clarification")
         
-        # Build context for modification clarification
-        modification_context = {
-            "conversation_stage": "modification_clarification",
-            "workflow_type": "modification_request", 
-            "existing_products": entity_result.get("existing_products", []),
-            "user_message": message,
-            "modification_context": True
-        }
+        # --- Generate clarification message for modification context ---
+        # Don't show collected information, just show modification instructions
+        clarification_questions = (
+            "If you'd like to make any updates, please use these keywords:\n"
+            "• New – to add new items (e.g., New 10 motors)\n"
+            "• Remove – to delete an item (e.g., Remove desktop)\n"
+            "• Change – to modify quantity, delivery date, or location (e.g., Change laptops to 20, Change date to 30 Dec)\n\n"
+            "If everything looks good, just click Continue to proceed."
+        )
 
-
-
-        # --- Generate AI-powered clarification response for modification context ---
-        existing_products = modification_context.get("existing_products", [])
-        if existing_products:
-            entities = existing_products[0].get("entities", {})
-            global_fields = {
-                "deliveryDate": entities.get("deliveryDate"),
-                "city": entities.get("city"),
-                "state": entities.get("state"),
-                "pincode": entities.get("pincode")
-            }
-
-            # Generate formatted summary from extracted entities + global fields
-            # format_rfq_response_message expects a list of entities, not a single entity
-            summary_message = format_rfq_response_message(
-                extracted_entities=[entities],  # Wrap in list
-                global_fields=global_fields,
-                missing_fields=[]
-            )
-
-
-            # Build final clarification message with helpful examples
-            clarification_questions = (
-                f"{summary_message}\n\n"
-                "If you feel you need to modify any details or if you missed adding any item, you can do it now.\n\n"
-                "Here are a few examples you can follow:\n\n"
-                "• To add an item you missed:  Add 10 motors\n"
-                "• To remove an item you added:  Remove Desktop\n"
-                "• To change the quantity of an item:  Change laptops to 20\n"
-                "• To change the delivery date:  Change delivery date to 30 Dec\n"
-                "• To change the delivery location:  Change delivery location to 411005"
-            )
-
-        else:
-            clarification_questions = "What would you like to change it to?"
-
-        await self.whatsapp_service.send_message(user.phone_number, clarification_questions)
+        await self.whatsapp_service.send_configurable_buttons(
+            recipient_id=user.phone_number,
+            body=clarification_questions,
+            buttons_config=[{"id": "confirm_no_changes", "title": "Continue"}]
+        )
 
         await self.session_manager.save_session(session, WorkflowType.rfq_creation)
         
@@ -254,7 +221,11 @@ class PurchaseIntentHandler:
             }
 
         # If no new entities but not a modification request, send general clarification
-        clarification_message = "Could you provide more details about what you need? For example, what product and how many?"
+        clarification_message = (
+            "Please share the items for your RFQ with name, brand/specs (if any), and quantity — you can add multiple items together in one message.\n\n"
+            "📝 Example:\n"
+            "Laptop Dell Inspiron - 5, Printer HP LaserJet - 2, Desktop HP 17\" - 10"
+        )
         await self.whatsapp_service.send_message(user.phone_number, clarification_message)
         await self.session_manager.save_session(session, WorkflowType.rfq_creation)
 

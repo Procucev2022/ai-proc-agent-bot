@@ -70,6 +70,10 @@ class Settings:
         # Redis configuration
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self.redis_expiry_seconds = int(os.getenv("REDIS_EXPIRY_SECONDS", "43200"))  # 12 hours default for token inactivity
+
+        # Redis session storage configuration
+        self.redis_session_storage_enabled = os.getenv("REDIS_SESSION_STORAGE_ENABLED", "true").lower() == "true"
+        self.redis_session_ttl_seconds = int(os.getenv("REDIS_SESSION_TTL_SECONDS", "1800"))  # 30 minutes default
         
         # Security configuration
         self.secret_key = os.getenv("SECRET_KEY")
@@ -210,15 +214,15 @@ class Settings:
         self.webhook_health_check_interval_seconds = int(
             os.getenv("WEBHOOK_HEALTH_CHECK_INTERVAL_SECONDS", "300")
         )
-        
+
         self.webhook_api_response_threshold_seconds = float(
             os.getenv("WEBHOOK_API_RESPONSE_THRESHOLD_SECONDS", "5.0")
         )
-        
+
         self.webhook_api_timeout_seconds = float(
             os.getenv("WEBHOOK_API_TIMEOUT_SECONDS", "10.0")
         )
-        
+
         self.webhook_failure_grace_period_seconds = int(
             os.getenv("WEBHOOK_FAILURE_GRACE_PERIOD_SECONDS", "900")
         )

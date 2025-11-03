@@ -247,7 +247,7 @@ class SummarizationHelpers:
                 'workflow_type': str(session.workflow_type),
                 'outcome': session.outcome.value if hasattr(session.outcome, 'value') else str(session.outcome) if session.outcome else None,
                 'session_duration_minutes': session_duration,
-                'rfq_ids': [session.rfq_id] if session.rfq_id else [],
+                'rfq_ids': session.rfq_ids if hasattr(session, 'rfq_ids') and session.rfq_ids else ([session.rfq_id] if hasattr(session, 'rfq_id') and session.rfq_id else []),
                 
                 # Conversation context
                 'conversation_messages': conversation_messages,
@@ -282,7 +282,7 @@ class SummarizationHelpers:
                 'workflow_type': str(session.workflow_type),
                 'outcome': session.outcome.value if hasattr(session.outcome, 'value') else str(session.outcome) if session.outcome else None,
                 'extracted_entities': rich_entities,
-                'rfq_ids': [session.rfq_id] if session.rfq_id else []
+                'rfq_ids': session.rfq_ids if hasattr(session, 'rfq_ids') and session.rfq_ids else ([session.rfq_id] if hasattr(session, 'rfq_id') and session.rfq_id else [])
             }
     
     @staticmethod
@@ -390,6 +390,8 @@ class SummarizationHelpers:
                     self.interaction_metrics = data.get('interaction_metrics', {})
                     self.seller_responses = data.get('seller_responses', [])
                     self.rfq_metadata = data.get('rfq_metadata', {})
+                    # Add conversation_history to avoid AttributeError
+                    self.conversation_history = data.get('conversation_history', {})
             
             mock_session = MockSession(session_data)
             

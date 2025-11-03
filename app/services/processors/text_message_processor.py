@@ -100,7 +100,7 @@ class TextMessageProcessor:
             elif intent == "general_inquiry":
                 return await self._handle_general_inquiry(user, message)
             elif confidence < 0.5:
-                return await self._handle_clarification_request(user, message)
+                return await self._handle_clarification_request(user, message, session)
             else:
                 return await self._handle_fallback(user, message)
                 
@@ -150,17 +150,39 @@ class TextMessageProcessor:
             logger.error(f"Error handling general inquiry: {e}")
             return {"status": "error", "error": str(e)}
     
-    async def _handle_clarification_request(self, user: User, message: str) -> Dict[str, Any]:
-        """Handle ambiguous messages requiring clarification."""
+    async def _handle_clarification_request(self, user: User, message: str, session: ConversationSession) -> Dict[str, Any]:
+        """Handle ambiguous messages requiring clarification with retry counter."""
         try:
-            context = ChatServiceHelpers.build_context("clarification", message)
-            clarification_questions = [
-                "Could you be more specific about what you're looking for?",
-                "Are you looking to create an RFQ or check product availability?"
-            ]
-            response = await self.response_helpers.generate_clarification_response(clarification_questions, 0, context)
-            await self.whatsapp_service.send_message(user.phone_number, response)
-            return {"status": "clarification_sent"}
+            # Track retry count to prevent infinite loops
+            retry_count = session.workflow_state.get('clarification_retry_count', 0)
+
+            if retry_count >= 2:
+                # After 2 retries, gracefully exit
+                logger.warning(f"Clarification retry limit reached for {user.phone_number}, exiting gracefully")
+                apology_response = (
+                    "I'm sorry, I'm facing some technical difficulties understanding your request right now. "
+                    "Please try again later or contact support for assistance.\n\n"
+                    "Thank you for your patience!"
+                )
+                await self.whatsapp_service.send_message(user.phone_number, apology_response)
+
+                # Clear workflow state and reset counter
+                session.workflow_state['clarification_retry_count'] = 0
+                session.workflow_state = {"last_activity_at": session.workflow_state.get("last_activity_at")}
+
+                return {"status": "clarification_limit_reached_exit"}
+            else:
+                # Increment retry counter
+                session.workflow_state['clarification_retry_count'] = retry_count + 1
+
+                context = ChatServiceHelpers.build_context("clarification", message)
+                clarification_questions = [
+                    "Could you be more specific about what you're looking for?",
+                    "Are you looking to create an RFQ or check product availability?"
+                ]
+                response = await self.response_helpers.generate_clarification_response(clarification_questions, 0, context)
+                await self.whatsapp_service.send_message(user.phone_number, response)
+                return {"status": "clarification_sent"}
         except Exception as e:
             logger.error(f"Error handling clarification request: {e}")
             return {"status": "error", "error": str(e)}
