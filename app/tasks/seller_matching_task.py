@@ -1,4 +1,4 @@
-R"""
+"""
 Simple Migration Test - Real Data Integration
 
 Tests the complete migration from mock data to real seller data.
