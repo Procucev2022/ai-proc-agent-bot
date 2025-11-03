@@ -267,11 +267,30 @@ class ProductsArrayHandler:
 
         print(f"  All products have same missing fields: {all_same_missing}")
 
-        if all_same_missing and len(incomplete_products) > 1:
-            # All products missing the same fields - ask once for all
+        # Define product-specific fields that should always be asked per product
+        product_specific_fields = {'item_0_quantity', 'item_0_description', 'project_desc', 'preferred_brand'}
+
+        # Check if any missing field is product-specific
+        has_product_specific_missing = any(
+            field in product_specific_fields
+            for field in first_missing
+        )
+
+        print(f"  Has product-specific missing fields: {has_product_specific_missing}")
+
+        # Only use combined questions for delivery-related fields
+        # For product-specific fields (quantity, description, brand), always ask individually per product
+        if has_product_specific_missing:
+            # Missing product-specific fields - always ask individually per product
+            print(f"  Using individual questions because of product-specific fields")
+            await self._generate_individual_questions(incomplete_products, all_questions, all_missing_fields, has_date_error, total_products)
+        elif all_same_missing and len(incomplete_products) > 1:
+            # All products missing only the same delivery-related fields - ask once for all
+            print(f"  Using combined questions for delivery-related fields")
             await self._generate_combined_questions(incomplete_products, all_questions, all_missing_fields, has_date_error)
         else:
             # Products have different missing fields - ask individually
+            print(f"  Using individual questions due to different missing fields")
             await self._generate_individual_questions(incomplete_products, all_questions, all_missing_fields, has_date_error, total_products)
 
         # Remove duplicate questions while preserving order
