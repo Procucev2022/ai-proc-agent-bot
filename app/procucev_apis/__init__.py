@@ -10,14 +10,22 @@ from .email_service_api import EmailServiceAPI
 from .rfq_apis import RFQAPIService
 from .seller_apis import SellerAPIService
 from .category_apis import CategoryAPIService
-from .procucev_api_client import ProcucevAPIClient
+from .procucev_api_client import (
+    ProcucevAPIClient,
+    get_procucev_api_client,
+    init_procucev_api_client,
+    close_procucev_api_client
+)
 
 __all__ = [
     "AuthAPIService",
-    "RegisterAPIService", 
+    "RegisterAPIService",
     "EmailServiceAPI",
     "RFQAPIService",
     "SellerAPIService",
     "CategoryAPIService",
-    "ProcucevAPIClient"
+    "ProcucevAPIClient",
+    "get_procucev_api_client",
+    "init_procucev_api_client",
+    "close_procucev_api_client"
 ]

@@ -9,7 +9,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
-from app.procucev_apis.procucev_api_client import ProcucevAPIClient
+from app.procucev_apis.procucev_api_client import get_procucev_api_client
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +18,9 @@ class RFQAPIService:
     Service for handling RFQ operations.
     Provides methods for RFQ creation, status checking, and bulk operations.
     """
-    
+
     def __init__(self):
-        self.api_client = ProcucevAPIClient()
+        self.api_client = get_procucev_api_client()
 
     async def create_rfq(self, rfq_data: Dict[str, Any], user_id: str = None, org_id: str = None) -> Dict[str, Any]:
         """Create RFQ in GMT system."""

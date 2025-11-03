@@ -44,6 +44,16 @@ class ProductsArrayHandler:
                 products = await self._merge_with_existing_incomplete_products(existing_incomplete, products)
                 print(f"ProductsArrayHandler: After merging, processing {len(products)} total products")
 
+            # Apply attachment caption as remarks to all products if present
+            attachment_caption = session.workflow_state.get("attachment_caption")
+            if attachment_caption:
+                logger.info(f"Applying attachment caption as remarks to {len(products)} products: {attachment_caption}")
+                for product in products:
+                    if isinstance(product, dict) and not product.get("remarks"):
+                        product["remarks"] = attachment_caption
+                # Clear the caption after applying it
+                del session.workflow_state["attachment_caption"]
+
             # Track categories from all products in product_items
             await self._track_product_categories(session, products)
 
@@ -137,12 +147,9 @@ class ProductsArrayHandler:
         existing_incomplete = session.workflow_state.get("incomplete_products", [])
         if self._no_products_mentioned(products) and not existing_incomplete:
             no_products_message = (
-                "Please provide the item details in the following format:\n\n"
-                "• Delivery Location Pincode, Delivery Date, Item 1 Details, Item 2 Details …..Item n Details as per the example below \n"
-                "• Example:\n"
-                "  Pincode 411005, Delivery Date 22 Nov, Laptop Dell Inspiron - 5, Printer HP LaserJet - 2,  Desktops HP 17’’  -10\n\n"
-                "You can type these details here or attach an Excel file with columns for Item, Quantity, Brand, Specification, Delivery Date, and Pincode.\n\n"
-                "Once I have these details, I can help raise your RFQ and ensure timely processing."
+                "Please share the items for your RFQ with name, brand/specs (if any), and quantity — you can add multiple items together in one message.\n\n"
+                "📝 Example:\n"
+                "Laptop Dell Inspiron - 5, Printer HP LaserJet - 2, Desktop HP 17\" - 10"
             )
             await self.whatsapp_service.send_message(user.phone_number, no_products_message)
             return {
@@ -176,24 +183,40 @@ class ProductsArrayHandler:
         
         # Keep questions as a list for proper bullet formatting
         print(f"  Final clarification questions: {all_questions}")
-        
-        # Build context and send response directly
-        context = ChatServiceHelpers.build_context("clarification", message, {}, completeness,
-            missing_fields=all_missing_fields,
-            total_products=len(products),
-            incomplete_products=len(incomplete_products)
+
+        # Use consistent formatting with optional questions - show ALL products (complete + incomplete)
+        # Build combined list: complete products first, then incomplete
+        all_products_entities = []
+        for prod in complete_products:
+            all_products_entities.append(prod["entities"])
+        for prod in incomplete_products:
+            all_products_entities.append(prod["entities"])
+
+        # Extract global fields from first product (if available)
+        global_fields = {}
+        if all_products_entities:
+            first_entity = all_products_entities[0]
+            global_fields = {
+                'deliveryDate': first_entity.get('deliveryDate'),
+                'state': first_entity.get('state'),
+                'city': first_entity.get('city'),
+                'pincode': first_entity.get('pincode')
+            }
+
+        # Format response using the same formatter as optional questions for consistency
+        formatted_message = format_rfq_response_message(
+            all_products_entities,
+            global_fields,
+            all_questions,  # Pass mandatory questions instead of optional
+            include_optional=False  # This is for mandatory fields
         )
-        
-        # Add products to context for date validation error extraction
-        context["products"] = products
-        context["date_validation_error"] = date_validation_error
-        
-        # Add extracted entities to context for enhanced formatting
-        context["extracted_entities"] = [prod["entities"] for prod in incomplete_products]
-        
-        response = await self.response_helpers.generate_clarification_response(all_questions, completeness, context, chat_summaries)
-        await self.whatsapp_service.send_message(user.phone_number, response)
-        
+
+        await self.whatsapp_service.send_configurable_buttons(
+            recipient_id=user.phone_number,
+            body=formatted_message,
+            buttons_config=[{"id": "confirm_cancel", "title": "Restart"}]
+        )
+
         return {
             "status": "products_incomplete",
             "total_products": len(products),
@@ -607,7 +630,36 @@ class ProductsArrayHandler:
                 else:
                     existing_entities.append(existing_prod)
 
-            # Check if new products are re-extractions of existing products or genuinely new ones
+            # Check if we should use positional matching (similar to EntityService logic)
+            # Count existing products without descriptions
+            existing_without_desc_count = sum(1 for e in existing_entities if not (e.get("description") or e.get("projectDesc")))
+            new_with_desc_count = sum(1 for p in new_products if (p.get("description") or p.get("projectDesc")))
+
+            # Use positional matching if counts match and all existing lack descriptions
+            use_positional_matching = (
+                existing_without_desc_count > 0 and
+                new_with_desc_count > 0 and
+                existing_without_desc_count == len(existing_entities) and  # ALL existing lack descriptions
+                new_with_desc_count == len(new_products) and  # ALL new have descriptions
+                existing_without_desc_count == new_with_desc_count  # Counts match
+            )
+
+            if use_positional_matching:
+                print(f"ProductsArrayHandler: Using positional matching - {len(existing_entities)} existing products without descriptions, {len(new_products)} new products with descriptions")
+                # Positionally merge: match by index order
+                merged_products = []
+                for i, (existing_entity, new_product) in enumerate(zip(existing_entities, new_products)):
+                    merged_entity = existing_entity.copy()
+                    print(f"ProductsArrayHandler: Positionally merging new product '{new_product.get('description')}' into existing product at index {i}")
+                    for key, value in new_product.items():
+                        if value is not None:
+                            merged_entity[key] = value
+                    merged_products.append(merged_entity)
+
+                print(f"ProductsArrayHandler: Final positionally merged result: {len(merged_products)} total products")
+                return merged_products
+
+            # Standard merge logic (description-based matching)
             new_products_with_descriptions = []
             supplementary_data = {}
 
@@ -663,8 +715,9 @@ class ProductsArrayHandler:
                     print(f"ProductsArrayHandler: Merging re-extracted data for product: {existing_desc}")
 
                     # Merge all non-None fields from re-extracted product
+                    # For re-extracted products, we ALWAYS update fields (even if they exist) because this is a modification
                     for field, value in reextracted_product.items():
-                        if value is not None and (merged_entity.get(field) is None or merged_entity.get(field) == ""):  # Only fill if field is None or empty
+                        if value is not None:  # Update any non-None value from re-extraction
                             merged_entity[field] = value
                             print(f"ProductsArrayHandler: Applied {field}={value} to {existing_desc}")
                     

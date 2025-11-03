@@ -8,7 +8,7 @@ credit checking, email sending, and subscription management.
 import logging
 from typing import Dict, Any, List
 
-from app.procucev_apis.procucev_api_client import ProcucevAPIClient
+from app.procucev_apis.procucev_api_client import get_procucev_api_client
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +17,9 @@ class SellerAPIService:
     Service for handling seller-specific operations.
     Provides methods for RFQ management, credits, emails, and subscriptions.
     """
-    
+
     def __init__(self):
-        self.api_client = ProcucevAPIClient()
+        self.api_client = get_procucev_api_client()
         
     async def fetch_active_rfqs(self, org_id: str) -> Dict[str, Any]:
         """Fetch active RFQs based on seller's category."""

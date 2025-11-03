@@ -9,20 +9,20 @@ import logging
 from typing import Dict, Any
 from datetime import datetime
 
-from app.procucev_apis.procucev_api_client import ProcucevAPIClient
+from app.procucev_apis.procucev_api_client import get_procucev_api_client
 
 logger = logging.getLogger(__name__)
 
 class RegisterAPIService:
     """
     Service for handling authentication and registration operations.
-    
+
     Provides methods for user authentication, registration, OTP verification,
     and approval status management for both buyers and sellers.
     """
-    
+
     def __init__(self):
-        self.api_client = ProcucevAPIClient()
+        self.api_client = get_procucev_api_client()
         
     async def register_seller(self, seller_data: Dict[str, Any]) -> Dict[str, Any]:
         """

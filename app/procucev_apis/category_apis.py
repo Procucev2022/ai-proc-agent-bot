@@ -8,7 +8,7 @@ with the GMT Procucev backend.
 import logging
 from typing import Dict, Any
 
-from app.procucev_apis.procucev_api_client import ProcucevAPIClient
+from app.procucev_apis.procucev_api_client import get_procucev_api_client
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +17,9 @@ class CategoryAPIService:
     Service for handling category and division operations.
     Provides methods for fetching divisions and categories.
     """
-    
+
     def __init__(self):
-        self.api_client = ProcucevAPIClient()
+        self.api_client = get_procucev_api_client()
         
     async def get_divisions(self) -> Dict[str, Any]:
         """Get all available divisions."""
