@@ -69,11 +69,15 @@
         "properties": {
           "total_rows_processed": {
             "type": "integer",
-            "description": "Total number of data rows processed"
+            "description": "Total number of rows read from the Excel file (including metadata)"
+          },
+          "total_products": {
+            "type": "integer",
+            "description": "Rows identified as valid for RFQ creation (exclude blank and metadata-only rows)"
           },
           "total_products_extracted": {
             "type": "integer",
-            "description": "Total number of products extracted"
+            "description": "Number of identified rows successfully extracted into RFQ products"
           },
           "header_row_detected": {
             "type": "integer",
@@ -81,11 +85,11 @@
           },
           "skipped_rows": {
             "type": "integer",
-            "description": "Number of rows skipped due to missing quantity or other validation issues"
+            "description": "Number of rows skipped from total_products (calculated as total_products - total_products_extracted)"
           },
           "skipped_items": {
             "type": "array",
-            "description": "Details of items that were skipped during processing",
+            "description": "Details of actual product rows that failed validation (do NOT include non-product rows)",
             "items": {
               "type": "object",
               "properties": {
@@ -95,11 +99,11 @@
                 },
                 "description": {
                   "type": "string",
-                  "description": "Item description if available"
+                  "description": "Item description if available, or content from the row"
                 },
                 "reason": {
                   "type": "string",
-                  "description": "Reason why this item was skipped (e.g., 'missing quantity', 'empty row', 'invalid data')"
+                  "description": "Reason why this item was skipped (e.g., 'not a product row', 'missing quantity', 'empty row', 'invalid data')"
                 }
               },
               "required": ["row_number", "description", "reason"],
@@ -108,10 +112,10 @@
           },
           "skipped_items_summary": {
             "type": "string",
-            "description": "Combined summary statement of all skipped items with details for user-friendly rejection message and reupload guidance"
+            "description": "Summary of only actual product validation failures (exclude non-product rows from summary)"
           }
         },
-        "required": ["total_rows_processed", "total_products_extracted", "header_row_detected", "skipped_rows", "skipped_items", "skipped_items_summary"],
+        "required": ["total_rows_processed", "total_products", "total_products_extracted", "header_row_detected", "skipped_rows", "skipped_items", "skipped_items_summary"],
         "additionalProperties": false
       },
       "confidence": {
