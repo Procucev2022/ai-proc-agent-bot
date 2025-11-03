@@ -27,3 +27,4 @@ celery_app.config_from_object('app.celery_config')
 
 if __name__ == '__main__':
     celery_app.start()
+

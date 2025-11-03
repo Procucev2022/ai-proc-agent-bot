@@ -1,5 +1,5 @@
 """
-Seller matching background task.
+Simple Migration Test - Real Data Integration
 
 This task processes categorized RFQs and performs seller matching using
 the existing SellerRecommendationService.

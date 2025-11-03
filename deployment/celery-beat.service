@@ -1,0 +1,20 @@
+[Unit]
+Description=Celery Beat for Procurement Agent
+After=network.target redis.service celery-worker.service
+Requires=redis.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/path/to/procucev_proc_agent
+Environment="PATH=/path/to/procucev_proc_agent/venv/bin"
+ExecStart=/path/to/procucev_proc_agent/venv/bin/celery -A app.celery_app beat \
+    --loglevel=info \
+    --logfile=/var/log/celery/beat.log \
+    --pidfile=/var/run/celery/beat.pid
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
