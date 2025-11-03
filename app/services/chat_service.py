@@ -866,6 +866,9 @@ class ChatService:
             # Update the last user message in conversation history with intent data
             self._update_last_user_message_with_intent(session, intent, confidence)
 
+            # Check workflow state flags early for use in intent handling
+            has_excel_confirmation_pending = bool(session.workflow_state.get("awaiting_excel_confirmation"))
+
             # Handle FAQ requests FIRST - can interrupt any workflow (highest priority after exit)
             if intent == "faq" and confidence > 0.6:
                 logger.info(f"FAQ intent detected with {confidence}% confidence - handling immediately (interrupting workflow)")
@@ -877,13 +880,23 @@ class ChatService:
                 logger.info(f"Cancel workflow intent detected with {confidence}% confidence")
                 user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
 
+                # Check if user is in Excel confirmation - handle directly
+                if has_excel_confirmation_pending:
+                    logger.info("Cancel workflow during Excel confirmation - treating as Excel cancellation")
+                    return await self._handle_excel_confirmation_response(user, session, "cancel")
+
                 # Trigger cancel confirmation flow (will send buttons or handle confirmation)
                 cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message)
                 await self.session_manager.save_session(session, session.workflow_type)
                 return cancel_result
 
-            # Handle exit intent - but check for pending optional fields first
+            # Handle exit intent - but check for pending optional fields and Excel confirmation first
             if intent == "exit_system" and confidence > 50:
+                # Check if user is in Excel confirmation - handle directly
+                if has_excel_confirmation_pending:
+                    logger.info("Exit intent during Excel confirmation - treating as Excel cancellation")
+                    return await self._handle_excel_confirmation_response(user, session, "exit")
+
                 # Check if user has pending optional fields - they might mean "skip" instead of "exit"
                 has_pending_optional = bool(
                     session.workflow_state.get("pending_optional_rfq") or
@@ -989,8 +1002,9 @@ class ChatService:
                 session.workflow_state.get("pending_optional_rfq") or session.workflow_state.get(
                     "pending_optional_combined_rfq"))
             has_pending_attachment_decision = bool(session.workflow_state.get("awaiting_attachment_decision"))
+            # has_excel_confirmation_pending already defined above for early use in intent handling
             print(
-                f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}")
+                f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}, has_excel_confirmation_pending={has_excel_confirmation_pending}")
 
             # Debug logging for optional fields state
 
@@ -1049,8 +1063,9 @@ class ChatService:
                                                                                          self._should_use_summary_aware_extraction)
 
             # Check for intent switch during pending optional/confirmation states BEFORE handling them
+            # Note: Excel confirmation should not be interrupted by intent switches
             if (
-                    has_pending_optional or has_pending_confirmations) and await self.intent_switch_handler.should_handle_intent_switch(
+                    has_pending_optional or has_pending_confirmations) and not has_excel_confirmation_pending and await self.intent_switch_handler.should_handle_intent_switch(
                     session, intent, confidence, intent_result.get('context_analysis')):
                 result = await self.intent_switch_handler.handle_intent_switch_choice(user, session, message, intent,
                                                                                       intent_result)
@@ -1068,6 +1083,12 @@ class ChatService:
                 else:
                     await self.session_manager.save_session(session, WorkflowType.rfq_creation)
                     return result
+
+            # Handle Excel confirmation responses BEFORE pending confirmations
+            if session.workflow_state.get("awaiting_excel_confirmation"):
+                result = await self._handle_excel_confirmation_response(user, session, message)
+                # Excel confirmation handler returns specific statuses, don't continue to normal flow
+                return result
 
             # Handle pending confirmations (user responding to "Would you like to proceed?")
             if has_pending_confirmations:
@@ -1118,7 +1139,8 @@ class ChatService:
 
             if has_existing_data or has_incomplete_products:
                 # Check for intent switch during active workflow BEFORE continuing
-                if await self.intent_switch_handler.should_handle_intent_switch(session, intent, confidence, intent_result.get('context_analysis')):
+                # Note: Excel confirmation should not be interrupted by intent switches
+                if not has_excel_confirmation_pending and await self.intent_switch_handler.should_handle_intent_switch(session, intent, confidence, intent_result.get('context_analysis')):
                     result = await self.intent_switch_handler.handle_intent_switch_choice(user, session, message,
                                                                                           intent, intent_result)
                     await self.session_manager.save_session(session, self._get_workflow_or_default(session))
@@ -1464,37 +1486,69 @@ class ChatService:
 
     async def _handle_complete_excel(self, user: User, session: ConversationSession, processing_result: Dict) -> Dict[
         str, Any]:
-        """Handle complete Excel files by converting to products array and using existing multiple RFQ flow."""
+        """Handle complete Excel files with confirmation step before proceeding to multiple RFQ flow."""
         try:
-            # Convert Excel items to products array format for existing multiple RFQ flow
+            # Convert Excel items to products array format
             products = self._convert_excel_items_to_products_array(processing_result['items'])
             
-            logger.info(f"[EXCEL-TO-MULTIPLE-RFQ] Converted {len(processing_result['items'])} Excel items to {len(products)} products for multiple RFQ flow")
+            logger.info(f"[EXCEL-CONFIRMATION] Converted {len(processing_result['items'])} Excel items to {len(products)} products")
             
-            # Clear any existing workflow state to start fresh with multiple RFQ flow
-            session.workflow_state = session.workflow_state or {}
-            session.workflow_state.pop('incomplete_products', None)
-            session.workflow_state.pop('complete_products', None)
-            session.workflow_state.pop('excel_data', None)
+            # Validation: Check if all items were successfully extracted
+            total_rows = processing_result.get('total_items', len(processing_result['items']))
+            extracted_rows = len(products)
             
-            # Send acknowledgment message with processing summary
-            processing_summary = processing_result.get('processing_summary', {})
-            skipped_rows = processing_summary.get('skipped_rows', 0)
-            skipped_items_summary = processing_result.get('skipped_items_summary', '')
-            
-            if skipped_rows > 0:
-                success_message = f"✅ Successfully extracted {len(products)} valid items from your Excel file!\n\n📝 Processing Summary:\n{skipped_items_summary}"
+            if extracted_rows == total_rows:
+                # All items successfully extracted - proceed with confirmation flow
+                
+                # Save extracted data to session for confirmation flow
+                session.workflow_state = session.workflow_state or {}
+                session.workflow_state['excel_confirmation_data'] = {
+                    'products': products,
+                    'processing_result': processing_result,
+                    'filename': processing_result.get('filename', 'Excel file')
+                }
+                session.workflow_state['awaiting_excel_confirmation'] = True
+                
+                # Clear any existing workflow state to prepare for fresh flow
+                session.workflow_state.pop('incomplete_products', None)
+                session.workflow_state.pop('complete_products', None)
+                session.workflow_state.pop('excel_data', None)
+                
+                # Send confirmation message with processing summary
+                processing_summary = processing_result.get('processing_summary', {})
+                skipped_rows = processing_summary.get('skipped_rows', 0)
+                skipped_items_summary = processing_result.get('skipped_items_summary', '')
+                
+                if skipped_rows > 0:
+                    confirmation_message = f"✅ Successfully extracted {len(products)} valid items from your Excel file!\n\n📝 Processing Summary:\n{skipped_items_summary}\n\n🔄 **Excel Processing Confirmation**\n\nWould you like to proceed with creating RFQs for these items?"
+                else:
+                    confirmation_message = f"✅ Successfully extracted {len(products)} items from your Excel file!\n\n🔄 **Excel Processing Confirmation**\n\nWould you like to proceed with creating RFQs for these items?"
+                
+                # Send confirmation message with buttons
+                buttons_config = [
+                    {"id": "confirm_excel", "title": "✅ Confirm"},
+                    {"id": "cancel_excel", "title": "❌ Cancel"}
+                ]
+                
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    confirmation_message,
+                    buttons_config,
+                    "Please choose:"
+                )
+                await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+                
+                return {"status": "excel_confirmation_sent", "awaiting_confirmation": True}
+                
             else:
-                success_message = f"✅ Successfully extracted {len(products)} items from your Excel file!"
-            
-            # Send the success message first
-            await self.session_manager.send_and_track_message(user.phone_number, success_message, session)
-            
-            
-            # Use existing products array handler for multiple RFQ creation
-            return await self.products_array_handler.handle_products_array(
-                user, session, f"Excel upload: {processing_result['filename']}", products
-            )
+                # Not all items extracted - handle as incomplete
+                logger.info(f"[EXCEL-INCOMPLETE] Only {extracted_rows}/{total_rows} items extracted - handling as incomplete")
+                excel_context = {
+                    'excel_data': processing_result,
+                    'completeness': (extracted_rows / total_rows) * 100 if total_rows > 0 else 0,
+                    'missing_fields': ['Some items could not be processed']
+                }
+                return await self._handle_incomplete_excel(user, session, excel_context)
 
         except Exception as e:
             logger.error(f"[EXCEL-COMPLETE-ERROR] Error handling complete Excel: {e}")
@@ -1512,6 +1566,116 @@ class ChatService:
             await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
             return await self._handle_incomplete_excel(user, session, {"excel_data": processing_result})
     
+    async def _handle_excel_confirmation_response(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+        """Handle user response to Excel confirmation message with AI-based confirmation and keyword fallback."""
+        try:
+            # First try AI-based confirmation parsing
+            ai_confirmation_result = None
+            try:
+                ai_confirmation_result = await self.openai_service.parse_confirmation_response(message)
+                logger.info(f"[EXCEL-CONFIRMATION-AI] AI parsed response: '{message}' -> '{ai_confirmation_result}'")
+            except Exception as e:
+                logger.warning(f"[EXCEL-CONFIRMATION-AI] AI parsing failed: {e}, falling back to keywords")
+            
+            # Determine confirmation status using AI result or keyword fallback
+            is_confirmed = None
+            is_cancelled = None
+            
+            if ai_confirmation_result == "yes":
+                is_confirmed = True
+                logger.info(f"[EXCEL-CONFIRMATION] AI detected confirmation: '{message}'")
+            elif ai_confirmation_result == "no":
+                is_cancelled = True
+                logger.info(f"[EXCEL-CONFIRMATION] AI detected cancellation: '{message}'")
+            else:
+                # Fallback to keyword matching
+                message_lower = message.lower().strip()
+                confirm_responses = ['confirm', 'yes', 'y', 'proceed', 'continue', 'ok']
+                cancel_responses = ['clear', 'cancel', 'exit', 'reupload', 'no', 'n', 'restart']
+                
+                if any(response in message_lower for response in confirm_responses):
+                    is_confirmed = True
+                    logger.info(f"[EXCEL-CONFIRMATION] Keyword detected confirmation: '{message}'")
+                elif any(response in message_lower for response in cancel_responses):
+                    is_cancelled = True
+                    logger.info(f"[EXCEL-CONFIRMATION] Keyword detected cancellation: '{message}'")
+            
+            if is_confirmed:
+                # User confirmed - proceed to multiple RFQ creation
+                logger.info(f"[EXCEL-CONFIRMED] User confirmed Excel processing - proceeding to RFQ creation")
+                
+                # Retrieve saved data
+                excel_data = session.workflow_state.get('excel_confirmation_data', {})
+                products = excel_data.get('products', [])
+                processing_result = excel_data.get('processing_result', {})
+                filename = excel_data.get('filename', 'Excel file')
+                
+                if not products:
+                    error_message = "❌ Sorry, I couldn't find the Excel data. Please upload your file again."
+                    await self.session_manager.send_and_track_message(user.phone_number, error_message, session)
+                    return {"status": "excel_data_missing"}
+                
+                # Clear confirmation state
+                session.workflow_state.pop('excel_confirmation_data', None)
+                session.workflow_state.pop('awaiting_excel_confirmation', None)
+                
+                # Use existing products array handler for multiple RFQ creation
+                return await self.products_array_handler.handle_products_array(
+                    user, session, f"Excel upload: {filename}", products
+                )
+                
+            elif is_cancelled:
+                # User cancelled - clear session and discard data
+                logger.info(f"[EXCEL-CANCELLED] User cancelled Excel processing - clearing session")
+                
+                # Clear all Excel-related data
+                session.workflow_state.pop('excel_confirmation_data', None)
+                session.workflow_state.pop('awaiting_excel_confirmation', None)
+                session.workflow_state.pop('incomplete_products', None)
+                session.workflow_state.pop('complete_products', None)
+                session.workflow_state.pop('excel_data', None)
+                
+                # Send cancellation message
+                cancel_message = "❌ Excel processing cancelled. Your data has been cleared. You can upload a new file or provide details through text."
+                await self.session_manager.send_and_track_message(user.phone_number, cancel_message, session)
+                await self.session_manager.save_session(session, WorkflowType.general_inquiry)
+                
+                return {"status": "excel_cancelled"}
+                
+            else:
+                # Unclear response - send clarification with buttons
+                clarification_message = "🤔 I didn't quite understand your response.\n\nPlease choose what you'd like to do:"
+                
+                buttons_config = [
+                    {"id": "confirm_excel", "title": "✅ Confirm"},
+                    {"id": "cancel_excel", "title": "❌ Cancel"}
+                ]
+                
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    clarification_message,
+                    buttons_config,
+                    "Excel Processing:"
+                )
+                return {"status": "excel_clarification_requested"}
+                
+        except Exception as e:
+            logger.error(f"[EXCEL-CONFIRMATION-ERROR] Error handling Excel confirmation response: {e}")
+            error_message = "⚠️ Sorry, there was an error processing your response.\n\nPlease choose what you'd like to do:"
+            
+            buttons_config = [
+                {"id": "confirm_excel", "title": "✅ Confirm"},
+                {"id": "cancel_excel", "title": "❌ Cancel"}
+            ]
+            
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                error_message,
+                buttons_config,
+                "Excel Processing:"
+            )
+            return {"status": "error", "error": str(e)}
+
     def _convert_excel_items_to_products_array(self, excel_items: List[Dict]) -> List[Dict]:
         """Convert Excel items to products array format for existing multiple RFQ flow."""
         products = []
@@ -2160,6 +2324,10 @@ class ChatService:
             exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
             return exit_result
 
+        # Handle Excel confirmation buttons
+        elif button_id in ["confirm_excel", "cancel_excel"]:
+            return await self._handle_excel_confirmation_button(user, session, button_id)
+        
         # Handle cancel workflow confirmation buttons
         elif button_id in ["confirm_cancel", "decline_cancel"]:
             return await self._handle_cancel_confirmation_button(user, session, button_id)
@@ -2231,6 +2399,24 @@ class ChatService:
             logger.error(f"Error handling authentication email button: {e}")
             return {"status": "error", "error": str(e)}
 
+    async def _handle_excel_confirmation_button(self, user: User, session: ConversationSession, button_id: str) -> Dict[str, Any]:
+        """Handle Excel confirmation button responses."""
+        logger.info(f"Excel confirmation button response from {user.phone_number}: {button_id}")
+        
+        try:
+            if button_id == "confirm_excel":
+                # User confirmed - simulate "confirm" response
+                return await self._handle_excel_confirmation_response(user, session, "confirm")
+            elif button_id == "cancel_excel":
+                # User cancelled - simulate "cancel" response
+                return await self._handle_excel_confirmation_response(user, session, "cancel")
+            else:
+                return {"status": "unknown_excel_button", "button_id": button_id}
+                
+        except Exception as e:
+            logger.error(f"Error handling Excel confirmation button: {e}")
+            return {"status": "error", "error": str(e)}
+    
     async def _handle_cancel_confirmation_button(self, user: User, session: ConversationSession, button_id: str) -> Dict[str, Any]:
         """Handle cancel workflow confirmation button responses."""
         logger.info(f"Cancel confirmation button response from {user.phone_number}: {button_id}")
