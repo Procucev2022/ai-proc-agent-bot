@@ -157,7 +157,9 @@ class ProductsArrayHandler:
                 "total_products": 0
             }
         
-        all_questions, all_missing_fields = await self._generate_clarification_questions(incomplete_products)
+        # Calculate total products for context (incomplete + complete)
+        total_products = len(incomplete_products) + len(complete_products)
+        all_questions, all_missing_fields = await self._generate_clarification_questions(incomplete_products, total_products)
         
         # Calculate overall completeness
         total_mandatory_fields = sum(len(prod["missing_fields"]) for prod in incomplete_products)
@@ -208,7 +210,8 @@ class ProductsArrayHandler:
             all_products_entities,
             global_fields,
             all_questions,  # Pass mandatory questions instead of optional
-            include_optional=False  # This is for mandatory fields
+            include_optional=False,  # This is for mandatory fields
+            excel_source=False  # Multi-product text flow, not Excel
         )
 
         await self.whatsapp_service.send_configurable_buttons(
@@ -223,7 +226,7 @@ class ProductsArrayHandler:
             "incomplete_products": len(incomplete_products)
         }
     
-    async def _generate_clarification_questions(self, incomplete_products: list) -> tuple:
+    async def _generate_clarification_questions(self, incomplete_products: list, total_products: int = 1) -> tuple:
         """Generate clarification questions for incomplete products."""
         all_questions = []
         all_missing_fields = []
@@ -255,7 +258,7 @@ class ProductsArrayHandler:
             await self._generate_combined_questions(incomplete_products, all_questions, all_missing_fields, has_date_error)
         else:
             # Products have different missing fields - ask individually
-            await self._generate_individual_questions(incomplete_products, all_questions, all_missing_fields, has_date_error)
+            await self._generate_individual_questions(incomplete_products, all_questions, all_missing_fields, has_date_error, total_products)
 
         # Remove duplicate questions while preserving order
         all_questions = list(dict.fromkeys(all_questions))
@@ -289,7 +292,7 @@ class ProductsArrayHandler:
 
             all_missing_fields.extend(incomplete_products[0]["missing_fields"])
     
-    async def _generate_individual_questions(self, incomplete_products: list, all_questions: list, all_missing_fields: list, has_date_error: bool = False):
+    async def _generate_individual_questions(self, incomplete_products: list, all_questions: list, all_missing_fields: list, has_date_error: bool = False, total_products: int = 1):
         """Generate individual questions for products with different missing fields."""
         # First, identify delivery fields that should always be asked for all products
         delivery_fields = {'delivery_date', 'delivery_location_0_state', 'delivery_location_0_city', 'delivery_location_0_pincode'}
@@ -344,21 +347,35 @@ class ProductsArrayHandler:
             prod = item["product"]
             missing_fields = item["missing_fields"]
 
-            product_desc = prod["entities"].get("description", f"Product {prod['index']}")
+            product_desc = prod["entities"].get("description", f"Product {prod['index']}").capitalize()
             rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(prod["entities"], self.openai_service)
             combined_questions = rfq_schema.get_combined_questions()
 
             print(f"  Processing product-specific questions for {product_desc}: {missing_fields}")
 
             if combined_questions["has_mandatory"]:
-                # Only add product prefix if there are multiple products
-                if len(incomplete_products) > 1:
-                    all_questions.append(f"For {product_desc}:")
                 # Filter out None values from mandatory questions and delivery date if there's a date error
                 mandatory_questions = [q for q in combined_questions["mandatory"] if q is not None and str(q).strip()]
                 if has_date_error:
                     mandatory_questions = [q for q in mandatory_questions if "delivery date" not in q.lower()]
-                all_questions.extend(mandatory_questions)
+
+                # Format questions with product name for multi-product scenarios
+                # Use total_products to check if there are multiple products in the entire request
+                if total_products > 1:
+                    # Convert questions to format: "Field for Product"
+                    for question in mandatory_questions:
+                        # Extract field name from question (e.g., "How many items do you need (quantity)?" -> "Quantity")
+                        if "quantity" in question.lower():
+                            all_questions.append(f"Quantity for {product_desc}")
+                        elif "description" in question.lower():
+                            all_questions.append(f"Description for {product_desc}")
+                        else:
+                            # For other questions, append as-is with product name
+                            all_questions.append(f"{question} for {product_desc}")
+                else:
+                    # Single product - use questions as-is
+                    all_questions.extend(mandatory_questions)
+
                 all_missing_fields.extend(missing_fields)
     
     async def _handle_complete_products(self, user: User, session: ConversationSession,
@@ -388,7 +405,7 @@ class ProductsArrayHandler:
                 'city': product_info["entities"].get('city'),
                 'pincode': product_info["entities"].get('pincode')
             }
-            formatted_message = format_rfq_response_message([product_info["entities"]], global_fields, optional_questions, include_optional=True)
+            formatted_message = format_rfq_response_message([product_info["entities"]], global_fields, optional_questions, include_optional=True, excel_source=False)
           
             optional_message = f"{formatted_message}\n\nIf yes, please upload them now — or click on ‘Continue’ to proceed."
             
@@ -495,7 +512,7 @@ class ProductsArrayHandler:
                     'city': first_entity.get('city'),
                     'pincode': first_entity.get('pincode')
                 }
-            formatted_message = format_rfq_response_message(all_products_entities, global_fields, optional_questions, include_optional=True)
+            formatted_message = format_rfq_response_message(all_products_entities, global_fields, optional_questions, include_optional=True, excel_source=False)
 
             optional_message = f"{formatted_message}\n\n If yes, please upload them now — or click on ‘Continue’ to proceed."
             

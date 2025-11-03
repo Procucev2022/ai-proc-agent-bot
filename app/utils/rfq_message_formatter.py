@@ -13,7 +13,8 @@ def format_rfq_response_message(
     global_fields: Dict[str, Any],
     missing_fields: List[str],
     include_optional: bool = False,
-    show_only_collected: bool = False
+    show_only_collected: bool = False,
+    excel_source: bool = False
 ) -> str:
     """
     Generate a conversational RFQ response message without angle brackets for qty/items.
@@ -25,6 +26,7 @@ def format_rfq_response_message(
         missing_fields: List of missing field descriptions
         include_optional: Whether to include optional questions
         show_only_collected: If True, only show collected info without asking for missing fields (for modification clarification)
+        excel_source: If True, this data came from an Excel upload (shows Excel-specific error messages)
     """
 
     items = []
@@ -138,69 +140,7 @@ def format_rfq_response_message(
     validation_errors = list(validation_errors)
     
     # --- Determine missing questions ---
-    questions = []
-    has_quantity = any(e.get('quantity') for e in extracted_entities)
-    has_date_error = any(e.get('date_validation_error') for e in extracted_entities)
-    has_pincode_error = any(e.get('pincode_validation_error') for e in extracted_entities)
-
-    # Check for missing descriptions
-    missing_descriptions = [e for e in extracted_entities if not e.get('description', '').strip()]
-    if missing_descriptions:
-        if len(extracted_entities) == 1:
-            questions.append("What is the item description?")
-        else:
-            questions.append("What are the item descriptions?")
-
-    # Check if this is from Excel upload (has multiple items) and missing quantities
-    is_excel_upload = len(extracted_entities) > 3  # Assume Excel if more than 3 items
-    missing_quantities = [e for e in extracted_entities if not e.get('quantity')]
-
-    if missing_quantities:
-        if is_excel_upload:
-            # For Excel uploads with missing quantities, suggest re-upload
-            missing_count = len(missing_quantities)
-            if missing_count == 1:
-                questions.append(f"Your Excel file is missing quantity for 1 item. Please add the missing quantity and reupload the file.")
-            else:
-                questions.append(f"Your Excel file is missing quantities for {missing_count} items. Please add the missing quantities and reupload the file.")
-        else:
-            # For manual input, ask for quantities
-            if len(items) == 1 and not has_quantity:
-                questions.append("Quantity")
-            elif len(items) > 1:
-                questions.append("Quantity?")
-
-    # Only ask for delivery date if no date error and no date provided
-    if not global_fields.get("deliveryDate") and not has_date_error:
-        questions.append("Delivery Date")
-    
-    # Only ask for location if no pincode error and location not complete
-    # if not all(global_fields.get(k) for k in ["city", "state", "pincode"]) and not has_pincode_error:
-    #     questions.append("What is the delivery location?")
-    # Extract global fields
-    city = global_fields.get("city")
-    state = global_fields.get("state")
-    pincode = global_fields.get("pincode")
-
-    # Check what's missing
-    missing_city = not city
-    missing_state = not state
-    missing_pincode = not pincode
-
-    # Only ask if no pincode error
-    if not has_pincode_error:
-
-        # If all missing → ask for overall location
-        if missing_city and missing_state and missing_pincode:
-            questions.append("Delivery Pincode?")
-
-        # Otherwise, ask for specific missing fields
-        elif missing_pincode:
-            questions.append("Delivery Pincode?")
-        elif missing_city:
-            questions.append("Delivery City?")
-        elif missing_state:
-            questions.append("Delivery State?")
+    questions = missing_fields if missing_fields else []
 
     # Combine validation errors and questions
     all_issues = validation_errors + questions
@@ -227,10 +167,10 @@ def format_rfq_response_message(
                     message += f"[ERROR] {error}\n"
         else:
             # For other validation issues, show as questions
-            message += " To proceed, please share the following information:\n\n"
+            message += "\n\nI couldn't get everything though — looks like we're still missing:\n\n"
             for issue in all_issues:
-                message += f"•  {issue}\n"
-            message += "\nOnce I have this, I can continue with your request."
+                message += f"{issue}\n"
+            message += "\nPlease share to proceed."
     elif include_optional and missing_fields:
         # If no mandatory issues but flag is set, add optional questions
         message += "\n\n" + "\n".join(missing_fields)

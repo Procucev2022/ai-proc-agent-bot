@@ -672,13 +672,13 @@ class ResponseHelpers:
                 }
             
             # Use the new conversational formatter
-            result = format_rfq_response_message(extracted_entities, global_fields, missing_fields)
-            
+            result = format_rfq_response_message(extracted_entities, global_fields, missing_fields, excel_source=False)
+
             logger.info(f"Formatted message result: {result[:100]}...")
             return result
         except Exception as e:
             logger.error(f"Error formatting RFQ entities message: {e}")
-            return format_rfq_response_message([], {}, missing_fields)
+            return format_rfq_response_message([], {}, missing_fields, excel_source=False)
 
     def _extract_date_validation_errors(self, context: dict) -> list:
         """Extract date validation error messages from context."""
