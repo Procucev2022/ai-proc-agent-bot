@@ -474,7 +474,7 @@ class ChatService:
                     "redirected_to_buyer_registration", "redirected_to_seller_registration",
                     "intent_mismatch_handled", "intent_mismatch_retry_sent", "new_user_registration_presented",
                     "buyer_options_presented", "seller_options_presented", "single_buyer_profile_selection_presented", "profile_selection_sent",
-                    "registration_type_clarification_sent", "verification_failed"
+                    "registration_type_clarification_sent", "verification_failed","filtered_buyer_profiles_shown"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
@@ -712,7 +712,8 @@ class ChatService:
                         "*Registration received—thank you!*\n\n"
                         "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
                         "Our team will get in touch shortly to complete the process, and once verified, "
-                        "you’ll be able to access your account and start raising RFQs."
+                        "you’ll be able to access your account and start raising RFQs.\n\n"
+                        "Thank you for choosing Procucev!"
                     )
 
                     verification_message = redirect_info.get("message", pending_message)
@@ -1519,15 +1520,27 @@ class ChatService:
                 skipped_rows = processing_summary.get('skipped_rows', 0)
                 skipped_items_summary = processing_result.get('skipped_items_summary', '')
                 
-                if skipped_rows > 0:
-                    confirmation_message = f"✅ Successfully extracted {len(products)} valid items from your Excel file!\n\n📝 Processing Summary:\n{skipped_items_summary}\n\n🔄 **Excel Processing Confirmation**\n\nWould you like to proceed with creating RFQs for these items?"
+                # Generate item list for display (show first 3 items, then +X more)
+                item_names = []
+                for i, product in enumerate(products[:3]):
+                    desc = product.get('description', f'Item{i+1}')
+                    item_names.append(desc)
+                
+                if len(products) > 3:
+                    remaining = len(products) - 3
+                    items_display = f"{', '.join(item_names)}, +{remaining} Items"
                 else:
-                    confirmation_message = f"✅ Successfully extracted {len(products)} items from your Excel file!\n\n🔄 **Excel Processing Confirmation**\n\nWould you like to proceed with creating RFQs for these items?"
+                    items_display = ', '.join(item_names)
+                
+                if skipped_rows > 0:
+                    confirmation_message = f"Successfully identified {items_display}.\nPlease click on Confirm to proceed for the RFQ creation\n\n(Type 'Exit' to anytime to end the chat)\n\n📝"
+                else:
+                    confirmation_message = f"Successfully identified {items_display}.\nPlease click on Confirm to proceed for the RFQ creation\n\n(Type 'Exit' to anytime to end the chat)"
                 
                 # Send confirmation message with buttons
                 buttons_config = [
-                    {"id": "confirm_excel", "title": "✅ Confirm"},
-                    {"id": "cancel_excel", "title": "❌ Cancel"}
+                    {"id": "confirm_excel", "title": "Confirm"},
+                    {"id": "cancel_excel", "title": "Cancel"}
                 ]
                 
                 await self.whatsapp_service.send_configurable_buttons(
@@ -1625,22 +1638,43 @@ class ChatService:
                 )
                 
             elif is_cancelled:
-                # User cancelled - clear session and discard data
                 logger.info(f"[EXCEL-CANCELLED] User cancelled Excel processing - clearing session")
+                # User cancelled - clear session and redirect to initial greeting stage
+                logger.info(f"[EXCEL-CANCELLED] User cancelled Excel processing - clearing session and redirecting to greeting")
                 
-                # Clear all Excel-related data
-                session.workflow_state.pop('excel_confirmation_data', None)
-                session.workflow_state.pop('awaiting_excel_confirmation', None)
-                session.workflow_state.pop('incomplete_products', None)
-                session.workflow_state.pop('complete_products', None)
-                session.workflow_state.pop('excel_data', None)
+                # Clear all Excel-related data and reset session completely
+                session.workflow_state = {}
+                session.workflow_type = None
                 
-                # Send cancellation message
-                cancel_message = "❌ Excel processing cancelled. Your data has been cleared. You can upload a new file or provide details through text."
-                await self.session_manager.send_and_track_message(user.phone_number, cancel_message, session)
-                await self.session_manager.save_session(session, WorkflowType.general_inquiry)
+                # Get user details for personalized greeting
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                first_name = user.name.split()[0].capitalize() if user.name else "there"
                 
-                return {"status": "excel_cancelled"}
+                # Send the specified greeting message with buttons
+                greeting_message = f"Hi {first_name}! What can I assist you with today?\nLet's continue with your buyer profile ({user.email})\n(Type 'Exit' anytime to end the chat)"
+                
+                # Role-based button configuration
+                if user_role == "buyer":
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                else:
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "get_support", "title": "Get Support Info"}
+                    ]
+                
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    greeting_message,
+                    buttons_config
+                )
+                
+                await self.session_manager.save_session(session, None)
+                
+                return {"status": "excel_cancelled_redirected_to_greeting"}
                 
             else:
                 # Unclear response - send clarification with buttons
