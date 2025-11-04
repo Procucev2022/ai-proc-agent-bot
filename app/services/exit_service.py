@@ -82,7 +82,7 @@ class ExitService:
 
     async def _clear_session_data(self, session: ConversationSession) -> bool:
         """
-        Save complete session data to database (preserving conversation history), then clear Redis.
+        Save complete session data to database (preserving conversation history), then completely clear Redis.
 
         Args:
             session: Current conversation session
@@ -124,23 +124,60 @@ class ExitService:
 
             logger.info(f"Session {session.session_id} saved to database with complete conversation history preserved (outcome=abandoned)")
 
-            # STEP 2: Clear Redis (user is exiting, session is complete)
-            from app.redis_db import get_session_redis_service
+            # STEP 2: Clear ALL Redis data (user is exiting, everything should be wiped)
+            from app.redis_db import get_session_redis_service, get_redis_service
             from app.config import get_settings
             settings = get_settings()
             if settings.redis_session_storage_enabled:
                 redis_session = get_session_redis_service()
+                redis_base = get_redis_service()
 
-                # Delete session from Redis
-                delete_result = await redis_session.delete_session(session.session_id)
-                logger.info(f"Session {session.session_id} Redis delete result: {delete_result}")
+                # Extract normalized phone for user-related key patterns
+                normalized_phone = session.external_user_id.lstrip('+').replace(' ', '').replace('-', '')
 
-                # Verify deletion by checking if key still exists
+                # Comprehensive Redis cleanup - delete all keys related to this user/session
+                cleanup_patterns = [
+                    f"session:{session.session_id}",  # Session key
+                    f"auth:{normalized_phone}",  # Auth token
+                    f"user_cache:{normalized_phone}",  # User cache
+                    f"incoming_messages:{normalized_phone}*",  # Message queue incoming
+                    f"outgoing_messages:{normalized_phone}*",  # Message queue outgoing
+                    f"processing:*:{normalized_phone}",  # Processing locks
+                    f"*:{session.session_id}*",  # Any session-related keys
+                    f"*:{normalized_phone}*",  # Any user-related keys
+                ]
+
+                total_deleted = 0
+                # First delete explicit keys that we know about
+                explicit_keys_to_delete = [
+                    session.session_id,
+                    normalized_phone,
+                ]
+
+                for key_part in explicit_keys_to_delete:
+                    # Delete session:{key}
+                    deleted = await redis_session.delete_session(key_part)
+                    if deleted:
+                        total_deleted += 1
+                        logger.info(f"Deleted session key for {key_part}")
+
+                # Then do pattern-based cleanup for any remaining keys
+                for pattern in cleanup_patterns:
+                    deleted_count = await redis_base.delete_pattern(pattern)
+                    total_deleted += deleted_count
+
+                # Final verification - check if session still exists
                 still_exists = await redis_session.session_exists(session.session_id)
                 if still_exists:
-                    logger.error(f"⚠️ BUG: Session {session.session_id} STILL EXISTS in Redis after delete!")
-                else:
-                    logger.info(f"✓ Session {session.session_id} successfully deleted from Redis (verified)")
+                    logger.error(f"⚠️ WARNING: Session {session.session_id} still exists in Redis after comprehensive cleanup!")
+                    # Try one more aggressive delete
+                    await redis_base.delete(f"session:{session.session_id}")
+                    still_exists = await redis_session.session_exists(session.session_id)
+                    if still_exists:
+                        logger.error(f"⚠️ CRITICAL BUG: Session {session.session_id} could NOT be deleted from Redis!")
+                        return False
+
+                logger.info(f"✓ Comprehensive Redis cleanup complete: {total_deleted} keys deleted, session verified removed")
 
             return True
 
