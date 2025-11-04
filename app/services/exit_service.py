@@ -136,6 +136,7 @@ class ExitService:
                 normalized_phone = session.external_user_id.lstrip('+').replace(' ', '').replace('-', '')
 
                 # Comprehensive Redis cleanup - delete all keys related to this user/session
+                # IMPORTANT: Do NOT delete welcome_msg token - user should not see welcome message again today if they exit and return
                 cleanup_patterns = [
                     f"session:{session.session_id}",  # Session key
                     f"auth:{normalized_phone}",  # Auth token
@@ -144,7 +145,6 @@ class ExitService:
                     f"outgoing_messages:{normalized_phone}*",  # Message queue outgoing
                     f"processing:*:{normalized_phone}",  # Processing locks
                     f"*:{session.session_id}*",  # Any session-related keys
-                    f"*:{normalized_phone}*",  # Any user-related keys
                 ]
 
                 total_deleted = 0
@@ -161,10 +161,28 @@ class ExitService:
                         total_deleted += 1
                         logger.info(f"Deleted session key for {key_part}")
 
-                # Then do pattern-based cleanup for any remaining keys
+                # Then do pattern-based cleanup for any remaining keys (excluding welcome message)
                 for pattern in cleanup_patterns:
                     deleted_count = await redis_base.delete_pattern(pattern)
                     total_deleted += deleted_count
+
+                # Explicitly delete user-related patterns but exclude welcome_msg key
+                # Use scan to find and delete keys with phone number but skip welcome_msg
+                try:
+                    await redis_base.init_client()
+                    cursor = 0
+                    while True:
+                        cursor, keys = await redis_base.client.scan(cursor, match=f"*:{normalized_phone}*", count=100)
+                        if keys:
+                            # Filter out welcome_msg keys - these should be preserved
+                            keys_to_delete = [k for k in keys if not k.startswith("welcome_msg:")]
+                            if keys_to_delete:
+                                deleted = await redis_base.client.delete(*keys_to_delete)
+                                total_deleted += deleted
+                        if cursor == 0:
+                            break
+                except Exception as e:
+                    logger.warning(f"Error during pattern cleanup for user-related keys: {e}")
 
                 # Final verification - check if session still exists
                 still_exists = await redis_session.session_exists(session.session_id)
