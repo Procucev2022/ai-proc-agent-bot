@@ -469,6 +469,11 @@ async def process_document_message(webhook_data: Dict[str, Any], chat_service):
         is_excel = any(filename.lower().endswith(ext) for ext in excel_extensions)
 
         if is_excel:
+            # Send processing message immediately for Excel files
+            from app.services.whatsapp_service import WhatsAppService
+            whatsapp_service = WhatsAppService()
+            await whatsapp_service.send_message(from_number, "Please wait, the file is processing…")
+            
             # Process as Excel file through chat service
             await chat_service.process_message(
                 user_phone=from_number,
