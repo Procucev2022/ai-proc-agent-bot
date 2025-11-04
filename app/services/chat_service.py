@@ -1638,22 +1638,43 @@ class ChatService:
                 )
                 
             elif is_cancelled:
-                # User cancelled - clear session and discard data
                 logger.info(f"[EXCEL-CANCELLED] User cancelled Excel processing - clearing session")
+                # User cancelled - clear session and redirect to initial greeting stage
+                logger.info(f"[EXCEL-CANCELLED] User cancelled Excel processing - clearing session and redirecting to greeting")
                 
-                # Clear all Excel-related data
-                session.workflow_state.pop('excel_confirmation_data', None)
-                session.workflow_state.pop('awaiting_excel_confirmation', None)
-                session.workflow_state.pop('incomplete_products', None)
-                session.workflow_state.pop('complete_products', None)
-                session.workflow_state.pop('excel_data', None)
+                # Clear all Excel-related data and reset session completely
+                session.workflow_state = {}
+                session.workflow_type = None
                 
-                # Send cancellation message
-                cancel_message = "❌ Excel processing cancelled. Your data has been cleared. You can upload a new file or provide details through text."
-                await self.session_manager.send_and_track_message(user.phone_number, cancel_message, session)
-                await self.session_manager.save_session(session, WorkflowType.general_inquiry)
+                # Get user details for personalized greeting
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                first_name = user.name.split()[0].capitalize() if user.name else "there"
                 
-                return {"status": "excel_cancelled"}
+                # Send the specified greeting message with buttons
+                greeting_message = f"Hi {first_name}! What can I assist you with today?\nLet's continue with your buyer profile ({user.email})\n(Type 'Exit' anytime to end the chat)"
+                
+                # Role-based button configuration
+                if user_role == "buyer":
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                else:
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "get_support", "title": "Get Support Info"}
+                    ]
+                
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    greeting_message,
+                    buttons_config
+                )
+                
+                await self.session_manager.save_session(session, None)
+                
+                return {"status": "excel_cancelled_redirected_to_greeting"}
                 
             else:
                 # Unclear response - send clarification with buttons
