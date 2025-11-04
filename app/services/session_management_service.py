@@ -377,13 +377,25 @@ class SessionManagementService:
                 'last_activity_at': session.last_activity_at
             }
 
-            # Always save to Redis if enabled
-            if self.redis_enabled:
+            # Only save to Redis if session is NOT completed/abandoned/exited
+            # Once a session is exited, it should stay deleted from Redis (data is in database for audit trail)
+            should_save_to_redis = True
+            if session.outcome in [ConversationOutcome.abandoned, ConversationOutcome.completed, ConversationOutcome.timeout]:
+                should_save_to_redis = False
+                logger.info(f"[PREVENT_REDIS_SAVE] Session {session.session_id} marked as {session.outcome.value}, NOT saving to Redis (staying deleted)")
+            elif session.workflow_state and session.workflow_state.get("exit_completed"):
+                should_save_to_redis = False
+                logger.info(f"[PREVENT_REDIS_SAVE] Session {session.session_id} has exit_completed flag, NOT saving to Redis (staying deleted)")
+
+            if self.redis_enabled and should_save_to_redis:
                 # Use _session_to_dict helper which properly serializes dates
                 redis_data = self._session_to_dict(session)
                 await self.redis_session.store_session(session.session_id, redis_data)
                 await self.redis_session.refresh_ttl(session.session_id)
                 logger.debug(f"Saved session to Redis: {session.session_id} (persist_to_db={persist_to_db})")
+            elif self.redis_enabled and not should_save_to_redis:
+                logger.info(f"[PREVENT_REDIS_SAVE] Skipped Redis save for exited session: {session.session_id}")
+                logger.debug(f"[PREVENT_REDIS_SAVE] Reason - outcome={session.outcome}, exit_completed={session.workflow_state.get('exit_completed') if session.workflow_state else None}")
 
             # Only persist to DB when explicitly requested or Redis disabled
             if persist_to_db or not self.redis_enabled:

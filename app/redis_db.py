@@ -111,6 +111,24 @@ class BaseRedisService:
             logger.error(f"Redis INCR error for key {key}: {e}")
             return None
 
+    async def delete_pattern(self, pattern: str) -> int:
+        """Delete all keys matching a pattern using SCAN."""
+        await self.init_client()
+        try:
+            deleted_count = 0
+            cursor = 0
+            while True:
+                cursor, keys = await self.client.scan(cursor, match=pattern, count=100)
+                if keys:
+                    deleted_count += await self.client.delete(*keys)
+                if cursor == 0:
+                    break
+            logger.info(f"Deleted {deleted_count} keys matching pattern '{pattern}'")
+            return deleted_count
+        except Exception as e:
+            logger.error(f"Redis SCAN/DELETE error for pattern {pattern}: {e}")
+            return 0
+
 
 class AuthRedisService(BaseRedisService):
     """Specialized async Redis service for authentication."""
