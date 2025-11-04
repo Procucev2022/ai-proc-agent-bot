@@ -103,11 +103,13 @@ class SessionManagementService:
 
                 # If session wasn't recently exited, reset it for new workflow
                 if session:
-                    logger.info(f"Session {session_id} was {session.outcome.value}, resetting Redis for new workflow (keeping DB data intact)")
+                    logger.info(f"Session {session_id} was {session.outcome.value}, resetting for new workflow")
 
-                    # IMPORTANT: Keep conversation_history and rfq_ids from DB (accumulated throughout the day)
-                    # Only reset workflow-specific fields for fresh start
+                    # IMPORTANT: Clear conversation_history and workflow_state for fresh start
+                    # Old conversation_history was causing stale product data to leak into new RFQ context
+                    # Keep rfq_ids in database for audit trail, but clear from active session
                     session.workflow_state = {"extracted_entities": [], "last_activity_at": utc_now().isoformat()}
+                    session.conversation_history = {"messages": [], "metadata": [], "openai_messages": []}  # Clear for fresh workflow
                     session.extracted_entities = {}  # Clear for new workflow
                     session.outcome = None  # Clear completion status
                     session.completed_at = None
@@ -120,15 +122,15 @@ class SessionManagementService:
                         logger.info(f"Session {session_id} reset in Redis for new workflow (DB data preserved)")
                     else:
                         # If Redis disabled, we have no choice but to update DB
-                        # But we keep conversation_history and rfq_ids intact
-                        logger.warning(f"Redis disabled - resetting session {session_id} in database (history preserved)")
+                        # Clear conversation_history for fresh workflow (prevent stale data leak)
+                        logger.warning(f"Redis disabled - resetting session {session_id} in database (history cleared for fresh workflow)")
                         session = self.db_manager.save_conversation_session({
                             'session_id': session.session_id,
                             'external_user_id': session.external_user_id,
                             'workflow_type': None,
                             'outcome': None,
                             'workflow_state': session.workflow_state,
-                            'conversation_history': session.conversation_history,  # Preserved
+                            'conversation_history': {"messages": [], "metadata": [], "openai_messages": []},  # Cleared for fresh workflow
                             'extracted_entities': session.extracted_entities,  # Empty for new workflow
                             'retention_date': session.retention_date,
                             'completed_at': None
