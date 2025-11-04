@@ -82,8 +82,8 @@ class AuthenticationHelpers:
             required_fields = []
 
             for name, field_info in fields.items():
-                # Skip internal or system fields
-                if name in {"source_type"}:
+                # Skip internal or system fields and address field
+                if name in {"source_type", "address"}:
                     continue
 
                 # Only include required fields

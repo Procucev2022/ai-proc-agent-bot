@@ -236,7 +236,28 @@ class EntityService:
                 pending_products = []
         else:
             pending_products = []
-        
+
+        # Preserve attachments from extracted_entities when they're not in pending_products
+        # This ensures attachments added after product entry are preserved during modification
+        if pending_products and extracted_entities:
+            # Get attachments from extracted_entities (usually index 0 for single product RFQ)
+            extracted_attachments = []
+            if isinstance(extracted_entities, list):
+                for entity in extracted_entities:
+                    if isinstance(entity, dict) and entity.get("attachments"):
+                        extracted_attachments = entity.get("attachments", [])
+                        break  # Use attachments from first entity that has them
+
+            # Add attachments to pending_products if they don't already have them
+            for product in pending_products:
+                if isinstance(product, dict):
+                    entities = product.get("entities", {})
+                    if isinstance(entities, dict):
+                        # If this product doesn't have attachments but extracted_entities has some, add them
+                        if not entities.get("attachments") and extracted_attachments:
+                            entities["attachments"] = extracted_attachments
+                            print(f"EntityService: Merged {len(extracted_attachments)} attachments into pending product")
+
         # Debug: Print pending products info
         print(f"EntityService: Found {len(pending_products)} pending products for modification")
         if pending_products:

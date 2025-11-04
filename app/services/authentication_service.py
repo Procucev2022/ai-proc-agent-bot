@@ -910,22 +910,22 @@ Return only the selected email address or "none" if no clear selection.
         try:
             user_details = session.workflow_state.get("selected_user_details")
             selected_email = session.workflow_state.get("selected_email")
-            
+
             if not user_details or not selected_email:
                 return {"status": "restart_authentication"}
-            
+
             user_id = user_details.get("id")
             if not user_id:
                 logger.error("No user ID found for domain approval")
                 return {"status": "error", "error": "User ID not found"}
-            
+
             domain_result = await self._check_domain_approval(user_id)
-            
+
             if domain_result.get("approved"):
                 return await self._complete_buyer_authentication(user_phone, user_details, selected_email)
             else:
-                return await self._handle_domain_mismatch(user_phone, user_details)
-                
+                return await self._handle_domain_mismatch(user_phone, user_details, session)
+
         except Exception as e:
             logger.error(f"Domain matching error: {e}")
             return {"status": "error", "error": str(e)}
@@ -971,27 +971,33 @@ Return only the selected email address or "none" if no clear selection.
             logger.error(f"Buyer authentication completion error: {e}")
             return {"status": "error", "error": str(e)}
     
-    async def _handle_domain_mismatch(self, user_phone: str, user_details: Dict) -> Dict[str, Any]:
+    async def _handle_domain_mismatch(self, user_phone: str, user_details: Dict, session: ConversationSession) -> Dict[str, Any]:
         """Handle domain mismatch scenario."""
         try:
             message = (
                 "*Registration received—thank you!*\n\n"
-                "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                "We're reviewing your details to ensure everything is set up perfectly for your onboarding. "
                 "Our team will get in touch shortly to complete the process, and once verified, "
-                "you’ll be able to access your account and start raising RFQs.\n\n"
+                "you'll be able to access your account and start raising RFQs.\n\n"
                 "Thank you for choosing Procucev!"
             )
 
             await self.whatsapp_service.send_message(user_phone, message)
-            
+
+            # Call exit service to clear the workflow (same pattern as chat_service.py)
+            from app.services.exit_service import ExitService
+            exit_service = ExitService(self.whatsapp_service, self, self.session_manager, None)
+            await exit_service.handle_exit_intent(user_phone, session, show_message=False)
+
             return {
-                "status": "authentication_completed",
+                "status": "redirect_to_support",
                 "user_type": "buyer",
                 "approved": False,
                 "redirect_to_main_flow": False,
-                "pending_approval": True
+                "pending_approval": True,
+                "exit_completed": True
             }
-            
+
         except Exception as e:
             logger.error(f"Domain mismatch handling error: {e}")
             return {"status": "error", "error": str(e)}
