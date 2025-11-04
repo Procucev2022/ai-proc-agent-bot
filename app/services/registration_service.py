@@ -628,9 +628,6 @@ class RegistrationService:
                         else:
                             logger.info(f"Buyer registration completed for {user_phone} - domain not approved, awaiting manual approval")
                             # Domain not approved - send pending message
-                            pending_message = "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
-
-                            
                             # Send email notification to support team
                             await self.support_notification_service.notify_buyer_registration_not_approved(
                                 entities.get("name", "User"),
@@ -643,15 +640,19 @@ class RegistrationService:
                                 "*Registration received—thank you!*\n\n"
                                 "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
                                 "Our team will get in touch shortly to complete the process, and once verified, "
-                                "you’ll be able to access your account and start raising RFQs."
+                                "you’ll be able to access your account and start raising RFQs.\n\n"
+                                "Thank you for choosing Procucev!"
                             )
 
                             if self.session_manager:
                                 await self.session_manager.send_and_track_message(user_phone, pending_message, session)
                             else:
                                 await self.whatsapp_service.send_message(user_phone, pending_message)
-                            
-                            
+
+                            # Call exit without showing exit message
+                            from app.services.exit_service import ExitService
+                            exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
+                            await exit_service.handle_exit_intent(user_phone, session, show_message=False)
                             
                             return {
                                 "status": "redirect_to_support",
@@ -661,7 +662,6 @@ class RegistrationService:
                     else:
                         logger.warning(f"Buyer registration completed for {user_phone} - missing user_id")
                         # No user_id found - redirect to support
-                        pending_message = "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
 
                         
                         # Send email notification to support team
@@ -676,7 +676,8 @@ class RegistrationService:
                             "*Registration received—thank you!*\n\n"
                             "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
                             "Our team will get in touch shortly to complete the process, and once verified, "
-                            "you’ll be able to access your account and start raising RFQs."
+                            "you’ll be able to access your account and start raising RFQs.\n\n"
+                            "Thank you for choosing Procucev!"
                         )
 
                         if self.session_manager:
@@ -684,7 +685,10 @@ class RegistrationService:
                         else:
                             await self.whatsapp_service.send_message(user_phone, pending_message)
                         
-
+                        # Call exit without showing exit message
+                        from app.services.exit_service import ExitService
+                        exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
+                        await exit_service.handle_exit_intent(user_phone, session, show_message=False)
                         
                         return {
                             "status": "redirect_to_support",
@@ -724,6 +728,13 @@ class RegistrationService:
                         "user_type": "seller",
                         "email": entities.get('email')
                     }
+            
+            # Handle maximum OTP attempts exceeded - call exit without message
+            elif otp_result.get("status") == "max_otp_exceeded":
+                logger.warning(f"Maximum OTP attempts exceeded for {user_phone}")
+                from app.services.exit_service import ExitService
+                exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
+                return await exit_service.handle_exit_intent(user_phone, session, show_message=False)
             
             # Handle OTP service redirect to support
             elif otp_result.get("status") == "redirect_to_support":
@@ -798,8 +809,14 @@ class RegistrationService:
         """Redirect user to support team with issue-specific messages."""
         try:
             # Default message for registration issues
-            support_message = "We could not complete your registration at this time. Our support team will reach out to you soon to help finalize your onboarding. If you need immediate assistance, please contact us at info@procucev.com."
-            
+            support_message = (
+                "*Registration Unsuccessful*\n"
+                "We couldn’t complete your registration at this time. Our support team will "
+                "reach out to you shortly to help finalize your onboarding.\n\n"
+                "If you need immediate assistance, please contact us at *info@procucev.com*.\n\n"
+                "*Thank you for choosing Procucev!*"
+            )
+
             if self.session_manager and session:
                 await self.session_manager.send_and_track_message(user_phone, support_message, session)
             else:
