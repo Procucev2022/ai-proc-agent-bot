@@ -15,6 +15,7 @@ import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 import xlrd
+from app.utils.excel_error_formatter import format_excel_error
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class ExcelValidationService:
     INVALID_UOM_VALUES = {'each', 'per item', 'item', 'piece'}
     SPECIAL_CHARS_PATTERN = r'[^a-zA-Z0-9\s\-\._()&]'
     
+
     async def validate_excel_file_from_url(self, file_url: str, filename: str) -> Dict[str, Any]:
         """
         Download and validate Excel file from WhatsApp URL with comprehensive checks.
@@ -72,9 +74,13 @@ class ExcelValidationService:
             
             # Step 3: Validate file size
             if len(file_content) > self.MAX_FILE_SIZE:
+                error_msg = format_excel_error('file_too_large', {
+                    'file_size_mb': len(file_content) / (1024*1024),
+                    'max_size_mb': self.MAX_FILE_SIZE // (1024*1024)
+                })
                 return {
                     'valid': False,
-                    'error': f"File too large. Maximum size is {self.MAX_FILE_SIZE // (1024*1024)}MB",
+                    'error': error_msg,
                     'error_type': 'file_too_large'
                 }
             
@@ -227,9 +233,10 @@ class ExcelValidationService:
                 
                 # Check for password protection
                 if any(keyword in str(pandas_error).lower() for keyword in ['password', 'encrypted', 'protected']):
+                    error_msg = format_excel_error('password_protected', {})
                     return {
                         'valid': False,
-                        'error': "File appears to be password protected. Please upload an unprotected Excel file.",
+                        'error': error_msg,
                         'error_type': 'password_protected'
                     }
                 
@@ -246,9 +253,10 @@ class ExcelValidationService:
                     
                     # Check if password protected
                     if any(keyword in str(openpyxl_error).lower() for keyword in ['password', 'encrypted', 'protected']):
+                        error_msg = format_excel_error('password_protected', {})
                         return {
                             'valid': False,
-                            'error': "File appears to be password protected. Please upload an unprotected Excel file.",
+                            'error': error_msg,
                             'error_type': 'password_protected'
                         }
                     
@@ -260,9 +268,10 @@ class ExcelValidationService:
                     except Exception as xlrd_error:
                         logger.debug(f"XLRD read failed: {xlrd_error}")
                         
+                        error_msg = format_excel_error('corrupted_file', {})
                         return {
                             'valid': False,
-                            'error': "Could not read Excel file. It may be corrupted or in an unsupported format.",
+                            'error': error_msg,
                             'error_type': 'unreadable_file'
                         }
                 
@@ -286,9 +295,12 @@ class ExcelValidationService:
                 # Check 1: Only allow single worksheet
                 if len(workbook.worksheets) > 1:
                     workbook.close()
+                    error_msg = format_excel_error('multiple_worksheets', {
+                        'worksheet_count': len(workbook.worksheets)
+                    })
                     return {
                         'valid': False,
-                        'error': f"Your Excel file contains {len(workbook.worksheets)} worksheets. Only 1 worksheet is allowed. Please use a single sheet and reupload.",
+                        'error': error_msg,
                         'error_type': 'multiple_worksheets'
                     }
                 
@@ -302,9 +314,13 @@ class ExcelValidationService:
                 
                 if filled_rows > self.MAX_ROWS:
                     workbook.close()
+                    error_msg = format_excel_error('row_limit', {
+                        'actual_rows': filled_rows,
+                        'max_rows': self.MAX_ROWS
+                    })
                     return {
                         'valid': False,
-                        'error': f"Your Excel file contains {filled_rows} rows with data, but only {self.MAX_ROWS} rows are allowed per upload. Please reduce to {self.MAX_ROWS} rows and reupload.",
+                        'error': error_msg,
                         'error_type': 'too_many_rows'
                     }
                 
@@ -312,9 +328,10 @@ class ExcelValidationService:
                 merged_ranges = list(worksheet.merged_cells.ranges)
                 if merged_ranges:
                     workbook.close()
+                    error_msg = format_excel_error('merged_cells', {})
                     return {
                         'valid': False,
-                        'error': "Your Excel file contains merged cells. Please unmerge all cells and reupload.",
+                        'error': error_msg,
                         'error_type': 'merged_cells_found'
                     }
                 
@@ -373,9 +390,10 @@ class ExcelValidationService:
             df = df.dropna(how='all')
             
             if df.empty:
+                error_msg = format_excel_error('empty_file', {})
                 return {
                     'valid': False,
-                    'error': "Excel file contains no data.",
+                    'error': error_msg,
                     'error_type': 'no_data_found'
                 }
             
@@ -441,15 +459,17 @@ class ExcelValidationService:
                     has_data = any(len(df.iloc[i].dropna()) >= 2 for i in range(min(3, len(df))))
                     
                     if not has_data:
+                        error_msg = format_excel_error('empty_file', {})
                         return {
                             'valid': False,
-                            'error': "Excel file appears to have no data. Please ensure your Excel contains data rows.",
+                            'error': error_msg,
                             'error_type': 'no_data_found'
                         }
                     else:
+                        error_msg = format_excel_error('no_headers', {})
                         return {
                             'valid': False,
-                            'error': "Your Excel file doesn't have proper column headers. Please add clear column headers (e.g., 'Item Name', 'Quantity', 'Description') and reupload.",
+                            'error': error_msg,
                             'error_type': 'missing_headers'
                         }
             else:
@@ -487,11 +507,26 @@ class ExcelValidationService:
             # Check 5: Data type consistency
             data_issues = self._validate_data_types(df)
             if data_issues:
-                return {
-                    'valid': False,
-                    'error': f"Data quality issues found: {'; '.join(data_issues[:3])}",
-                    'error_type': 'data_quality_issues'
-                }
+                # Check if it's a quantity validation issue
+                quantity_issues = [issue for issue in data_issues if 'Invalid quantity values' in issue]
+                if quantity_issues:
+                    # Extract example values from the first quantity issue
+                    first_issue = quantity_issues[0]
+                    example_values = first_issue.split(': ')[-1] if ': ' in first_issue else '"@200"'
+                    error_msg = format_excel_error('invalid_quantity', {
+                        'example_values': example_values
+                    })
+                    return {
+                        'valid': False,
+                        'error': error_msg,
+                        'error_type': 'invalid_quantity_values'
+                    }
+                else:
+                    return {
+                        'valid': False,
+                        'error': f"Data quality issues found: {'; '.join(data_issues[:3])}",
+                        'error_type': 'data_quality_issues'
+                    }
             
             return {'valid': True}
             
@@ -548,10 +583,10 @@ class ExcelValidationService:
                 text_values = []
                 for value in col_data.head(5):
                     if isinstance(value, str) and not value.strip().replace('.', '').replace(',', '').isdigit():
-                        text_values.append(value)
+                        text_values.append(f"@{value}" if not value.startswith('@') else value)
                 
                 if text_values:
-                    issues.append(f"Quantity column '{column}' contains text values: {', '.join(text_values[:2])}")
+                    issues.append(f"Invalid quantity values in '{column}' column: {', '.join(text_values[:2])}")
         
         return issues
     

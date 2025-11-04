@@ -1520,15 +1520,27 @@ class ChatService:
                 skipped_rows = processing_summary.get('skipped_rows', 0)
                 skipped_items_summary = processing_result.get('skipped_items_summary', '')
                 
-                if skipped_rows > 0:
-                    confirmation_message = f"✅ Successfully extracted {len(products)} valid items from your Excel file!\n\n📝 Processing Summary:\n{skipped_items_summary}\n\n🔄 **Excel Processing Confirmation**\n\nWould you like to proceed with creating RFQs for these items?"
+                # Generate item list for display (show first 3 items, then +X more)
+                item_names = []
+                for i, product in enumerate(products[:3]):
+                    desc = product.get('description', f'Item{i+1}')
+                    item_names.append(desc)
+                
+                if len(products) > 3:
+                    remaining = len(products) - 3
+                    items_display = f"{', '.join(item_names)}, +{remaining} Items"
                 else:
-                    confirmation_message = f"✅ Successfully extracted {len(products)} items from your Excel file!\n\n🔄 **Excel Processing Confirmation**\n\nWould you like to proceed with creating RFQs for these items?"
+                    items_display = ', '.join(item_names)
+                
+                if skipped_rows > 0:
+                    confirmation_message = f"Successfully identified {items_display}.\nPlease click on Confirm to proceed for the RFQ creation\n\n(Type 'Exit' to anytime to end the chat)\n\n📝"
+                else:
+                    confirmation_message = f"Successfully identified {items_display}.\nPlease click on Confirm to proceed for the RFQ creation\n\n(Type 'Exit' to anytime to end the chat)"
                 
                 # Send confirmation message with buttons
                 buttons_config = [
-                    {"id": "confirm_excel", "title": "✅ Confirm"},
-                    {"id": "cancel_excel", "title": "❌ Cancel"}
+                    {"id": "confirm_excel", "title": "Confirm"},
+                    {"id": "cancel_excel", "title": "Cancel"}
                 ]
                 
                 await self.whatsapp_service.send_configurable_buttons(

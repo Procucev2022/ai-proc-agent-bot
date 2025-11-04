@@ -142,7 +142,8 @@ class ExcelProcessingService:
             
             # Reject file if ANY rows are skipped
             if identified_rows > 0 and skipped_rows > 0:
-                combined_error = f"❌ File rejected: File processing incomplete: {skipped_rows} rows skipped out of {identified_rows} total product rows. Only {extracted_rows} products extracted successfully.\n\n{processing_summary.get('skipped_items_summary', '2 rows were skipped due to missing quantities.')}\n\nPlease fix your Excel file and upload again."
+                skipped_summary = processing_summary.get('skipped_items_summary', 'One product row was skipped due to missing quantity.')
+                combined_error = f"❌ File rejected: File processing incomplete: {skipped_rows} rows skipped out of {identified_rows} total product rows. Only {extracted_rows} products extracted successfully.\n\n{skipped_summary}\n\nPlease fix your Excel file and upload again."
                 return {
                     'success': False,
                     'error': combined_error,
