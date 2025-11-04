@@ -978,7 +978,8 @@ Return only the selected email address or "none" if no clear selection.
                 "*Registration received—thank you!*\n\n"
                 "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
                 "Our team will get in touch shortly to complete the process, and once verified, "
-                "you’ll be able to access your account and start raising RFQs."
+                "you’ll be able to access your account and start raising RFQs.\n\n"
+                "Thank you for choosing Procucev!"
             )
 
             await self.whatsapp_service.send_message(user_phone, message)

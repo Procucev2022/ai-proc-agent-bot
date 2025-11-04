@@ -324,7 +324,7 @@ class ProfileSelectionService:
             option_num = 1
 
             for profile in buyer_profiles:
-                message_parts.append(f"{option_num} {profile['email']}")
+                message_parts.append(f"{option_num}.  {profile['email']}")
                 profile_options.append({
                     "number": option_num,
                     "profile": profile,
@@ -333,7 +333,7 @@ class ProfileSelectionService:
                 option_num += 1
 
             # Add registration option
-            message_parts.append(f"{option_num}️Add or Register a new Buyer profile")
+            message_parts.append(f"{option_num}.  Add or Register a new Buyer profile")
             profile_options.append({
                 "number": option_num,
                 "action": "register_buyer",
