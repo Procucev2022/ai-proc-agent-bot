@@ -171,6 +171,31 @@ class EntityService:
                 merged_products = self._apply_supplementary_data_to_existing_products(existing_context, global_fields)
 
             validated_products, has_date_validation_error = await self._validate_dates_in_products(merged_products, message)
+
+            # Check for non-procurable items BEFORE cleaning invalid descriptions
+            non_procurable_items = self._detect_non_procurable_items(validated_products)
+            if non_procurable_items:
+                print(f"EntityService: Detected non-procurable items: {non_procurable_items}")
+                return {
+                    "products": [],
+                    "confidence": response.get("confidence", 0),
+                    "success": False,
+                    "non_procurable_items": non_procurable_items,
+                    "error_type": "non_procurable"
+                }
+
+            # Check for quantity limit violations (100,000 max)
+            quantity_violations = self._check_quantity_limits(validated_products)
+            if quantity_violations:
+                print(f"EntityService: Detected quantity limit violations: {quantity_violations}")
+                return {
+                    "products": [],
+                    "confidence": response.get("confidence", 0),
+                    "success": False,
+                    "quantity_violations": quantity_violations,
+                    "error_type": "quantity_limit"
+                }
+
             # Clean up invalid descriptions (units of measure, generic terms, etc.)
             validated_products = self._clean_invalid_descriptions(validated_products)
             # Auto-fill city and state from pincode
@@ -1141,6 +1166,58 @@ class EntityService:
         except FileNotFoundError:
             print(f"Schema file not found: {schema_path}")
             return {}
+
+    def _detect_non_procurable_items(self, products: list) -> list:
+        """
+        Detect non-procurable items marked by the LLM during extraction.
+
+        The LLM is instructed to set description="NON_PROCURABLE" and put the actual
+        item name in remarks when it detects non-procurable items.
+
+        Returns list of non-procurable item names found, or empty list if all items are procurable.
+        """
+        non_procurable = []
+
+        for product in products:
+            desc = product.get("description", "")
+
+            # Check if LLM marked this as non-procurable
+            if desc and desc.strip() == "NON_PROCURABLE":
+                # Get the actual item name from remarks
+                item_name = product.get("remarks", "unknown item")
+                non_procurable.append(item_name)
+                print(f"EntityService: Detected non-procurable item marked by LLM: {item_name}")
+
+        return non_procurable
+
+    def _check_quantity_limits(self, products: list) -> list:
+        """
+        Check if any product quantities exceed the maximum limit of 100,000 units.
+
+        Returns list of dicts with product info for items that violate the limit,
+        or empty list if all quantities are within limits.
+        """
+        MAX_QUANTITY = 100000
+        violations = []
+
+        for product in products:
+            quantity = product.get("quantity")
+            if quantity is not None:
+                try:
+                    # Convert to float for comparison
+                    qty_value = float(quantity) if isinstance(quantity, str) else quantity
+                    if qty_value > MAX_QUANTITY:
+                        violations.append({
+                            "description": product.get("description", "unknown product"),
+                            "quantity": qty_value,
+                            "max_allowed": MAX_QUANTITY
+                        })
+                        print(f"EntityService: Quantity limit violation - {product.get('description')}: {qty_value} > {MAX_QUANTITY}")
+                except (ValueError, TypeError):
+                    # Skip if quantity can't be converted to number
+                    pass
+
+        return violations
 
     def _clean_invalid_descriptions(self, products: list) -> list:
         """

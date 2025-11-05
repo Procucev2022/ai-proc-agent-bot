@@ -77,7 +77,11 @@ class PurchaseWorkflowHandler:
             # Extract entities
             entity_result = await self.entity_service.extract_entities(message, context=entity_context, workflow_type=workflow_type)
             logger.info(f"EntityService result: {entity_result}")
-            
+
+            # Check for non-procurable items
+            if entity_result.get("error_type") == "non_procurable":
+                return await self._handle_non_procurable_items(user, session, entity_result)
+
             # Check for modification clarification needed
             if entity_result.get("modification_intent_detected") and entity_result.get("requires_clarification"):
                 return await self._handle_modification_clarification(user, session, message, entity_result)
@@ -124,7 +128,74 @@ class PurchaseWorkflowHandler:
             "status": "modification_clarification_sent",
             "message": "Asked for clarification on modification details"
         }
-    
+
+    async def _handle_non_procurable_items(self, user: User, session: ConversationSession,
+                                          entity_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle detection of non-procurable items by informing user and canceling the request.
+
+        Args:
+            user: User object
+            session: Current conversation session
+            entity_result: Entity extraction result with non_procurable_items
+
+        Returns:
+            Dict with status and cancellation details
+        """
+        try:
+            non_procurable_items = entity_result.get("non_procurable_items", [])
+            logger.info(f"Handling non-procurable items for user {user.phone_number}: {non_procurable_items}")
+
+            # Format the items list for the message
+            if len(non_procurable_items) == 1:
+                items_text = f'"{non_procurable_items[0]}"'
+            else:
+                items_text = ', '.join(f'"{item}"' for item in non_procurable_items[:-1])
+                items_text += f' and "{non_procurable_items[-1]}"'
+
+            # Send informative message about non-procurable items first
+            info_message = (
+                f"I'm sorry, but {items_text} cannot be procured through our standard RFQ system.\n\n"
+                f"Our system handles tangible physical products like equipment, materials, supplies, and goods that can be purchased through standard procurement channels."
+            )
+            await self.whatsapp_service.send_message(user.phone_number, info_message)
+
+            # Clear the workflow state and send action buttons using cancel service
+            from app.services.cancel_service import CancelService
+            from app.services.session_management_service import SessionManagementService
+            from app.database import DatabaseManager
+
+            cancel_service = CancelService(
+                whatsapp_service=self.whatsapp_service,
+                session_manager=SessionManagementService(DatabaseManager()),
+                db_manager=DatabaseManager()
+            )
+
+            # Clear workflow state without confirmation (automatic cancellation)
+            await cancel_service._clear_workflow_state(session)
+
+            # Get user type and send cancellation message with buttons
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+            user_type = "buyer" if user_role == "buyer" else "seller"
+
+            # Use cancel service's method to send the appropriate message with buttons
+            await cancel_service._send_cancellation_message(user.phone_number, user_type)
+
+            logger.info(f"Workflow cancelled for user {user.phone_number} due to non-procurable items")
+
+            return {
+                "status": "non_procurable_cancelled",
+                "non_procurable_items": non_procurable_items,
+                "message": "Request cancelled due to non-procurable items"
+            }
+
+        except Exception as e:
+            logger.error(f"Error handling non-procurable items: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
     async def _handle_products_array(self, user: User, session: ConversationSession, 
                                    message: str, products: list) -> Dict[str, Any]:
         """Handle multiple products processing."""
