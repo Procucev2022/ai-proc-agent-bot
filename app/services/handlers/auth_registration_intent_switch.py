@@ -351,68 +351,33 @@ Analyze their response and return only:
             return {"status": "error", "error": str(e)}
 
     async def handle_role_switch_confirmation(self, user, session, message: str, target_role: str) -> Dict[str, Any]:
-        """Handle role switch confirmation with dynamic account options."""
+        """Handle role switch confirmation - simplified to show only 2 options."""
         try:
             current_role = _get_role_string(user)
-            current_email = getattr(user, 'email', None) or getattr(user, 'username', None)
 
             # Store role switch state
             session.workflow_state["pending_role_switch"] = {
                 "target_role": target_role,
                 "current_role": current_role,
                 "original_message": message,
-                "current_email": current_email,
                 "timestamp": utc_now().isoformat()
             }
 
-            # Get dynamic account options from cache
-            target_intent = "sell_something" if target_role == "seller" else "buy_something"
-            account_options = await self.user_cache_service.get_account_options_for_intent_switch(
-                user.phone_number, target_intent, current_email
+            # Simple 2-option confirmation message
+            confirmation_message = (
+                f"You're currently logged in as a {current_role.title()}. "
+                f"What would you like to do?\n\n"
+                f"1. Switch to {target_role.title()} account\n"
+                f"2. Continue with current {current_role.title()} account\n\n"
+                "Please reply with 1 or 2:"
             )
-
-            if not account_options:
-                # Fallback to generic message if no cached data
-                return await self._handle_role_switch_fallback(user, session, target_role, current_role)
-
-            # Generate dynamic confirmation message
-            role_descriptions = {
-                "buyer": "create RFQs and purchase products",
-                "seller": "view and respond to RFQs"
-            }
-
-            if account_options["has_target_accounts"]:
-                # Show actual account options
-                confirmation_message = (
-                    f"You're currently logged in as a {current_role}. "
-                    f"I found these {target_role} accounts for you:\n\n"
-                )
-
-                for option in account_options["formatted_options"]:
-                    confirmation_message += f"{option['text']}\n"
-
-                confirmation_message += f"\nPlease reply with the number of your choice:"
-            else:
-                # No target accounts found
-                confirmation_message = (
-                    f"You're currently logged in as a {current_role}. "
-                    f"I didn't find any {target_role} accounts for your number.\n\n"
-                )
-
-                for option in account_options["formatted_options"]:
-                    confirmation_message += f"{option['text']}\n"
-
-                confirmation_message += f"\nPlease reply with the number of your choice:"
-
-            # Store account options for response parsing
-            session.workflow_state["pending_role_switch"]["account_options"] = account_options
 
             await self.whatsapp_service.send_message(
                 user.phone_number,
                 confirmation_message
             )
 
-            return {"status": "enhanced_role_switch_confirmation_requested"}
+            return {"status": "role_switch_confirmation_requested"}
 
         except Exception as e:
             logger.error(f"Error handling role switch confirmation: {e}")
@@ -450,7 +415,7 @@ Analyze their response and return only:
             return {"status": "error", "error": str(e)}
     
     async def handle_role_switch_response(self, user, session, message: str, authentication_service) -> Dict[str, Any]:
-        """Handle user's response to enhanced role switch confirmation."""
+        """Handle user's response to simplified 2-option role switch confirmation."""
         try:
             pending_switch = session.workflow_state.get("pending_role_switch")
             if not pending_switch:
@@ -460,19 +425,52 @@ Analyze their response and return only:
             current_role = pending_switch["current_role"]
             original_message = pending_switch["original_message"]
 
-            # Check if this is enhanced account selection or fallback
-            account_options = pending_switch.get("account_options")
+            # Parse user response - looking for "1" (switch) or "2" (continue)
+            message_lower = message.strip().lower()
 
-            if account_options:
-                # Enhanced account selection - parse user choice
-                return await self._handle_enhanced_account_selection_response(
-                    user, session, message, authentication_service, pending_switch, account_options
+            # Check for switch confirmation (option 1)
+            if message_lower in ["1", "switch", "yes", "switch account"]:
+                logger.info(f"User chose to switch from {current_role} to {target_role}")
+
+                # Clear pending switch state before exit
+                if "pending_role_switch" in session.workflow_state:
+                    del session.workflow_state["pending_role_switch"]
+
+                # Exit and trigger profile selection
+                return await self._handle_switch_to_existing_account(
+                    user, session, target_role, original_message, authentication_service
                 )
+
+            # Check for continue with current account (option 2)
+            elif message_lower in ["2", "continue", "no", "stay", "current"]:
+                logger.info(f"User chose to continue with current {current_role} account - ignoring role switch request")
+
+                # Clear pending switch state
+                if "pending_role_switch" in session.workflow_state:
+                    del session.workflow_state["pending_role_switch"]
+
+                # Send acknowledgment and let them continue with existing workflow
+                continue_message = f"Alright, continuing with your {current_role.title()} account."
+                await self.whatsapp_service.send_message(user.phone_number, continue_message)
+
+                # Return status indicating we should just ignore the role switch message
+                # and continue with whatever workflow they were in before
+                return {
+                    "status": "role_switch_declined",
+                    "ignore_message": True  # Signal to ignore the original message
+                }
+
             else:
-                # Fallback to original three-option response handling
-                return await self._handle_traditional_role_switch_response(
-                    user, session, message, authentication_service, pending_switch
+                # Unclear response - ask for clarification
+                clarification_message = (
+                    f"Please choose one of the options:\n\n"
+                    f"1. Switch to {target_role.title()} account\n"
+                    f"2. Continue with current {current_role.title()} account\n\n"
+                    "Reply with 1 or 2:"
                 )
+                await self.whatsapp_service.send_message(user.phone_number, clarification_message)
+
+                return {"status": "role_switch_clarification_requested"}
 
         except Exception as e:
             logger.error(f"Error handling role switch response: {e}")
@@ -850,83 +848,39 @@ Analyze their response and return only:
                 return "unclear"
 
     async def _handle_switch_to_existing_account(self, user, session, target_role: str, original_message: str, authentication_service) -> Dict[str, Any]:
-        """Handle switching to existing account authentication flow."""
+        """Handle switching to existing account by completely exiting and triggering profile selection."""
         try:
-            # Clear user token/session
-            # Normalize phone number by removing '+' prefix for token clearing
-            normalized_phone = user.phone_number.lstrip('+')
-            await authentication_service.clear_user_token(normalized_phone)
+            from app.services.exit_service import ExitService
 
-            # Clear current session and create new one for reauthentication
-            if hasattr(authentication_service, 'session_manager') and authentication_service.session_manager:
-                # Create new session for authentication with target role
-                new_session = await authentication_service.session_manager.create_session(
-                    user.phone_number,
-                    workflow_type="authentication",
-                    user_type=target_role
-                )
+            logger.info(f"Switching to different {target_role} account - initiating complete exit and profile selection")
 
-                # Update current session to match new session
-                WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="handler")
-                session.workflow_state = {
-                    "target_role": target_role,
-                    "authentication_stage": "start",
-                    "user_type": target_role
-                }
-
-            # Send confirmation message
-            switch_message = f"Switched to {target_role} mode. Starting authentication process..."
-            await self.whatsapp_service.send_message(user.phone_number, switch_message)
-
-            # Determine intent based on target role
-            intent = "sell_something" if target_role == "seller" else "buy_something"
-
-            # Check if we have cached user data to avoid API call
-            cached_filtered_result = await self.user_cache_service.get_filtered_user_data(
-                user.phone_number, intent
+            # Use ExitService to completely exit the user (without goodbye message)
+            exit_service = ExitService(
+                whatsapp_service=self.whatsapp_service,
+                authentication_service=authentication_service,
+                session_manager=authentication_service.session_manager if hasattr(authentication_service, 'session_manager') else None
             )
 
-            if cached_filtered_result:
-                logger.info(f"Using cached filtered data for intent switch to {target_role}")
-                filtered_result = cached_filtered_result
-            else:
-                # Fallback to authentication service
-                auth_result = await authentication_service.user_authenticate(
-                    user.phone_number,
-                    original_message,
-                    session,
-                    intent=intent
-                )
+            # Perform complete exit without showing goodbye message
+            exit_result = await exit_service.handle_exit_intent(
+                user.phone_number,
+                session,
+                show_message=False  # No goodbye message, we're switching accounts
+            )
 
-                if auth_result.get("success") and auth_result.get("response"):
-                    # Filter users by the new intent
-                    filtered_result = authentication_service.filter_users_by_intent(
-                        auth_result["response"],
-                        intent
-                    )
-                else:
-                    filtered_result = {"success": False}
+            logger.info(f"Exit result for account switch: {exit_result}")
 
-            if filtered_result.get("success"):
-                # Initiate email confirmation with filtered users
-                email_result = await authentication_service.initiate_email_confirmation(
-                    user.phone_number,
-                    session,
-                    filtered_result["filtered_users"],
-                    filtered_result["unique_emails"]
-                )
+            # Send account switch message
+            switch_message = f"Switching to a different {target_role} account. Please select your profile to continue."
+            await self.whatsapp_service.send_message(user.phone_number, switch_message)
 
-                return {
-                    "status": "switch_authentication_started",
-                    "target_role": target_role,
-                    "email_result": email_result
-                }
-            else:
-                await self.whatsapp_service.send_message(
-                    user.phone_number,
-                    f"No {target_role} accounts found for your phone number. Please contact support."
-                )
-                return {"status": "no_matching_accounts", "target_role": target_role}
+            # Return status to trigger profile selection in chat service
+            return {
+                "status": "exit_and_trigger_profile_selection",
+                "target_role": target_role,
+                "original_message": original_message,
+                "exit_result": exit_result
+            }
 
         except Exception as e:
             logger.error(f"Error handling switch to existing account: {e}")
@@ -1032,76 +986,44 @@ Analyze their response and return only:
 
     async def _handle_switch_to_specific_account(self, user, session, selected_account: Dict, selected_email: str,
                                                target_role: str, original_message: str, authentication_service) -> Dict[str, Any]:
-        """Handle switching to a specific selected account using traditional auth flow."""
+        """Handle switching to a specific selected account by completely exiting and triggering profile selection."""
         try:
-            # Clear user token/session
-            normalized_phone = user.phone_number.lstrip('+')
-            await authentication_service.clear_user_token(normalized_phone)
+            from app.services.exit_service import ExitService
 
-            # Clear pending switch state
+            logger.info(f"Switching to specific {target_role} account ({selected_email}) - initiating complete exit and profile selection")
+
+            # Clear pending switch state before exit
             if "pending_role_switch" in session.workflow_state:
                 del session.workflow_state["pending_role_switch"]
 
-            # Make fresh authentication call to get all accounts for this phone number
-            logger.info(f"Making authentication call to get fresh account data for selected email: {selected_email}")
-
-            # Use existing user_authenticate method to get fresh data and cache it
-            auth_response = await authentication_service.user_authenticate(
-                user.phone_number, "account_switch", session, intent="general_inquiry"
+            # Use ExitService to completely exit the user (without goodbye message)
+            exit_service = ExitService(
+                whatsapp_service=self.whatsapp_service,
+                authentication_service=authentication_service,
+                session_manager=authentication_service.session_manager if hasattr(authentication_service, 'session_manager') else None
             )
 
-            if auth_response.get("success"):
-                raw_response = auth_response.get("response", [])
-                if raw_response:
-                    # Find the specific user account from the response
-                    selected_user_data = None
-                    for account in raw_response:
-                        account_email = account.get("username") or account.get("email")
-                        if account_email == selected_email:
-                            selected_user_data = account
-                            break
-
-                    if selected_user_data:
-                        # Use traditional authentication flow via _process_selected_email
-                        # This ensures buyers get "Hi {username}!" and sellers get OTP validation
-                        logger.info(f"Processing selected email through traditional auth flow: {selected_email}")
-
-                        # Create filtered_users list with just the selected account
-                        filtered_users = [selected_user_data]
-
-                        # Call the traditional email processing method
-                        result = await authentication_service._process_selected_email(
-                            user.phone_number,
-                            session,
-                            selected_email,
-                            filtered_users
-                        )
-
-                        logger.info(f"Traditional auth flow result for {target_role}: {result.get('status')}")
-
-                        # Retrieve meaningful message from cache if available
-                        cached_meaningful = await self.user_cache_service.get_meaningful_message(normalized_phone)
-                        if cached_meaningful:
-                            result["original_message"] = cached_meaningful["message"]
-                            result["original_intent_result"] = cached_meaningful["intent_result"]
-                            logger.info(f"Retrieved and attached meaningful message to result: {cached_meaningful['message'][:50]}...")
-                            # Clear from cache after retrieval
-                            await self.user_cache_service.clear_meaningful_message(normalized_phone)
-
-                        return result
-                    else:
-                        logger.error(f"Selected email {selected_email} not found in fresh API response")
-                else:
-                    logger.error("Empty API response when switching accounts")
-            else:
-                logger.error(f"Authentication API call failed for {selected_email}: {auth_response.get('message')}")
-
-            # If we reach here, something went wrong
-            await self.whatsapp_service.send_message(
+            # Perform complete exit without showing goodbye message
+            exit_result = await exit_service.handle_exit_intent(
                 user.phone_number,
-                "Error switching accounts. Please try again or contact support."
+                session,
+                show_message=False  # No goodbye message, we're switching accounts
             )
-            return {"status": "account_switch_failed"}
+
+            logger.info(f"Exit result for specific account switch: {exit_result}")
+
+            # Send account switch message
+            switch_message = f"Switching to {target_role} account. Please select your profile to continue."
+            await self.whatsapp_service.send_message(user.phone_number, switch_message)
+
+            # Return status to trigger profile selection in chat service
+            return {
+                "status": "exit_and_trigger_profile_selection",
+                "target_role": target_role,
+                "selected_email": selected_email,
+                "original_message": original_message,
+                "exit_result": exit_result
+            }
 
         except Exception as e:
             logger.error(f"Error handling switch to specific account: {e}")

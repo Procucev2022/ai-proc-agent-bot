@@ -7,6 +7,7 @@ and ask for missing details in a consistent format across the application.
 
 from typing import List, Dict, Any
 from datetime import datetime
+from app.utils.datetime_utils import get_ordinal_suffix
 
 def format_rfq_response_message(
     extracted_entities: List[Dict[str, Any]],
@@ -91,11 +92,20 @@ def format_rfq_response_message(
     delivery_info = []
     if global_fields.get("deliveryDate"):
         delivery_date = global_fields["deliveryDate"]
-        # Format date nicely
+        # Format date nicely with ordinal suffix (e.g., "5th Nov 2025")
         if isinstance(delivery_date, datetime):
-            formatted_date = delivery_date.strftime("%d %b %Y")
+            day = delivery_date.day
+            suffix = get_ordinal_suffix(day)
+            formatted_date = f"{day}{suffix} {delivery_date.strftime('%b %Y')}"
         else:
-            formatted_date = str(delivery_date)
+            # Try to parse string dates
+            try:
+                parsed_date = datetime.strptime(str(delivery_date), "%Y-%m-%d")
+                day = parsed_date.day
+                suffix = get_ordinal_suffix(day)
+                formatted_date = f"{day}{suffix} {parsed_date.strftime('%b %Y')}"
+            except (ValueError, AttributeError):
+                formatted_date = str(delivery_date)
         delivery_info.append(f"*Delivery Date:* {formatted_date}")
 
     if global_fields.get("city") or global_fields.get("state") or global_fields.get("pincode"):
