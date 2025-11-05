@@ -2422,11 +2422,42 @@ class ChatService:
             # Route to confirmation handler
             result = await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
 
-            # Save session after confirmation handling to persist any session clearing
-            # This ensures that when RFQ is successfully created, the cleared workflow_state
-            # is saved to the database so the next request starts fresh
-            await self.session_manager.save_session(session)
-            logger.info(f"Session saved after confirmation button handling for {user.phone_number}")
+            # Handle session completion if RFQs were created
+            if result.get("status") == "multiple_rfqs_created":
+                # APPEND session to database (preserves history from previous RFQs)
+                from app.database import DatabaseManager
+                db_manager = DatabaseManager()
+                try:
+                    db_manager.append_session_data({
+                        'session_id': session.session_id,
+                        'external_user_id': session.external_user_id,
+                        'workflow_type': WorkflowType.rfq_submitted.value,
+                        'outcome': session.outcome.value if session.outcome else None,
+                        'workflow_state': session.workflow_state,
+                        'conversation_history': session.conversation_history,
+                        'extracted_entities': session.extracted_entities,
+                        'rfq_ids': session.rfq_ids if hasattr(session, 'rfq_ids') else None,
+                        'product_items': session.product_items if hasattr(session, 'product_items') else None,
+                        'retention_date': session.retention_date,
+                        'last_activity_at': session.last_activity_at,
+                        'completed_at': session.completed_at
+                    })
+                    logger.info(f"Appended completed RFQ session {session.session_id} to database (button handler)")
+                finally:
+                    db_manager.close()
+
+                # Clear Redis (session complete) - CRITICAL: Delete old session to prevent stale data leak
+                from app.redis_db import get_session_redis_service
+                from app.config import get_settings
+                settings = get_settings()
+                if settings.redis_session_storage_enabled:
+                    redis_session = get_session_redis_service()
+                    await redis_session.delete_session(session.session_id)
+                    logger.info(f"Deleted completed session {session.session_id} from Redis (button handler)")
+            else:
+                # Save session if RFQ was not created (e.g., error occurred)
+                await self.session_manager.save_session(session)
+                logger.info(f"Session saved after confirmation button handling for {user.phone_number}")
 
             return result
 

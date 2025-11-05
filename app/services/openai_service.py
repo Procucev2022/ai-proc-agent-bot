@@ -2566,7 +2566,13 @@ Determine the best category for the input item based on the similar items and th
                     # Format response with proper spacing and sections
                     # Only return the summary - prefix/suffix are added by the handler
                     if args.get("summary"):
-                        return args['summary']
+                        summary = args['summary']
+                        # Fix literal \n in the output - the AI sometimes returns escaped newlines as text
+                        # Replace all occurrences of literal \n with actual newline characters
+                        if '\\n' in summary:
+                            logger.warning("Found escaped newlines in summary, converting to actual newlines")
+                            summary = summary.replace('\\n', '\n')
+                        return summary
 
                     # Fallback if no summary
                     return "No summary generated"

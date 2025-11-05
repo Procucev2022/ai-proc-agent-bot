@@ -29,7 +29,7 @@ Map Excel columns to these RFQ fields:
 
 **Required Fields (per product):**
 - description: Must be non-empty string
-- quantity: Must be positive number (SKIP PRODUCT IF MISSING OR ZERO)
+- quantity: Must be positive number (SKIP PRODUCT IF MISSING OR ZERO). Maximum allowed: 100,000 pieces/units per product.
 - unitofMeasures: Must be non-empty string (default to "pcs" if missing)
 
 **Optional Fields:**
