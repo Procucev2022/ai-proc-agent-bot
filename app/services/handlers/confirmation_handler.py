@@ -128,6 +128,7 @@ class ConfirmationHandler:
         ]):
             logger.info(f"Confirmation service detected skip request from {user.phone_number}")
             return await self._proceed_to_confirmation_from_optional(user, session, message)
+        # For above TODO, Add a elif logic here
         else:
             logger.info(f"Confirmation service detected user wants to provide optional info from {user.phone_number}")
             return await self._merge_optional_fields_and_confirm(user, session, message)

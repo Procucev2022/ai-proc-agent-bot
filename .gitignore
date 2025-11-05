@@ -16,3 +16,8 @@ VMconnection.txt
 WhatsappIntegrationDoc.md
 database_explorer.py
 /documentation
+
+# Celery files
+celerybeat-schedule
+celerybeat.pid
+celerybeat-schedule

@@ -70,6 +70,13 @@ class Settings:
         # Redis configuration
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self.redis_expiry_seconds = int(os.getenv("REDIS_EXPIRY_SECONDS", "43200"))  # 12 hours default for token inactivity
+        
+        # Celery configuration
+        self.celery_broker_url = os.getenv("CELERY_BROKER_URL", "redis://localhost:6380/0")
+        self.celery_result_backend = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6380/0")
+        self.celery_worker_concurrency = int(os.getenv("CELERY_WORKER_CONCURRENCY", "2"))
+        self.celery_task_time_limit = int(os.getenv("CELERY_TASK_TIME_LIMIT", "360"))
+        self.celery_beat_schedule_enabled = os.getenv("CELERY_BEAT_SCHEDULE_ENABLED", "true").lower() == "true"
 
         # Redis session storage configuration
         self.redis_session_storage_enabled = os.getenv("REDIS_SESSION_STORAGE_ENABLED", "true").lower() == "true"
@@ -414,6 +421,16 @@ class Settings:
             "initial_delay": self.retry_initial_delay,
             "exponential_base": self.retry_exponential_base,
             "max_delay": self.retry_max_delay
+        }
+    
+    def get_celery_config(self) -> Dict[str, Any]:
+        """Get Celery configuration."""
+        return {
+            "broker_url": self.celery_broker_url,
+            "result_backend": self.celery_result_backend,
+            "worker_concurrency": self.celery_worker_concurrency,
+            "task_time_limit": self.celery_task_time_limit,
+            "beat_schedule_enabled": self.celery_beat_schedule_enabled
         }
 
 # Global settings instance

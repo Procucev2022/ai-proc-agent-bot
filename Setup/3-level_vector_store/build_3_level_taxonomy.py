@@ -31,14 +31,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def process_category_mappings(batch_size: int = 10, start_from: int = 0, use_remote: bool = True) -> Dict[str, Any]:
+def process_category_mappings(batch_size: int = 50, start_from: int = 0) -> Dict[str, Any]:
     """
-    Process category data (remote or local) to build 3-level taxonomy.
+    Process category data from item_category table to build 3-level taxonomy.
+    
+    Always uses remote item_category data as the primary source to ensure
+    consistency between auto-categorization and learning taxonomy systems.
+    This will also populate the client_category_mapping table automatically.
     
     Args:
         batch_size: Number of mappings to process in each batch
         start_from: Index to start processing from (for resuming)
-        use_remote: Whether to use remote item_category data
         
     Returns:
         Dict with processing results
@@ -46,59 +49,40 @@ def process_category_mappings(batch_size: int = 10, start_from: int = 0, use_rem
     learning_service = LearningCategorizationService()
     
     try:
-        # Get items from appropriate source
-        if use_remote:
-            settings = get_settings()
-            if not settings.enable_remote_categorization:
-                logger.error("Remote categorization is not enabled in configuration")
-                return {
-                    "success": False,
-                    "error": "Remote categorization not enabled",
-                    "processed_count": 0
-                }
-            
-            if not test_remote_connection():
-                logger.error("Remote database connection failed")
-                return {
-                    "success": False,
-                    "error": "Remote database connection failed",
-                    "processed_count": 0
-                }
-            
-            logger.info("Using remote item_category data")
-            all_items = get_remote_item_categories()
-            total_mappings = len(all_items)
-            
-            # Convert remote items to standard format and slice
-            category_mappings = []
-            for item_data in all_items[start_from:start_from + 50]:
-                category_mappings.append({
-                    'id': item_data['uuid'],
-                    'category': item_data['category'],
-                    'item': item_data['item'],
-                    'division': item_data.get('division', ''),
-                    'serial_no': item_data.get('serial_no', 0)
-                })
+        # Always use remote item_category data as primary source
+        settings = get_settings()
+        if not settings.enable_remote_categorization:
+            logger.error("Remote categorization must be enabled to build taxonomy from item_category")
+            return {
+                "success": False,
+                "error": "Remote categorization not enabled - required for item_category access",
+                "processed_count": 0
+            }
+        
+        if not test_remote_connection():
+            logger.error("Remote database connection failed")
+            return {
+                "success": False,
+                "error": "Remote database connection failed",
+                "processed_count": 0
+            }
+        
+        logger.info("Using remote item_category data as primary source for learning taxonomy")
+        all_items = get_remote_item_categories()
+        total_mappings = len(all_items)
+        logger.info(f"Found {total_mappings} items in item_category table")
+        
+        # Convert remote items to standard format and slice
+        category_mappings = []
+        for item_data in all_items[start_from:start_from + batch_size]:
+            category_mappings.append({
+                'id': item_data['uuid'],
+                'category': item_data['category'],
+                'item': item_data['item'],
+                'division': item_data.get('division', ''),
+                'serial_no': item_data.get('serial_no', 0)
+            })
                 
-        else:
-            logger.info("Using local CategoryMapping data")
-            db = get_db_session()
-            try:
-                total_mappings = db.query(CategoryMapping).count()
-                local_mappings = db.query(CategoryMapping).offset(start_from).limit(50).all()
-                
-                # Convert local mappings to standard format
-                category_mappings = []
-                for mapping in local_mappings:
-                    category_mappings.append({
-                        'id': mapping.id,
-                        'category': mapping.category,
-                        'item': mapping.item,
-                        'division': '',
-                        'serial_no': 0
-                    })
-            finally:
-                db.close()
         
         logger.info(f"Total mappings in database: {total_mappings}")
         logger.info(f"Processing 50 items from index {start_from}, batch size: {batch_size}")
@@ -199,35 +183,30 @@ def process_category_mappings(batch_size: int = 10, start_from: int = 0, use_rem
 
 def main():
     """Main function with command line argument parsing."""
-    parser = argparse.ArgumentParser(description='Build 3-level taxonomy from category data')
-    parser.add_argument('--batch-size', type=int, default=10, 
-                       help='Number of items to process in each batch (default: 10)')
+    parser = argparse.ArgumentParser(description='Build 3-level taxonomy from item_category data')
+    parser.add_argument('--batch-size', type=int, default=50, 
+                       help='Number of items to process in each batch (default: 50)')
     parser.add_argument('--start-from', type=int, default=0,
                        help='Index to start processing from (for resuming, default: 0)')
-    parser.add_argument('--use-local', action='store_true',
-                       help='Use local CategoryMapping table instead of remote item_category')
     
     args = parser.parse_args()
     
-    use_remote = not args.use_local
-    source = "remote item_category" if use_remote else "local CategoryMapping"
-    
     logger.info("Starting 3-level taxonomy building process")
     logger.info(f"Configuration: batch_size={args.batch_size}, start_from={args.start_from}")
-    logger.info(f"Data source: {source}")
+    logger.info("Data source: remote item_category table (primary source)")
+    logger.info("This will automatically populate client_category_mapping table")
     
     # Process the mappings
     results = process_category_mappings(
         batch_size=args.batch_size,
-        start_from=args.start_from,
-        use_remote=use_remote
+        start_from=args.start_from
     )
     
     if results["success"]:
-        logger.info("✅ Taxonomy building completed successfully!")
+        logger.info("Taxonomy building completed successfully!")
         exit_code = 0
     else:
-        logger.error("❌ Taxonomy building failed!")
+        logger.error("Taxonomy building failed!")
         logger.error(f"Error: {results.get('error', 'Unknown error')}")
         exit_code = 1
     
