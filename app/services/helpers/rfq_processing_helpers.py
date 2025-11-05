@@ -58,7 +58,7 @@ async def run_auto_categorization_for_rfqs(rfq_results: List[Dict[str, Any]], au
                 if enhanced_auto_categorization_service:
                     try:
                         logger.info(f"Trying enhanced auto-categorization for '{item_description}'")
-                        categorization_result = enhanced_auto_categorization_service.categorize_item(
+                        categorization_result = await enhanced_auto_categorization_service.categorize_item(
                             item_description=item_description,
                             user_id="system_auto_categorization",
                             session_id=f"rfq_{rfq_id}",

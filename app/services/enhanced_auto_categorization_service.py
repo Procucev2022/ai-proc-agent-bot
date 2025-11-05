@@ -171,10 +171,10 @@ class EnhancedAutoCategorizationService:
             "matched_level": None
         }
 
-    def categorize_item(
-        self, 
-        item_description: str, 
-        user_id: str, 
+    async def categorize_item(
+        self,
+        item_description: str,
+        user_id: str,
         session_id: Optional[str] = None,
         rfq_id: Optional[str] = None,
         similarity_threshold: float = 0.75,
@@ -242,7 +242,7 @@ class EnhancedAutoCategorizationService:
                 logger.info(f"Top matches count: {len(top_matches)}")
 
                 # Use OpenAI for final categorization decision with category constraints
-                openai_result = self.openai_service.categorize_with_similar_items(
+                openai_result = await self.openai_service.categorize_with_similar_items(
                     item_description, top_matches, available_categories
                 )
 
