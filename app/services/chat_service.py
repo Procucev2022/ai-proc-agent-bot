@@ -1433,8 +1433,6 @@ class ChatService:
             # Validate Excel file
             validation_service = ExcelValidationService()
             validation_result = await validation_service.validate_excel_file_from_url(file_url, filename)
-            
-            logger.info(f"[EXCEL-VALIDATION] Validation result: {validation_result}")
 
             if not validation_result.get('valid'):
                 validation_error = validation_result.get('error', 'Invalid Excel file')
