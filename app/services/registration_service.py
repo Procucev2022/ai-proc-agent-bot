@@ -641,7 +641,8 @@ class RegistrationService:
                                 "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
                                 "Our team will get in touch shortly to complete the process, and once verified, "
                                 "you’ll be able to access your account and start raising RFQs.\n\n"
-                                "Thank you for choosing Procucev!"
+                                "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
+
                             )
 
                             if self.session_manager:
@@ -677,7 +678,8 @@ class RegistrationService:
                             "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
                             "Our team will get in touch shortly to complete the process, and once verified, "
                             "you’ll be able to access your account and start raising RFQs.\n\n"
-                            "Thank you for choosing Procucev!"
+                            "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
+
                         )
 
                         if self.session_manager:

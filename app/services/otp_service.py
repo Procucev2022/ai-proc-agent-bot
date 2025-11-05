@@ -150,7 +150,8 @@ class OTPService:
                     "*Maximum OTP attempts exceeded.*\n"
                     "For your security, your session has ended. "
                     "Please contact our support team for assistance at support@procucev.com\n\n"
-                    "Thank you for choosing Procucev!"
+                    "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
+
                 )
             )
             return {"status": "max_otp_exceeded", "reason": "max_otp_retries_exceeded"}
@@ -176,7 +177,8 @@ class OTPService:
                     "*Maximum OTP attempts exceeded.*\n"
                     "For your security, your session has ended. "
                     "Please contact our support team for assistance at support@procucev.com\n\n"
-                    "Thank you for choosing Procucev!"
+                    "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
+
                 )
             )
             return {"status": "max_otp_exceeded", "reason": "max_otp_retries_exceeded"}
