@@ -1919,23 +1919,23 @@ Analyze their response to determine their true choice.
             return {"column_mapping": {}, "confidence": 20, "unmapped_headers": headers, "reasoning": f"Error: {str(e)}", "success": False}
 
     @log_service_method("openai_service")
-    async def categorize_with_similar_items(self, item_description: str, similar_items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    async def categorize_with_similar_items(self, item_description: str, similar_items: List[Dict[str, Any]], available_categories: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Categorize an RFQ item using similar items from vector search.
-        
+
         Uses OpenAI function calling to make final categorization decision based on
         vector search results, with confidence scoring and reasoning.
-        
+
         Args:
             item_description: Description of the item to categorize
             similar_items: List of similar items with category information and similarity scores
             available_categories: Optional list of available categories to constrain the selection
-            
+
         Returns:
             Dict with categorization result, confidence score, and reasoning
         """
         start_time = time.time()
-        
+
         try:
             # Create dynamic auto-categorization tool with enum constraint
             if available_categories:
