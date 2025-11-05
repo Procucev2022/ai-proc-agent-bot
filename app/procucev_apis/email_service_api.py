@@ -9,20 +9,20 @@ import logging
 from typing import Dict, Any, List
 from datetime import datetime
 
-from app.procucev_apis.procucev_api_client import ProcucevAPIClient
+from app.procucev_apis.procucev_api_client import get_procucev_api_client
 
 logger = logging.getLogger(__name__)
 
 class EmailServiceAPI:
     """
     Service for handling email notification operations.
-    
+
     Provides methods for sending emails to buyers, sellers, and support team
     with support for TO, CC, and BCC recipients.
     """
-    
+
     def __init__(self):
-        self.api_client = ProcucevAPIClient()
+        self.api_client = get_procucev_api_client()
         
     async def send_email(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
         """

@@ -1,0 +1,60 @@
+services:
+  # Redis for Celery broker and result backend
+  celery_redis:
+    container_name: procucev_celery_redis
+    image: redis:6.2-alpine
+    ports:
+      - "6380:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - celery_redis_data:/data
+    networks:
+      - procucev_network
+
+  # Celery Worker
+  celery_worker:
+    container_name: procucev_celery_worker
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=2
+    depends_on:
+      - celery_redis
+    environment:
+      - REDIS_URL=redis://celery_redis:6379/0
+      - CELERY_BROKER_URL=redis://celery_redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://celery_redis:6379/0
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+    networks:
+      - procucev_network
+    restart: unless-stopped
+
+  # Celery Beat (scheduler)
+  celery_beat:
+    container_name: procucev_celery_beat
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    command: celery -A app.celery_app beat --loglevel=info
+    depends_on:
+      - celery_redis
+      - celery_worker
+    environment:
+      - REDIS_URL=redis://celery_redis:6379/0
+      - CELERY_BROKER_URL=redis://celery_redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://celery_redis:6379/0
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+    networks:
+      - procucev_network
+    restart: unless-stopped
+
+volumes:
+  celery_redis_data:
+
+networks:
+  procucev_network:
+    driver: bridge

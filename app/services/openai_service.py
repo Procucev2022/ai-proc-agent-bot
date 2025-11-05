@@ -56,12 +56,28 @@ class OpenAIService:
         self.tools_dir = Path(__file__).parent.parent / "tools"
         self.prompts_dir = Path(__file__).parent.parent / "prompts"
         self.interaction_logger = get_interaction_logger()
-        
+
         # Initialize error notification service (lazy loading to avoid circular imports)
         self._error_notification_service = None
 
         # OpenAI call tracking for performance monitoring
         self.call_counts = {}
+
+    async def close(self):
+        """Close the OpenAI client and cleanup resources."""
+        try:
+            await self.client.close()
+            logger.debug("OpenAI client closed successfully")
+        except Exception as e:
+            logger.warning(f"Error closing OpenAI client: {e}")
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit - cleanup resources."""
+        await self.close()
 
     def _track_openai_call(self, call_type: str, user_phone: str = None):
         """Track OpenAI API calls for performance monitoring."""
@@ -476,15 +492,38 @@ class OpenAIService:
             # Track this OpenAI call
             self._track_openai_call("entity_extraction")
 
+            # Load system prompt (cached via instructions parameter)
+            system_prompt = self._load_prompt(prompt_category, prompt_name, current_year=current_year)
+
+            # Log timing breakdown
+            prep_time = time.time() - start_time
+            logger.info(f"Entity extraction prep time: {prep_time:.2f}s")
+
+            api_call_start = time.time()
             response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": message}],
-                instructions=self._load_prompt(prompt_category, prompt_name, current_year=current_year),
+                instructions=system_prompt,
                 tools=[entity_tool],
                 tool_choice={"type": "function", "name": tool_function_name}
             )
-            
+            api_call_time = time.time() - api_call_start
+
+            # Log cache usage information
+            usage = getattr(response, 'usage', None)
+            if usage:
+                total_input_tokens = getattr(usage, 'input_tokens', 0)
+                input_tokens_details = getattr(usage, 'input_tokens_details', None)
+                cached_tokens = getattr(input_tokens_details, 'cached_tokens', 0) if input_tokens_details else 0
+                output_tokens = getattr(usage, 'output_tokens', 0)
+
+                cache_percentage = (cached_tokens / total_input_tokens * 100) if total_input_tokens > 0 else 0
+                logger.info(f"OpenAI API call time: {api_call_time:.2f}s | Input tokens: {total_input_tokens} | Cached: {cached_tokens} ({cache_percentage:.1f}%) | Output: {output_tokens}")
+            else:
+                logger.info(f"OpenAI API call time: {api_call_time:.2f}s (no usage data available)")
+
             processing_time = time.time() - start_time
+            logger.info(f"Total entity extraction time: {processing_time:.2f}s")
             
             # Parse function call response
             if response.output and len(response.output) > 0:
@@ -695,6 +734,11 @@ class OpenAIService:
             # Track this OpenAI call
             self._track_openai_call("entity_extraction_with_summaries")
 
+            # Log timing breakdown
+            prep_time = time.time() - start_time
+            logger.info(f"Summary-aware entity extraction prep time: {prep_time:.2f}s")
+
+            api_call_start = time.time()
             response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": message}],
@@ -702,8 +746,23 @@ class OpenAIService:
                 tools=[entity_tool],
                 tool_choice={"type": "function", "name": "extract_entities_with_summaries"}
             )
-            
+            api_call_time = time.time() - api_call_start
+
+            # Log cache usage information
+            usage = getattr(response, 'usage', None)
+            if usage:
+                total_input_tokens = getattr(usage, 'input_tokens', 0)
+                input_tokens_details = getattr(usage, 'input_tokens_details', None)
+                cached_tokens = getattr(input_tokens_details, 'cached_tokens', 0) if input_tokens_details else 0
+                output_tokens = getattr(usage, 'output_tokens', 0)
+
+                cache_percentage = (cached_tokens / total_input_tokens * 100) if total_input_tokens > 0 else 0
+                logger.info(f"OpenAI API call time: {api_call_time:.2f}s | Input tokens: {total_input_tokens} | Cached: {cached_tokens} ({cache_percentage:.1f}%) | Output: {output_tokens}")
+            else:
+                logger.info(f"OpenAI API call time: {api_call_time:.2f}s (no usage data available)")
+
             processing_time = time.time() - start_time
+            logger.info(f"Total summary-aware entity extraction time: {processing_time:.2f}s")
             
             # Parse function call response
             if response.output and len(response.output) > 0:
@@ -1860,26 +1919,58 @@ Analyze their response to determine their true choice.
             return {"column_mapping": {}, "confidence": 20, "unmapped_headers": headers, "reasoning": f"Error: {str(e)}", "success": False}
 
     @log_service_method("openai_service")
-    async def categorize_with_similar_items(self, item_description: str, similar_items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    async def categorize_with_similar_items(self, item_description: str, similar_items: List[Dict[str, Any]], available_categories: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Categorize an RFQ item using similar items from vector search.
-        
+
         Uses OpenAI function calling to make final categorization decision based on
         vector search results, with confidence scoring and reasoning.
-        
+
         Args:
             item_description: Description of the item to categorize
             similar_items: List of similar items with category information and similarity scores
-            
+            available_categories: Optional list of available categories to constrain the selection
+
         Returns:
             Dict with categorization result, confidence score, and reasoning
         """
         start_time = time.time()
-        
+
         try:
-            # Load auto-categorization tool
-            with open(self.tools_dir / "auto_categorization.json", 'r') as f:
-                categorization_tool = json.load(f)
+            # Create dynamic auto-categorization tool with enum constraint
+            if available_categories:
+                categories_list = list(set(available_categories)) + ["Other"]
+            else:
+                # Extract categories from similar items as fallback
+                categories_list = list(set([item['category'] for item in similar_items])) + ["Other"]
+            
+            # Create tool with strict enum constraint
+            categorization_tool = {
+                "type": "function",
+                "name": "categorize_item", 
+                "description": "Categorize an RFQ item based on similar items and their categories. You must choose from the available categories provided.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "category": {
+                            "type": "string",
+                            "description": f"The category for the item. Must be one of: {', '.join(categories_list)}",
+                            "enum": categories_list  # Strict constraint
+                        },
+                        "confidence_score": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                            "description": "Confidence score between 0 and 1 for the categorization"
+                        },
+                        "reasoning": {
+                            "type": "string", 
+                            "description": "Brief explanation of why this category was selected based on similar items and available options"
+                        }
+                    },
+                    "required": ["category", "confidence_score", "reasoning"]
+                }
+            }
             
             # Format similar items for the prompt
             similar_items_text = ""
@@ -1889,11 +1980,26 @@ Analyze their response to determine their true choice.
    Category: {item['category']}
 """
             
+            # Extract available categories from similar items or use default
+            if available_categories:
+                categories_list = list(set(available_categories)) + ["Other"]
+                # Format each category on its own line with bullet points
+                categories_formatted = '\n'.join([f"- {cat}" for cat in categories_list])
+                available_categories_text = f"\nAVAILABLE CATEGORIES (you must choose one of these):\n{categories_formatted}\n"
+            else:
+                # Extract categories from similar items as fallback
+                item_categories = list(set([item['category'] for item in similar_items])) + ["Other"]
+                categories_formatted = '\n'.join([f"- {cat}" for cat in item_categories])
+                available_categories_text = f"\nAVAILABLE CATEGORIES (you must choose one of these):\n{categories_formatted}\n"
+            
             prompt = f"""
 Item to categorize: "{item_description}"
 
 Top similar items from database (ranked by similarity):
 {similar_items_text}
+{available_categories_text}
+
+IMPORTANT: You must choose from the available categories listed above. If none are appropriate, select 'Other'.
 
 Determine the best category for the input item based on the similar items and their categories.
 """
@@ -2458,17 +2564,18 @@ Determine the best category for the input item based on the similar items and th
                     logger.info(f"RFQ confirmation LLM output: {json.dumps(args, indent=2)}")
 
                     # Format response with proper spacing and sections
-                    response_parts = []
-
-                    # Summary section
+                    # Only return the summary - prefix/suffix are added by the handler
                     if args.get("summary"):
-                        response_parts.append(f"RFQ Summary:\n\n{args['summary']}")
+                        summary = args['summary']
+                        # Fix literal \n in the output - the AI sometimes returns escaped newlines as text
+                        # Replace all occurrences of literal \n with actual newline characters
+                        if '\\n' in summary:
+                            logger.warning("Found escaped newlines in summary, converting to actual newlines")
+                            summary = summary.replace('\\n', '\n')
+                        return summary
 
-                    # Confirmation request section
-                    if args.get("confirmation_request"):
-                        response_parts.append(args["confirmation_request"])
-
-                    return "\n\n".join(response_parts)
+                    # Fallback if no summary
+                    return "No summary generated"
             
             # Fallback response
             return "Here's a summary of your RFQ."
@@ -3213,6 +3320,16 @@ If multiple emails and user selected a number, include selection."""
                         "confidence": args.get("confidence", 0)
                     }
                     
+                    
+                    # Debug: Log each RFQ and its products
+                    rfqs = result["rfqs"]
+                    logger.info(f"[DEBUG-RFQS] Number of RFQs returned: {len(rfqs)}")
+                    for i, rfq in enumerate(rfqs):
+                        products = rfq.get('products', [])
+                        logger.info(f"[DEBUG-RFQS] RFQ {i+1} has {len(products)} products")
+                        for j, product in enumerate(products):
+                            logger.info(f"[DEBUG-RFQS] Product {j+1}: {product.get('product_name', 'Unknown')}")
+                    
                     # Log successful Excel processing
                     self.interaction_logger.log_entity_extraction(
                         user_input=f"Excel file: {filename}",
@@ -3224,25 +3341,6 @@ If multiple emails and user selected a number, include selection."""
                         missing_fields=[]
                     )
                     
-                    # Log extracted entities for debugging with detailed information
-                    extracted_rfqs = result["rfqs"]
-                    logger.info(f"Extracted entities from OpenAI: {len(extracted_rfqs)} RFQs \n , Data : {extracted_rfqs}")
-                    for i, rfq in enumerate(extracted_rfqs, 1):
-                        products = rfq.get("products", [])
-                        logger.info(f"  RFQ {i}: {len(products)} products")
-                        logger.info(f"    RFQ Details: deliveryDate={rfq.get('deliveryDate', 'N/A')}, city={rfq.get('city', 'N/A')}, state={rfq.get('state', 'N/A')}")
-                        
-                        for j, product in enumerate(products, 1):  # Show all products
-                            logger.info(f"    Product {j}: {product.get('description', 'N/A')} - {product.get('quantity', 'N/A')} {product.get('unitofMeasures', 'N/A')}")
-                            logger.info(f"      Specification: {product.get('specification', 'N/A')}")
-                            logger.info(f"      Category: {product.get('category', 'N/A')}")
-                            logger.info(f"      Raw Product JSON: {json.dumps(product, indent=10)}")
-                        
-                        logger.info(f"    Raw RFQ JSON: {json.dumps(rfq, indent=8)}")
-                    
-                    logger.info(f"Excel processing successful: {len(result['rfqs'])} RFQs, confidence: {result['confidence']}")
-                    logger.info(f"Processing Summary: {json.dumps(result.get('processing_summary', {}), indent=4)}")
-                    logger.info(f"Complete Result JSON: {json.dumps(result, indent=2)}")
                     return result
             
             # Log failed processing

@@ -95,8 +95,9 @@ class LocationService:
         
         # Default coordinates for unknown pincodes (Bangalore as fallback)
         self.default_coordinates = {"lat": 12.9716, "lng": 77.5946, "city": "Unknown", "state": "Unknown"}
-        
-        logger.info(f"LocationService initialized with {len(self.pincode_coordinates)} pincode mappings")
+
+        # Reduced to debug level - singleton is created once per worker process
+        logger.debug(f"LocationService initialized with {len(self.pincode_coordinates)} pincode mappings")
     
     async def get_coordinates_from_pincode(self, pincode: str) -> Dict[str, Any]:
         """

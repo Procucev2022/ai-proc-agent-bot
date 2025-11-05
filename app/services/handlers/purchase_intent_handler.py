@@ -13,7 +13,6 @@ from app.services.whatsapp_service import WhatsAppService
 from app.services.workflow_manager import WorkflowManager
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.utils.datetime_utils import utc_now
-from app.utils.rfq_message_formatter import format_rfq_response_message
 
 logger = logging.getLogger(__name__)
 
@@ -112,13 +111,23 @@ class PurchaseIntentHandler:
             # Debug: Check which path we're taking
             print(f"PurchaseIntentHandler debug: entity_result keys = {entity_result.keys()}")
             print(f"PurchaseIntentHandler debug: entity_result = {entity_result}")
-            
+
+            # Check for non-procurable items FIRST
+            if entity_result.get("error_type") == "non_procurable":
+                logger.info(f"Non-procurable items detected: {entity_result.get('non_procurable_items')}")
+                return await self._handle_non_procurable_items(user, session, entity_result)
+
+            # Check for quantity limit violations
+            if entity_result.get("error_type") == "quantity_limit":
+                logger.info(f"Quantity limit violations detected: {entity_result.get('quantity_violations')}")
+                return await self._handle_quantity_limit_violations(user, session, entity_result)
+
             # Check if modification intent was detected but clarification is needed
             if entity_result.get("modification_intent_detected") and entity_result.get("requires_clarification"):
                 return await self._handle_modification_clarification(
                     user, session, message, entity_result, chat_summaries
                 )
-            
+
             if "products" in entity_result and entity_result["products"]:
                 print(f"PurchaseIntentHandler: Taking PRODUCTS ARRAY path with {len(entity_result['products'])} products")
                 logger.info(f"Taking PRODUCTS ARRAY path with {len(entity_result['products'])} products")
@@ -140,57 +149,25 @@ class PurchaseIntentHandler:
             return await self._handle_error_response(e, user.phone_number)
     
     async def _handle_modification_clarification(self, user: User, session: ConversationSession,
-                                               message: str, entity_result: Dict, chat_summaries: list) -> Dict[str, Any]:
+                                               _message: str, _entity_result: Dict, _chat_summaries: list) -> Dict[str, Any]:
         """Handle modification intent that requires clarification."""
         print(f"PurchaseIntentHandler: Modification intent detected but missing values, generating clarification")
         
-        # Build context for modification clarification
-        modification_context = {
-            "conversation_stage": "modification_clarification",
-            "workflow_type": "modification_request", 
-            "existing_products": entity_result.get("existing_products", []),
-            "user_message": message,
-            "modification_context": True
-        }
+        # --- Generate clarification message for modification context ---
+        # Don't show collected information, just show modification instructions
+        clarification_questions = (
+            "If you'd like to make any updates, please use these keywords:\n"
+            "• New – to add new items (e.g., New 10 motors)\n"
+            "• Remove – to delete an item (e.g., Remove desktop)\n"
+            "• Change – to modify quantity, delivery date, or location (e.g., Change laptops to 20, Change date to 30 Dec)\n\n"
+            "If everything looks good, just click Continue to proceed."
+        )
 
-
-
-        # --- Generate AI-powered clarification response for modification context ---
-        existing_products = modification_context.get("existing_products", [])
-        if existing_products:
-            entities = existing_products[0].get("entities", {})
-            global_fields = {
-                "deliveryDate": entities.get("deliveryDate"),
-                "city": entities.get("city"),
-                "state": entities.get("state"),
-                "pincode": entities.get("pincode")
-            }
-
-            # Generate formatted summary from extracted entities + global fields
-            # format_rfq_response_message expects a list of entities, not a single entity
-            summary_message = format_rfq_response_message(
-                extracted_entities=[entities],  # Wrap in list
-                global_fields=global_fields,
-                missing_fields=[]
-            )
-
-
-            # Build final clarification message with helpful examples
-            clarification_questions = (
-                f"{summary_message}\n\n"
-                "If you feel you need to modify any details or if you missed adding any item, you can do it now.\n\n"
-                "Here are a few examples you can follow:\n\n"
-                "• To add an item you missed:  Add 10 motors\n"
-                "• To remove an item you added:  Remove Desktop\n"
-                "• To change the quantity of an item:  Change laptops to 20\n"
-                "• To change the delivery date:  Change delivery date to 30 Dec\n"
-                "• To change the delivery location:  Change delivery location to 411005"
-            )
-
-        else:
-            clarification_questions = "What would you like to change it to?"
-
-        await self.whatsapp_service.send_message(user.phone_number, clarification_questions)
+        await self.whatsapp_service.send_configurable_buttons(
+            recipient_id=user.phone_number,
+            body=clarification_questions,
+            buttons_config=[{"id": "confirm_no_changes", "title": "Continue"}]
+        )
 
         await self.session_manager.save_session(session, WorkflowType.rfq_creation)
         
@@ -254,7 +231,11 @@ class PurchaseIntentHandler:
             }
 
         # If no new entities but not a modification request, send general clarification
-        clarification_message = "Could you provide more details about what you need? For example, what product and how many?"
+        clarification_message = (
+            "Please share the items for your RFQ with *name, brand/specs (if any), and quantity* — you can add multiple items together in one message.\n\n"
+            "📝 Example:\n"
+            "Laptop Dell Inspiron - 5, Printer HP LaserJet - 2, Desktop HP 17\" - 10"
+        )
         await self.whatsapp_service.send_message(user.phone_number, clarification_message)
         await self.session_manager.save_session(session, WorkflowType.rfq_creation)
 
@@ -263,6 +244,122 @@ class PurchaseIntentHandler:
             "message": "Requested more details from user"
         }
     
+    async def _handle_quantity_limit_violations(self, user: User, session: ConversationSession,
+                                                entity_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle quantity limit violations by informing user and asking them to adjust.
+
+        Args:
+            user: User object
+            session: Current conversation session
+            entity_result: Entity extraction result with quantity_violations
+
+        Returns:
+            Dict with status and details
+        """
+        try:
+            violations = entity_result.get("quantity_violations", [])
+            logger.info(f"Handling quantity limit violations for user {user.phone_number}: {violations}")
+
+            # Format the violations for the message
+            if len(violations) == 1:
+                violation = violations[0]
+                items_text = (
+                    f'"{violation["description"]}" with quantity {int(violation["quantity"]):,}'
+                )
+            else:
+                items_list = []
+                for v in violations:
+                    items_list.append(f'"{v["description"]}" ({int(v["quantity"]):,})')
+                items_text = ', '.join(items_list[:-1]) + f' and {items_list[-1]}'
+
+            # Send informative message
+            info_message = (
+                f"I'm sorry, but the quantity for {items_text} exceeds our limit.\n\n"
+                f"Please limit quantities to 100,000 pieces/units per product. "
+                f"You can adjust the quantities and try again."
+            )
+            await self.whatsapp_service.send_message(user.phone_number, info_message)
+
+            logger.info(f"Quantity limit violation message sent to user {user.phone_number}")
+
+            return {
+                "status": "quantity_limit_violation",
+                "violations": violations,
+                "message": "User informed about quantity limit violations"
+            }
+
+        except Exception as e:
+            logger.error(f"Error handling quantity limit violations: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
+    async def _handle_non_procurable_items(self, user: User, session: ConversationSession,
+                                          entity_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle detection of non-procurable items by informing user and canceling the request.
+
+        Args:
+            user: User object
+            session: Current conversation session
+            entity_result: Entity extraction result with non_procurable_items
+
+        Returns:
+            Dict with status and cancellation details
+        """
+        try:
+            non_procurable_items = entity_result.get("non_procurable_items", [])
+            logger.info(f"Handling non-procurable items for user {user.phone_number}: {non_procurable_items}")
+
+            # Format the items list for the message
+            if len(non_procurable_items) == 1:
+                items_text = f'"{non_procurable_items[0]}"'
+            else:
+                items_text = ', '.join(f'"{item}"' for item in non_procurable_items[:-1])
+                items_text += f' and "{non_procurable_items[-1]}"'
+
+            # Send informative message about non-procurable items first
+            info_message = (
+                f"I'm sorry, but {items_text} cannot be procured through our standard RFQ system.\n\n"
+                f"Our system handles tangible physical products like equipment, materials, supplies, and goods that can be purchased through standard procurement channels."
+            )
+            await self.whatsapp_service.send_message(user.phone_number, info_message)
+
+            # Clear the workflow state and send action buttons using cancel service
+            from app.services.cancel_service import CancelService
+
+            cancel_service = CancelService(
+                whatsapp_service=self.whatsapp_service,
+                session_manager=self.session_manager
+            )
+
+            # Clear workflow state without confirmation (automatic cancellation)
+            await cancel_service._clear_workflow_state(session)
+
+            # Get user type and send cancellation message with buttons
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+            user_type = "buyer" if user_role == "buyer" else "seller"
+
+            # Use cancel service's method to send the appropriate message with buttons
+            await cancel_service._send_cancellation_message(user.phone_number, user_type)
+
+            logger.info(f"Workflow cancelled for user {user.phone_number} due to non-procurable items")
+
+            return {
+                "status": "non_procurable_cancelled",
+                "non_procurable_items": non_procurable_items,
+                "message": "Request cancelled due to non-procurable items"
+            }
+
+        except Exception as e:
+            logger.error(f"Error handling non-procurable items: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
     async def _handle_error_response(self, error: Exception, phone_number: str) -> Dict[str, Any]:
         """Handle error response."""
         logger.error(f"Error in purchase intent handler: {error}")

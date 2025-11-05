@@ -36,6 +36,8 @@ class RFQItemSchema(BaseModel):
                 raise ValueError('Quantity must be a valid number')
         if v <= 0:
             raise ValueError('Quantity must be greater than 0')
+        if v > 100000:
+            raise ValueError('Please limit quantity to 100,000 pieces/units')
         return v
     
     @validator('unit_of_measures')
@@ -324,6 +326,49 @@ class RFQValidationSchema(BaseModel):
     attachments: List[Dict[str, Any]] = Field(default_factory=list, description="Document attachments")
     
     
+    def _is_invalid_description(self, desc: str) -> bool:
+        """
+        Check if description is actually a unit of measure, generic term, or otherwise invalid.
+
+        Returns True if the description should be considered invalid/missing.
+        """
+        if not desc:
+            return True
+
+        desc_lower = desc.lower().strip()
+
+        # Invalid: Units of measure that should not be treated as product descriptions
+        UNIT_KEYWORDS = {
+            'pcs', 'pc', 'pieces', 'piece',
+            'kg', 'kgs', 'kilogram', 'kilograms',
+            'g', 'grams', 'gram',
+            'liters', 'liter', 'l', 'lt',
+            'meters', 'meter', 'm', 'mt',
+            'boxes', 'box',
+            'sets', 'set',
+            'units', 'unit',
+            'sqft', 'sqm'
+        }
+
+        # Invalid: Too generic terms that don't describe actual products
+        GENERIC_TERMS = {
+            'item', 'items',
+            'product', 'products',
+            'thing', 'things',
+            'stuff',
+            'something'
+        }
+
+        # Invalid: Just numbers
+        if desc_lower.isdigit():
+            return True
+
+        # Invalid: Common units or generic terms
+        if desc_lower in UNIT_KEYWORDS or desc_lower in GENERIC_TERMS:
+            return True
+
+        return False
+
     def get_missing_mandatory_fields(self) -> List[str]:
         """Return list of missing mandatory fields based on GMT API requirements."""
         missing = []
@@ -332,16 +377,20 @@ class RFQValidationSchema(BaseModel):
         # Note: project_desc is now auto-populated by system, not required from user
         if not self.delivery_date or self.date_validation_error:
             missing.append("delivery_date")
-        
+
         # Division is now auto-populated via categorization service - not required from user
-            
+
         if not self.items:
             missing.append("items")
         else:
             # Check individual item fields for completeness
             for i, item in enumerate(self.items):
-                if not item.get("description"):
+                description = item.get("description", "").strip() if item.get("description") else ""
+
+                # Check if description is missing OR invalid (unit of measure, generic term, etc.)
+                if not description or self._is_invalid_description(description):
                     missing.append(f"item_{i}_description")
+
                 quantity = item.get("quantity")
                 if not quantity:
                     missing.append(f"item_{i}_quantity")

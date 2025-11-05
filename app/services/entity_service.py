@@ -171,6 +171,33 @@ class EntityService:
                 merged_products = self._apply_supplementary_data_to_existing_products(existing_context, global_fields)
 
             validated_products, has_date_validation_error = await self._validate_dates_in_products(merged_products, message)
+
+            # Check for non-procurable items BEFORE cleaning invalid descriptions
+            non_procurable_items = self._detect_non_procurable_items(validated_products)
+            if non_procurable_items:
+                print(f"EntityService: Detected non-procurable items: {non_procurable_items}")
+                return {
+                    "products": [],
+                    "confidence": response.get("confidence", 0),
+                    "success": False,
+                    "non_procurable_items": non_procurable_items,
+                    "error_type": "non_procurable"
+                }
+
+            # Check for quantity limit violations (100,000 max)
+            quantity_violations = self._check_quantity_limits(validated_products)
+            if quantity_violations:
+                print(f"EntityService: Detected quantity limit violations: {quantity_violations}")
+                return {
+                    "products": [],
+                    "confidence": response.get("confidence", 0),
+                    "success": False,
+                    "quantity_violations": quantity_violations,
+                    "error_type": "quantity_limit"
+                }
+
+            # Clean up invalid descriptions (units of measure, generic terms, etc.)
+            validated_products = self._clean_invalid_descriptions(validated_products)
             # Auto-fill city and state from pincode
             validated_products = await self._auto_fill_location_from_pincode(validated_products)
 
@@ -234,7 +261,28 @@ class EntityService:
                 pending_products = []
         else:
             pending_products = []
-        
+
+        # Preserve attachments from extracted_entities when they're not in pending_products
+        # This ensures attachments added after product entry are preserved during modification
+        if pending_products and extracted_entities:
+            # Get attachments from extracted_entities (usually index 0 for single product RFQ)
+            extracted_attachments = []
+            if isinstance(extracted_entities, list):
+                for entity in extracted_entities:
+                    if isinstance(entity, dict) and entity.get("attachments"):
+                        extracted_attachments = entity.get("attachments", [])
+                        break  # Use attachments from first entity that has them
+
+            # Add attachments to pending_products if they don't already have them
+            for product in pending_products:
+                if isinstance(product, dict):
+                    entities = product.get("entities", {})
+                    if isinstance(entities, dict):
+                        # If this product doesn't have attachments but extracted_entities has some, add them
+                        if not entities.get("attachments") and extracted_attachments:
+                            entities["attachments"] = extracted_attachments
+                            print(f"EntityService: Merged {len(extracted_attachments)} attachments into pending product")
+
         # Debug: Print pending products info
         print(f"EntityService: Found {len(pending_products)} pending products for modification")
         if pending_products:
@@ -286,6 +334,8 @@ class EntityService:
                 )
                 # Validate dates in final products
                 validated_products, has_date_validation_error = await self._validate_dates_in_products(modified_products, message)
+                # Clean up invalid descriptions
+                validated_products = self._clean_invalid_descriptions(validated_products)
                 # Auto-fill city and state from pincode
                 validated_products = await self._auto_fill_location_from_pincode(validated_products)
 
@@ -861,6 +911,8 @@ class EntityService:
             # Validate dates in the final products
             if "products" in response:
                 validated_products, has_date_validation_error = await self._validate_dates_in_products(response["products"], message)
+                # Clean up invalid descriptions
+                validated_products = self._clean_invalid_descriptions(validated_products)
                 # Auto-fill city and state from pincode
                 validated_products = await self._auto_fill_location_from_pincode(validated_products)
                 response["products"] = validated_products
@@ -963,6 +1015,7 @@ class EntityService:
 
         Logic:
         - If new products have descriptions that match existing ones, merge the data
+        - If existing products lack descriptions and new products have them, use positional matching
         - If new products are genuinely new, add them to the list
         - Preserve all existing products
         - If new product has no description (None), it's supplementary data for all existing products
@@ -975,14 +1028,47 @@ class EntityService:
         Returns:
             Merged list of products
         """
-        # Get descriptions from existing products for matching
-        existing_descriptions = {}
+        # Identify existing products without valid descriptions
+        products_without_desc = []
+        products_with_desc = {}
+
         for i, existing_prod in enumerate(existing_products):
             desc = existing_prod.get("description")
             if desc and isinstance(desc, str):
                 desc_lower = desc.lower().strip()
                 if desc_lower:
-                    existing_descriptions[desc_lower] = i
+                    products_with_desc[desc_lower] = i
+                else:
+                    products_without_desc.append(i)
+            else:
+                products_without_desc.append(i)
+
+        # Check if we should use positional matching
+        # Condition: existing products without descriptions, new products with descriptions, same count
+        new_products_with_desc = [p for p in new_products if p.get("description")]
+        use_positional_matching = (
+            len(products_without_desc) > 0 and
+            len(new_products_with_desc) > 0 and
+            len(products_without_desc) == len(new_products_with_desc) and
+            len(new_products) == len(new_products_with_desc)  # All new products have descriptions
+        )
+
+        if use_positional_matching:
+            print(f"EntityService: Using positional matching - {len(products_without_desc)} existing products without descriptions, {len(new_products_with_desc)} new products with descriptions")
+            # Positional merge: match by index order
+            merged_products = [prod.copy() for prod in existing_products]
+
+            for existing_idx, new_prod in zip(products_without_desc, new_products_with_desc):
+                print(f"EntityService: Positionally merging new product '{new_prod.get('description')}' into existing product at index {existing_idx}")
+                for key, value in new_prod.items():
+                    if value is not None:
+                        merged_products[existing_idx][key] = value
+                        print(f"  Updated {key}={value}")
+
+            return merged_products
+
+        # Standard merge logic (description-based matching)
+        existing_descriptions = products_with_desc
 
         # Start with copies of existing products
         merged_products = [prod.copy() for prod in existing_products]
@@ -1081,13 +1167,123 @@ class EntityService:
             print(f"Schema file not found: {schema_path}")
             return {}
 
+    def _detect_non_procurable_items(self, products: list) -> list:
+        """
+        Detect non-procurable items marked by the LLM during extraction.
+
+        The LLM is instructed to set description="NON_PROCURABLE" and put the actual
+        item name in remarks when it detects non-procurable items.
+
+        Returns list of non-procurable item names found, or empty list if all items are procurable.
+        """
+        non_procurable = []
+
+        for product in products:
+            desc = product.get("description", "")
+
+            # Check if LLM marked this as non-procurable
+            if desc and desc.strip() == "NON_PROCURABLE":
+                # Get the actual item name from remarks
+                item_name = product.get("remarks", "unknown item")
+                non_procurable.append(item_name)
+                print(f"EntityService: Detected non-procurable item marked by LLM: {item_name}")
+
+        return non_procurable
+
+    def _check_quantity_limits(self, products: list) -> list:
+        """
+        Check if any product quantities exceed the maximum limit of 100,000 units.
+
+        Returns list of dicts with product info for items that violate the limit,
+        or empty list if all quantities are within limits.
+        """
+        MAX_QUANTITY = 100000
+        violations = []
+
+        for product in products:
+            quantity = product.get("quantity")
+            if quantity is not None:
+                try:
+                    # Convert to float for comparison
+                    qty_value = float(quantity) if isinstance(quantity, str) else quantity
+                    if qty_value > MAX_QUANTITY:
+                        violations.append({
+                            "description": product.get("description", "unknown product"),
+                            "quantity": qty_value,
+                            "max_allowed": MAX_QUANTITY
+                        })
+                        print(f"EntityService: Quantity limit violation - {product.get('description')}: {qty_value} > {MAX_QUANTITY}")
+                except (ValueError, TypeError):
+                    # Skip if quantity can't be converted to number
+                    pass
+
+        return violations
+
+    def _clean_invalid_descriptions(self, products: list) -> list:
+        """
+        Remove descriptions that are actually units of measure, generic terms, or otherwise invalid.
+
+        This ensures that invalid descriptions extracted by OpenAI are cleared so they can be
+        properly requested from the user during validation.
+
+        Args:
+            products: List of product entities
+
+        Returns:
+            Updated products list with invalid descriptions set to None
+        """
+        # Same invalid description sets as in RFQValidationSchema for consistency
+        UNIT_KEYWORDS = {
+            'pcs', 'pc', 'pieces', 'piece',
+            'kg', 'kgs', 'kilogram', 'kilograms',
+            'g', 'grams', 'gram',
+            'liters', 'liter', 'l', 'lt',
+            'meters', 'meter', 'm', 'mt',
+            'boxes', 'box',
+            'sets', 'set',
+            'units', 'unit',
+            'sqft', 'sqm'
+        }
+
+        GENERIC_TERMS = {
+            'item', 'items',
+            'product', 'products',
+            'thing', 'things',
+            'stuff',
+            'something'
+        }
+
+        cleaned_products = []
+
+        for product in products:
+            cleaned_product = product.copy()
+            desc = product.get("description", "")
+
+            if desc:
+                desc_lower = desc.lower().strip()
+
+                # Check if description is invalid
+                is_invalid = (
+                    desc_lower.isdigit() or  # Just a number
+                    desc_lower in UNIT_KEYWORDS or  # Unit of measure
+                    desc_lower in GENERIC_TERMS  # Too generic
+                )
+
+                if is_invalid:
+                    cleaned_product["description"] = None
+                    print(f"EntityService: Cleared invalid description '{desc}' (unit of measure or generic term)")
+
+            cleaned_products.append(cleaned_product)
+
+        return cleaned_products
+
     async def _auto_fill_location_from_pincode(self, products: list) -> list:
         """
         Auto-fill city and state from pincode using direct API lookup.
-        
+
         Args:
             products: List of product entities
-            
+
         Returns:
             Updated products list with city and state filled from pincode lookup
         """

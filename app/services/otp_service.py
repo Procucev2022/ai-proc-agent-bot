@@ -144,8 +144,17 @@ class OTPService:
         
         if retry_count >= self.MAX_OTP_RETRIES:
             await self.support_notification_service.notify_otp_validation_failed("User", email, user_phone)
-            await self.whatsapp_service.send_message(user_phone, "Maximum OTP attempts exceeded. Please contact support.")
-            return {"status": "redirect_to_support", "reason": "max_otp_retries_exceeded"}
+            await self.whatsapp_service.send_message(
+                user_phone,
+                (
+                    "*Maximum OTP attempts exceeded.*\n"
+                    "For your security, your session has ended. "
+                    "Please contact our support team for assistance at support@procucev.com\n\n"
+                    "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
+
+                )
+            )
+            return {"status": "max_otp_exceeded", "reason": "max_otp_retries_exceeded"}
         
         remaining = self.MAX_OTP_RETRIES - retry_count
         await self.whatsapp_service.send_message(
@@ -160,8 +169,19 @@ class OTPService:
         retry_count = session.workflow_state["otp_retry_count"]
         
         if retry_count >= self.MAX_OTP_RETRIES:
-            await self.whatsapp_service.send_message(user_phone, "Maximum OTP attempts exceeded. Please contact support.")
-            return {"status": "redirect_to_support", "reason": "max_otp_retries_exceeded"}
+            email = session.workflow_state.get("otp_email")
+            await self.support_notification_service.notify_otp_validation_failed("User", email, user_phone)
+            await self.whatsapp_service.send_message(
+                user_phone,
+                (
+                    "*Maximum OTP attempts exceeded.*\n"
+                    "For your security, your session has ended. "
+                    "Please contact our support team for assistance at support@procucev.com\n\n"
+                    "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
+
+                )
+            )
+            return {"status": "max_otp_exceeded", "reason": "max_otp_retries_exceeded"}
         
         remaining = self.MAX_OTP_RETRIES - retry_count
         await self.whatsapp_service.send_message(

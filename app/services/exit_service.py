@@ -45,10 +45,11 @@ class ExitService:
         try:
             logger.info(f"Handling exit intent for user: {user_phone}")
 
-            # Step 1: Clear authentication token
+            # Step 1: Clear authentication token and ALL cached data (including meaningful messages)
             auth_cleared = False
             if self.authentication_service:
-                auth_cleared = await self.authentication_service.clear_user_token(user_phone)
+                # preserve_meaningful_message=False ensures complete cleanup on exit
+                auth_cleared = await self.authentication_service.clear_user_token(user_phone, preserve_meaningful_message=False)
                 logger.info(f"Authentication token cleared: {auth_cleared}")
 
             # Step 2: Clear session data
@@ -81,7 +82,7 @@ class ExitService:
 
     async def _clear_session_data(self, session: ConversationSession) -> bool:
         """
-        Clear all session data and mark session as completed.
+        Save complete session data to database (preserving conversation history), then completely clear Redis.
 
         Args:
             session: Current conversation session
@@ -93,48 +94,109 @@ class ExitService:
             if not session:
                 return True
 
-            # Clear all session state
             from app.models import ConversationOutcome
-            session.workflow_type = None
-            session.outcome = ConversationOutcome.abandoned
-            exit_timestamp = session.workflow_state.get("last_activity_at") if session.workflow_state else None
-            # Handle exit_timestamp - it might already be a string or datetime
-            if exit_timestamp:
-                if hasattr(exit_timestamp, 'isoformat'):
-                    exit_timestamp_str = exit_timestamp.isoformat()
-                else:
-                    exit_timestamp_str = str(exit_timestamp)
-            else:
-                exit_timestamp_str = None
-            
-            session.workflow_state = {
-                "exit_completed": True,
-                "exit_timestamp": exit_timestamp_str
-            }
-            session.conversation_history = {"messages": [], "metadata": []}
-            session.extracted_entities = {}
 
-            # Mark session as completed
+            # Mark session as completed and abandoned (but keep all data intact)
+            session.outcome = ConversationOutcome.abandoned
             session.completed_at = utc_now().replace(tzinfo=None)
 
-            # Save the cleared session
-            if self.session_manager:
-                await self.session_manager.save_session(session, WorkflowType.user_exit)
-            else:
-                # Fallback to direct database save
-                self.db_manager.save_conversation_session({
-                    'session_id': session.session_id,
-                    'external_user_id': session.external_user_id,
-                    'workflow_type': "user_exit",
-                    'outcome': "abandoned",
-                    'workflow_state': session.workflow_state,
-                    'conversation_history': session.conversation_history,
-                    'extracted_entities': session.extracted_entities,
-                    'retention_date': session.retention_date,
-                    'completed_at': session.completed_at
-                })
+            # Add exit metadata to workflow_state without clearing other data
+            if not session.workflow_state:
+                session.workflow_state = {}
+            session.workflow_state["exit_completed"] = True
+            session.workflow_state["exit_timestamp"] = utc_now().isoformat()
 
-            logger.info(f"Session {session.session_id} cleared and marked as completed")
+            # IMPORTANT: Keep conversation_history intact for audit trail
+            # All messages with timestamps are preserved in the database
+
+            # STEP 1: APPEND complete session to database (preserves all history)
+            self.db_manager.append_session_data({
+                'session_id': session.session_id,
+                'external_user_id': session.external_user_id,
+                'workflow_type': WorkflowType.user_exit.value,
+                'outcome': ConversationOutcome.abandoned.value,
+                'workflow_state': session.workflow_state,
+                'conversation_history': session.conversation_history,  # Appended to existing
+                'extracted_entities': session.extracted_entities,
+                'retention_date': session.retention_date,
+                'completed_at': session.completed_at
+            })
+
+            logger.info(f"Session {session.session_id} saved to database with complete conversation history preserved (outcome=abandoned)")
+
+            # STEP 2: Clear ALL Redis data (user is exiting, everything should be wiped)
+            from app.redis_db import get_session_redis_service, get_redis_service
+            from app.config import get_settings
+            settings = get_settings()
+            if settings.redis_session_storage_enabled:
+                redis_session = get_session_redis_service()
+                redis_base = get_redis_service()
+
+                # Extract normalized phone for user-related key patterns
+                normalized_phone = session.external_user_id.lstrip('+').replace(' ', '').replace('-', '')
+
+                # Comprehensive Redis cleanup - delete all keys related to this user/session
+                # IMPORTANT: Do NOT delete welcome_msg token - user should not see welcome message again today if they exit and return
+                cleanup_patterns = [
+                    f"session:{session.session_id}",  # Session key
+                    f"auth:{normalized_phone}",  # Auth token
+                    f"user_cache:{normalized_phone}",  # User cache
+                    f"incoming_messages:{normalized_phone}*",  # Message queue incoming
+                    f"outgoing_messages:{normalized_phone}*",  # Message queue outgoing
+                    f"processing:*:{normalized_phone}",  # Processing locks
+                    f"*:{session.session_id}*",  # Any session-related keys
+                ]
+
+                total_deleted = 0
+                # First delete explicit keys that we know about
+                explicit_keys_to_delete = [
+                    session.session_id,
+                    normalized_phone,
+                ]
+
+                for key_part in explicit_keys_to_delete:
+                    # Delete session:{key}
+                    deleted = await redis_session.delete_session(key_part)
+                    if deleted:
+                        total_deleted += 1
+                        logger.info(f"Deleted session key for {key_part}")
+
+                # Then do pattern-based cleanup for any remaining keys (excluding welcome message)
+                for pattern in cleanup_patterns:
+                    deleted_count = await redis_base.delete_pattern(pattern)
+                    total_deleted += deleted_count
+
+                # Explicitly delete user-related patterns but exclude welcome_msg key
+                # Use scan to find and delete keys with phone number but skip welcome_msg
+                try:
+                    await redis_base.init_client()
+                    cursor = 0
+                    while True:
+                        cursor, keys = await redis_base.client.scan(cursor, match=f"*:{normalized_phone}*", count=100)
+                        if keys:
+                            # Filter out welcome_msg keys - these should be preserved
+                            keys_to_delete = [k for k in keys if not k.startswith("welcome_msg:")]
+                            if keys_to_delete:
+                                deleted = await redis_base.client.delete(*keys_to_delete)
+                                total_deleted += deleted
+                        if cursor == 0:
+                            break
+                except Exception as e:
+                    logger.warning(f"Error during pattern cleanup for user-related keys: {e}")
+
+                # Final verification - check if session still exists
+                still_exists = await redis_session.session_exists(session.session_id)
+                if still_exists:
+                    logger.error(f"⚠️ WARNING: Session {session.session_id} still exists in Redis after comprehensive cleanup!")
+                    # Try one more aggressive delete
+                    await redis_base.delete(f"session:{session.session_id}")
+                    still_exists = await redis_session.session_exists(session.session_id)
+                    if still_exists:
+                        logger.error(f"⚠️ CRITICAL BUG: Session {session.session_id} could NOT be deleted from Redis!")
+                        return False
+
+                logger.info(f"✓ Comprehensive Redis cleanup complete: {total_deleted} keys deleted, session verified removed")
+
             return True
 
         except Exception as e:

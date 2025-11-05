@@ -13,6 +13,11 @@ Key responsibilities:
 - Maintain conversation context and session state
 - Handle error scenarios and fallback mechanisms
 - Coordinate responses back to users through WhatsApp
+
+Performance Notes:
+- ChatService is instantiated per request (by design) to avoid DB connection leaks
+- Heavy services use singleton patterns (InteractionLogger, LocationService)
+- SessionManagementService is instantiated per request but uses Redis for state
 """
 
 import logging
@@ -107,79 +112,223 @@ class ChatService:
             from app.services.whatsapp_service import WhatsAppService
             self.whatsapp_service = WhatsAppService()
 
-        # Initialize services that don't need database sessions
-        self.intent_service = IntentService()
-        self.entity_service = EntityService()
-        self.openai_service = OpenAIService()
-        self.response_helpers = ResponseHelpers(self.openai_service)
+        # Lazy initialization for services - only create when first accessed
+        self._intent_service = None
+        self._entity_service = None
+        self._openai_service = None
+        self._response_helpers = None
 
-        # Initialize services that need database sessions
+        # Lazy initialization for handlers
+        self._confirmation_service = None
+        self._authentication_service = None
+        self._registration_service = None
+        self._exit_service = None
+        self._cancel_service = None
+        self._faq_service = None
+        self._confirmation_handler = None
+        self._intent_switch_handler = None
+        self._products_array_handler = None
+        self._purchase_intent_handler = None
+        self._attachment_decision_handler = None
+        self._image_processor = None
+        self._seller_service = None
+        self._rfq_status_service = None
+
+        # Initialize only lightweight services that need database sessions
         self.chat_summary_service = ChatSummaryService(db_session=db_session)
         self.daily_summary_service = DailySummaryService()
-
-        # Now all services use the same session (either provided or created)
         self.db_manager = DatabaseManager(session=db_session)
         self.vendor_service = VendorService(db_session=db_session)
         self.rfq_service = RFQService()
         self.rfq_background_service = RFQBackgroundService(db_session=db_session)
-        
-        # Initialize extracted services first
+
+        # Initialize session manager (lightweight, needed early)
         self.session_manager = SessionManagementService(
             self.db_manager, self.whatsapp_service,
             self.chat_summary_service, self.daily_summary_service
         )
-        
-        # Initialize services that depend on whatsapp_service and session_manager
-        self.seller_service = SellerService(
-            whatsapp_service=self.whatsapp_service,
-            session_manager=self.session_manager,
-            db_session=db_session
-        )
-        self.rfq_status_service = RFQStatusService(
-            whatsapp_service=self.whatsapp_service,
-            session_manager=self.session_manager,
-            db_session=db_session
-        )
-        
-        # Initialize confirmation service and tools
 
-        
-        confirmation_tool = ConfirmationTool(self.openai_service)
-        confirmation_service = ConfirmationService(confirmation_tool)
-        
-        # Initialize authentication and registration services with session_manager
-        self.authentication_service = AuthenticationService(
-            self.whatsapp_service, self.openai_service, self.response_helpers, self.session_manager
-        )
-        self.registration_service = RegistrationService(
-            self.whatsapp_service, self.openai_service, self.entity_service, self.response_helpers, confirmation_service, self.session_manager
-        )
-        self.exit_service = ExitService(
-            self.whatsapp_service, self.authentication_service, self.session_manager, self.db_manager
-        )
-        self.cancel_service = CancelService(
-            self.whatsapp_service, self.session_manager, self.db_manager
-        )
-        self.faq_service = FAQService()
-        self.confirmation_handler = ConfirmationHandler(
-            self.whatsapp_service, self.response_helpers
-        )
-        self.intent_switch_handler = IntentSwitchHandler(
-            self.whatsapp_service, self.response_helpers
-        )
-        self.products_array_handler = ProductsArrayHandler(
-            self.whatsapp_service, self.openai_service,
-            self.response_helpers, self.session_manager
-        )
-        self.purchase_intent_handler = PurchaseIntentHandler(
-            self.whatsapp_service, self.response_helpers, self.entity_service,
-            self.chat_summary_service, self.products_array_handler, self.session_manager
-        )
-        self.attachment_decision_handler = AttachmentDecisionHandler(
-            self.whatsapp_service, self.response_helpers,
-            self.purchase_intent_handler, self.session_manager
-        )
-        self.image_processor = ImageMessageProcessor(self.whatsapp_service, self.response_helpers)
+    # Lazy-loaded service properties
+    @property
+    def intent_service(self):
+        """Lazy-load IntentService only when needed."""
+        if self._intent_service is None:
+            self._intent_service = IntentService()
+        return self._intent_service
+
+    @property
+    def entity_service(self):
+        """Lazy-load EntityService only when needed."""
+        if self._entity_service is None:
+            self._entity_service = EntityService()
+        return self._entity_service
+
+    @property
+    def openai_service(self):
+        """Lazy-load OpenAIService only when needed."""
+        if self._openai_service is None:
+            self._openai_service = OpenAIService()
+        return self._openai_service
+
+    @property
+    def response_helpers(self):
+        """Lazy-load ResponseHelpers only when needed."""
+        if self._response_helpers is None:
+            self._response_helpers = ResponseHelpers(self.openai_service)
+        return self._response_helpers
+
+    @property
+    def confirmation_service(self):
+        """Lazy-load ConfirmationService only when needed."""
+        if self._confirmation_service is None:
+            from app.tools.confirmation_tool import ConfirmationTool
+            from app.services.confirmation_service import ConfirmationService
+            confirmation_tool = ConfirmationTool(self.openai_service)
+            self._confirmation_service = ConfirmationService(confirmation_tool)
+        return self._confirmation_service
+
+    @property
+    def authentication_service(self):
+        """Lazy-load AuthenticationService only when needed."""
+        if self._authentication_service is None:
+            from app.services.authentication_service import AuthenticationService
+            self._authentication_service = AuthenticationService(
+                self.whatsapp_service, self.openai_service, self.response_helpers, self.session_manager
+            )
+        return self._authentication_service
+
+    @property
+    def registration_service(self):
+        """Lazy-load RegistrationService only when needed."""
+        if self._registration_service is None:
+            from app.services.registration_service import RegistrationService
+            self._registration_service = RegistrationService(
+                self.whatsapp_service, self.openai_service, self.entity_service,
+                self.response_helpers, self.confirmation_service, self.session_manager
+            )
+        return self._registration_service
+
+    @property
+    def exit_service(self):
+        """Lazy-load ExitService only when needed."""
+        if self._exit_service is None:
+            from app.services.exit_service import ExitService
+            self._exit_service = ExitService(
+                self.whatsapp_service, self.authentication_service, self.session_manager, self.db_manager
+            )
+        return self._exit_service
+
+    @property
+    def cancel_service(self):
+        """Lazy-load CancelService only when needed."""
+        if self._cancel_service is None:
+            from app.services.cancel_service import CancelService
+            self._cancel_service = CancelService(
+                self.whatsapp_service, self.session_manager, self.db_manager
+            )
+        return self._cancel_service
+
+    @property
+    def faq_service(self):
+        """Lazy-load FAQService only when needed."""
+        if self._faq_service is None:
+            from app.services.faq_service import FAQService
+            self._faq_service = FAQService()
+        return self._faq_service
+
+    @property
+    def confirmation_handler(self):
+        """Lazy-load ConfirmationHandler only when needed."""
+        if self._confirmation_handler is None:
+            from app.services.handlers.confirmation_handler import ConfirmationHandler
+            self._confirmation_handler = ConfirmationHandler(
+                self.whatsapp_service, self.response_helpers
+            )
+        return self._confirmation_handler
+
+    @property
+    def intent_switch_handler(self):
+        """Lazy-load IntentSwitchHandler only when needed."""
+        if self._intent_switch_handler is None:
+            from app.services.handlers.intent_switch_handler import IntentSwitchHandler
+            self._intent_switch_handler = IntentSwitchHandler(
+                self.whatsapp_service, self.response_helpers
+            )
+        return self._intent_switch_handler
+
+    @property
+    def products_array_handler(self):
+        """Lazy-load ProductsArrayHandler only when needed."""
+        if self._products_array_handler is None:
+            from app.services.handlers.products_array_handler import ProductsArrayHandler
+            self._products_array_handler = ProductsArrayHandler(
+                self.whatsapp_service, self.openai_service,
+                self.response_helpers, self.session_manager
+            )
+        return self._products_array_handler
+
+    @property
+    def purchase_intent_handler(self):
+        """Lazy-load PurchaseIntentHandler only when needed."""
+        if self._purchase_intent_handler is None:
+            from app.services.handlers.purchase_intent_handler import PurchaseIntentHandler
+            self._purchase_intent_handler = PurchaseIntentHandler(
+                self.whatsapp_service, self.response_helpers, self.entity_service,
+                self.chat_summary_service, self.products_array_handler, self.session_manager
+            )
+        return self._purchase_intent_handler
+
+    @property
+    def attachment_decision_handler(self):
+        """Lazy-load AttachmentDecisionHandler only when needed."""
+        if self._attachment_decision_handler is None:
+            from app.services.handlers.attachment_decision_handler import AttachmentDecisionHandler
+            self._attachment_decision_handler = AttachmentDecisionHandler(
+                self.whatsapp_service, self.response_helpers,
+                self.purchase_intent_handler, self.session_manager
+            )
+        return self._attachment_decision_handler
+
+    @property
+    def image_processor(self):
+        """Lazy-load ImageMessageProcessor only when needed."""
+        if self._image_processor is None:
+            from app.services.processors.image_message_processor import ImageMessageProcessor
+            self._image_processor = ImageMessageProcessor(self.whatsapp_service, self.response_helpers)
+        return self._image_processor
+
+    @property
+    def seller_service(self):
+        """Lazy-load SellerService only when needed."""
+        if self._seller_service is None:
+            from app.services.seller_service import SellerService
+            self._seller_service = SellerService(
+                whatsapp_service=self.whatsapp_service,
+                session_manager=self.session_manager,
+                db_session=self.db_session
+            )
+        return self._seller_service
+
+    @property
+    def rfq_status_service(self):
+        """Lazy-load RFQStatusService only when needed."""
+        if self._rfq_status_service is None:
+            from app.services.rfq_status_service import RFQStatusService
+            self._rfq_status_service = RFQStatusService(
+                whatsapp_service=self.whatsapp_service,
+                session_manager=self.session_manager,
+                db_session=self.db_session
+            )
+        return self._rfq_status_service
+
+    async def cleanup(self):
+        """Cleanup resources - close OpenAI client to prevent connection leaks."""
+        try:
+            if self._openai_service is not None:
+                await self._openai_service.close()
+                logger.debug("ChatService: OpenAI service closed")
+        except Exception as e:
+            logger.warning(f"ChatService: Error during cleanup: {e}")
 
     def _get_workflow_or_default(self, session: ConversationSession, default: str = 'general_inquiry') -> WorkflowType:
         """
@@ -267,6 +416,30 @@ class ChatService:
 
 
 
+            # CRITICAL: Handle exit and cancel intents BEFORE any workflow routing
+            # This ensures users can always exit regardless of workflow state (especially auth loops)
+            # Only applies when user is NOT authenticated (auth flow)
+            # For authenticated users, exit is handled later with optional field logic
+            workflow_type_str = str(session.workflow_type).lower() if session.workflow_type else None
+            is_in_auth_workflow = workflow_type_str in ["workflowtype.authentication", "authentication"]
+
+            if intent == "exit_system" and confidence > 50 and is_in_auth_workflow:
+                logger.info(f"Exit intent detected in auth workflow with {confidence}% confidence - handling immediately to prevent loop")
+                exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                return exit_result
+
+            if intent == "cancel_workflow" and confidence > 50 and is_in_auth_workflow:
+                logger.info(f"Cancel workflow intent detected in auth workflow with {confidence}% confidence - handling immediately to prevent loop")
+                from app.schemas.conversation import MessageSchema
+                message = MessageSchema(
+                    content=message_content,
+                    external_user_id=user_phone,
+                    message_type=message_type
+                )
+                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message)
+                await self.session_manager.save_session(session, session.workflow_type)
+                return cancel_result
+
             if intent=='faq':
                 # Handle FAQ directly without authentication for quick responses
                 faq_answer = await self.faq_service.get_faq_answer(message_content)
@@ -300,8 +473,8 @@ class ChatService:
                     "profile_selection_retry_presented", "role_menu_presented",
                     "redirected_to_buyer_registration", "redirected_to_seller_registration",
                     "intent_mismatch_handled", "intent_mismatch_retry_sent", "new_user_registration_presented",
-                    "buyer_options_presented", "single_buyer_profile_selection_presented", "profile_selection_sent",
-                    "registration_type_clarification_sent", "verification_failed"
+                    "buyer_options_presented", "seller_options_presented", "single_buyer_profile_selection_presented", "profile_selection_sent",
+                    "registration_type_clarification_sent", "verification_failed","filtered_buyer_profiles_shown","max_otp_exceeded", "buyer_no_accounts_message_sent"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
@@ -345,13 +518,11 @@ class ChatService:
                     # Max OTP retries exceeded, user exited, or other support-requiring scenario
                     # Check if exit has already been completed to avoid duplicate calls
                     if auth_result.get("exit_completed"):
-                       
-                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        # Exit already completed - session already cleaned up, no need to save
                         return auth_result
                     else:
-                        
+                        # Exit service handles all session persistence (DB + Redis cleanup)
                         exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                        await self.session_manager.save_session(session, WorkflowType.user_exit)
                         return exit_result
 
                 elif auth_status == "registration_completed":
@@ -512,12 +683,12 @@ class ChatService:
                     # Check if exit has already been completed to avoid duplicate calls
                     if auth_result.get("exit_completed"):
                         logger.info(f"Exit already completed in auth flow for {user_phone}, skipping duplicate exit call")
-                        await self.session_manager.save_session(session, WorkflowType.user_exit)
+                        # Exit already completed - session already cleaned up, no need to save
                         return auth_result
                     else:
                         logger.info(f"Final redirect to support - calling exit service for {user_phone}")
+                        # Exit service handles all session persistence (DB + Redis cleanup)
                         exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                        await self.session_manager.save_session(session, WorkflowType.user_exit)
                         return exit_result
                 elif auth_status == "verification_required":
                     # Handle verification required status
@@ -541,7 +712,8 @@ class ChatService:
                         "*Registration received—thank you!*\n\n"
                         "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
                         "Our team will get in touch shortly to complete the process, and once verified, "
-                        "you’ll be able to access your account and start raising RFQs."
+                        "you’ll be able to access your account and start raising RFQs.\n\n"
+                        "Thank you for choosing Procucev!"
                     )
 
                     verification_message = redirect_info.get("message", pending_message)
@@ -695,6 +867,9 @@ class ChatService:
             # Update the last user message in conversation history with intent data
             self._update_last_user_message_with_intent(session, intent, confidence)
 
+            # Check workflow state flags early for use in intent handling
+            has_excel_confirmation_pending = bool(session.workflow_state.get("awaiting_excel_confirmation"))
+
             # Handle FAQ requests FIRST - can interrupt any workflow (highest priority after exit)
             if intent == "faq" and confidence > 0.6:
                 logger.info(f"FAQ intent detected with {confidence}% confidence - handling immediately (interrupting workflow)")
@@ -706,13 +881,23 @@ class ChatService:
                 logger.info(f"Cancel workflow intent detected with {confidence}% confidence")
                 user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
 
-                # Trigger cancel confirmation flow (will send buttons)
-                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session)
+                # Check if user is in Excel confirmation - handle directly
+                if has_excel_confirmation_pending:
+                    logger.info("Cancel workflow during Excel confirmation - treating as Excel cancellation")
+                    return await self._handle_excel_confirmation_response(user, session, "cancel")
+
+                # Trigger cancel confirmation flow (will send buttons or handle confirmation)
+                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message)
                 await self.session_manager.save_session(session, session.workflow_type)
                 return cancel_result
 
-            # Handle exit intent - but check for pending optional fields first
+            # Handle exit intent - but check for pending optional fields and Excel confirmation first
             if intent == "exit_system" and confidence > 50:
+                # Check if user is in Excel confirmation - handle directly
+                if has_excel_confirmation_pending:
+                    logger.info("Exit intent during Excel confirmation - treating as Excel cancellation")
+                    return await self._handle_excel_confirmation_response(user, session, "exit")
+
                 # Check if user has pending optional fields - they might mean "skip" instead of "exit"
                 has_pending_optional = bool(
                     session.workflow_state.get("pending_optional_rfq") or
@@ -732,8 +917,8 @@ class ChatService:
                     logger.info(f"Exit intent detected with {confidence}% confidence - handling system exit")
                     # Use the same phone format as used in authentication flow
                     user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+                    # Exit service handles all session persistence (DB + Redis cleanup)
                     exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-                    await self.session_manager.save_session(session, WorkflowType.user_exit)
                     return exit_result
 
             if intent == "support" and confidence > 0.7:
@@ -818,8 +1003,9 @@ class ChatService:
                 session.workflow_state.get("pending_optional_rfq") or session.workflow_state.get(
                     "pending_optional_combined_rfq"))
             has_pending_attachment_decision = bool(session.workflow_state.get("awaiting_attachment_decision"))
+            # has_excel_confirmation_pending already defined above for early use in intent handling
             print(
-                f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}")
+                f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}, has_excel_confirmation_pending={has_excel_confirmation_pending}")
 
             # Debug logging for optional fields state
 
@@ -878,8 +1064,9 @@ class ChatService:
                                                                                          self._should_use_summary_aware_extraction)
 
             # Check for intent switch during pending optional/confirmation states BEFORE handling them
+            # Note: Excel confirmation should not be interrupted by intent switches
             if (
-                    has_pending_optional or has_pending_confirmations) and await self.intent_switch_handler.should_handle_intent_switch(
+                    has_pending_optional or has_pending_confirmations) and not has_excel_confirmation_pending and await self.intent_switch_handler.should_handle_intent_switch(
                     session, intent, confidence, intent_result.get('context_analysis')):
                 result = await self.intent_switch_handler.handle_intent_switch_choice(user, session, message, intent,
                                                                                       intent_result)
@@ -898,6 +1085,12 @@ class ChatService:
                     await self.session_manager.save_session(session, WorkflowType.rfq_creation)
                     return result
 
+            # Handle Excel confirmation responses BEFORE pending confirmations
+            if session.workflow_state.get("awaiting_excel_confirmation"):
+                result = await self._handle_excel_confirmation_response(user, session, message)
+                # Excel confirmation handler returns specific statuses, don't continue to normal flow
+                return result
+
             # Handle pending confirmations (user responding to "Would you like to proceed?")
             if has_pending_confirmations:
                 result = await self.confirmation_handler.handle_pending_confirmations(user, session, message,
@@ -905,9 +1098,36 @@ class ChatService:
 
                 # Handle session completion if RFQs were created
                 if result.get("status") == "multiple_rfqs_created":
-                    # Generate enhanced session summary BEFORE clearing (non-blocking)
-                    await self.session_manager.handle_session_completion_enhanced(session)
-                    await self.session_manager.save_session(session, WorkflowType.rfq_submitted)
+                    # APPEND session to database (preserves history from previous RFQs)
+                    from app.database import DatabaseManager
+                    db_manager = DatabaseManager()
+                    try:
+                        db_manager.append_session_data({
+                            'session_id': session.session_id,
+                            'external_user_id': session.external_user_id,
+                            'workflow_type': WorkflowType.rfq_submitted.value,
+                            'outcome': session.outcome.value if session.outcome else None,
+                            'workflow_state': session.workflow_state,
+                            'conversation_history': session.conversation_history,
+                            'extracted_entities': session.extracted_entities,
+                            'rfq_ids': session.rfq_ids if hasattr(session, 'rfq_ids') else None,
+                            'product_items': session.product_items if hasattr(session, 'product_items') else None,
+                            'retention_date': session.retention_date,
+                            'last_activity_at': session.last_activity_at,
+                            'completed_at': session.completed_at
+                        })
+                        logger.info(f"Appended completed RFQ session {session.session_id} to database")
+                    finally:
+                        db_manager.close()
+
+                    # Clear Redis (session complete)
+                    from app.redis_db import get_session_redis_service
+                    from app.config import get_settings
+                    settings = get_settings()
+                    if settings.redis_session_storage_enabled:
+                        redis_session = get_session_redis_service()
+                        await redis_session.delete_session(session.session_id)
+                        logger.info(f"Deleted completed session {session.session_id} from Redis")
                 elif result.get("continue_with_purchase_intent"):
                     # Continue with purchase intent flow for modifications
                     return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None,
@@ -920,7 +1140,8 @@ class ChatService:
 
             if has_existing_data or has_incomplete_products:
                 # Check for intent switch during active workflow BEFORE continuing
-                if await self.intent_switch_handler.should_handle_intent_switch(session, intent, confidence, intent_result.get('context_analysis')):
+                # Note: Excel confirmation should not be interrupted by intent switches
+                if not has_excel_confirmation_pending and await self.intent_switch_handler.should_handle_intent_switch(session, intent, confidence, intent_result.get('context_analysis')):
                     result = await self.intent_switch_handler.handle_intent_switch_choice(user, session, message,
                                                                                           intent, intent_result)
                     await self.session_manager.save_session(session, self._get_workflow_or_default(session))
@@ -1248,13 +1469,14 @@ class ChatService:
             completeness = excel_context['completeness']
             items = processing_result.get('items', [])
 
-            # Always redirect to multiple RFQ flow for Excel uploads with valid items
-            if items and len(items) > 0:
+            # Check if processing was successful
+            if processing_result.get('success') and items and len(items) > 0:
                 logger.info(f"[EXCEL-REDIRECT] Redirecting {len(items)} Excel items to multiple RFQ creation flow")
                 # Set workflow type for RFQ creation
                 WorkflowManager.set_workflow_type(session, WorkflowType.rfq_creation, caller='excel_upload_complete')
                 return await self._handle_complete_excel(user, session, processing_result)
             else:
+                # Processing failed or no items extracted
                 return await self._handle_incomplete_excel(user, session, excel_context)
 
         except Exception as e:
@@ -1265,31 +1487,81 @@ class ChatService:
 
     async def _handle_complete_excel(self, user: User, session: ConversationSession, processing_result: Dict) -> Dict[
         str, Any]:
-        """Handle complete Excel files by converting to products array and using existing multiple RFQ flow."""
+        """Handle complete Excel files with confirmation step before proceeding to multiple RFQ flow."""
         try:
-            # Convert Excel items to products array format for existing multiple RFQ flow
+            # Convert Excel items to products array format
             products = self._convert_excel_items_to_products_array(processing_result['items'])
             
-            logger.info(f"[EXCEL-TO-MULTIPLE-RFQ] Converted {len(processing_result['items'])} Excel items to {len(products)} products for multiple RFQ flow")
+            logger.info(f"[EXCEL-CONFIRMATION] Converted {len(processing_result['items'])} Excel items to {len(products)} products")
             
-            # Clear any existing workflow state to start fresh with multiple RFQ flow
-            session.workflow_state = session.workflow_state or {}
-            session.workflow_state.pop('incomplete_products', None)
-            session.workflow_state.pop('complete_products', None)
-            session.workflow_state.pop('excel_data', None)
+            # Validation: Check if all items were successfully extracted
+            total_rows = processing_result.get('total_items', len(processing_result['items']))
+            extracted_rows = len(products)
             
-            # Send acknowledgment message first
-            removed_rows = processing_result.get('removed_rows', 0)
-            if removed_rows > 0:
-                success_message = f"✅ Successfully extracted {len(products)} valid items from your Excel file!\n\n📝 Note: {removed_rows} incomplete rows were automatically removed (missing mandatory fields: Specification or Quantity).\n\nProcessing your RFQ..."
+            if extracted_rows == total_rows:
+                # All items successfully extracted - proceed with confirmation flow
+                
+                # Save extracted data to session for confirmation flow
+                session.workflow_state = session.workflow_state or {}
+                session.workflow_state['excel_confirmation_data'] = {
+                    'products': products,
+                    'processing_result': processing_result,
+                    'filename': processing_result.get('filename', 'Excel file')
+                }
+                session.workflow_state['awaiting_excel_confirmation'] = True
+                
+                # Clear any existing workflow state to prepare for fresh flow
+                session.workflow_state.pop('incomplete_products', None)
+                session.workflow_state.pop('complete_products', None)
+                session.workflow_state.pop('excel_data', None)
+                
+                # Send confirmation message with processing summary
+                processing_summary = processing_result.get('processing_summary', {})
+                skipped_rows = processing_summary.get('skipped_rows', 0)
+                skipped_items_summary = processing_result.get('skipped_items_summary', '')
+                
+                # Generate item list for display (show first 3 items, then +X more)
+                item_names = []
+                for i, product in enumerate(products[:3]):
+                    desc = product.get('description', f'Item{i+1}')
+                    item_names.append(desc)
+                
+                if len(products) > 3:
+                    remaining = len(products) - 3
+                    items_display = f"{', '.join(item_names)}, +{remaining} Items"
+                else:
+                    items_display = ', '.join(item_names)
+                
+                if skipped_rows > 0:
+                    confirmation_message = f"Successfully identified {items_display}.\nPlease click on Confirm to proceed for the RFQ creation\n\n(Type 'Exit' to anytime to end the chat)\n\n📝"
+                else:
+                    confirmation_message = f"Successfully identified {items_display}.\nPlease click on Confirm to proceed for the RFQ creation\n\n(Type 'Exit' to anytime to end the chat)"
+                
+                # Send confirmation message with buttons
+                buttons_config = [
+                    {"id": "confirm_excel", "title": "Confirm"},
+                    {"id": "cancel_excel", "title": "Cancel"}
+                ]
+                
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    confirmation_message,
+                    buttons_config,
+                    "Please choose:"
+                )
+                await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+                
+                return {"status": "excel_confirmation_sent", "awaiting_confirmation": True}
+                
             else:
-                success_message = f"✅ Successfully extracted {len(products)} items from your Excel file!\n\nProcessing your RFQ..."
-            await self.session_manager.send_and_track_message(user.phone_number, success_message, session)
-            
-            # Use existing products array handler for multiple RFQ creation
-            return await self.products_array_handler.handle_products_array(
-                user, session, f"Excel upload: {processing_result['filename']}", products
-            )
+                # Not all items extracted - handle as incomplete
+                logger.info(f"[EXCEL-INCOMPLETE] Only {extracted_rows}/{total_rows} items extracted - handling as incomplete")
+                excel_context = {
+                    'excel_data': processing_result,
+                    'completeness': (extracted_rows / total_rows) * 100 if total_rows > 0 else 0,
+                    'missing_fields': ['Some items could not be processed']
+                }
+                return await self._handle_incomplete_excel(user, session, excel_context)
 
         except Exception as e:
             logger.error(f"[EXCEL-COMPLETE-ERROR] Error handling complete Excel: {e}")
@@ -1307,16 +1579,143 @@ class ChatService:
             await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
             return await self._handle_incomplete_excel(user, session, {"excel_data": processing_result})
     
+    async def _handle_excel_confirmation_response(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+        """Handle user response to Excel confirmation message with AI-based confirmation and keyword fallback."""
+        try:
+            # First try AI-based confirmation parsing
+            ai_confirmation_result = None
+            try:
+                ai_confirmation_result = await self.openai_service.parse_confirmation_response(message)
+                logger.info(f"[EXCEL-CONFIRMATION-AI] AI parsed response: '{message}' -> '{ai_confirmation_result}'")
+            except Exception as e:
+                logger.warning(f"[EXCEL-CONFIRMATION-AI] AI parsing failed: {e}, falling back to keywords")
+            
+            # Determine confirmation status using AI result or keyword fallback
+            is_confirmed = None
+            is_cancelled = None
+            
+            if ai_confirmation_result == "yes":
+                is_confirmed = True
+                logger.info(f"[EXCEL-CONFIRMATION] AI detected confirmation: '{message}'")
+            elif ai_confirmation_result == "no":
+                is_cancelled = True
+                logger.info(f"[EXCEL-CONFIRMATION] AI detected cancellation: '{message}'")
+            else:
+                # Fallback to keyword matching
+                message_lower = message.lower().strip()
+                confirm_responses = ['confirm', 'yes', 'y', 'proceed', 'continue', 'ok']
+                cancel_responses = ['clear', 'cancel', 'exit', 'reupload', 'no', 'n', 'restart']
+                
+                if any(response in message_lower for response in confirm_responses):
+                    is_confirmed = True
+                    logger.info(f"[EXCEL-CONFIRMATION] Keyword detected confirmation: '{message}'")
+                elif any(response in message_lower for response in cancel_responses):
+                    is_cancelled = True
+                    logger.info(f"[EXCEL-CONFIRMATION] Keyword detected cancellation: '{message}'")
+            
+            if is_confirmed:
+                # User confirmed - proceed to multiple RFQ creation
+                logger.info(f"[EXCEL-CONFIRMED] User confirmed Excel processing - proceeding to RFQ creation")
+                
+                # Retrieve saved data
+                excel_data = session.workflow_state.get('excel_confirmation_data', {})
+                products = excel_data.get('products', [])
+                processing_result = excel_data.get('processing_result', {})
+                filename = excel_data.get('filename', 'Excel file')
+                
+                if not products:
+                    error_message = "❌ Sorry, I couldn't find the Excel data. Please upload your file again."
+                    await self.session_manager.send_and_track_message(user.phone_number, error_message, session)
+                    return {"status": "excel_data_missing"}
+                
+                # Clear confirmation state
+                session.workflow_state.pop('excel_confirmation_data', None)
+                session.workflow_state.pop('awaiting_excel_confirmation', None)
+                
+                # Use existing products array handler for multiple RFQ creation
+                return await self.products_array_handler.handle_products_array(
+                    user, session, f"Excel upload: {filename}", products
+                )
+                
+            elif is_cancelled:
+                logger.info(f"[EXCEL-CANCELLED] User cancelled Excel processing - clearing session")
+                # User cancelled - clear session and redirect to initial greeting stage
+                logger.info(f"[EXCEL-CANCELLED] User cancelled Excel processing - clearing session and redirecting to greeting")
+                
+                # Clear all Excel-related data and reset session completely
+                session.workflow_state = {}
+                session.workflow_type = None
+                
+                # Get user details for personalized greeting
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                first_name = user.name.split()[0].capitalize() if user.name else "there"
+                
+                # Send the specified greeting message with buttons
+                greeting_message = f"Hi {first_name}! What can I assist you with today?\nLet's continue with your buyer profile ({user.email})\n(Type 'Exit' anytime to end the chat)"
+                
+                # Role-based button configuration
+                if user_role == "buyer":
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Stocks"}
+                    ]
+                else:
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "get_support", "title": "Get Support Info"}
+                    ]
+                
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    greeting_message,
+                    buttons_config
+                )
+                
+                await self.session_manager.save_session(session, None)
+                
+                return {"status": "excel_cancelled_redirected_to_greeting"}
+                
+            else:
+                # Unclear response - send clarification with buttons
+                clarification_message = "🤔 I didn't quite understand your response.\n\nPlease choose what you'd like to do:"
+                
+                buttons_config = [
+                    {"id": "confirm_excel", "title": "✅ Confirm"},
+                    {"id": "cancel_excel", "title": "❌ Cancel"}
+                ]
+                
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    clarification_message,
+                    buttons_config,
+                    "Excel Processing:"
+                )
+                return {"status": "excel_clarification_requested"}
+                
+        except Exception as e:
+            logger.error(f"[EXCEL-CONFIRMATION-ERROR] Error handling Excel confirmation response: {e}")
+            error_message = "⚠️ Sorry, there was an error processing your response.\n\nPlease choose what you'd like to do:"
+            
+            buttons_config = [
+                {"id": "confirm_excel", "title": "✅ Confirm"},
+                {"id": "cancel_excel", "title": "❌ Cancel"}
+            ]
+            
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                error_message,
+                buttons_config,
+                "Excel Processing:"
+            )
+            return {"status": "error", "error": str(e)}
+
     def _convert_excel_items_to_products_array(self, excel_items: List[Dict]) -> List[Dict]:
         """Convert Excel items to products array format for existing multiple RFQ flow."""
-        logger.info(f"[EXCEL-CONVERSION-START] Converting {len(excel_items)} Excel items to products array")
-        logger.info(f"[EXCEL-CONVERSION-INPUT] Raw excel_items: {excel_items}")
-        
         products = []
         
         for i, item in enumerate(excel_items, 1):
-            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing item: {item}")
-            
+           
             # Map Excel columns to entity format expected by products array handler
             product_entity = {
                 'description': item.get('ItemDescription', ''),
@@ -1331,48 +1730,35 @@ class ChatService:
                 'pincode': None,
                 'division': None
             }
-            
-            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Mapped product_entity: {product_entity}")
-            
+                        
             # Clean up empty values but keep structure for validation
             cleaned_entity = {}
             for k, v in product_entity.items():
-                logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing field '{k}': value={v}, type={type(v)}")
                 
                 try:
                     if v is not None:
                         # Convert to string first
-                        v_str = str(v)
-                        logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Field '{k}': converted to string='{v_str}'")
-                        
+                        v_str = str(v)                        
                         # Check if it has content (str() already gives clean representation)
                         if v_str and v_str.strip():
                             # Keep quantity as string but ensure it's valid
                             if k == 'quantity':
-                                logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing quantity field: '{v_str}'")
                                 try:
                                     # Validate it's a valid number but keep as string
                                     float(v_str)
                                     cleaned_entity[k] = v_str
-                                    logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Quantity validated and set: '{v_str}'")
                                 except ValueError as ve:
-                                    logger.error(f"[EXCEL-CONVERSION-ITEM-{i}] Quantity validation failed: {ve}")
                                     cleaned_entity[k] = None
                             else:
                                 # Only strip if it's actually a string that needs stripping
-                                logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Processing non-quantity field '{k}': original_type={type(v)}, is_string={isinstance(v, str)}")
                                 if isinstance(v, str):
                                     cleaned_entity[k] = v_str.strip()
-                                    logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] String field '{k}' stripped: '{cleaned_entity[k]}'")
                                 else:
                                     cleaned_entity[k] = v_str
-                                    logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Non-string field '{k}' used as-is: '{cleaned_entity[k]}'")
                         else:
                             cleaned_entity[k] = None  # Keep None for empty strings
-                            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Field '{k}' set to None (empty after strip)")
                     else:
                         cleaned_entity[k] = None  # Keep None for missing required fields
-                        logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Field '{k}' set to None (was None)")
                         
                 except Exception as field_error:
                     logger.error(f"[EXCEL-CONVERSION-ITEM-{i}] ERROR processing field '{k}': {field_error}")
@@ -1380,7 +1766,6 @@ class ChatService:
                     raise field_error
             
             products.append(cleaned_entity)
-            logger.info(f"[EXCEL-CONVERSION-ITEM-{i}] Final cleaned_entity: {cleaned_entity}")
             
         logger.info(f"[EXCEL-CONVERSION-SUCCESS] Successfully converted {len(excel_items)} Excel items to products array")
         logger.info(f"[EXCEL-CONVERSION-RESULT] Final products: {products}")
@@ -1392,6 +1777,24 @@ class ChatService:
         try:
             processing_result = excel_context['excel_data']
             missing_fields = excel_context['missing_fields']
+            
+            # Check if this is a rejection due to skipped rows
+            if processing_result.get('should_skip_rfq_creation') and processing_result.get('processing_summary'):
+                processing_summary = processing_result['processing_summary']
+                skipped_items_summary = processing_summary.get('skipped_items_summary', '')
+                
+                # Show rejection message with skipped items details
+                rejection_message = f"❌ File rejected: {processing_result.get('error', 'File processing incomplete')}\n\n{skipped_items_summary}\n\nPlease fix your Excel file and upload again."
+                await self.session_manager.send_and_track_message(user.phone_number, rejection_message, session)
+                
+                # Update session state - waiting for excel reupload
+                session.workflow_state = session.workflow_state or {}
+                session.workflow_state['stage'] = 'excel_reupload_required'
+                session.workflow_state['pending_excel_reupload'] = True
+                session.workflow_state['last_excel_issues'] = [processing_result.get('error', 'File processing incomplete')]
+                await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+                
+                return {"status": "excel_rejected", "response": "excel_rejection_sent"}
 
             # Generate reupload instructions using helper
             instructions = ExcelHelpers.generate_reupload_instructions(missing_fields, excel_context)
@@ -1864,7 +2267,17 @@ class ChatService:
             tracked_message = workflow_state.get("last_meaningful_message")
             tracked_intent_result = workflow_state.get("last_meaningful_intent_result")
 
-            if tracked_message and tracked_intent_result:
+            # CRITICAL: Only use tracked message if session has NO existing RFQ data
+            # This prevents using stale messages after RFQ creation/exit
+            has_existing_rfq_data = bool(
+                workflow_state.get("pending_rfq") or
+                workflow_state.get("pending_combined_rfq") or
+                workflow_state.get("extracted_entities") or
+                workflow_state.get("incomplete_products") or
+                workflow_state.get("complete_products")
+            )
+
+            if tracked_message and tracked_intent_result and not has_existing_rfq_data:
                 logger.info(f"Using tracked meaningful message instead of button synthetic message: '{str(tracked_message)[:50]}...'")
                 # Clear the tracked message since we're using it
                 workflow_state.pop("last_meaningful_message", None)
@@ -1873,7 +2286,15 @@ class ChatService:
                 message_to_process = tracked_message
                 intent_result = tracked_intent_result
             else:
-                logger.info(f"No tracked meaningful message found - using default RFQ creation message")
+                if has_existing_rfq_data:
+                    logger.info(f"Ignoring tracked message - session has existing RFQ data, starting fresh")
+                else:
+                    logger.info(f"No tracked meaningful message found - using default RFQ creation message")
+
+                # Clear any stale meaningful message
+                workflow_state.pop("last_meaningful_message", None)
+                workflow_state.pop("last_meaningful_intent_result", None)
+
                 message_to_process = "I want to create a new RFQ"
                 intent_result = {"intent": "buy_something", "confidence": 95}
 
@@ -1933,10 +2354,14 @@ class ChatService:
         elif button_id == "exit":
             # Trigger exit flow
             user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+            # Exit service handles all session persistence (DB + Redis cleanup)
             exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
-            await self.session_manager.save_session(session, WorkflowType.user_exit)
             return exit_result
 
+        # Handle Excel confirmation buttons
+        elif button_id in ["confirm_excel", "cancel_excel"]:
+            return await self._handle_excel_confirmation_button(user, session, button_id)
+        
         # Handle cancel workflow confirmation buttons
         elif button_id in ["confirm_cancel", "decline_cancel"]:
             return await self._handle_cancel_confirmation_button(user, session, button_id)
@@ -1955,6 +2380,14 @@ class ChatService:
             await self.session_manager.save_session(session)
             logger.info(f"Session saved after continue button handling for {user.phone_number}")
 
+        # Handle continue button from modification clarification (confirms no changes needed)
+        elif button_id == "confirm_no_changes":
+            result = await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
+            # Session will be cleared by confirmation handler after RFQ creation
+            # CRITICAL: Save session to persist the cleared workflow_state to Redis
+            await self.session_manager.save_session(session)
+            logger.info(f"Handled confirm_no_changes button for {user.phone_number}")
+
             return result
 
         # Check if this is a confirmation button response
@@ -1962,11 +2395,42 @@ class ChatService:
             # Route to confirmation handler
             result = await self.confirmation_handler.handle_confirmation_button(user, session, button_id)
 
-            # Save session after confirmation handling to persist any session clearing
-            # This ensures that when RFQ is successfully created, the cleared workflow_state
-            # is saved to the database so the next request starts fresh
-            await self.session_manager.save_session(session)
-            logger.info(f"Session saved after confirmation button handling for {user.phone_number}")
+            # Handle session completion if RFQs were created
+            if result.get("status") == "multiple_rfqs_created":
+                # APPEND session to database (preserves history from previous RFQs)
+                from app.database import DatabaseManager
+                db_manager = DatabaseManager()
+                try:
+                    db_manager.append_session_data({
+                        'session_id': session.session_id,
+                        'external_user_id': session.external_user_id,
+                        'workflow_type': WorkflowType.rfq_submitted.value,
+                        'outcome': session.outcome.value if session.outcome else None,
+                        'workflow_state': session.workflow_state,
+                        'conversation_history': session.conversation_history,
+                        'extracted_entities': session.extracted_entities,
+                        'rfq_ids': session.rfq_ids if hasattr(session, 'rfq_ids') else None,
+                        'product_items': session.product_items if hasattr(session, 'product_items') else None,
+                        'retention_date': session.retention_date,
+                        'last_activity_at': session.last_activity_at,
+                        'completed_at': session.completed_at
+                    })
+                    logger.info(f"Appended completed RFQ session {session.session_id} to database (button handler)")
+                finally:
+                    db_manager.close()
+
+                # Clear Redis (session complete) - CRITICAL: Delete old session to prevent stale data leak
+                from app.redis_db import get_session_redis_service
+                from app.config import get_settings
+                settings = get_settings()
+                if settings.redis_session_storage_enabled:
+                    redis_session = get_session_redis_service()
+                    await redis_session.delete_session(session.session_id)
+                    logger.info(f"Deleted completed session {session.session_id} from Redis (button handler)")
+            else:
+                # Save session if RFQ was not created (e.g., error occurred)
+                await self.session_manager.save_session(session)
+                logger.info(f"Session saved after confirmation button handling for {user.phone_number}")
 
             return result
 
@@ -2000,6 +2464,24 @@ class ChatService:
             logger.error(f"Error handling authentication email button: {e}")
             return {"status": "error", "error": str(e)}
 
+    async def _handle_excel_confirmation_button(self, user: User, session: ConversationSession, button_id: str) -> Dict[str, Any]:
+        """Handle Excel confirmation button responses."""
+        logger.info(f"Excel confirmation button response from {user.phone_number}: {button_id}")
+        
+        try:
+            if button_id == "confirm_excel":
+                # User confirmed - simulate "confirm" response
+                return await self._handle_excel_confirmation_response(user, session, "confirm")
+            elif button_id == "cancel_excel":
+                # User cancelled - simulate "cancel" response
+                return await self._handle_excel_confirmation_response(user, session, "cancel")
+            else:
+                return {"status": "unknown_excel_button", "button_id": button_id}
+                
+        except Exception as e:
+            logger.error(f"Error handling Excel confirmation button: {e}")
+            return {"status": "error", "error": str(e)}
+    
     async def _handle_cancel_confirmation_button(self, user: User, session: ConversationSession, button_id: str) -> Dict[str, Any]:
         """Handle cancel workflow confirmation button responses."""
         logger.info(f"Cancel confirmation button response from {user.phone_number}: {button_id}")

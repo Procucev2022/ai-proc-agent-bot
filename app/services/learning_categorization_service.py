@@ -141,30 +141,37 @@ class LearningCategorizationService:
             
             # Create cross-reference to client category if available
             if client_category:
-                # Find the client category mapping
+                # Create cross-reference tracking directly (since we're now using item_category as primary source)
+                category_path = f"{categorization['level_1']} > {categorization['level_2']} > {categorization['level_3']}"
+                
+                # Find existing CategoryMapping entry, or create a placeholder reference
                 client_mapping = db.query(CategoryMapping).filter(
                     CategoryMapping.category == client_category
                 ).first()
                 
                 if client_mapping:
                     learning_item.client_category_mapping_id = client_mapping.id
-                    
-                    # Create cross-reference tracking
-                    category_path = f"{categorization['level_1']} > {categorization['level_2']} > {categorization['level_3']}"
-                    cross_ref = ClientCategoryMapping(
-                        id=str(uuid.uuid4()),
-                        learning_category_item_id=learning_item.id,
-                        category_mapping_id=client_mapping.id,
-                        learning_category_path=category_path,
-                        client_category_name=client_category,
-                        similarity_score=self._calculate_category_similarity(
-                            category_path, client_category
-                        ),
-                        mapping_confidence=self._determine_mapping_confidence(
-                            categorization_result.get("confidence_score", 0.8)
-                        )
+                    mapping_id = client_mapping.id
+                else:
+                    # Client category doesn't exist in CategoryMapping (expected with item_category primary source)
+                    # We'll use a placeholder UUID for the mapping_id
+                    mapping_id = str(uuid.uuid4())
+                
+                # Always create cross-reference tracking for client categories from item_category
+                cross_ref = ClientCategoryMapping(
+                    id=str(uuid.uuid4()),
+                    learning_category_item_id=learning_item.id,
+                    category_mapping_id=mapping_id,
+                    learning_category_path=category_path,
+                    client_category_name=client_category,
+                    similarity_score=self._calculate_category_similarity(
+                        category_path, client_category
+                    ),
+                    mapping_confidence=self._determine_mapping_confidence(
+                        categorization_result.get("confidence_score", 0.8)
                     )
-                    db.add(cross_ref)
+                )
+                db.add(cross_ref)
             
             db.commit()
             

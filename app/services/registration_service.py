@@ -138,6 +138,10 @@ class RegistrationService:
                             existing_entities["details"] = str(value).strip()
                         else:
                             existing_entities[key] = str(value).strip()
+                
+                # Auto-fill address from pincode if provided
+                await self._auto_fill_address_from_pincode(existing_entities, user_phone, session)
+                
                 session.workflow_state["registration_entities"] = existing_entities
                 session.workflow_state["last_activity_at"] = utc_now().isoformat()
             else:
@@ -149,7 +153,15 @@ class RegistrationService:
             else:  # seller
                 entity_schema = SellerRegistrationSchema
 
+            # Check for pincode error from auto-fill
+            pincode_error = existing_entities.pop("_pincode_error", None)
+            
             existing_entities, validation_error_message = await self.authentication_helpers.validate_entities(existing_entities, entity_schema)
+            
+            # Use pincode error as validation error
+            if pincode_error:
+                validation_error_message = pincode_error
+            
             session.workflow_state["registration_entities"] = existing_entities
 
             # Dynamic schema-based field validation
@@ -433,20 +445,45 @@ class RegistrationService:
                     "user_id": user_id
                 }
             else:
-                # Registration failed
+                # Registration failed - check for specific error codes
                 error_msg = result.get("message", "Registration failed")
+                status_code = result.get("status_code", result.get("statusCode"))
                 
-                # Send email notification to support team for registration failure
-                await self.support_notification_service.notify_registration_failed(
-                    entities.get("name") or entities.get("full_name", "User"),
-                    entities.get("email", "unknown"),
-                    user_phone,
-                    user_type
-                )
-                
-                if "already exists" in error_msg.lower():
-                    return await self._redirect_to_support(user_phone, "user_already_exists", error_msg, session)
+                # Handle 409 Conflict - User already exists
+                if status_code == 409 or "already exists" in error_msg.lower():
+                    logger.info(f"User already exists: {error_msg}")
+                    user_exists_message = (
+                        "A user with this email address and phone number already exists. "
+                        "Please use a different email or contact support at support@procucev.com if you need assistance."
+                    )
+                    
+                    if self.session_manager:
+                        await self.session_manager.send_and_track_message(user_phone, user_exists_message, session)
+                    else:
+                        await self.whatsapp_service.send_message(user_phone, user_exists_message)
+                    
+                    # Call exit function without showing exit message
+                    from app.services.exit_service import ExitService
+                    exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
+                    await exit_service.handle_exit_intent(user_phone, session, show_message=False)
+                    
+                    return {
+                        "status": "user_already_exists",
+                        "message": error_msg,
+                        "exit_completed": True
+                    }
                 else:
+                    # Other registration failures
+                    logger.info(f"Registration failed: {error_msg}")
+                    
+                    # Send email notification to support team for registration failure
+                    await self.support_notification_service.notify_registration_failed(
+                        entities.get("name") or entities.get("full_name", "User"),
+                        entities.get("email", "unknown"),
+                        user_phone,
+                        user_type
+                    )
+                    
                     return await self._redirect_to_support(user_phone, "registration_failed", error_msg, session)
                     
         except Exception as e:
@@ -591,9 +628,6 @@ class RegistrationService:
                         else:
                             logger.info(f"Buyer registration completed for {user_phone} - domain not approved, awaiting manual approval")
                             # Domain not approved - send pending message
-                            pending_message = "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
-
-                            
                             # Send email notification to support team
                             await self.support_notification_service.notify_buyer_registration_not_approved(
                                 entities.get("name", "User"),
@@ -606,15 +640,20 @@ class RegistrationService:
                                 "*Registration received—thank you!*\n\n"
                                 "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
                                 "Our team will get in touch shortly to complete the process, and once verified, "
-                                "you’ll be able to access your account and start raising RFQs."
+                                "you’ll be able to access your account and start raising RFQs.\n\n"
+                                "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
+
                             )
 
                             if self.session_manager:
                                 await self.session_manager.send_and_track_message(user_phone, pending_message, session)
                             else:
                                 await self.whatsapp_service.send_message(user_phone, pending_message)
-                            
-                            
+
+                            # Call exit without showing exit message
+                            from app.services.exit_service import ExitService
+                            exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
+                            await exit_service.handle_exit_intent(user_phone, session, show_message=False)
                             
                             return {
                                 "status": "redirect_to_support",
@@ -624,7 +663,6 @@ class RegistrationService:
                     else:
                         logger.warning(f"Buyer registration completed for {user_phone} - missing user_id")
                         # No user_id found - redirect to support
-                        pending_message = "Registration successful—thank you! Our team will get in touch with you shortly to complete your onboarding so that you can raise RFQs. In the meantime please let us know if you want us to support you with anything else?"
 
                         
                         # Send email notification to support team
@@ -639,7 +677,9 @@ class RegistrationService:
                             "*Registration received—thank you!*\n\n"
                             "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
                             "Our team will get in touch shortly to complete the process, and once verified, "
-                            "you’ll be able to access your account and start raising RFQs."
+                            "you’ll be able to access your account and start raising RFQs.\n\n"
+                            "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
+
                         )
 
                         if self.session_manager:
@@ -647,7 +687,10 @@ class RegistrationService:
                         else:
                             await self.whatsapp_service.send_message(user_phone, pending_message)
                         
-
+                        # Call exit without showing exit message
+                        from app.services.exit_service import ExitService
+                        exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
+                        await exit_service.handle_exit_intent(user_phone, session, show_message=False)
                         
                         return {
                             "status": "redirect_to_support",
@@ -687,6 +730,13 @@ class RegistrationService:
                         "user_type": "seller",
                         "email": entities.get('email')
                     }
+            
+            # Handle maximum OTP attempts exceeded - call exit without message
+            elif otp_result.get("status") == "max_otp_exceeded":
+                logger.warning(f"Maximum OTP attempts exceeded for {user_phone}")
+                from app.services.exit_service import ExitService
+                exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
+                return await exit_service.handle_exit_intent(user_phone, session, show_message=False)
             
             # Handle OTP service redirect to support
             elif otp_result.get("status") == "redirect_to_support":
@@ -758,9 +808,17 @@ class RegistrationService:
 
 
     async def _redirect_to_support(self, user_phone: str, issue_type: str, error_details: str, session: ConversationSession = None) -> Dict[str, Any]:
-        """Redirect user to support team."""
+        """Redirect user to support team with issue-specific messages."""
         try:
-            support_message = "We could not complete your registration at this time. Our support team will reach out to you soon to help finalize your onboarding. If you need immediate assistance, please contact us at info@procucev.com."
+            # Default message for registration issues
+            support_message = (
+                "*Registration Unsuccessful*\n"
+                "We couldn’t complete your registration at this time. Our support team will "
+                "reach out to you shortly to help finalize your onboarding.\n\n"
+                "If you need immediate assistance, please contact us at *info@procucev.com*.\n\n"
+                "*Thank you for choosing Procucev!*"
+            )
+
             if self.session_manager and session:
                 await self.session_manager.send_and_track_message(user_phone, support_message, session)
             else:
@@ -771,7 +829,8 @@ class RegistrationService:
             return {
                 "status": "redirected_to_support",
                 "issue_type": issue_type,
-                "support_ticket_created": True
+                "support_ticket_created": True,
+                "exit_completed": True
             }
             
         except Exception as e:
@@ -792,6 +851,39 @@ class RegistrationService:
             return message_content.lower().strip() in ["exit", "quit", "stop", "cancel"]
         else:
             return False
+    
+    async def _auto_fill_address_from_pincode(self, entities: Dict[str, Any], user_phone: str, session: ConversationSession) -> None:
+        """Auto-fill address from pincode if valid pincode is provided."""
+        try:
+            pincode = entities.get("zipCode")
+            if not pincode or entities.get("address"):  # Skip if no pincode or address already exists
+                return
+            
+            # Validate pincode format
+            if not pincode.isdigit() or len(pincode) != 6:
+                return
+            
+            # Get location details from pincode
+            location_data = await get_location_from_pincode_async(pincode)
+            
+            if location_data:
+                city = location_data.get("city", "")
+                state = location_data.get("state", "")
+                
+                if city and state:
+                    # Auto-fill address with city and state
+                    entities["address"] = f"{city}, {state}"
+                    logger.info(f"Auto-filled address for {user_phone}: {city}, {state} from pincode {pincode}")
+                else:
+                    logger.warning(f"Incomplete location data for pincode {pincode}: {location_data}")
+            else:
+                # Clear invalid pincode and store error message for later display
+                entities["zipCode"] = None
+                entities["_pincode_error"] = f"The pincode {pincode} is invalid or not found. Kindly share a valid Indian pincode."
+                logger.warning(f"Invalid pincode {pincode} provided by {user_phone}")
+                
+        except Exception as e:
+            logger.error(f"Error auto-filling address from pincode: {e}")
     
     async def _handle_registration_exit(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
         """Handle exit during registration."""

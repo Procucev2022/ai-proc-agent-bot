@@ -23,12 +23,13 @@ class InteractionLogger:
         """Initialize interaction logger with log directory."""
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Create daily log file
         today = datetime.now().strftime("%Y-%m-%d")
         self.log_file = self.log_dir / f"interactions_{today}.jsonl"
-        
-        logger.info(f"InteractionLogger initialized - Log file: {self.log_file}")
+
+        # Reduced to debug level - singleton is created once per worker process
+        logger.debug(f"InteractionLogger initialized - Log file: {self.log_file}")
     
     def log_intent_classification(
         self,

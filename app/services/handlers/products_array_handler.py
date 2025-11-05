@@ -39,10 +39,34 @@ class ProductsArrayHandler:
 
             # Check if we have existing incomplete products that need to be merged with new data
             existing_incomplete = session.workflow_state.get("incomplete_products", [])
+            existing_complete = session.workflow_state.get("complete_products", [])
+
             if existing_incomplete:
                 print(f"ProductsArrayHandler: Found {len(existing_incomplete)} existing incomplete products, merging with new data")
                 products = await self._merge_with_existing_incomplete_products(existing_incomplete, products)
                 print(f"ProductsArrayHandler: After merging, processing {len(products)} total products")
+
+                # Also add back the complete products that were stored earlier
+                if existing_complete:
+                    print(f"ProductsArrayHandler: Adding back {len(existing_complete)} complete products")
+                    complete_entities = []
+                    for comp_prod in existing_complete:
+                        if isinstance(comp_prod, dict) and "entities" in comp_prod:
+                            complete_entities.append(comp_prod["entities"])
+                        else:
+                            complete_entities.append(comp_prod)
+                    products = complete_entities + products  # Complete products first, then incomplete
+                    print(f"ProductsArrayHandler: Total products after adding complete: {len(products)}")
+
+            # Apply attachment caption as remarks to all products if present
+            attachment_caption = session.workflow_state.get("attachment_caption")
+            if attachment_caption:
+                logger.info(f"Applying attachment caption as remarks to {len(products)} products: {attachment_caption}")
+                for product in products:
+                    if isinstance(product, dict) and not product.get("remarks"):
+                        product["remarks"] = attachment_caption
+                # Clear the caption after applying it
+                del session.workflow_state["attachment_caption"]
 
             # Track categories from all products in product_items
             await self._track_product_categories(session, products)
@@ -137,12 +161,9 @@ class ProductsArrayHandler:
         existing_incomplete = session.workflow_state.get("incomplete_products", [])
         if self._no_products_mentioned(products) and not existing_incomplete:
             no_products_message = (
-                "Please provide the item details in the following format:\n\n"
-                "• Delivery Location Pincode, Delivery Date, Item 1 Details, Item 2 Details …..Item n Details as per the example below \n"
-                "• Example:\n"
-                "  Pincode 411005, Delivery Date 22 Nov, Laptop Dell Inspiron - 5, Printer HP LaserJet - 2,  Desktops HP 17’’  -10\n\n"
-                "You can type these details here or attach an Excel file with columns for Item, Quantity, Brand, Specification, Delivery Date, and Pincode.\n\n"
-                "Once I have these details, I can help raise your RFQ and ensure timely processing."
+                "Please share the items for your RFQ with name, brand/specs (if any), and quantity — you can add multiple items together in one message.\n\n"
+                "📝 Example:\n"
+                "Laptop Dell Inspiron - 5, Printer HP LaserJet - 2, Desktop HP 17\" - 10"
             )
             await self.whatsapp_service.send_message(user.phone_number, no_products_message)
             return {
@@ -150,7 +171,9 @@ class ProductsArrayHandler:
                 "total_products": 0
             }
         
-        all_questions, all_missing_fields = await self._generate_clarification_questions(incomplete_products)
+        # Calculate total products for context (incomplete + complete)
+        total_products = len(incomplete_products) + len(complete_products)
+        all_questions, all_missing_fields = await self._generate_clarification_questions(incomplete_products, total_products)
         
         # Calculate overall completeness
         total_mandatory_fields = sum(len(prod["missing_fields"]) for prod in incomplete_products)
@@ -176,31 +199,48 @@ class ProductsArrayHandler:
         
         # Keep questions as a list for proper bullet formatting
         print(f"  Final clarification questions: {all_questions}")
-        
-        # Build context and send response directly
-        context = ChatServiceHelpers.build_context("clarification", message, {}, completeness,
-            missing_fields=all_missing_fields,
-            total_products=len(products),
-            incomplete_products=len(incomplete_products)
+
+        # Use consistent formatting with optional questions - show ALL products (complete + incomplete)
+        # Build combined list: complete products first, then incomplete
+        all_products_entities = []
+        for prod in complete_products:
+            all_products_entities.append(prod["entities"])
+        for prod in incomplete_products:
+            all_products_entities.append(prod["entities"])
+
+        # Extract global fields from first product (if available)
+        global_fields = {}
+        if all_products_entities:
+            first_entity = all_products_entities[0]
+            global_fields = {
+                'deliveryDate': first_entity.get('deliveryDate'),
+                'state': first_entity.get('state'),
+                'city': first_entity.get('city'),
+                'pincode': first_entity.get('pincode')
+            }
+
+        # Format response using the same formatter as optional questions for consistency
+        formatted_message = format_rfq_response_message(
+            all_products_entities,
+            global_fields,
+            all_questions,  # Pass mandatory questions instead of optional
+            include_optional=False,  # This is for mandatory fields
+            excel_source=False  # Multi-product text flow, not Excel
         )
-        
-        # Add products to context for date validation error extraction
-        context["products"] = products
-        context["date_validation_error"] = date_validation_error
-        
-        # Add extracted entities to context for enhanced formatting
-        context["extracted_entities"] = [prod["entities"] for prod in incomplete_products]
-        
-        response = await self.response_helpers.generate_clarification_response(all_questions, completeness, context, chat_summaries)
-        await self.whatsapp_service.send_message(user.phone_number, response)
-        
+
+        await self.whatsapp_service.send_configurable_buttons(
+            recipient_id=user.phone_number,
+            body=formatted_message,
+            buttons_config=[{"id": "confirm_cancel", "title": "Restart"}]
+        )
+
         return {
             "status": "products_incomplete",
             "total_products": len(products),
             "incomplete_products": len(incomplete_products)
         }
     
-    async def _generate_clarification_questions(self, incomplete_products: list) -> tuple:
+    async def _generate_clarification_questions(self, incomplete_products: list, total_products: int = 1) -> tuple:
         """Generate clarification questions for incomplete products."""
         all_questions = []
         all_missing_fields = []
@@ -227,12 +267,31 @@ class ProductsArrayHandler:
 
         print(f"  All products have same missing fields: {all_same_missing}")
 
-        if all_same_missing and len(incomplete_products) > 1:
-            # All products missing the same fields - ask once for all
+        # Define product-specific fields that should always be asked per product
+        product_specific_fields = {'item_0_quantity', 'item_0_description', 'project_desc', 'preferred_brand'}
+
+        # Check if any missing field is product-specific
+        has_product_specific_missing = any(
+            field in product_specific_fields
+            for field in first_missing
+        )
+
+        print(f"  Has product-specific missing fields: {has_product_specific_missing}")
+
+        # Only use combined questions for delivery-related fields
+        # For product-specific fields (quantity, description, brand), always ask individually per product
+        if has_product_specific_missing:
+            # Missing product-specific fields - always ask individually per product
+            print(f"  Using individual questions because of product-specific fields")
+            await self._generate_individual_questions(incomplete_products, all_questions, all_missing_fields, has_date_error, total_products)
+        elif all_same_missing and len(incomplete_products) > 1:
+            # All products missing only the same delivery-related fields - ask once for all
+            print(f"  Using combined questions for delivery-related fields")
             await self._generate_combined_questions(incomplete_products, all_questions, all_missing_fields, has_date_error)
         else:
             # Products have different missing fields - ask individually
-            await self._generate_individual_questions(incomplete_products, all_questions, all_missing_fields, has_date_error)
+            print(f"  Using individual questions due to different missing fields")
+            await self._generate_individual_questions(incomplete_products, all_questions, all_missing_fields, has_date_error, total_products)
 
         # Remove duplicate questions while preserving order
         all_questions = list(dict.fromkeys(all_questions))
@@ -249,8 +308,8 @@ class ProductsArrayHandler:
             product_names = []
             for i, prod in enumerate(incomplete_products):
                 description = prod["entities"].get("description")
-                if description and description.strip():
-                    product_names.append(description)
+                if description and str(description).strip():
+                    product_names.append(str(description))
                 else:
                     # Use index from prod dict, or fallback to list index
                     index = prod.get("index", i + 1)
@@ -266,7 +325,7 @@ class ProductsArrayHandler:
 
             all_missing_fields.extend(incomplete_products[0]["missing_fields"])
     
-    async def _generate_individual_questions(self, incomplete_products: list, all_questions: list, all_missing_fields: list, has_date_error: bool = False):
+    async def _generate_individual_questions(self, incomplete_products: list, all_questions: list, all_missing_fields: list, has_date_error: bool = False, total_products: int = 1):
         """Generate individual questions for products with different missing fields."""
         # First, identify delivery fields that should always be asked for all products
         delivery_fields = {'delivery_date', 'delivery_location_0_state', 'delivery_location_0_city', 'delivery_location_0_pincode'}
@@ -294,8 +353,8 @@ class ProductsArrayHandler:
             product_names = []
             for i, prod in enumerate(incomplete_products):
                 description = prod["entities"].get("description")
-                if description and description.strip():
-                    product_names.append(description)
+                if description and str(description).strip():
+                    product_names.append(str(description))
                 else:
                     # Use index from prod dict, or fallback to list index
                     index = prod.get("index", i + 1)
@@ -321,21 +380,35 @@ class ProductsArrayHandler:
             prod = item["product"]
             missing_fields = item["missing_fields"]
 
-            product_desc = prod["entities"].get("description", f"Product {prod['index']}")
+            product_desc = prod["entities"].get("description", f"Product {prod['index']}").capitalize()
             rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(prod["entities"], self.openai_service)
             combined_questions = rfq_schema.get_combined_questions()
 
             print(f"  Processing product-specific questions for {product_desc}: {missing_fields}")
 
             if combined_questions["has_mandatory"]:
-                # Only add product prefix if there are multiple products
-                if len(incomplete_products) > 1:
-                    all_questions.append(f"For {product_desc}:")
                 # Filter out None values from mandatory questions and delivery date if there's a date error
                 mandatory_questions = [q for q in combined_questions["mandatory"] if q is not None and str(q).strip()]
                 if has_date_error:
                     mandatory_questions = [q for q in mandatory_questions if "delivery date" not in q.lower()]
-                all_questions.extend(mandatory_questions)
+
+                # Format questions with product name for multi-product scenarios
+                # Use total_products to check if there are multiple products in the entire request
+                if total_products > 1:
+                    # Convert questions to format: "Field for Product"
+                    for question in mandatory_questions:
+                        # Extract field name from question (e.g., "How many items do you need (quantity)?" -> "Quantity")
+                        if "quantity" in question.lower():
+                            all_questions.append(f"Quantity for {product_desc}")
+                        elif "description" in question.lower():
+                            all_questions.append(f"Description for {product_desc}")
+                        else:
+                            # For other questions, append as-is with product name
+                            all_questions.append(f"{question} for {product_desc}")
+                else:
+                    # Single product - use questions as-is
+                    all_questions.extend(mandatory_questions)
+
                 all_missing_fields.extend(missing_fields)
     
     async def _handle_complete_products(self, user: User, session: ConversationSession,
@@ -365,7 +438,7 @@ class ProductsArrayHandler:
                 'city': product_info["entities"].get('city'),
                 'pincode': product_info["entities"].get('pincode')
             }
-            formatted_message = format_rfq_response_message([product_info["entities"]], global_fields, optional_questions, include_optional=True)
+            formatted_message = format_rfq_response_message([product_info["entities"]], global_fields, optional_questions, include_optional=True, excel_source=False)
           
             optional_message = f"{formatted_message}\n\nIf yes, please upload them now — or click on ‘Continue’ to proceed."
             
@@ -400,17 +473,19 @@ class ProductsArrayHandler:
             }
         
         # Generate confirmation (either optional fields were completed or user declined)
-        summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
+        summary_content = await self.response_helpers.generate_rfq_summary_and_confirmation(rfq_schema, {
             "user_message": message,
             "extracted_entities": product_info["entities"]
         }, chat_summaries)
 
-        summary_response += (
-            "\n\nPlease review the above details carefully. "
+        # Add prefix and suffix to the summary
+        summary_response = (
+            f"RFQ Summary:\n\n{summary_content}\n\n"
+            "Please review the above details carefully. "
             'If everything is correct, kindly click "Confirm" to proceed with the RFQ creation. '
             'If you wish to make any changes, click "Add or Modify."'
         )
-        
+
         # Send confirmation message with buttons
         buttons_config = [
             {"id": "confirm_rfq", "title": "Confirm"},
@@ -472,7 +547,7 @@ class ProductsArrayHandler:
                     'city': first_entity.get('city'),
                     'pincode': first_entity.get('pincode')
                 }
-            formatted_message = format_rfq_response_message(all_products_entities, global_fields, optional_questions, include_optional=True)
+            formatted_message = format_rfq_response_message(all_products_entities, global_fields, optional_questions, include_optional=True, excel_source=False)
 
             optional_message = f"{formatted_message}\n\n If yes, please upload them now — or click on ‘Continue’ to proceed."
             
@@ -607,7 +682,36 @@ class ProductsArrayHandler:
                 else:
                     existing_entities.append(existing_prod)
 
-            # Check if new products are re-extractions of existing products or genuinely new ones
+            # Check if we should use positional matching (similar to EntityService logic)
+            # Count existing products without descriptions
+            existing_without_desc_count = sum(1 for e in existing_entities if not (e.get("description") or e.get("projectDesc")))
+            new_with_desc_count = sum(1 for p in new_products if (p.get("description") or p.get("projectDesc")))
+
+            # Use positional matching if counts match and all existing lack descriptions
+            use_positional_matching = (
+                existing_without_desc_count > 0 and
+                new_with_desc_count > 0 and
+                existing_without_desc_count == len(existing_entities) and  # ALL existing lack descriptions
+                new_with_desc_count == len(new_products) and  # ALL new have descriptions
+                existing_without_desc_count == new_with_desc_count  # Counts match
+            )
+
+            if use_positional_matching:
+                print(f"ProductsArrayHandler: Using positional matching - {len(existing_entities)} existing products without descriptions, {len(new_products)} new products with descriptions")
+                # Positionally merge: match by index order
+                merged_products = []
+                for i, (existing_entity, new_product) in enumerate(zip(existing_entities, new_products)):
+                    merged_entity = existing_entity.copy()
+                    print(f"ProductsArrayHandler: Positionally merging new product '{new_product.get('description')}' into existing product at index {i}")
+                    for key, value in new_product.items():
+                        if value is not None:
+                            merged_entity[key] = value
+                    merged_products.append(merged_entity)
+
+                print(f"ProductsArrayHandler: Final positionally merged result: {len(merged_products)} total products")
+                return merged_products
+
+            # Standard merge logic (description-based matching)
             new_products_with_descriptions = []
             supplementary_data = {}
 
@@ -663,8 +767,9 @@ class ProductsArrayHandler:
                     print(f"ProductsArrayHandler: Merging re-extracted data for product: {existing_desc}")
 
                     # Merge all non-None fields from re-extracted product
+                    # For re-extracted products, we ALWAYS update fields (even if they exist) because this is a modification
                     for field, value in reextracted_product.items():
-                        if value is not None and (merged_entity.get(field) is None or merged_entity.get(field) == ""):  # Only fill if field is None or empty
+                        if value is not None:  # Update any non-None value from re-extraction
                             merged_entity[field] = value
                             print(f"ProductsArrayHandler: Applied {field}={value} to {existing_desc}")
                     

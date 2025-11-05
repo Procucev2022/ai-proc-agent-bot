@@ -397,17 +397,20 @@ async def process_message_async(webhook_data: Dict[str, Any]):
 
             with get_db_session_context() as db:
                 chat_service = ChatService(db_session=db)
-
-                # Handle document messages specifically
-                if message_type.lower() == "document":
-                    await process_document_message(webhook_data, chat_service)
-                else:
-                    # Process other non-text messages (image, interactive, etc.) through chat service
-                    await chat_service.process_message(
-                        user_phone=from_number,
-                        message_content=content,
-                        message_type=message_type
-                    )
+                try:
+                    # Handle document messages specifically
+                    if message_type.lower() == "document":
+                        await process_document_message(webhook_data, chat_service)
+                    else:
+                        # Process other non-text messages (image, interactive, etc.) through chat service
+                        await chat_service.process_message(
+                            user_phone=from_number,
+                            message_content=content,
+                            message_type=message_type
+                        )
+                finally:
+                    # Cleanup to prevent unclosed aiohttp sessions
+                    await chat_service.cleanup()
 
     except Exception as e:
         logger.error(f"Error in async message processing: {e}", exc_info=True)
@@ -466,6 +469,11 @@ async def process_document_message(webhook_data: Dict[str, Any], chat_service):
         is_excel = any(filename.lower().endswith(ext) for ext in excel_extensions)
 
         if is_excel:
+            # Send processing message immediately for Excel files
+            from app.services.whatsapp_service import WhatsAppService
+            whatsapp_service = WhatsAppService()
+            await whatsapp_service.send_message(from_number, "Please wait, the file is processing…")
+            
             # Process as Excel file through chat service
             await chat_service.process_message(
                 user_phone=from_number,
@@ -501,19 +509,9 @@ async def handle_technical_error_with_cancel(user_phone: str, error_message: str
     try:
         logger.error(f"{error_type} for user {user_phone}: {error_message}")
 
-        # Initialize services
-        session_manager = SessionManagementService()
-        cancel_service = CancelService(session_manager=session_manager)
-
-        # Get user's current session
-        session = await session_manager.get_conversation_context(user_phone)
-
-        if session:
-            # Clear workflow state using cancel service internal method
-            logger.info(f"Clearing workflow state for user {user_phone} due to technical error")
-            await cancel_service._clear_workflow_state(session)
-
-        # Send user-friendly error message
+        # Initialize minimal services for error handling
+        # Note: SessionManagementService requires 4 dependencies,
+        # so we skip session clearing in error scenarios to avoid complexity
         from app.services.whatsapp_service import WhatsAppService
         whatsapp_service = WhatsAppService()
 

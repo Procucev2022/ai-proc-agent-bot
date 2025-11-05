@@ -169,14 +169,9 @@ class AuthenticationHelpers:
             greeting = "Great"
             user_name = collected_entities.get("name") or collected_entities.get("full_name")
             if user_name:
-                greeting += f", {user_name.split()[0].lower()}!"
+                greeting += f", {user_name.split()[0].title()}!"
             else:
                 greeting += "!"
-            
-            # Add validation error if present
-            validation_notice = ""
-            if validation_error_message:
-                validation_notice = f"\n {validation_error_message}\n"
             
             # Acknowledge collected fields
             acknowledgment = ""
@@ -190,7 +185,10 @@ class AuthenticationHelpers:
                         field_desc = field_info.description or name.replace("_", " ").title()
                         collected.append(f"{field_desc}: {value}")
                 if collected:
-                    acknowledgment = f" I've got:\n\n{chr(10).join(collected)}\n\n"
+                    acknowledgment = f"\n I've got:\n\n{chr(10).join(collected)}\n\n"
+            
+            # Check if validation error is pincode-related
+            is_pincode_error = validation_error_message and ("pincode" in validation_error_message.lower() or "zipcode" in validation_error_message.lower())
             
             # Ask for missing fields using their description
             questions = []
@@ -198,12 +196,26 @@ class AuthenticationHelpers:
                 if field in schema.model_fields:
                     field_info = schema.model_fields[field]
                     field_desc = field_info.description or field.replace("_", " ").title()
-                    questions.append(f"• What's your {field_desc.lower()}?")
+                    
+                    # Skip pincode and location questions if there's a pincode validation error
+                    if is_pincode_error and field in ["zipCode", "address"]:
+                        continue
+                    
+                    if field == "zipCode":
+                        questions.append(f"• What's your pincode?")
+                    elif field == "address":
+                        questions.append(f"• What's your location?")
+                    else:
+                        questions.append(f"• What's your {field_desc.lower()}?")
+            
+            # Add validation error as a question if present
+            if validation_error_message:
+                questions.append(f"• {validation_error_message}")
             
             if questions:
-                return greeting + validation_notice + acknowledgment + "I still need:\n\n" + "\n".join(questions)
+                return greeting + acknowledgment + "I still need:\n\n" + "\n".join(questions)
             else:
-                return greeting + validation_notice + acknowledgment + "Please provide the remaining registration details."
+                return greeting + acknowledgment + "Please provide the remaining registration details."
                 
         except Exception as e:
             logger.error(f"Registration questions generation error: {e}")

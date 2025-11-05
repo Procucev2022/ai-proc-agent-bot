@@ -78,49 +78,24 @@ class VerificationCheckService:
             # Step 1: Check verification status - block if not EMAIL_VERIFIED
             if verification_status in ["PENDING_EMAIL_VERIFICATION", "EMAIL_VERIFICATION_FAILED"]:
                 logger.info(f"Blocking access - verification status: {verification_status}")
-                
+
                 # First refresh user data to check if status was recently updated
-                logger.info(f"Refreshing user data to check for updated verification status")
-                refresh_result = await self.refresh_user_verification_status(user_phone, max_retries=1)
-                
-                if refresh_result.get("success") and refresh_result.get("data"):
-                    refreshed_data = refresh_result["data"][0] if refresh_result["data"] else {}
-                    refreshed_status = refreshed_data.get("verificationStatus", verification_status)
-                    refreshed_approved = refreshed_data.get("approved")
-                    
-                    if refreshed_status == "EMAIL_VERIFIED":
-                        logger.info(f"User status updated to EMAIL_VERIFIED after refresh - continuing verification")
-                        user_dict.update(refreshed_data)
-                        verification_status = refreshed_status
-                        approved = refreshed_approved  # Update approved flag from fresh data
-                    else:
-                        logger.info(f"Status still {refreshed_status} after refresh - requiring verification")
-                        # FIXED: Automatically send OTP when email verification is required
-                        otp_result = await self._send_verification_otp(user_phone, email)
-                        return {
-                            "verification_required": True,
-                            "otp_sent": otp_result.get("status") == "otp_sent",
-                            "redirect_info": {
-                                "flow": "email_verification",
-                                "reason": verification_status,
-                                "message": f"Email verification required for {email}.",
-                                "email": email
-                            }
-                        }
-                else:
-                    logger.warning(f"Failed to refresh user data - requiring verification")
-                    # FIXED: Automatically send OTP when email verification is required
-                    otp_result = await self._send_verification_otp(user_phone, email)
-                    return {
-                        "verification_required": True,
-                        "otp_sent": otp_result.get("status") == "otp_sent",
-                        "redirect_info": {
-                            "flow": "email_verification",
-                            "reason": verification_status,
-                            "message": f"Email verification required for {email}.",
-                            "email": email
-                        }
+                # logger.info(f"Refreshing user data to check for updated verification status")
+                # refresh_result = await self.refresh_user_verification_status(user_phone, max_retries=1)
+                logger.warning(f"Failed to refresh user data - requiring verification")
+                # FIXED: Automatically send OTP when email verification is required
+                print("user", user_phone,"email",email)
+                otp_result = await self._send_verification_otp(user_phone, email)
+                return {
+                    "verification_required": True,
+                    "otp_sent": otp_result.get("status") == "otp_sent",
+                    "redirect_info": {
+                        "flow": "email_verification",
+                        "reason": verification_status,
+                        "message": f"Email verification required for {email}.",
+                        "email": email
                     }
+                }
             
             # Step 2: If EMAIL_VERIFIED, apply user type specific rules
             if verification_status == "EMAIL_VERIFIED":
@@ -131,186 +106,23 @@ class VerificationCheckService:
                         logger.info(f"Access granted - buyer with EMAIL_VERIFIED status and approved=True")
                         return {"access_granted": True, "user_data": user_dict}
                     else:
-                        # User not approved - refresh data first to check for recent approval
-                        user_id = user_dict.get("id")
-                        if user_id:
-                            # First refresh user data to get latest approval status
-                            logger.info(f"Refreshing user data to check for updated approval status")
-                            refresh_result = await self.refresh_user_verification_status(user_phone, max_retries=1)
-                            
-                            if refresh_result.get("success") and refresh_result.get("data"):
-                                # Find the specific user by user_id instead of using first user
-                                refreshed_data = None
-                                for user in refresh_result["data"]:
-                                    if user.get("id") == user_id:
-                                        refreshed_data = user
-                                        break
-                                
-                                if not refreshed_data:
-                                    logger.warning(f"Could not find user {user_id} in refreshed data, using original data")
-                                    refreshed_data = user_dict
-                                
-                                refreshed_approved = refreshed_data.get("approved")
-                                
-                                if refreshed_approved is True:
-                                    logger.info(f"User approval status updated to True after refresh - granting access")
-                                    user_dict.update(refreshed_data)
-                                    return {"access_granted": True, "user_data": user_dict}
-                                elif refreshed_approved is False:
-                                    # Still not approved after refresh - call AI domain check
-                                    logger.info(f"User still not approved after refresh - calling AI domain check")
-                                    domain_result = await self._check_domain_approval(user_id, refreshed_approved, refreshed_data)
-                                    if domain_result.get("approved"):
-                                        logger.info(f"Domain check successful - user approved, refreshing data after approval")
-                                        
-                                        # Wait a moment for API to reflect the change
-                                        import asyncio
-                                        await asyncio.sleep(1)
-                                        
-                                        # Refresh user data again to get updated approval status
-                                        final_refresh = await self.refresh_user_verification_status(user_phone, max_retries=2)
-                                        if final_refresh.get("success") and final_refresh.get("data"):
-                                            # Find the specific user by user_id instead of using first user
-                                            final_data = None
-                                            for user in final_refresh["data"]:
-                                                if user.get("id") == user_id:
-                                                    final_data = user
-                                                    break
-                                            
-                                            if not final_data:
-                                                logger.warning(f"Could not find user {user_id} in final refresh data")
-                                                final_data = refreshed_data
-                                            
-                                            final_approved = final_data.get("approved")
-                                            
-                                            if final_approved is True:
-                                                logger.info(f"Final refresh confirmed approval - granting access")
-                                                user_dict.update(final_data)
-                                                return {"access_granted": True, "user_data": user_dict}
-                                            else:
-                                                logger.warning(f"Domain approved but API still shows approved={final_approved} - granting access anyway")
-                                                user_dict["approved"] = True
-                                                return {"access_granted": True, "user_data": user_dict}
-                                        else:
-                                            logger.warning(f"Domain approved but final refresh failed - granting access anyway")
-                                            user_dict["approved"] = True
-                                            return {"access_granted": True, "user_data": user_dict}
-                                    else:
-                                        logger.info(f"Blocking access - buyer domain check failed: {domain_result}")
-                                        
-                                        # Send email notification to support for domain mismatch
-                                        try:
-                                            from app.services.support_notification_service import SupportNotificationService
-                                            support_service = SupportNotificationService()
-                                            full_name = refreshed_data.get("fullName", "Unknown")
-                                            email_for_notification = refreshed_data.get("username") or refreshed_data.get("email", "Unknown")
-                                            notification_result = await support_service.notify_buyer_registration_not_approved(full_name, email_for_notification, user_phone)
-                                            logger.info(f"Support notification sent for domain mismatch: {email_for_notification}, result: {notification_result}")
-                                        except Exception as e:
-                                            logger.error(f"Failed to send support notification for domain mismatch: {e}")
-                                        
-                                        return {
-                                            "verification_required": True,
-                                            "redirect_to_support": True,
-                                            "redirect_info": {
-                                                "flow": "pending_approval",
-                                                "reason": "domain_not_approved",
-                                                "message": (
-                                                    "*Registration received—thank you!*\n\n"
-                                                    "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
-                                                    "Our team will get in touch shortly to complete the process, and once verified, "
-                                                    "you’ll be able to access your account and start raising RFQs."
-                                                ),
+                        # Missing user_id - show pending message
+                        logger.info(f"Blocking access - buyer missing user_id")
+                        return {
+                            "verification_required": True,
+                            "redirect_to_support": True,
+                            "redirect_info": {
+                                "flow": "pending_approval",
+                                "reason": "missing_user_id",
+                                "message": (
+                                    "*Registration under review — thank you!*\n\n"
+                                    "Your registration details are being verified to ensure a smooth onboarding experience. "
+                                    "Our team will reach out shortly to complete the setup. Once verified, you’ll be ready to access your account and raise RFQs.\n\n"
+                                    "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
+                                )
 
-                                            }
-                                        }
-                                else:
-                                    # approved is None - show pending message
-                                    logger.info(f"Blocking access - buyer approval status is None after refresh")
-                                    return {
-                                        "verification_required": True,
-                                        "redirect_to_support": True,
-                                        "redirect_info": {
-                                            "flow": "pending_approval",
-                                            "reason": "approval_pending",
-                                            "message": (
-                                                "*Registration received—thank you!*\n\n"
-                                                "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
-                                                "Our team will get in touch shortly to complete the process, and once verified, "
-                                                "you’ll be able to access your account and start raising RFQs."
-                                            ),
-                                        }
-                                    }
-                            else:
-                                # Failed to refresh - use original logic with domain check
-                                logger.warning(f"Failed to refresh user data - using original approval logic")
-                                if approved is False:
-                                    domain_result = await self._check_domain_approval(user_id, approved, user_dict)
-                                    if domain_result.get("approved"):
-                                        logger.info(f"Domain check successful - user approved, granting access")
-                                        user_dict["approved"] = True
-                                        return {"access_granted": True, "user_data": user_dict}
-                                    else:
-                                        logger.info(f"Blocking access - buyer domain check failed: {domain_result}")
-                                        
-                                        # Send email notification to support for domain mismatch
-                                        try:
-                                            from app.services.support_notification_service import SupportNotificationService
-                                            support_service = SupportNotificationService()
-                                            full_name = user_dict.get("fullName", "Unknown")
-                                            email_for_notification = user_dict.get("username") or user_dict.get("email", "Unknown")
-                                            notification_result = await support_service.notify_buyer_registration_not_approved(full_name, email_for_notification, user_phone)
-                                            logger.info(f"Support notification sent for domain mismatch: {email_for_notification}, result: {notification_result}")
-                                        except Exception as e:
-                                            logger.error(f"Failed to send support notification for domain mismatch: {e}")
-                                        
-                                        return {
-                                            "verification_required": True,
-                                            "redirect_to_support": True,
-                                            "redirect_info": {
-                                                "flow": "pending_approval",
-                                                "reason": "domain_not_approved",
-                                                "message": (
-                                                    "*Registration received—thank you!*\n\n"
-                                                    "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
-                                                    "Our team will get in touch shortly to complete the process, and once verified, "
-                                                    "you’ll be able to access your account and start raising RFQs."
-                                                ),
-                                            }
-                                        }
-                                else:
-                                    logger.info(f"Blocking access - buyer not approved (approved={approved}, user_id={user_id})")
-                                    return {
-                                        "verification_required": True,
-                                        "redirect_to_support": True,
-                                        "redirect_info": {
-                                            "flow": "pending_approval",
-                                            "reason": "not_approved",
-                                            "message": (
-                                                "*Registration received—thank you!*\n\n"
-                                                "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
-                                                "Our team will get in touch shortly to complete the process, and once verified, "
-                                                "you’ll be able to access your account and start raising RFQs."
-                                            ),
-                                        }
-                                    }
-                        else:
-                            # Missing user_id - show pending message
-                            logger.info(f"Blocking access - buyer missing user_id")
-                            return {
-                                "verification_required": True,
-                                "redirect_to_support": True,
-                                "redirect_info": {
-                                    "flow": "pending_approval",
-                                    "reason": "missing_user_id",
-                                    "message": (
-                                        "*Registration received—thank you!*\n\n"
-                                        "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
-                                        "Our team will get in touch shortly to complete the process, and once verified, "
-                                        "you’ll be able to access your account and start raising RFQs."
-                                    ),
-                                }
                             }
+                        }
                 else:
                     # FIXED: Sellers need only EMAIL_VERIFIED status - NO domain matching or approval checks
                     logger.info(f"Access granted - seller with EMAIL_VERIFIED status (no domain check required)")

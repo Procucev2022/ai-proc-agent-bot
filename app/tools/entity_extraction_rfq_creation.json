@@ -12,24 +12,25 @@
                     "type": "object",
                     "properties": {
                         "description": {
-                            "type": ["string", "null"],
-                            "description": "Item description"
+                            "type": "string",
+                            "description": "Item description. Use empty string if not provided."
                         },
                         "quantity": {
                             "type": ["number", "null"],
-                            "description": "Required quantity - numeric value"
+                            "description": "Required quantity - numeric value ONLY. Do NOT confuse specifications with quantity. If uncertain, use null. Examples: '100 laptops' -> 100, 'Motors 1000KV' -> null (1000KV is spec, not quantity), '25 meters cable, 100 qty' -> 100."
                         },
                         "unitofMeasures": {
-                            "type": ["string", "null"],
-                            "description": "Unit of measurement: pcs, kg, meters, etc."
+                            "type": "string",
+                            "description": "Unit of measurement extracted from context: pcs, kg, meters, liters, boxes, sets, etc. Extract from user's message if explicitly mentioned (e.g., '25 meters cables' -> 'meters', '50kg rice' -> 'kg'). Use empty string ONLY if no unit is mentioned AND cannot be inferred. DO NOT default to 'pcs' unless explicitly stated or clearly implied for countable items."
+
                         },
                         "brand": {
-                            "type": ["string", "null"],
-                            "description": "Preferred brand name for this item"
+                            "type": "string",
+                            "description": "Preferred brand name for this item. Use empty string if not provided."
                         },
                         "remarks": {
-                            "type": ["string", "null"],
-                            "description": "Item-specific remarks or requirements"
+                            "type": "string",
+                            "description": "Item-specific remarks or requirements. Use empty string if not provided."
                         }
                     },
                     "required": ["description", "quantity", "unitofMeasures", "brand", "remarks"],
@@ -37,20 +38,20 @@
                 }
             },
             "deliveryDate": {
-                "type": ["string", "null"],
-                "description": "Required delivery date (applies to all products)"
+                "type": "string",
+                "description": "Required delivery date (applies to all products). Use empty string if not provided."
             },
             "state": {
-                "type": ["string", "null"],
-                "description": "Delivery state for all products (e.g., Karnataka, Maharashtra, etc.)"
+                "type": "string",
+                "description": "Delivery state for all products (e.g., Karnataka, Maharashtra, etc.). Use empty string if not provided."
             },
             "city": {
-                "type": ["string", "null"],
-                "description": "Delivery city for all products (e.g., Bangalore, Mumbai, etc.)"
+                "type": "string",
+                "description": "Delivery city for all products (e.g., Bangalore, Mumbai, etc.). Use empty string if not provided."
             },
             "pincode": {
-                "type": ["string", "null"],
-                "description": "Delivery pincode for all products (6-digit postal code)"
+                "type": "string",
+                "description": "Delivery pincode for all products (6-digit postal code). Use empty string if not provided."
             },
             "confidence": {
                 "type": "number",

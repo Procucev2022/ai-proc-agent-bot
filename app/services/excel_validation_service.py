@@ -15,6 +15,7 @@ import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 import xlrd
+from app.utils.excel_error_formatter import format_excel_error
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,9 @@ class ExcelValidationService:
     # Business validation rules
     REQUIRED_FIELDS = ['ItemDescription', 'Quantity']
     INVALID_UOM_VALUES = {'each', 'per item', 'item', 'piece'}
+    SPECIAL_CHARS_PATTERN = r'[^a-zA-Z0-9\s\-\._()&]'
     
+
     async def validate_excel_file_from_url(self, file_url: str, filename: str) -> Dict[str, Any]:
         """
         Download and validate Excel file from WhatsApp URL with comprehensive checks.
@@ -71,9 +74,13 @@ class ExcelValidationService:
             
             # Step 3: Validate file size
             if len(file_content) > self.MAX_FILE_SIZE:
+                error_msg = format_excel_error('file_too_large', {
+                    'file_size_mb': len(file_content) / (1024*1024),
+                    'max_size_mb': self.MAX_FILE_SIZE // (1024*1024)
+                })
                 return {
                     'valid': False,
-                    'error': f"File too large. Maximum size is {self.MAX_FILE_SIZE // (1024*1024)}MB",
+                    'error': error_msg,
                     'error_type': 'file_too_large'
                 }
             
@@ -226,9 +233,10 @@ class ExcelValidationService:
                 
                 # Check for password protection
                 if any(keyword in str(pandas_error).lower() for keyword in ['password', 'encrypted', 'protected']):
+                    error_msg = format_excel_error('password_protected', {})
                     return {
                         'valid': False,
-                        'error': "File appears to be password protected. Please upload an unprotected Excel file.",
+                        'error': error_msg,
                         'error_type': 'password_protected'
                     }
                 
@@ -245,9 +253,10 @@ class ExcelValidationService:
                     
                     # Check if password protected
                     if any(keyword in str(openpyxl_error).lower() for keyword in ['password', 'encrypted', 'protected']):
+                        error_msg = format_excel_error('password_protected', {})
                         return {
                             'valid': False,
-                            'error': "File appears to be password protected. Please upload an unprotected Excel file.",
+                            'error': error_msg,
                             'error_type': 'password_protected'
                         }
                     
@@ -259,9 +268,10 @@ class ExcelValidationService:
                     except Exception as xlrd_error:
                         logger.debug(f"XLRD read failed: {xlrd_error}")
                         
+                        error_msg = format_excel_error('corrupted_file', {})
                         return {
                             'valid': False,
-                            'error': "Could not read Excel file. It may be corrupted or in an unsupported format.",
+                            'error': error_msg,
                             'error_type': 'unreadable_file'
                         }
                 
@@ -282,9 +292,17 @@ class ExcelValidationService:
             try:
                 workbook = load_workbook(file_obj, read_only=False)
                 
-                # Check 1: Multiple worksheets (warn but allow)
+                # Check 1: Only allow single worksheet
                 if len(workbook.worksheets) > 1:
-                    logger.info(f"Multiple worksheets detected ({len(workbook.worksheets)}). Using first sheet only.")
+                    workbook.close()
+                    error_msg = format_excel_error('multiple_worksheets', {
+                        'worksheet_count': len(workbook.worksheets)
+                    })
+                    return {
+                        'valid': False,
+                        'error': error_msg,
+                        'error_type': 'multiple_worksheets'
+                    }
                 
                 worksheet = workbook.active
                 
@@ -296,9 +314,13 @@ class ExcelValidationService:
                 
                 if filled_rows > self.MAX_ROWS:
                     workbook.close()
+                    error_msg = format_excel_error('row_limit', {
+                        'actual_rows': filled_rows,
+                        'max_rows': self.MAX_ROWS
+                    })
                     return {
                         'valid': False,
-                        'error': f"Your Excel file contains {filled_rows} rows with data, but only {self.MAX_ROWS} rows are allowed per upload. Please reduce to {self.MAX_ROWS} rows and reupload.",
+                        'error': error_msg,
                         'error_type': 'too_many_rows'
                     }
                 
@@ -306,9 +328,10 @@ class ExcelValidationService:
                 merged_ranges = list(worksheet.merged_cells.ranges)
                 if merged_ranges:
                     workbook.close()
+                    error_msg = format_excel_error('merged_cells', {})
                     return {
                         'valid': False,
-                        'error': "Your Excel file contains merged cells. Please unmerge all cells and reupload.",
+                        'error': error_msg,
                         'error_type': 'merged_cells_found'
                     }
                 
@@ -367,9 +390,10 @@ class ExcelValidationService:
             df = df.dropna(how='all')
             
             if df.empty:
+                error_msg = format_excel_error('empty_file', {})
                 return {
                     'valid': False,
-                    'error': "Excel file contains no data.",
+                    'error': error_msg,
                     'error_type': 'no_data_found'
                 }
             
@@ -394,51 +418,124 @@ class ExcelValidationService:
             if len(df.columns) > self.MAX_COLUMNS:
                 logger.warning(f"Excel has {len(df.columns)} columns, processing first {self.MAX_COLUMNS} only")
             
-            # Check 3: Special characters in headers
+            # Check 3: Handle files where headers are in first data row
             headers = df.columns.astype(str).tolist()
-            problematic_headers = []
-            for header in headers:
-                if re.search(self.SPECIAL_CHARS_PATTERN, header):
-                    problematic_headers.append(header)
+            actual_headers = [h for h in headers if not h.startswith('Unnamed:')]
             
-            if problematic_headers:
-                return {
-                    'valid': False,
-                    'error': f"Column headers contain special characters: {', '.join(problematic_headers[:3])}. Please use only letters, numbers, spaces, and basic punctuation.",
-                    'error_type': 'invalid_header_characters'
-                }
+            # If we only have Unnamed columns, check if headers are in first data row
+            if not actual_headers:
+                # Check first few rows for potential headers
+                potential_headers = None
+                header_row_index = -1
+                
+                for i in range(min(3, len(df))):
+                    row_values = df.iloc[i].dropna().astype(str).tolist()
+                    # Check if this row looks like headers (text values, not all numeric)
+                    if len(row_values) >= 2:
+                        text_count = sum(1 for val in row_values if val and not val.replace('.', '').replace(',', '').isdigit() and val.lower() not in ['nan', 'none', ''])
+                        if text_count >= 2:  # At least 2 text-like values
+                            potential_headers = row_values
+                            header_row_index = i
+                            break
+                
+                if potential_headers:
+                    # Found headers in data row - validate them for special characters
+                    problematic_headers = []
+                    for header in potential_headers:
+                        if header and re.search(self.SPECIAL_CHARS_PATTERN, header):
+                            problematic_headers.append(header)
+                    
+                    if problematic_headers:
+                        return {
+                            'valid': False,
+                            'error': f"Column headers in row {header_row_index + 1} contain special characters: {', '.join(problematic_headers[:3])}. Please use only letters, numbers, spaces, and basic punctuation in your headers.",
+                            'error_type': 'invalid_header_characters'
+                        }
+                    
+                    # Headers look good, continue validation
+                    logger.info(f"Found valid headers in row {header_row_index + 1}: {potential_headers}")
+                else:
+                    # No meaningful headers found anywhere
+                    has_data = any(len(df.iloc[i].dropna()) >= 2 for i in range(min(3, len(df))))
+                    
+                    if not has_data:
+                        error_msg = format_excel_error('empty_file', {})
+                        return {
+                            'valid': False,
+                            'error': error_msg,
+                            'error_type': 'no_data_found'
+                        }
+                    else:
+                        error_msg = format_excel_error('no_headers', {})
+                        return {
+                            'valid': False,
+                            'error': error_msg,
+                            'error_type': 'missing_headers'
+                        }
+            else:
+                # Validate column-level headers for special characters
+                problematic_headers = []
+                for header in actual_headers:
+                    if re.search(self.SPECIAL_CHARS_PATTERN, header):
+                        problematic_headers.append(header)
+                
+                if problematic_headers:
+                    return {
+                        'valid': False,
+                        'error': f"Column headers contain special characters: {', '.join(problematic_headers[:3])}. Please use only letters, numbers, spaces, and basic punctuation.",
+                        'error_type': 'invalid_header_characters'
+                    }
             
             # Check 4: Non-English headers detection
-            non_english_headers = []
-            for header in headers:
-                if header and not re.match(r'^[a-zA-Z0-9\s\-\._()]+$', header):
-                    non_english_headers.append(header)
+            headers_to_check = actual_headers if actual_headers else (potential_headers if 'potential_headers' in locals() else [])
             
-            if len(non_english_headers) > len(headers) // 2:  # More than half are non-English
-                return {
-                    'valid': False,
-                    'error': "Excel headers appear to be in a non-English language. Please use English column headers.",
-                    'error_type': 'non_english_headers'
-                }
+            if headers_to_check:
+                non_english_headers = []
+                for header in headers_to_check:
+                    if header and not re.match(r'^[a-zA-Z0-9\s\-\._()]+$', header):
+                        non_english_headers.append(header)
+                
+                if len(non_english_headers) > len(headers_to_check) // 2:  # More than half are non-English
+                    return {
+                        'valid': False,
+                        'error': "Excel headers appear to be in a non-English language. Please use English column headers.",
+                        'error_type': 'non_english_headers'
+                    }
             
 
             
             # Check 5: Data type consistency
             data_issues = self._validate_data_types(df)
             if data_issues:
-                return {
-                    'valid': False,
-                    'error': f"Data quality issues found: {'; '.join(data_issues[:3])}",
-                    'error_type': 'data_quality_issues'
-                }
+                # Check if it's a quantity validation issue
+                quantity_issues = [issue for issue in data_issues if 'Invalid quantity values' in issue]
+                if quantity_issues:
+                    # Extract example values from the first quantity issue
+                    first_issue = quantity_issues[0]
+                    example_values = first_issue.split(': ')[-1] if ': ' in first_issue else '"@200"'
+                    error_msg = format_excel_error('invalid_quantity', {
+                        'example_values': example_values
+                    })
+                    return {
+                        'valid': False,
+                        'error': error_msg,
+                        'error_type': 'invalid_quantity_values'
+                    }
+                else:
+                    return {
+                        'valid': False,
+                        'error': f"Data quality issues found: {'; '.join(data_issues[:3])}",
+                        'error_type': 'data_quality_issues'
+                    }
             
             return {'valid': True}
             
         except Exception as e:
             logger.error(f"Error validating data quality: {e}")
+            logger.error(f"DataFrame info: shape={getattr(df, 'shape', 'unknown')}, columns={getattr(df, 'columns', 'unknown')}")
             return {
                 'valid': False,
-                'error': "Failed to validate Excel data quality.",
+                'error': "Failed to validate Excel data quality. Please ensure your file is a valid Excel format.",
                 'error_type': 'data_quality_error'
             }
     
@@ -446,12 +543,24 @@ class ExcelValidationService:
         """Validate data types and detect common issues."""
         issues = []
         
+        # Skip data type validation for files with Unnamed columns (headers likely in data)
+        unnamed_cols = [col for col in df.columns if 'Unnamed:' in str(col)]
+        if len(unnamed_cols) == len(df.columns):
+            # All columns are unnamed - this is likely a file with headers in first row
+            # Skip mixed data type validation as it's expected
+            logger.info("Skipping data type validation for file with headers in data rows")
+            return issues
+        
         for col_idx, column in enumerate(df.columns):
             col_data = df[column].dropna()
             if col_data.empty:
                 continue
             
-            # Check for mixed data types in same column
+            # Skip mixed data type check for unnamed columns
+            if 'Unnamed:' in str(column):
+                continue
+            
+            # Check for mixed data types in same column (only for named columns)
             data_types = set()
             for value in col_data.head(10):  # Check first 10 non-null values
                 if pd.isna(value):
@@ -459,7 +568,7 @@ class ExcelValidationService:
                 if isinstance(value, (int, float)) and not pd.isna(value):
                     data_types.add('numeric')
                 elif isinstance(value, str):
-                    if value.strip().isdigit():
+                    if value.strip().replace('.', '').replace(',', '').isdigit():
                         data_types.add('numeric')
                     else:
                         data_types.add('text')
@@ -469,15 +578,15 @@ class ExcelValidationService:
             if len(data_types) > 1:
                 issues.append(f"Column '{column}' has mixed data types")
             
-            # Check for quantity-like columns with text values
+            # Check for quantity-like columns with text values (only for named columns)
             if any(keyword in str(column).lower() for keyword in ['qty', 'quantity', 'count', 'number']):
                 text_values = []
                 for value in col_data.head(5):
                     if isinstance(value, str) and not value.strip().replace('.', '').replace(',', '').isdigit():
-                        text_values.append(value)
+                        text_values.append(f"@{value}" if not value.startswith('@') else value)
                 
                 if text_values:
-                    issues.append(f"Quantity column '{column}' contains text values: {', '.join(text_values[:2])}")
+                    issues.append(f"Invalid quantity values in '{column}' column: {', '.join(text_values[:2])}")
         
         return issues
     

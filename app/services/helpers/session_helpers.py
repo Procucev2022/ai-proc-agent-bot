@@ -19,25 +19,41 @@ class SessionHelpers:
     
     @staticmethod
     async def is_session_expired(session: ConversationSession) -> bool:
-        """Check if session has expired based on timeout, with proper activity-based renewal."""
+        """Check if session has expired based on timeout, with Redis TTL support."""
         if not session:
             return False
-        
-        # If session doesn't have created_at, it's invalid
+
+        # If Redis enabled, check if session exists in Redis (TTL-based expiry)
+        from app.redis_db import get_session_redis_service
+        from app.config import get_settings
+
+        settings = get_settings()
+        if settings.redis_session_storage_enabled:
+            redis_session = get_session_redis_service()
+            exists = await redis_session.session_exists(session.session_id)
+            if exists:
+                # Session in Redis = active (TTL not expired)
+                return False
+            else:
+                # Session not in Redis = expired
+                logger.info(f"Session {session.session_id} expired (not found in Redis)")
+                return True
+
+        # Fallback to timestamp-based check (for DB-only sessions)
         if not session.created_at:
             logger.warning(f"Session {session.session_id} missing created_at timestamp")
             return True
-        
+
         # Use last_activity_at if available, otherwise fall back to created_at
         last_activity = getattr(session, 'last_activity_at', None) or session.created_at
-        
-        timeout_minutes = get_settings().session_timeout_minutes
+
+        timeout_minutes = settings.session_timeout_minutes
         timeout_hours = timeout_minutes / 60
         session_expired, last_activity_utc, expired_threshold_utc = is_expired(last_activity, timeout_hours)
-        
+
         if session_expired:
             logger.info(f"Session {session.session_id} expired: last_activity={format_utc_display(last_activity_utc)}, expired_time={format_utc_display(expired_threshold_utc)}")
-        
+
         return session_expired
     
     @staticmethod
@@ -136,20 +152,49 @@ class SessionHelpers:
     
     @staticmethod
     async def handle_session_expiry(session: ConversationSession, db_manager) -> ConversationSession:
-        """Properly handle session expiration by refreshing the existing session.
+        """Handle session expiration by appending to DB, then resetting for Redis.
 
-        Instead of creating new sessions with different IDs, this method:
-        1. Completely clears old session data (no archiving to prevent data leakage)
-        2. Resets the existing session for a fresh start
-        3. Updates timestamps to current time
-
-        IMPORTANT: Old data is NOT preserved to prevent it from appearing in new RFQ workflows.
+        New behavior:
+        1. APPEND complete session data to database with outcome='timeout'
+        2. Reset session state for fresh start (goes to Redis)
+        3. Database maintains complete audit trail across all workflows
         """
         if not session:
             return None
 
+        from app.models import ConversationOutcome
+
         current_utc = utc_now()
 
+        # STEP 1: APPEND complete session to database before resetting
+        session.outcome = ConversationOutcome.timeout
+        session.completed_at = current_utc.replace(tzinfo=None)
+
+        # Add timeout marker to workflow_state
+        if not session.workflow_state:
+            session.workflow_state = {}
+        session.workflow_state['timeout_occurred'] = True
+        session.workflow_state['timeout_timestamp'] = current_utc.isoformat()
+
+        # APPEND to database (preserves all history)
+        db_manager.append_session_data({
+            'session_id': session.session_id,
+            'external_user_id': session.external_user_id,
+            'workflow_type': session.workflow_type.value if session.workflow_type else None,
+            'outcome': ConversationOutcome.timeout.value,
+            'workflow_state': session.workflow_state,
+            'conversation_history': session.conversation_history,  # Appended to existing
+            'extracted_entities': session.extracted_entities,
+            'rfq_ids': session.rfq_ids if hasattr(session, 'rfq_ids') else None,
+            'product_items': session.product_items if hasattr(session, 'product_items') else None,
+            'retention_date': session.retention_date,
+            'last_activity_at': session.last_activity_at,
+            'completed_at': session.completed_at
+        })
+
+        logger.info(f"Appended expired session {session.session_id} to database with full history (outcome=timeout)")
+
+        # STEP 2: Reset session for fresh start (will be saved to Redis)
         # Preserve profile selection state to prevent infinite loops during authentication
         preserved_state = {}
         if session.workflow_state:
@@ -158,47 +203,28 @@ class SessionHelpers:
             if 'profile_options' in session.workflow_state:
                 preserved_state['profile_options'] = session.workflow_state['profile_options']
 
-        # COMPLETELY RESET workflow_state - DO NOT preserve any old data
-        # This prevents old RFQ items from appearing after session timeout
+        # Reset for fresh start
         session.workflow_state = {
             'extracted_entities': [],
             'last_activity_at': current_utc.isoformat(),
             'session_refreshed': current_utc.isoformat(),
-            **preserved_state  # Restore profile selection state if it existed
+            **preserved_state
         }
 
-        # Reset session for fresh start but keep the same ID
-        # But preserve authentication workflow if user is in profile selection
         if session.workflow_type == WorkflowType.authentication and preserved_state:
-            # Keep authentication workflow active if profile selection was in progress
-            pass
+            pass  # Keep authentication workflow active
         else:
             session.workflow_type = None
+
         session.outcome = None
         session.conversation_history = {"openai_messages": [], "metadata": []}
         session.extracted_entities = {}
-        session.completed_at = None  # Clear completion timestamp
-
-        # Update timestamps to current UTC
+        session.completed_at = None
         session.last_activity_at = current_utc.replace(tzinfo=None)
-        
-        # Save the refreshed session
-        updated_session = db_manager.save_conversation_session({
-            'session_id': session.session_id,
-            'external_user_id': session.external_user_id,
-            'workflow_type': session.workflow_type,
-            'outcome': session.outcome,
-            'workflow_state': session.workflow_state,
-            'conversation_history': session.conversation_history,
-            'extracted_entities': session.extracted_entities,
-            'retention_date': session.retention_date,
-            'last_activity_at': session.last_activity_at,
-            'completed_at': session.completed_at
-        })
-        
-        logger.info(f"Refreshed expired session {session.session_id} with new activity timestamp")
-        
-        return updated_session
+
+        logger.info(f"Reset session {session.session_id} for fresh start (will go to Redis)")
+
+        return session
     
     @staticmethod
     def update_bfs_activity(session: ConversationSession, search_data: Dict[str, Any]) -> ConversationSession:
