@@ -37,24 +37,57 @@ Map Excel columns to these RFQ fields:
 - remarks: Can be null
 
 **Global Fields (per RFQ):**
-- deliveryDate, state, city, pincode: Set to null (not typically in Excel)
+- deliveryDate: Extract ONLY if ALL items have the same date. If dates differ, skip items with different dates.
+- pincode: Extract ONLY if ALL items have the same pincode. If pincodes differ, skip items with different pincodes.
+- state: Set to null
+- city: Set to null
 
 **SKIPPED ITEMS HANDLING:**
 - Skip rows that are not product rows (e.g., "Delivery Date", "Pincode", location info)
+- Skip product rows with inconsistent dates or pincodes
 - Only record actual product rows that failed validation in skipped_items
 - Calculate skipped_rows as: total_products - total_products_extracted
 - Do NOT include non-product rows in skipped_items array or summary
+
+## GLOBAL FIELD EXTRACTION
+
+**CRITICAL: Extract date and pincode from metadata rows at the bottom of Excel:**
+
+1. **Delivery Date Extraction:**
+   - Scan ALL rows for delivery date information, especially rows after product data
+   - Look for patterns like: "Delivery Date", "5/11/2025", "2025-11-05"
+   - Common locations: Bottom rows with format like "Row X: {'0': '', '1': 'Delivery Date', '2': '5/11/2025', '3': '', '4': '', '5': ''}"
+   - Extract the date value and convert to YYYY-MM-DD format
+   - If found, use as deliveryDate for all products
+
+2. **Pincode Extraction:**
+   - Scan ALL rows for pincode information, especially rows after product data  
+   - Look for patterns like: "Pincode", "560037", "Pin Code"
+   - Common locations: Bottom rows with format like "Row Y: {'0': '', '1': 'Pincode', '2': '560037', '3': '', '4': '', '5': ''}"
+   - Extract the numeric pincode value
+   - If found, use as pincode for all products
+
+**METADATA ROW DETECTION:**
+- After processing product rows, scan remaining rows for metadata
+- Look for rows where column 1 contains "Delivery Date" or "Pincode" and column 2 contains the value
+- These are typically non-product rows that contain global RFQ information
 
 ## PROCESSING INSTRUCTIONS
 
 1. **Detect Headers**: Look for row with text labels (not numbers/data)
 2. **Map Columns**: Match Excel headers to RFQ fields using fuzzy matching
-3. **Extract Data**: Process each data row into product object
-4. **Skip Invalid Rows**: Skip rows missing required fields (description, quantity). IMPORTANT: Skip any product where quantity is missing, empty, zero, or non-numeric
-5. **Skip Non-Product Rows**: Skip rows containing delivery dates, location info (pincode, city, state), or other metadata
-6. **Record Skipped Items**: For each skipped row, record row_number, description (or content), and reason
-7. **Group Products**: For now, put all products in a single RFQ
-8. **Validate Data**: Check data types and business rules
+3. **FIRST PASS - Extract Global Fields**: Scan ALL rows for metadata BEFORE processing products
+   - Look for rows where column '1' contains "Delivery Date" and column '2' contains date value
+   - Look for rows where column '1' contains "Pincode" and column '2' contains pincode value
+   - Example: Row X: {'1': 'Delivery Date', '2': '5/11/2025'} → deliveryDate = "2025-11-05"
+   - Example: Row Y: {'1': 'Pincode', '2': '560037'} → pincode = "560037"
+4. **Extract Data**: Process each data row into product object
+5. **Skip Invalid Rows**: Skip rows missing required fields (description, quantity). IMPORTANT: Skip any product where quantity is missing, empty, zero, or non-numeric
+6. **Skip Non-Product Rows**: Skip metadata rows (delivery date, pincode) after extracting their values
+7. **Record Skipped Items**: For each skipped row, record row_number, description (or content), and reason
+   - Do NOT include metadata rows in skipped_items (they are not products)
+8. **Group Products**: Put all products in a single RFQ with extracted global fields
+9. **Validate Data**: Check data types and business rules
 
 ## OUTPUT FORMAT
 
@@ -81,7 +114,63 @@ Row 2: PM002, Bubble Wrap Roll, 50m roll, roll, 200, 2, WrapCo Ltd, Cushioning, 
 
 **Processing:** Use first occurrence of each column type, ignore duplicates
 
-**Example 3 - With Skipped Items:**
+**Example 3 - Real Excel Data with Date and Pincode:**
+Input Excel (showing dict format as received):
+Row 1: {'0': 'S.No', '1': 'ItemDescription', '2': 'Specification', '3': 'Uom', '4': 'Quantity', '5': 'Remarks'}
+Row 2: {'0': '1', '1': 'Motherboards', '2': '', '3': 'pcs', '4': '2', '5': '1a123'}
+Row 3: {'0': '2', '1': 'Batteries', '2': '', '3': 'pcs', '4': '5', '5': '2A345'}
+Row 4: {'0': '3', '1': 'Screens', '2': '', '3': '', '4': '10', '5': ''}
+Row 5: {'0': '4', '1': 'chips', '2': '', '3': '', '4': '5', '5': ''}
+Row 6: {'0': '5', '1': 'Silicon', '2': '', '3': '', '4': '8', '5': ''}
+Row 7: {'0': '6', '1': 'Glass', '2': '', '3': '', '4': '50', '5': ''}
+Row 8: {'0': '7', '1': 'Plastics', '2': '', '3': '', '4': '100', '5': ''}
+Row 9: {'0': '8', '1': 'Minerals', '2': '', '3': '', '4': '50', '5': ''}
+Row 10: {'0': '9', '1': 'chemicals', '2': '', '3': '', '4': '', '5': ''}
+Row 11: {'0': '10', '1': 'Petroleum products', '2': '', '3': '', '4': '', '5': ''}
+Row 12: {'0': '11', '1': 'Aluminium', '2': '', '3': '', '4': '', '5': ''}
+Row 13: {'0': '', '1': '', '2': '', '3': '', '4': '', '5': ''}
+Row 14: {'0': '', '1': 'Delivery Date', '2': '5/11/2025', '3': '', '4': '', '5': ''}
+Row 15: {'0': '', '1': 'Pincode', '2': '560037', '3': '', '4': '', '5': ''}
+
+**CRITICAL: Notice Row 14 and 15 contain metadata:**
+- Row 14: Column '1' = 'Delivery Date', Column '2' = '5/11/2025' → Extract as deliveryDate: "2025-11-05"
+- Row 15: Column '1' = 'Pincode', Column '2' = '560037' → Extract as pincode: "560037"
+
+**Expected Output for Example 3:**
+{
+  "rfqs": [{
+    "products": [
+      {"description": "Motherboards", "quantity": 2, "unitofMeasures": "pcs", "brand": "", "remarks": "1a123"},
+      {"description": "Batteries", "quantity": 5, "unitofMeasures": "pcs", "brand": "", "remarks": "2A345"},
+      {"description": "Screens", "quantity": 10, "unitofMeasures": "pcs", "brand": "", "remarks": ""},
+      {"description": "chips", "quantity": 5, "unitofMeasures": "pcs", "brand": "", "remarks": ""},
+      {"description": "Silicon", "quantity": 8, "unitofMeasures": "pcs", "brand": "", "remarks": ""},
+      {"description": "Glass", "quantity": 50, "unitofMeasures": "pcs", "brand": "", "remarks": ""},
+      {"description": "Plastics", "quantity": 100, "unitofMeasures": "pcs", "brand": "", "remarks": ""},
+      {"description": "Minerals", "quantity": 50, "unitofMeasures": "pcs", "brand": "", "remarks": ""}
+    ],
+    "deliveryDate": "2025-11-05",
+    "state": null,
+    "city": null,
+    "pincode": "560037"
+  }],
+  "processing_summary": {
+    "total_rows_processed": 15,
+    "total_products": 11,
+    "total_products_extracted": 8,
+    "header_row_detected": 0,
+    "skipped_rows": 3,
+    "skipped_items": [
+      {"row_number": 9, "description": "chemicals", "reason": "missing quantity"},
+      {"row_number": 10, "description": "Petroleum products", "reason": "missing quantity"},
+      {"row_number": 11, "description": "Aluminium", "reason": "missing quantity"}
+    ],
+    "skipped_items_summary": "3 product rows skipped due to missing quantity."
+  },
+  "confidence": 95.0
+}
+
+**Example 4 - With Skipped Items:**
 Input Excel:
 Row 0: [empty]
 Row 1: S.No, ItemDescription, Specification, Uom, Quantity, Remarks
@@ -90,7 +179,7 @@ Row 3: 2, Mouse, Wireless optical, pcs, , USB receiver  // Missing quantity
 Row 4: 3, Delivery Date, 15-Dec-2024, , , 
 Row 5: 4, Pincode, 560001, , ,
 
-**Output for Example 3 (with skipped items):**
+**Output for Example 4 (with skipped items):**
 {
   "rfqs": [{
     "products": [
@@ -102,10 +191,10 @@ Row 5: 4, Pincode, 560001, , ,
         "remarks": "For office use"
       }
     ],
-    "deliveryDate": null,
+    "deliveryDate": "2024-12-15",
     "state": null,
     "city": null,
-    "pincode": null
+    "pincode": "560001"
   }],
   "processing_summary": {
     "total_rows_processed": 6,
@@ -132,7 +221,7 @@ Row 5: 4, Pincode, 560001, , ,
 - If no valid data rows: Return empty products array
 - If column mapping fails: Use best-effort mapping
 - If required fields missing: Skip row, add to skipped_items with specific reason
-- If non-product rows found: Skip but do NOT add to skipped_items
+- If non-product rows found: Extract global field values first, then skip but do NOT add to skipped_items
 - Calculate skipped_rows = total_products - total_products_extracted
 - Create detailed skipped_items_summary explaining what was skipped and why
 
