@@ -153,7 +153,6 @@ class OTPService:
                     "Thank you for choosing Procucev!"
                 )
             )
-
             return {"status": "max_otp_exceeded", "reason": "max_otp_retries_exceeded"}
         
         remaining = self.MAX_OTP_RETRIES - retry_count
@@ -169,7 +168,17 @@ class OTPService:
         retry_count = session.workflow_state["otp_retry_count"]
         
         if retry_count >= self.MAX_OTP_RETRIES:
-            await self.whatsapp_service.send_message(user_phone, "Maximum OTP attempts exceeded. Please contact support.")
+            email = session.workflow_state.get("otp_email")
+            await self.support_notification_service.notify_otp_validation_failed("User", email, user_phone)
+            await self.whatsapp_service.send_message(
+                user_phone,
+                (
+                    "*Maximum OTP attempts exceeded.*\n"
+                    "For your security, your session has ended. "
+                    "Please contact our support team for assistance at support@procucev.com\n\n"
+                    "Thank you for choosing Procucev!"
+                )
+            )
             return {"status": "max_otp_exceeded", "reason": "max_otp_retries_exceeded"}
         
         remaining = self.MAX_OTP_RETRIES - retry_count
