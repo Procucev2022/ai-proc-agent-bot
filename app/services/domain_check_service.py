@@ -350,16 +350,7 @@ Determine if the email domain matches or is related to the company name.
         logger.info(f"DOMAIN_CHECK_SERVICE: Redirecting user {user_phone} to support - reason: {reason}, details: {details}")
         
         try:
-            support_message = (
-                "We need to verify your account details. "
-                "Our support team will contact you shortly to complete the verification process."
-            )
-            
-            if self.session_manager:
-                await self.session_manager.send_and_track_message(user_phone, support_message, session)
-            else:
-                await self.whatsapp_service.send_message(user_phone, support_message)
-            
+            # Don't send message here - let the calling service handle messaging
             # Clear workflow to exit flow
             session.workflow_type = None
             session.workflow_state = {}
@@ -371,7 +362,7 @@ Determine if the email domain matches or is related to the company name.
                 "approved": False,
                 "reason": reason,
                 "exit_flow": True,
-                "support_message_sent": True
+                "support_message_sent": False
             }
             logger.info(f"DOMAIN_CHECK_SERVICE: Support redirect result: {result}")
             return result
