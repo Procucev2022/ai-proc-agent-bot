@@ -178,7 +178,7 @@ class AuthenticationHelpers:
             if collected_entities:
                 collected = []
                 for name, field_info in schema.model_fields.items():
-                    if name in {"source_type"}:  # Skip internal fields
+                    if name in {"source_type", "address"}:  # Skip internal fields and location
                         continue
                     value = collected_entities.get(name)
                     if value:
@@ -197,14 +197,16 @@ class AuthenticationHelpers:
                     field_info = schema.model_fields[field]
                     field_desc = field_info.description or field.replace("_", " ").title()
                     
-                    # Skip pincode and location questions if there's a pincode validation error
-                    if is_pincode_error and field in ["zipCode", "address"]:
+                    # Skip pincode question if there's a pincode validation error
+                    if is_pincode_error and field == "zipCode":
+                        continue
+                    
+                    # Skip location/address field from questions
+                    if field == "address":
                         continue
                     
                     if field == "zipCode":
                         questions.append(f"• What's your pincode?")
-                    elif field == "address":
-                        questions.append(f"• What's your location?")
                     else:
                         questions.append(f"• What's your {field_desc.lower()}?")
             
