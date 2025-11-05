@@ -232,7 +232,7 @@ class PurchaseIntentHandler:
 
         # If no new entities but not a modification request, send general clarification
         clarification_message = (
-            "Please share the items for your RFQ with name, brand/specs (if any), and quantity — you can add multiple items together in one message.\n\n"
+            "Please share the items for your RFQ with *name, brand/specs (if any), and quantity* — you can add multiple items together in one message.\n\n"
             "📝 Example:\n"
             "Laptop Dell Inspiron - 5, Printer HP LaserJet - 2, Desktop HP 17\" - 10"
         )
