@@ -17,7 +17,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.celery
-    command: celery -A app.celery_app worker --loglevel=info --concurrency=2 --uid=1000 --gid=1000
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=2
     depends_on:
       - celery_redis
     environment:
