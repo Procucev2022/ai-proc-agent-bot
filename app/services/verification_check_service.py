@@ -115,12 +115,12 @@ class VerificationCheckService:
                                 "flow": "pending_approval",
                                 "reason": "missing_user_id",
                                 "message": (
-                                    "*Registration in review —thank you!*\n\n"
-                                    "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
-                                    "Our team will get in touch shortly to complete the process, and once verified, "
-                                    "you’ll be able to access your account and start raising RFQs.\n\n"
-                                    "Thank you for choosing Procucev!"
-                                ),
+                                    "*Registration under review — thank you!*\n\n"
+                                    "Your registration details are being verified to ensure a smooth onboarding experience. "
+                                    "Our team will reach out shortly to complete the setup. Once verified, you’ll be ready to access your account and raise RFQs.\n\n"
+                                    "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
+                                )
+
                             }
                         }
                 else:
