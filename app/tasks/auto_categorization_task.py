@@ -6,6 +6,7 @@ auto-categorization using the existing AutoCategorizationService.
 """
 
 import logging
+import asyncio
 from typing import List, Dict, Any
 from celery import shared_task
 from datetime import datetime
@@ -53,14 +54,14 @@ def process_uncategorized_rfqs(self):
 
         for item in uncategorized_items:
             try:
-                result = process_single_item(item, auto_cat_service)
+                result = asyncio.run(process_single_item(item, auto_cat_service))
                 results.append(result)
-                
+
                 if result["success"]:
                     processed_count += 1
                 else:
                     failed_count += 1
-                    
+
             except Exception as e:
                 logger.error(f"Failed to process item {item.get('uuid', 'unknown')} from RFQ {item.get('rfq_id', 'unknown')}: {e}")
                 failed_count += 1
@@ -111,14 +112,14 @@ def get_uncategorized_items(limit: int = 50) -> List[Dict[str, Any]]:
     return execute_remote_query(query, {'limit': limit})
 
 
-def process_single_item(item: Dict[str, Any], auto_cat_service: EnhancedAutoCategorizationService) -> Dict[str, Any]:
+async def process_single_item(item: Dict[str, Any], auto_cat_service: EnhancedAutoCategorizationService) -> Dict[str, Any]:
     """
     Process a single item for auto-categorization.
-    
+
     Args:
         item: Item data dictionary
         auto_cat_service: Initialized EnhancedAutoCategorizationService instance
-        
+
     Returns:
         Processing result dictionary
     """
@@ -126,12 +127,12 @@ def process_single_item(item: Dict[str, Any], auto_cat_service: EnhancedAutoCate
     rfq_id = item.get('rfq_id')
     description = item.get('description', '')
     user_id = item.get('user', 'system')
-    
+
     try:
         logger.info(f"Processing item {item_uuid} from RFQ {rfq_id} for auto-categorization")
-        
+
         # Categorize the item
-        result = auto_cat_service.categorize_item(
+        result = await auto_cat_service.categorize_item(
             item_description=description,
             user_id=user_id,
             rfq_id=rfq_id
