@@ -474,7 +474,7 @@ class ChatService:
                     "redirected_to_buyer_registration", "redirected_to_seller_registration",
                     "intent_mismatch_handled", "intent_mismatch_retry_sent", "new_user_registration_presented",
                     "buyer_options_presented", "seller_options_presented", "single_buyer_profile_selection_presented", "profile_selection_sent",
-                    "registration_type_clarification_sent", "verification_failed","filtered_buyer_profiles_shown","max_otp_exceeded", "buyer_no_accounts_message_sent"
+                    "registration_type_clarification_sent", "verification_failed","filtered_buyer_profiles_shown","max_otp_exceeded", "buyer_no_accounts_message_sent","user_already_exists"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
@@ -831,60 +831,6 @@ class ChatService:
                 result = await auth_reg_switch.handle_role_switch_response(user, session, message, self.authentication_service)
                 await self.session_manager.save_session(session, self._get_workflow_or_default(session))
 
-                # Check if we need to trigger profile selection after exit
-                if result.get("status") == "exit_and_trigger_profile_selection":
-                    logger.info(f"Triggering profile selection after role switch exit for {user.phone_number}")
-
-                    # Trigger profile selection via authentication orchestrator
-                    from app.services.handlers.authentication_orchestrator import AuthenticationOrchestrator
-                    from app.services.helpers.support_helpers import SupportHelpers
-
-                    auth_orchestrator = AuthenticationOrchestrator(
-                        self.whatsapp_service,
-                        self.response_helpers,
-                        self.authentication_service,
-                        self.registration_service,
-                        self.intent_service,
-                        SupportHelpers(self.whatsapp_service),
-                        self
-                    )
-
-                    # Get the original message and target role to pass to profile selection
-                    original_message = result.get("original_message", "Hi")
-                    target_role = result.get("target_role")
-
-                    # Create intent_result based on target role to bypass profile selection message
-                    # This tells the auth flow what the user wants to do after selecting their profile
-                    target_intent = "sell_something" if target_role == "seller" else "buy_something"
-                    intent_result = {
-                        "intent": target_intent,
-                        "confidence": 95,  # High confidence since user explicitly confirmed role switch
-                        "role_switch": True  # Flag to indicate this is a role switch scenario
-                    }
-
-                    # CRITICAL: Clear abandoned outcome so session can be saved to Redis
-                    # The exit marked the session as abandoned, but we're now starting a fresh profile selection
-                    session.outcome = None
-                    if session.workflow_state and session.workflow_state.get("exit_completed"):
-                        del session.workflow_state["exit_completed"]
-                    if session.workflow_state and session.workflow_state.get("exit_timestamp"):
-                        del session.workflow_state["exit_timestamp"]
-                    logger.info(f"Cleared abandoned outcome to allow session save for profile selection")
-
-                    # Call authentication orchestrator to handle profile selection
-                    auth_result = await auth_orchestrator.authentication_orchestrator_flow(
-                        user.phone_number,
-                        original_message,
-                        session,
-                        intent_result=intent_result
-                    )
-
-                    # CRITICAL: Save session after profile selection to persist profile_selection_stage
-                    await self.session_manager.save_session(session, self._get_workflow_or_default(session))
-                    logger.info(f"Saved session after triggering profile selection for role switch")
-
-                    return auth_result
-
                 # If role switch completed with original message, process it
                 if result.get("status") == "authentication_completed" and result.get("original_message"):
                     original_msg = result["original_message"]
@@ -903,61 +849,6 @@ class ChatService:
                 auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
                 result = await auth_reg_switch.handle_account_switch_response(user, session, message, self.authentication_service)
                 await self.session_manager.save_session(session, self._get_workflow_or_default(session))
-
-                # Check if we need to trigger profile selection after exit
-                if result.get("status") == "exit_and_trigger_profile_selection":
-                    logger.info(f"Triggering profile selection after account switch exit for {user.phone_number}")
-
-                    # Trigger profile selection via authentication orchestrator
-                    from app.services.handlers.authentication_orchestrator import AuthenticationOrchestrator
-                    from app.services.helpers.support_helpers import SupportHelpers
-
-                    auth_orchestrator = AuthenticationOrchestrator(
-                        self.whatsapp_service,
-                        self.response_helpers,
-                        self.authentication_service,
-                        self.registration_service,
-                        self.intent_service,
-                        SupportHelpers(self.whatsapp_service),
-                        self
-                    )
-
-                    # Get the original message and target role to pass to profile selection
-                    original_message = result.get("original_message", "Hi")
-                    target_role = result.get("target_role")
-
-                    # Create intent_result based on target role to bypass profile selection message
-                    # This tells the auth flow what the user wants to do after selecting their profile
-                    target_intent = "sell_something" if target_role == "seller" else "buy_something"
-                    intent_result = {
-                        "intent": target_intent,
-                        "confidence": 95,  # High confidence since user explicitly confirmed role switch
-                        "role_switch": True  # Flag to indicate this is a role switch scenario
-                    }
-
-                    # CRITICAL: Clear abandoned outcome so session can be saved to Redis
-                    # The exit marked the session as abandoned, but we're now starting a fresh profile selection
-                    session.outcome = None
-                    if session.workflow_state and session.workflow_state.get("exit_completed"):
-                        del session.workflow_state["exit_completed"]
-                    if session.workflow_state and session.workflow_state.get("exit_timestamp"):
-                        del session.workflow_state["exit_timestamp"]
-                    logger.info(f"Cleared abandoned outcome to allow session save for profile selection")
-
-                    # Call authentication orchestrator to handle profile selection
-                    auth_result = await auth_orchestrator.authentication_orchestrator_flow(
-                        user.phone_number,
-                        original_message,
-                        session,
-                        intent_result=intent_result
-                    )
-
-                    # CRITICAL: Save session after profile selection to persist profile_selection_stage
-                    await self.session_manager.save_session(session, self._get_workflow_or_default(session))
-                    logger.info(f"Saved session after triggering profile selection for account switch")
-
-                    return auth_result
-
                 return result
             
             # Use already-classified intent from message tracking or fallback to classification
@@ -1144,20 +1035,6 @@ class ChatService:
                     # Any other status, return the result
                     return cancel_result
 
-            # Handle ROLE SWITCH requests immediately - even during active workflows (highest priority after exit/cancel)
-            # This handles buyer -> seller or seller -> buyer account switches
-            if user.is_registered and confidence > 0.7:
-                current_role = user.role.value if hasattr(user.role, 'value') else user.role
-                if (intent == "sell_something" and current_role == "buyer") or (intent == "buy_something" and current_role == "seller"):
-                    target_role = "seller" if intent == "sell_something" else "buyer"
-                    logger.info(f"Role switch detected: {current_role} -> {target_role} (confidence: {confidence}%)")
-
-                    from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
-                    auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
-                    result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, target_role)
-                    await self.session_manager.save_session(session, self._get_workflow_or_default(session))
-                    return result
-
             # Handle FAQ requests immediately - even during active workflows (highest priority after exit/cancel)
             if intent == "faq" and confidence > 0.6:
                 logger.info(f"FAQ intent detected with {confidence}% confidence - handling immediately")
@@ -1337,22 +1214,48 @@ class ChatService:
             if user.is_registered and confidence > 0.7:
                 current_role = user.role.value if hasattr(user.role, 'value') else user.role
                 if intent == "sell_something" and current_role == "buyer":
-                    # Cross-role switch: buyer -> seller
+                    # Cross-role switch: buyer -> seller, check if user has seller accounts
+                    from app.services.user_cache_service import get_user_cache_service
                     from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
 
-                    logger.info("Cross-role switch detected (buyer->seller)")
+                    user_cache_service = get_user_cache_service()
+                    account_options = await user_cache_service.get_account_options_for_intent_switch(
+                        user.phone_number, "sell_something", getattr(user, 'email', None) or getattr(user, 'username', None)
+                    )
+
                     auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
-                    result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "seller")
+                    if account_options and account_options.get("success") and account_options.get("has_target_accounts"):
+                        # User has seller accounts - show enhanced selection
+                        logger.info("Cross-role switch (buyer->seller) with cached seller accounts - using enhanced selection")
+                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "seller")
+                    else:
+                        # No cached seller accounts - use standard role switch
+                        logger.info("Cross-role switch (buyer->seller) without cached seller accounts - using standard flow")
+                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "seller")
+
                     await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                     return result
 
                 elif intent == "buy_something" and current_role == "seller":
-                    # Cross-role switch: seller -> buyer
+                    # Cross-role switch: seller -> buyer, check if user has buyer accounts
+                    from app.services.user_cache_service import get_user_cache_service
                     from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
 
-                    logger.info("Cross-role switch detected (seller->buyer)")
+                    user_cache_service = get_user_cache_service()
+                    account_options = await user_cache_service.get_account_options_for_intent_switch(
+                        user.phone_number, "buy_something", getattr(user, 'email', None) or getattr(user, 'username', None)
+                    )
+
                     auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
-                    result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "buyer")
+                    if account_options and account_options.get("success") and account_options.get("has_target_accounts"):
+                        # User has buyer accounts - show enhanced selection
+                        logger.info("Cross-role switch (seller->buyer) with cached buyer accounts - using enhanced selection")
+                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "buyer")
+                    else:
+                        # No cached buyer accounts - use standard role switch
+                        logger.info("Cross-role switch (seller->buyer) without cached buyer accounts - using standard flow")
+                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "buyer")
+
                     await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                     return result
             
@@ -1530,6 +1433,8 @@ class ChatService:
             # Validate Excel file
             validation_service = ExcelValidationService()
             validation_result = await validation_service.validate_excel_file_from_url(file_url, filename)
+            
+            logger.info(f"[EXCEL-VALIDATION] Validation result: {validation_result}")
 
             if not validation_result.get('valid'):
                 validation_error = validation_result.get('error', 'Invalid Excel file')
@@ -1726,13 +1631,10 @@ class ChatService:
                 # Clear confirmation state
                 session.workflow_state.pop('excel_confirmation_data', None)
                 session.workflow_state.pop('awaiting_excel_confirmation', None)
-
-                # Convert products to required format
-                converted_products = self._convert_to_products_array_format(products, session)
                 
                 # Use existing products array handler for multiple RFQ creation
                 return await self.products_array_handler.handle_products_array(
-                    user, session, f"Excel upload: {filename}", converted_products
+                    user, session, f"Excel upload: {filename}", products
                 )
                 
             elif is_cancelled:
@@ -1868,32 +1770,6 @@ class ChatService:
         logger.info(f"[EXCEL-CONVERSION-SUCCESS] Successfully converted {len(excel_items)} Excel items to products array")
         logger.info(f"[EXCEL-CONVERSION-RESULT] Final products: {products}")
         return products
-
-    def _convert_to_products_array_format(self, products: List[Dict], session: ConversationSession) -> List[Dict]:
-        """Convert products to required format for products array handler with global fields."""
-        converted_products = []
-        
-        # Extract global fields from session
-        global_delivery_date = session.workflow_state.get('delivery_date')
-        global_pincode = session.workflow_state.get('pincode')
-        global_state = session.workflow_state.get('state')
-        global_city = session.workflow_state.get('city')
-        
-        for product in products:
-            converted_product = {
-                'description': product.get('description', ''),
-                'quantity': product.get('quantity', ''),
-                'unitofMeasures': product.get('uom', 'pcs'),
-                'brand': product.get('projectDesc', ''),
-                'remarks': product.get('remarks', ''),
-                'deliveryDate': product.get('deliveryDate') or global_delivery_date or '',
-                'state': product.get('state') or global_state or '',
-                'city': product.get('city') or global_city or '',
-                'pincode': product.get('pincode') or global_pincode or ''
-            }
-            converted_products.append(converted_product)
-        
-        return converted_products
 
     async def _handle_incomplete_excel(self, user: User, session: ConversationSession, excel_context: Dict) -> Dict[
         str, Any]:
