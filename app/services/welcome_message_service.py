@@ -103,6 +103,34 @@ class WelcomeMessageService:
         except Exception as e:
             logger.error(f"Error resetting welcome flag for {phone_number}: {e}")
             return False
+    
+    async def check_and_send_welcome(self, phone_number: str, whatsapp_service) -> bool:
+        """
+        Check if welcome message should be sent and send it if needed.
+        
+        Returns True if welcome message was sent, False otherwise.
+        """
+        try:
+            if await self.should_send_welcome(phone_number):
+                welcome_text = (
+                    "Hello Namaste 🙏, I'm Qua – Your Procurement Partner.\n"
+                    "Thank you for contacting me. Let me check if you have visited us earlier..."
+                )
+                
+                message_response = await whatsapp_service.send_message(phone_number, welcome_text)
+                if message_response.success:
+                    await self.mark_welcome_sent(phone_number)
+                    logger.info(f"Welcome message sent to {phone_number}")
+                    return True
+                else:
+                    logger.error(f"Failed to send welcome message to {phone_number}")
+                    return False
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking and sending welcome message for {phone_number}: {e}")
+            return False
 
 
 # Singleton instance

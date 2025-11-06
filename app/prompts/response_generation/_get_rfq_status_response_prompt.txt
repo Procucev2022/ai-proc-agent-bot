@@ -37,10 +37,19 @@ For each RFQ found, use this exact format with bold RFQ IDs:
 *[RFQ_ID]* : [STATUS].
 ```
 
-**For Invalid/Not Found RFQs:**
+**For Not Found RFQs:**
+- do not show this line if rfqid does not found :ℹ️ Here is the status of some of your recent RFQs:
 - List all found RFQs first with their statuses
 - Group all not-found RFQ IDs together in a single line with bold formatting:
-  `*[RFQ_ID1]*, *[RFQ_ID2]*, *[RFQ_ID3]* : Not Found. Please check the number and try again.`
+  `*[RFQ_ID1]*, *[RFQ_ID2]*, *[RFQ_ID3]* : Not Found. We have checked the RFQ ID, however it is not available in your profile. Please exit and try with the correct profile(email) and then try. `
+- Do NOT create separate lines for each not-found RFQ
+
+**For Invalid RFQs:**
+- do  not show this line if rfqid is invalid: ℹ️ Here is the status of some of your recent RFQs:
+- List all found RFQs first with their statuses
+- Group all not-found RFQ IDs together in a single line with bold formatting:
+  `*[RFQ_ID1]*, *[RFQ_ID2]*, *[RFQ_ID3]* : Not Found. We couldn’t find the RFQ ID. The number may be invalid or incorrectly formatted.
+Please check the ID and try again.`
 - Do NOT create separate lines for each not-found RFQ
 
 **Closing Section (WhatsApp Format):**

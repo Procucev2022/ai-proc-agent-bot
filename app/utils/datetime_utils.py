@@ -11,6 +11,14 @@ from typing import Optional
 # Constants
 UTC = pytz.UTC
 
+def get_ordinal_suffix(day: int) -> str:
+    """Get ordinal suffix for a day (1st, 2nd, 3rd, 4th, etc.)"""
+    if 10 <= day % 100 <= 20:
+        suffix = 'th'
+    else:
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
+    return suffix
+
 def utc_now() -> datetime:
     """Get current time in UTC (timezone-aware)."""
     return datetime.now(UTC)
@@ -45,23 +53,27 @@ def format_utc_short(dt: datetime) -> str:
     return format_utc_display(dt, "%d/%m %H:%M UTC")
 
 def format_date_display(dt: datetime) -> str:
-    """Format date in DD Month YYYY format (e.g., 5 Sep 2025)."""
+    """Format date with ordinal suffix (e.g., 5th Nov 2025)."""
     if dt is None:
         return "N/A"
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
-    return dt.strftime("%d %b %Y").lstrip('0')
+    day = dt.day
+    suffix = get_ordinal_suffix(day)
+    return f"{day}{suffix} {dt.strftime('%b %Y')}"
 
 def format_date_for_validation_error(date_str: str) -> str:
-    """Format date string for validation error messages (e.g., 12 Sept 2025)."""
+    """Format date string for validation error messages with ordinal suffix (e.g., 12th Nov 2025)."""
     if not date_str:
         return "N/A"
-    
+
     try:
         # Parse the date string (assuming YYYY-MM-DD format)
         from datetime import datetime
         dt = datetime.strptime(date_str, "%Y-%m-%d")
-        return dt.strftime("%d %b %Y").lstrip('0')
+        day = dt.day
+        suffix = get_ordinal_suffix(day)
+        return f"{day}{suffix} {dt.strftime('%b %Y')}"
     except:
         # If parsing fails, return as-is
         return date_str

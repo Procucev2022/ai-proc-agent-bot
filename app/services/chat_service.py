@@ -27,7 +27,6 @@ import asyncio
 
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
-from app.services.welcome_message_service import get_welcome_service
 from app.utils.datetime_utils import utc_now
 from app.utils.logging_utils import log_service_method
 from app.context import session_context, user_context, get_request_id
@@ -359,21 +358,6 @@ class ChatService:
         workflow routing, and response generation.
         """
         try:
-            # Check and send welcome message if needed (before session creation)
-            welcome_service = get_welcome_service()
-            welcome_sent = False
-            if await welcome_service.should_send_welcome(user_phone):
-                welcome_text = (
-                    "Hello Namaste 🙏, I'm Qua – Your Procurement Partner.\n"
-                    "Thank you for contacting me. Let me check if you have visited us earlier..."
-                )
-
-                message_response = await self.whatsapp_service.send_message(user_phone, welcome_text)
-                if message_response.success:
-                    await welcome_service.mark_welcome_sent(user_phone)
-                    welcome_sent = True
-                # Continue processing user's message instead of returning early
-            
             # Get or create user session using extracted service
             session = await self.session_manager.get_conversation_context(user_phone)
 
@@ -474,7 +458,7 @@ class ChatService:
                     "redirected_to_buyer_registration", "redirected_to_seller_registration",
                     "intent_mismatch_handled", "intent_mismatch_retry_sent", "new_user_registration_presented",
                     "buyer_options_presented", "seller_options_presented", "single_buyer_profile_selection_presented", "profile_selection_sent",
-                    "registration_type_clarification_sent", "verification_failed","filtered_buyer_profiles_shown","max_otp_exceeded", "buyer_no_accounts_message_sent"
+                    "registration_type_clarification_sent", "verification_failed","filtered_buyer_profiles_shown","max_otp_exceeded", "buyer_no_accounts_message_sent","user_already_exists"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
@@ -749,12 +733,6 @@ class ChatService:
             #     total_calls = sum(call_summary.values())
             #     call_breakdown = ", ".join([f"{call_type}: {count}" for call_type, count in call_summary.items()])
             #     logger.info(f"OpenAI calls for {user_phone}: {total_calls} total ({call_breakdown})")
-
-            # Include welcome message information in the result if it was sent
-            if welcome_sent:
-                if isinstance(result, dict):
-                    result["welcome_message_sent"] = True
-                    logger.info(f"Both welcome message and user message processed for {user_phone}")
 
             return result
 

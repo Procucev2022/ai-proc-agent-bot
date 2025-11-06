@@ -93,48 +93,39 @@ class SessionManagementService:
         # Check if session exists but has been completed/abandoned
         if session and session.outcome:
             if session.outcome in [ConversationOutcome.abandoned, ConversationOutcome.completed, ConversationOutcome.timeout]:
-                # Check if this is a recently exited session (within last 30 seconds)
-                # If so, create a fresh session instead of resetting the exited one
-                if session.completed_at:
-                    time_since_completion = utc_now().replace(tzinfo=None) - session.completed_at
-                    if time_since_completion < timedelta(seconds=30):
-                        logger.info(f"Session {session_id} was recently exited ({time_since_completion.total_seconds():.1f}s ago), creating fresh session instead of reloading")
-                        session = None  # Force creation of new session below
+                # IMPORTANT: For role switches and exits, we ALWAYS want a completely fresh session
+                # Do NOT preserve ANY workflow_state from the abandoned session
+                logger.info(f"Session {session_id} was {session.outcome.value}, resetting for COMPLETELY fresh workflow (no state preserved)")
 
-                # If session wasn't recently exited, reset it for new workflow
-                if session:
-                    logger.info(f"Session {session_id} was {session.outcome.value}, resetting for new workflow")
+                # CRITICAL: Clear ALL workflow_state, conversation_history, and entities
+                # This ensures role switches get a truly fresh start with no data from previous sessions
+                session.workflow_state = {"extracted_entities": [], "last_activity_at": utc_now().isoformat()}
+                session.conversation_history = {"messages": [], "metadata": [], "openai_messages": []}
+                session.extracted_entities = {}
+                session.outcome = None
+                session.completed_at = None
+                session.workflow_type = None
 
-                    # IMPORTANT: Clear conversation_history and workflow_state for fresh start
-                    # Old conversation_history was causing stale product data to leak into new RFQ context
-                    # Keep rfq_ids in database for audit trail, but clear from active session
-                    session.workflow_state = {"extracted_entities": [], "last_activity_at": utc_now().isoformat()}
-                    session.conversation_history = {"messages": [], "metadata": [], "openai_messages": []}  # Clear for fresh workflow
-                    session.extracted_entities = {}  # Clear for new workflow
-                    session.outcome = None  # Clear completion status
-                    session.completed_at = None
-                    session.workflow_type = None
-
-                    # Save reset state to Redis ONLY (don't touch database)
-                    # Database keeps all accumulated history via append_session_data
-                    if self.redis_enabled:
-                        await self.redis_session.store_session(session_id, self._session_to_dict(session))
-                        logger.info(f"Session {session_id} reset in Redis for new workflow (DB data preserved)")
-                    else:
-                        # If Redis disabled, we have no choice but to update DB
-                        # Clear conversation_history for fresh workflow (prevent stale data leak)
-                        logger.warning(f"Redis disabled - resetting session {session_id} in database (history cleared for fresh workflow)")
-                        session = self.db_manager.save_conversation_session({
-                            'session_id': session.session_id,
-                            'external_user_id': session.external_user_id,
-                            'workflow_type': None,
-                            'outcome': None,
-                            'workflow_state': session.workflow_state,
-                            'conversation_history': {"messages": [], "metadata": [], "openai_messages": []},  # Cleared for fresh workflow
-                            'extracted_entities': session.extracted_entities,  # Empty for new workflow
-                            'retention_date': session.retention_date,
-                            'completed_at': None
-                        })
+                # Save reset state to Redis ONLY (don't touch database)
+                # Database keeps all accumulated history via append_session_data
+                if self.redis_enabled:
+                    await self.redis_session.store_session(session_id, self._session_to_dict(session))
+                    logger.info(f"Session {session_id} reset in Redis for new workflow (DB data preserved)")
+                else:
+                    # If Redis disabled, we have no choice but to update DB
+                    # Clear conversation_history for fresh workflow (prevent stale data leak)
+                    logger.warning(f"Redis disabled - resetting session {session_id} in database (history cleared for fresh workflow)")
+                    session = self.db_manager.save_conversation_session({
+                        'session_id': session.session_id,
+                        'external_user_id': session.external_user_id,
+                        'workflow_type': None,
+                        'outcome': None,
+                        'workflow_state': session.workflow_state,
+                        'conversation_history': {"messages": [], "metadata": [], "openai_messages": []},  # Cleared for fresh workflow
+                        'extracted_entities': session.extracted_entities,  # Empty for new workflow
+                        'retention_date': session.retention_date,
+                        'completed_at': None
+                    })
 
         if not session:
             # Create new session
@@ -160,6 +151,11 @@ class SessionManagementService:
             else:
                 session = self.db_manager.save_conversation_session(session_data)
                 logger.info(f"Created new session in DB: {session_id}")
+            
+            # Check and send welcome message for new session
+            from app.services.welcome_message_service import get_welcome_service
+            welcome_service = get_welcome_service()
+            await welcome_service.check_and_send_welcome(phone_number, self.whatsapp_service)
         else:
             logger.info(f"Found existing session: {session_id}")
             # Store in Redis for future requests if Redis enabled and not already there
@@ -179,12 +175,30 @@ class SessionManagementService:
     async def create_session(self, phone_number: str, workflow_type: str = None, user_type: str = None) -> ConversationSession:
         """Create a new session with specified workflow type and user type."""
         session_id = SessionHelpers.generate_session_id(phone_number, "daily")
-        
+
         # Check if session already exists first
         existing_session = self.db_manager.get_conversation_session(session_id)
         if existing_session:
-            logger.info(f"Session {session_id} already exists, returning existing session")
-            return existing_session
+            # CRITICAL: If session was abandoned/completed/timeout, clear ALL workflow_state for fresh start
+            # This is essential for role switches to get a completely fresh session
+            if existing_session.outcome and existing_session.outcome in [ConversationOutcome.abandoned, ConversationOutcome.completed, ConversationOutcome.timeout]:
+                logger.info(f"Session {session_id} already exists with outcome={existing_session.outcome.value}, clearing workflow_state for fresh start")
+                existing_session.workflow_state = {"extracted_entities": [], "last_activity_at": utc_now().isoformat(), "user_type": user_type}
+                existing_session.conversation_history = {"messages": [], "metadata": [], "openai_messages": []}
+                existing_session.extracted_entities = {}
+                existing_session.outcome = None
+                existing_session.completed_at = None
+                existing_session.workflow_type = workflow_type
+
+                # Save cleared state to Redis
+                if self.redis_enabled:
+                    await self.redis_session.store_session(session_id, self._session_to_dict(existing_session))
+                    logger.info(f"Cleared abandoned session {session_id} and saved to Redis for fresh workflow")
+
+                return existing_session
+            else:
+                logger.info(f"Session {session_id} already exists, returning existing session")
+                return existing_session
         
         session_data = {
             'session_id': session_id,
@@ -203,6 +217,11 @@ class SessionManagementService:
         
         session = self.db_manager.save_conversation_session(session_data)
         logger.info(f"Created new session: {session_id} with workflow: {workflow_type}, user_type: {user_type}")
+        
+        # Check and send welcome message for new session
+        from app.services.welcome_message_service import get_welcome_service
+        welcome_service = get_welcome_service()
+        await welcome_service.check_and_send_welcome(phone_number, self.whatsapp_service)
         
         return session
     

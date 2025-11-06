@@ -211,8 +211,8 @@ class AuthenticationHelpers:
                         questions.append(f"• What's your {field_desc.lower()}?")
             
             # Add validation error as a question if present
-            if validation_error_message:
-                questions.append(f"• {validation_error_message}")
+            # if validation_error_message:
+            #     questions.append(f"• {validation_error_message}")
             
             if questions:
                 return greeting + acknowledgment + "I still need:\n\n" + "\n".join(questions)

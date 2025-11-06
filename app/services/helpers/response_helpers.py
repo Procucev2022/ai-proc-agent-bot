@@ -8,6 +8,7 @@ extracted from the main ChatService class for better organization.
 import logging
 from typing import Dict, Any, List, Union
 from app.utils.rfq_message_formatter import format_rfq_response_message
+from app.utils.datetime_utils import get_ordinal_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -654,13 +655,15 @@ class ResponseHelpers:
             if extracted_entities:
                 first_entity = extracted_entities[0] if isinstance(extracted_entities[0], dict) else {}
                 delivery_date = first_entity.get('deliveryDate')
-                # Format date for display if it exists
+                # Format date for display if it exists with ordinal suffix
                 if delivery_date:
                     try:
                         from datetime import datetime
                         if isinstance(delivery_date, str) and len(delivery_date) == 10:  # YYYY-MM-DD format
                             date_obj = datetime.strptime(delivery_date, '%Y-%m-%d')
-                            delivery_date = date_obj.strftime('%d %b %Y')  # Format as "28 Oct 2025"
+                            day = date_obj.day
+                            suffix = get_ordinal_suffix(day)
+                            delivery_date = f"{day}{suffix} {date_obj.strftime('%b %Y')}"  # Format as "5th Nov 2025"
                     except:
                         pass  # Keep original format if parsing fails
                 

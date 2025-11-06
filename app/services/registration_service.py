@@ -452,25 +452,55 @@ class RegistrationService:
                 # Handle 409 Conflict - User already exists
                 if status_code == 409 or "already exists" in error_msg.lower():
                     logger.info(f"User already exists: {error_msg}")
-                    user_exists_message = (
-                        "A user with this email address and phone number already exists. "
-                        "Please use a different email or contact support at support@procucev.com if you need assistance."
+
+                    # Get user type before clearing workflow state
+                    user_type = session.workflow_state.get("user_type", "buyer")
+
+                    # Call cancel service to reset workflow state (keeps user authenticated)
+                    from app.services.cancel_service import CancelService
+                    cancel_service = CancelService(self.whatsapp_service, self.session_manager, None, None)
+                    await cancel_service._clear_workflow_state(session)
+
+                    # Restart registration flow with the same user type
+                    session.workflow_state = {
+                        "registration_stage": "data_collection",
+                        "user_type": user_type,
+                        "registration_entities": {},
+                        "last_activity_at": utc_now().isoformat()
+                    }
+
+                    # Build field list for registration message
+                    user_schema = BuyerRegistrationSchema if user_type == "buyer" else SellerRegistrationSchema
+                    fields = user_schema.model_fields
+                    required_field_labels = []
+
+                    for name, field_info in fields.items():
+                        if name in {"source_type", "address"}:
+                            continue
+                        if field_info.is_required():
+                            label = field_info.description or name.replace("_", " ").title()
+                            required_field_labels.append(f"*{label}*")
+
+                    field_list = ", ".join(required_field_labels)
+
+                    # Combine error message with registration prompt into ONE message (exact match to screenshot)
+                    combined_message = (
+                        "*Registration Unsuccessful*\n\n"
+                        "It looks like this email is already registered. Let's try again with a different email address.\n\n"
+                        f"Please share your {field_list} to continue with the registration\n\n"
+                        "Make sure your email address is correct, as you'll receive an OTP there for verification."
                     )
-                    
+
                     if self.session_manager:
-                        await self.session_manager.send_and_track_message(user_phone, user_exists_message, session)
+                        await self.session_manager.send_and_track_message(user_phone, combined_message, session)
+                        await self.session_manager.save_session(session, WorkflowType.registration)
                     else:
-                        await self.whatsapp_service.send_message(user_phone, user_exists_message)
-                    
-                    # Call exit function without showing exit message
-                    from app.services.exit_service import ExitService
-                    exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
-                    await exit_service.handle_exit_intent(user_phone, session, show_message=False)
-                    
+                        await self.whatsapp_service.send_message(user_phone, combined_message)
+
                     return {
                         "status": "user_already_exists",
                         "message": error_msg,
-                        "exit_completed": True
+                        "registration_restarted": True
                     }
                 else:
                     # Other registration failures
@@ -813,7 +843,7 @@ class RegistrationService:
             # Default message for registration issues
             support_message = (
                 "*Registration Unsuccessful*\n"
-                "We couldn’t complete your registration at this time. Our support team will "
+                "We couldn't complete your registration at this time. Our support team will "
                 "reach out to you shortly to help finalize your onboarding.\n\n"
                 "If you need immediate assistance, please contact us at *info@procucev.com*.\n\n"
                 "*Thank you for choosing Procucev!*"
@@ -823,16 +853,21 @@ class RegistrationService:
                 await self.session_manager.send_and_track_message(user_phone, support_message, session)
             else:
                 await self.whatsapp_service.send_message(user_phone, support_message)
-            
+
             logger.error(f"Support redirect for {user_phone}: {issue_type} - {error_details}")
-            
+
+            # Call exit service to properly clean up session (without showing exit message)
+            from app.services.exit_service import ExitService
+            exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
+            await exit_service.handle_exit_intent(user_phone, session, show_message=False)
+
             return {
                 "status": "redirected_to_support",
                 "issue_type": issue_type,
                 "support_ticket_created": True,
                 "exit_completed": True
             }
-            
+
         except Exception as e:
             logger.error(f"Support redirect error: {e}")
             return {"status": "error", "error": "Failed to redirect to support"}
