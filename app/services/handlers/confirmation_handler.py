@@ -272,16 +272,28 @@ class ConfirmationHandler:
         """Handle RFQ modification requests."""
         logger.info("User declined or has conditions - treating as modification request")
 
-        # Send modification message with confirmation buttons
-        modification_message = "I understand you'd like to make changes. Please tell me what you'd like to modify, and I'll help you update your request."
+        # Extract captured information and show it to user
+        captured_info_message = self._format_captured_info_for_modification(session)
+        
+        # Add modification instructions
+        modification_instructions = (
+            "If you'd like to make any updates, please use these keywords:\n"
+            "• New – to add new items (e.g., New 10 motors)\n"
+            "• Remove – to delete an item (e.g., Remove desktop)\n"
+            "• Change – to modify quantity, delivery date, or location (e.g., Change laptops to 20, Change date to 30 Dec)\n\n"
+            "If everything looks good, just click Continue to proceed."
+        )
+        
+        # Combine captured info with instructions
+        full_message = f"{captured_info_message}\n\n{modification_instructions}"
 
         buttons_config = [
-            {"id": "confirm_rfq", "title": "Confirm"},
+            {"id": "confirm_rfq", "title": "Continue"},
             {"id": "no_rfq", "title": "Add or Modify"}
         ]
         await self.whatsapp_service.send_configurable_buttons(
             user.phone_number,
-            modification_message,
+            full_message,
             buttons_config,
             "Confirmation Required"
         )
@@ -544,7 +556,6 @@ class ConfirmationHandler:
             user.phone_number,
             response,
             buttons_config,
-            "Choose an option"
         )
 
     async def _merge_optional_fields_and_confirm(self, user: User, session: ConversationSession,
@@ -663,6 +674,60 @@ class ConfirmationHandler:
                 existing_entities[field] = extracted_product[field]
 
         logger.info(f"Merged specifications into existing product: {existing_entities.get('description', 'Unknown')}")
+
+    def _format_captured_info_for_modification(self, session: ConversationSession) -> str:
+        """Format captured RFQ information for modification display."""
+        try:
+            from app.utils.rfq_message_formatter import format_rfq_response_message
+            
+            # Extract entities and global fields from session
+            extracted_entities = []
+            global_fields = {}
+            
+            # Check for pending RFQ data
+            if session.workflow_state.get("pending_combined_rfq"):
+                combined_data = session.workflow_state["pending_combined_rfq"]
+                # Extract entities from combined RFQ products
+                for product in combined_data.get("products", []):
+                    if "entities" in product:
+                        extracted_entities.append(product["entities"])
+                
+                # Extract global fields from combined schema
+                combined_schema = combined_data.get("combined_schema", {})
+                global_fields = {
+                    "deliveryDate": combined_schema.get("delivery_date"),
+                    "city": combined_schema.get("delivery_locations", [{}])[0].get("city") if combined_schema.get("delivery_locations") else None,
+                    "state": combined_schema.get("delivery_locations", [{}])[0].get("state") if combined_schema.get("delivery_locations") else None,
+                    "pincode": combined_schema.get("delivery_locations", [{}])[0].get("pincode") if combined_schema.get("delivery_locations") else None
+                }
+                
+            elif session.workflow_state.get("pending_rfq"):
+                product_info = session.workflow_state["pending_rfq"]
+                entities = product_info.get("entities", {})
+                extracted_entities = [entities]
+                
+                # Extract global fields from entities
+                global_fields = {
+                    "deliveryDate": entities.get("deliveryDate"),
+                    "city": entities.get("city"),
+                    "state": entities.get("state"),
+                    "pincode": entities.get("pincode")
+                }
+            
+            # Use format_rfq_response_message with show_only_collected=True to display captured info
+            if extracted_entities:
+                return format_rfq_response_message(
+                    extracted_entities=extracted_entities,
+                    global_fields=global_fields,
+                    missing_fields=[],  # No missing fields for modification display
+                    show_only_collected=True
+                )
+            else:
+                return "*Here's what I have captured so far:*\n\nNo product information found."
+                
+        except Exception as e:
+            logger.error(f"Error formatting captured info for modification: {e}")
+            return "*Here's what I have captured so far:*\n\nUnable to display captured information."
 
     # async def _check_bfs_availability(self, user_phone: str) -> None:
     #     """Check BFS availability after successful RFQ creation."""

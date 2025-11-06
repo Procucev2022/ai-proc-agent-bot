@@ -1450,12 +1450,10 @@ class ProfileSelectionService:
     async def _handle_exit_action(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
         """Handle user selecting exit option."""
         try:
-            message = "Thank you for your interest. Feel free to reach out anytime if you need assistance with procurement!"
-            await self.whatsapp_service.send_message(user_phone, message)
-
-            # Clear session state
-            session.workflow_state = {}
-            session.workflow_type = None
+            # Call exit without showing exit message
+            from app.services.exit_service import ExitService
+            exit_service = ExitService(self.whatsapp_service, None, None, None)
+            await exit_service.handle_exit_intent(user_phone, session, show_message=False)
 
             return {
                 "status": "user_exited",

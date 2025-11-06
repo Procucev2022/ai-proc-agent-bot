@@ -119,7 +119,7 @@ def format_rfq_response_message(
             validation_errors.add(entity["date_validation_error"])
         if entity.get("pincode_validation_error"):
             validation_errors.add(entity["pincode_validation_error"])
-    
+
     # Add validation errors from missing_fields (for backward compatibility)
     for field in missing_fields:
         if (
@@ -136,10 +136,10 @@ def format_rfq_response_message(
             "merged cells" in field.lower()
         ):
             validation_errors.add(field)
-    
+
     # Convert set back to list
     validation_errors = list(validation_errors)
-    
+
     # --- Determine missing questions ---
     questions = missing_fields if missing_fields else []
 
@@ -149,11 +149,11 @@ def format_rfq_response_message(
     # --- Add validation errors and questions with bullet points ---
     if validation_errors or (questions and not include_optional):
         # Check if any issues are Excel validation errors
-        excel_errors = [issue for issue in all_issues if 
-                       ("50 rows" in issue and "allowed" in issue) or 
+        excel_errors = [issue for issue in all_issues if
+                       ("50 rows" in issue and "allowed" in issue) or
                        "merged cells" in issue.lower() or
                        ("Excel file" in issue and ("missing" in issue or "reupload" in issue))]
-        
+
         if excel_errors:
             # For Excel validation errors, show them prominently and stop processing
             message += "\n\n"
@@ -170,7 +170,14 @@ def format_rfq_response_message(
             # For other validation issues, show as questions
             message += "\n\nI couldn't get everything though — looks like we're still missing:\n\n"
             for issue in all_issues:
-                message += f"• {issue}\n"
+                issue_clean = issue.strip().lower()
+                # Custom formatting for delivery date question
+                if issue_clean == "what is the required delivery date?":
+                    message += "• *Delivery Date* _(please enter a future date)_\n"
+                elif issue_clean == "where should the items be delivered?":
+                    message += "• *Delivery Pincode* _(6-digit valid numeric pincode)_\n"
+                else:
+                    message += f"• {issue}\n"
             message += "\nPlease share to proceed."
     elif include_optional and missing_fields:
         # If no mandatory issues but flag is set, add optional questions
