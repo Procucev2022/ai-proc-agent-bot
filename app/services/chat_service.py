@@ -831,6 +831,60 @@ class ChatService:
                 result = await auth_reg_switch.handle_role_switch_response(user, session, message, self.authentication_service)
                 await self.session_manager.save_session(session, self._get_workflow_or_default(session))
 
+                # Check if we need to trigger profile selection after exit
+                if result.get("status") == "exit_and_trigger_profile_selection":
+                    logger.info(f"Triggering profile selection after role switch exit for {user.phone_number}")
+
+                    # Trigger profile selection via authentication orchestrator
+                    from app.services.handlers.authentication_orchestrator import AuthenticationOrchestrator
+                    from app.services.helpers.support_helpers import SupportHelpers
+
+                    auth_orchestrator = AuthenticationOrchestrator(
+                        self.whatsapp_service,
+                        self.response_helpers,
+                        self.authentication_service,
+                        self.registration_service,
+                        self.intent_service,
+                        SupportHelpers(self.whatsapp_service),
+                        self
+                    )
+
+                    # Get the original message and target role to pass to profile selection
+                    original_message = result.get("original_message", "Hi")
+                    target_role = result.get("target_role")
+
+                    # Create intent_result based on target role to bypass profile selection message
+                    # This tells the auth flow what the user wants to do after selecting their profile
+                    target_intent = "sell_something" if target_role == "seller" else "buy_something"
+                    intent_result = {
+                        "intent": target_intent,
+                        "confidence": 95,  # High confidence since user explicitly confirmed role switch
+                        "role_switch": True  # Flag to indicate this is a role switch scenario
+                    }
+
+                    # CRITICAL: Clear abandoned outcome so session can be saved to Redis
+                    # The exit marked the session as abandoned, but we're now starting a fresh profile selection
+                    session.outcome = None
+                    if session.workflow_state and session.workflow_state.get("exit_completed"):
+                        del session.workflow_state["exit_completed"]
+                    if session.workflow_state and session.workflow_state.get("exit_timestamp"):
+                        del session.workflow_state["exit_timestamp"]
+                    logger.info(f"Cleared abandoned outcome to allow session save for profile selection")
+
+                    # Call authentication orchestrator to handle profile selection
+                    auth_result = await auth_orchestrator.authentication_orchestrator_flow(
+                        user.phone_number,
+                        original_message,
+                        session,
+                        intent_result=intent_result
+                    )
+
+                    # CRITICAL: Save session after profile selection to persist profile_selection_stage
+                    await self.session_manager.save_session(session, self._get_workflow_or_default(session))
+                    logger.info(f"Saved session after triggering profile selection for role switch")
+
+                    return auth_result
+
                 # If role switch completed with original message, process it
                 if result.get("status") == "authentication_completed" and result.get("original_message"):
                     original_msg = result["original_message"]
@@ -849,6 +903,61 @@ class ChatService:
                 auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
                 result = await auth_reg_switch.handle_account_switch_response(user, session, message, self.authentication_service)
                 await self.session_manager.save_session(session, self._get_workflow_or_default(session))
+
+                # Check if we need to trigger profile selection after exit
+                if result.get("status") == "exit_and_trigger_profile_selection":
+                    logger.info(f"Triggering profile selection after account switch exit for {user.phone_number}")
+
+                    # Trigger profile selection via authentication orchestrator
+                    from app.services.handlers.authentication_orchestrator import AuthenticationOrchestrator
+                    from app.services.helpers.support_helpers import SupportHelpers
+
+                    auth_orchestrator = AuthenticationOrchestrator(
+                        self.whatsapp_service,
+                        self.response_helpers,
+                        self.authentication_service,
+                        self.registration_service,
+                        self.intent_service,
+                        SupportHelpers(self.whatsapp_service),
+                        self
+                    )
+
+                    # Get the original message and target role to pass to profile selection
+                    original_message = result.get("original_message", "Hi")
+                    target_role = result.get("target_role")
+
+                    # Create intent_result based on target role to bypass profile selection message
+                    # This tells the auth flow what the user wants to do after selecting their profile
+                    target_intent = "sell_something" if target_role == "seller" else "buy_something"
+                    intent_result = {
+                        "intent": target_intent,
+                        "confidence": 95,  # High confidence since user explicitly confirmed role switch
+                        "role_switch": True  # Flag to indicate this is a role switch scenario
+                    }
+
+                    # CRITICAL: Clear abandoned outcome so session can be saved to Redis
+                    # The exit marked the session as abandoned, but we're now starting a fresh profile selection
+                    session.outcome = None
+                    if session.workflow_state and session.workflow_state.get("exit_completed"):
+                        del session.workflow_state["exit_completed"]
+                    if session.workflow_state and session.workflow_state.get("exit_timestamp"):
+                        del session.workflow_state["exit_timestamp"]
+                    logger.info(f"Cleared abandoned outcome to allow session save for profile selection")
+
+                    # Call authentication orchestrator to handle profile selection
+                    auth_result = await auth_orchestrator.authentication_orchestrator_flow(
+                        user.phone_number,
+                        original_message,
+                        session,
+                        intent_result=intent_result
+                    )
+
+                    # CRITICAL: Save session after profile selection to persist profile_selection_stage
+                    await self.session_manager.save_session(session, self._get_workflow_or_default(session))
+                    logger.info(f"Saved session after triggering profile selection for account switch")
+
+                    return auth_result
+
                 return result
             
             # Use already-classified intent from message tracking or fallback to classification
@@ -1035,6 +1144,20 @@ class ChatService:
                     # Any other status, return the result
                     return cancel_result
 
+            # Handle ROLE SWITCH requests immediately - even during active workflows (highest priority after exit/cancel)
+            # This handles buyer -> seller or seller -> buyer account switches
+            if user.is_registered and confidence > 0.7:
+                current_role = user.role.value if hasattr(user.role, 'value') else user.role
+                if (intent == "sell_something" and current_role == "buyer") or (intent == "buy_something" and current_role == "seller"):
+                    target_role = "seller" if intent == "sell_something" else "buyer"
+                    logger.info(f"Role switch detected: {current_role} -> {target_role} (confidence: {confidence}%)")
+
+                    from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
+                    auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
+                    result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, target_role)
+                    await self.session_manager.save_session(session, self._get_workflow_or_default(session))
+                    return result
+
             # Handle FAQ requests immediately - even during active workflows (highest priority after exit/cancel)
             if intent == "faq" and confidence > 0.6:
                 logger.info(f"FAQ intent detected with {confidence}% confidence - handling immediately")
@@ -1214,48 +1337,22 @@ class ChatService:
             if user.is_registered and confidence > 0.7:
                 current_role = user.role.value if hasattr(user.role, 'value') else user.role
                 if intent == "sell_something" and current_role == "buyer":
-                    # Cross-role switch: buyer -> seller, check if user has seller accounts
-                    from app.services.user_cache_service import get_user_cache_service
+                    # Cross-role switch: buyer -> seller
                     from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
 
-                    user_cache_service = get_user_cache_service()
-                    account_options = await user_cache_service.get_account_options_for_intent_switch(
-                        user.phone_number, "sell_something", getattr(user, 'email', None) or getattr(user, 'username', None)
-                    )
-
+                    logger.info("Cross-role switch detected (buyer->seller)")
                     auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
-                    if account_options and account_options.get("success") and account_options.get("has_target_accounts"):
-                        # User has seller accounts - show enhanced selection
-                        logger.info("Cross-role switch (buyer->seller) with cached seller accounts - using enhanced selection")
-                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "seller")
-                    else:
-                        # No cached seller accounts - use standard role switch
-                        logger.info("Cross-role switch (buyer->seller) without cached seller accounts - using standard flow")
-                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "seller")
-
+                    result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "seller")
                     await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                     return result
 
                 elif intent == "buy_something" and current_role == "seller":
-                    # Cross-role switch: seller -> buyer, check if user has buyer accounts
-                    from app.services.user_cache_service import get_user_cache_service
+                    # Cross-role switch: seller -> buyer
                     from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
 
-                    user_cache_service = get_user_cache_service()
-                    account_options = await user_cache_service.get_account_options_for_intent_switch(
-                        user.phone_number, "buy_something", getattr(user, 'email', None) or getattr(user, 'username', None)
-                    )
-
+                    logger.info("Cross-role switch detected (seller->buyer)")
                     auth_reg_switch = AuthRegistrationIntentSwitch(self.whatsapp_service)
-                    if account_options and account_options.get("success") and account_options.get("has_target_accounts"):
-                        # User has buyer accounts - show enhanced selection
-                        logger.info("Cross-role switch (seller->buyer) with cached buyer accounts - using enhanced selection")
-                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "buyer")
-                    else:
-                        # No cached buyer accounts - use standard role switch
-                        logger.info("Cross-role switch (seller->buyer) without cached buyer accounts - using standard flow")
-                        result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "buyer")
-
+                    result = await auth_reg_switch.handle_role_switch_confirmation(user, session, message, "buyer")
                     await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                     return result
             
