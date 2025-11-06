@@ -498,7 +498,7 @@ class RegistrationService:
                         await self.whatsapp_service.send_message(user_phone, combined_message)
 
                     return {
-                        "status": "user_already_exists_restarted",
+                        "status": "user_already_exists",
                         "message": error_msg,
                         "registration_restarted": True
                     }
