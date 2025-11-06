@@ -160,6 +160,11 @@ class SessionManagementService:
             else:
                 session = self.db_manager.save_conversation_session(session_data)
                 logger.info(f"Created new session in DB: {session_id}")
+            
+            # Check and send welcome message for new session
+            from app.services.welcome_message_service import get_welcome_service
+            welcome_service = get_welcome_service()
+            await welcome_service.check_and_send_welcome(phone_number, self.whatsapp_service)
         else:
             logger.info(f"Found existing session: {session_id}")
             # Store in Redis for future requests if Redis enabled and not already there
@@ -203,6 +208,11 @@ class SessionManagementService:
         
         session = self.db_manager.save_conversation_session(session_data)
         logger.info(f"Created new session: {session_id} with workflow: {workflow_type}, user_type: {user_type}")
+        
+        # Check and send welcome message for new session
+        from app.services.welcome_message_service import get_welcome_service
+        welcome_service = get_welcome_service()
+        await welcome_service.check_and_send_welcome(phone_number, self.whatsapp_service)
         
         return session
     

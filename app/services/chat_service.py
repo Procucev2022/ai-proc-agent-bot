@@ -27,7 +27,6 @@ import asyncio
 
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
-from app.services.welcome_message_service import get_welcome_service
 from app.utils.datetime_utils import utc_now
 from app.utils.logging_utils import log_service_method
 from app.context import session_context, user_context, get_request_id
@@ -359,21 +358,6 @@ class ChatService:
         workflow routing, and response generation.
         """
         try:
-            # Check and send welcome message if needed (before session creation)
-            welcome_service = get_welcome_service()
-            welcome_sent = False
-            if await welcome_service.should_send_welcome(user_phone):
-                welcome_text = (
-                    "Hello Namaste 🙏, I'm Qua – Your Procurement Partner.\n"
-                    "Thank you for contacting me. Let me check if you have visited us earlier..."
-                )
-
-                message_response = await self.whatsapp_service.send_message(user_phone, welcome_text)
-                if message_response.success:
-                    await welcome_service.mark_welcome_sent(user_phone)
-                    welcome_sent = True
-                # Continue processing user's message instead of returning early
-            
             # Get or create user session using extracted service
             session = await self.session_manager.get_conversation_context(user_phone)
 
@@ -749,12 +733,6 @@ class ChatService:
             #     total_calls = sum(call_summary.values())
             #     call_breakdown = ", ".join([f"{call_type}: {count}" for call_type, count in call_summary.items()])
             #     logger.info(f"OpenAI calls for {user_phone}: {total_calls} total ({call_breakdown})")
-
-            # Include welcome message information in the result if it was sent
-            if welcome_sent:
-                if isinstance(result, dict):
-                    result["welcome_message_sent"] = True
-                    logger.info(f"Both welcome message and user message processed for {user_phone}")
 
             return result
 
