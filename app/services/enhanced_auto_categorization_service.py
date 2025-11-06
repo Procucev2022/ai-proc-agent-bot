@@ -415,7 +415,7 @@ class EnhancedAutoCategorizationService:
                 else:
                     logger.info("No existing learning category found, creating new one")
                     # No existing category, create new one with default "Other" client category
-                    create_result = learning_service.create_3_level_category(
+                    create_result = await learning_service.create_3_level_category(
                         item_description=item_description,
                         client_category="Other",  # Default to Other for new learning categories
                         similar_items=[],  # No similar items available
@@ -507,7 +507,7 @@ class EnhancedAutoCategorizationService:
 
                 # Update learning taxonomy with the new categorization for future learning
                 try:
-                    self._update_learning_taxonomy(
+                    await self._update_learning_taxonomy(
                         item_description=item_description,
                         client_category=fallback_result["client_category"],
                         user_id=user_id
@@ -544,7 +544,7 @@ class EnhancedAutoCategorizationService:
                 
                 # Try to create fallback "Other" category entry
                 try:
-                    fallback_success = self._update_learning_taxonomy(
+                    fallback_success = await self._update_learning_taxonomy(
                         item_description=item_description,
                         client_category="Other",
                         user_id=user_id
@@ -676,7 +676,7 @@ class EnhancedAutoCategorizationService:
             logger.error(f"Error getting category suggestions: {str(e)}")
             return []
     
-    def _update_learning_taxonomy(self, item_description: str, client_category: str, user_id: str) -> bool:
+    async def _update_learning_taxonomy(self, item_description: str, client_category: str, user_id: str) -> bool:
         """
         Update the learning taxonomy with a new item categorization.
 
@@ -694,7 +694,7 @@ class EnhancedAutoCategorizationService:
             learning_service = LearningCategorizationService()
 
             # Use the existing create_3_level_category method to add this new item
-            result = learning_service.create_3_level_category(
+            result = await learning_service.create_3_level_category(
                 item_description=item_description,
                 client_category=client_category,
                 similar_items=[],  # No similar items in fallback scenario
