@@ -77,7 +77,6 @@ class ExcelProcessingService:
             initial_count = len(df)
             df = df.dropna(how='all')
             removed_count = initial_count - len(df)
-            logger.info(f"[DEBUG-MAIN] Removed {removed_count} completely empty rows from {initial_count} total rows")
             
             if df.empty:
                 return {
@@ -156,7 +155,6 @@ class ExcelProcessingService:
             # Convert to legacy format for compatibility
             items = []
             for i, product in enumerate(products):
-                logger.info(f"[DEBUG-CONVERSION] Converting product {i+1}: {product}")
                 item = {
                     'S.No': len(items) + 1,
                     'ItemDescription': product.get('description', ''),
@@ -201,24 +199,13 @@ class ExcelProcessingService:
     
     async def _process_excel_with_openai(self, df: pd.DataFrame, filename: str) -> Dict[str, Any]:
         """Process Excel DataFrame directly using OpenAI for streamlined RFQ creation."""
-        logger.info(f"[EXCEL-PROCESS] Starting OpenAI streamlined processing for {filename}")
         try:
             # Preprocess DataFrame to handle duplicates
             df_clean = self._preprocess_excel_data(df)
-            logger.info(f"[DEBUG-FLOW] After preprocessing shape: {df_clean.shape}")
-            
-            # Log first few rows to see actual data
-            for i, row in df_clean.head(5).iterrows():
-                logger.info(f"[DEBUG-FLOW] Row {i}: {row.to_dict()}")
-            
+                    
             # Convert DataFrame to dict format for OpenAI processing
             excel_data = df_clean.fillna('').astype(str).to_dict(orient='records')
-            logger.info(f"[DEBUG-FLOW] Converted to {len(excel_data)} records for OpenAI")
-            
-            # Log the data being sent to OpenAI
-            for i, record in enumerate(excel_data[:3]):
-                logger.info(f"[DEBUG-FLOW] OpenAI Record {i+1}: {record}")
-            
+                        
             # Create readable string for OpenAI input
             excel_text = "\n".join([f"Row {i+1}: {row}" for i, row in enumerate(excel_data[:50])])  
             
@@ -227,7 +214,8 @@ class ExcelProcessingService:
             
             if result.get('success'):
                 if result.get('rfqs'):
-                    logger.info(f"[DEBUG-FLOW] First RFQ has {len(result['rfqs'][0].get('products', []))} products")
+                    logger.info(f"Extracted rfq's {len(result['rfqs'][0].get('products', []))} products")
+                logger.info(f"OpenAI extracted items from Excel: {result}")
                 return result
             else:
                 logger.error(f"[EXCEL-PROCESS] OpenAI processing failed: {result.get('error')}")
@@ -541,11 +529,6 @@ class ExcelProcessingService:
     def _preprocess_excel_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Preprocess Excel data to handle duplicate columns and clean data."""
         try:
-            
-            # Log first few rows before processing
-            for i, row in df.head(10).iterrows():
-                logger.info(f"[DEBUG-PREPROCESS] Original Row {i}: {row.tolist()}")
-            
             # Handle duplicate column names by keeping only the first occurrence
             # Pandas automatically renames duplicates with .1, .2, etc.
             seen_base_columns = set()
@@ -570,35 +553,23 @@ class ExcelProcessingService:
                 if normalized_base not in seen_base_columns:
                     seen_base_columns.add(normalized_base)
                     columns_to_keep.append(col)
-                    logger.info(f"[EXCEL-PREPROCESS] Keeping column: {col} (base: {base_col})")
                 else:
                     logger.info(f"[EXCEL-PREPROCESS] Skipping duplicate column: {col} (base: {base_col})")
             
             # Select only unique columns
             df_clean = df[columns_to_keep].copy()
-            logger.info(f"[DEBUG-PREPROCESS] After column dedup shape: {df_clean.shape}")
             
             # Log ALL rows before any removal to debug the blank row issue
-            logger.info(f"[DEBUG-PREPROCESS] ALL rows before empty removal:")
             for i, row in df_clean.iterrows():
                 is_empty = row.isna().all()
                 has_data = not row.isna().all() and any(str(val).strip() for val in row if pd.notna(val))
-                logger.info(f"[DEBUG-PREPROCESS] Row {i} (empty: {is_empty}, has_data: {has_data}): {row.tolist()}")
             
             # CRITICAL FIX: Only remove rows that are completely empty (all NaN)
             # Do NOT remove rows with blank cells that might have data in other columns
             initial_row_count = len(df_clean)
             df_clean = df_clean.dropna(how='all')  # Only remove rows where ALL columns are NaN
             removed_empty_rows = initial_row_count - len(df_clean)
-            
-            logger.info(f"[DEBUG-PREPROCESS] Removed {removed_empty_rows} completely empty rows")
-            logger.info(f"[DEBUG-PREPROCESS] After empty row removal shape: {df_clean.shape}")
-            
-            # Log rows after empty removal to verify blank rows with data are preserved
-            logger.info(f"[DEBUG-PREPROCESS] Rows after empty removal:")
-            for i, row in df_clean.iterrows():
-                logger.info(f"[DEBUG-PREPROCESS] Preserved Row {i}: {row.tolist()}")
-            
+                       
             # CRITICAL FIX: Be more careful with duplicate removal
             # Only remove exact duplicates, not rows that might have slight differences
             initial_rows = len(df_clean)
@@ -613,18 +584,7 @@ class ExcelProcessingService:
             # Remove duplicates based on filled data
             df_clean = df_clean[~df_for_dup_check.duplicated(keep='first')]
             removed_duplicates = initial_rows - len(df_clean)
-            
-            if removed_duplicates > 0:
-                logger.info(f"[EXCEL-PREPROCESS] Removed {removed_duplicates} duplicate rows")
-            
-            logger.info(f"[EXCEL-PREPROCESS] Final cleaned DataFrame shape: {df_clean.shape}")
-            logger.info(f"[EXCEL-PREPROCESS] Final cleaned columns: {df_clean.columns.tolist()}")
-            
-            # Log final rows to verify all product rows are preserved
-            logger.info(f"[DEBUG-PREPROCESS] Final rows after all processing:")
-            for i, row in df_clean.iterrows():
-                logger.info(f"[DEBUG-PREPROCESS] Final Row {i}: {row.to_dict()}")
-            
+                                  
             return df_clean
             
         except Exception as e:

@@ -1433,8 +1433,6 @@ class ChatService:
             # Validate Excel file
             validation_service = ExcelValidationService()
             validation_result = await validation_service.validate_excel_file_from_url(file_url, filename)
-            
-            logger.info(f"[EXCEL-VALIDATION] Validation result: {validation_result}")
 
             if not validation_result.get('valid'):
                 validation_error = validation_result.get('error', 'Invalid Excel file')
@@ -1631,10 +1629,13 @@ class ChatService:
                 # Clear confirmation state
                 session.workflow_state.pop('excel_confirmation_data', None)
                 session.workflow_state.pop('awaiting_excel_confirmation', None)
+
+                # Convert products to required format
+                converted_products = self._convert_to_products_array_format(products, session)
                 
                 # Use existing products array handler for multiple RFQ creation
                 return await self.products_array_handler.handle_products_array(
-                    user, session, f"Excel upload: {filename}", products
+                    user, session, f"Excel upload: {filename}", converted_products
                 )
                 
             elif is_cancelled:
@@ -1770,6 +1771,32 @@ class ChatService:
         logger.info(f"[EXCEL-CONVERSION-SUCCESS] Successfully converted {len(excel_items)} Excel items to products array")
         logger.info(f"[EXCEL-CONVERSION-RESULT] Final products: {products}")
         return products
+
+    def _convert_to_products_array_format(self, products: List[Dict], session: ConversationSession) -> List[Dict]:
+        """Convert products to required format for products array handler with global fields."""
+        converted_products = []
+        
+        # Extract global fields from session
+        global_delivery_date = session.workflow_state.get('delivery_date')
+        global_pincode = session.workflow_state.get('pincode')
+        global_state = session.workflow_state.get('state')
+        global_city = session.workflow_state.get('city')
+        
+        for product in products:
+            converted_product = {
+                'description': product.get('description', ''),
+                'quantity': product.get('quantity', ''),
+                'unitofMeasures': product.get('uom', 'pcs'),
+                'brand': product.get('projectDesc', ''),
+                'remarks': product.get('remarks', ''),
+                'deliveryDate': product.get('deliveryDate') or global_delivery_date or '',
+                'state': product.get('state') or global_state or '',
+                'city': product.get('city') or global_city or '',
+                'pincode': product.get('pincode') or global_pincode or ''
+            }
+            converted_products.append(converted_product)
+        
+        return converted_products
 
     async def _handle_incomplete_excel(self, user: User, session: ConversationSession, excel_context: Dict) -> Dict[
         str, Any]:
