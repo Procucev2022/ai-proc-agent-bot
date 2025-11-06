@@ -325,12 +325,31 @@ class EntityService:
         if response.get("is_modification_extraction"):
             has_new_values = response.get("has_new_values", False)
             modifications = response.get("modifications", [])
-            
-            if has_new_values and modifications:
+
+            # Extract global delivery fields from response
+            global_delivery_fields = {}
+            if response.get("deliveryDate") and response.get("deliveryDate").strip():
+                global_delivery_fields["deliveryDate"] = response.get("deliveryDate")
+            if response.get("state") and response.get("state").strip():
+                global_delivery_fields["state"] = response.get("state")
+            if response.get("city") and response.get("city").strip():
+                global_delivery_fields["city"] = response.get("city")
+            if response.get("pincode") and response.get("pincode").strip():
+                global_delivery_fields["pincode"] = response.get("pincode")
+
+            # Check if we have remove operations even if has_new_values is False
+            has_remove_operation = any(mod.get("operation_type") == "remove" for mod in modifications)
+
+            if (has_new_values and (modifications or global_delivery_fields)) or has_remove_operation:
                 print(f"EntityService: User provided new values, applying {len(modifications)} modification operations")
+                if has_remove_operation and not has_new_values:
+                    print(f"EntityService: WARNING - has_new_values=False but remove operation detected, proceeding anyway")
+                if global_delivery_fields:
+                    print(f"EntityService: Global delivery fields to apply: {list(global_delivery_fields.keys())}")
+
                 # Apply modifications directly - they contain operation_type, target_product_index, and new values
                 modified_products = self._apply_modifications_to_existing_products(
-                    pending_products, modifications, message
+                    pending_products, modifications, message, global_delivery_fields
                 )
                 # Validate dates in final products
                 validated_products, has_date_validation_error = await self._validate_dates_in_products(modified_products, message)
@@ -437,7 +456,7 @@ class EntityService:
             formatted.append(details)
         return "\n".join(formatted)
     
-    def _apply_modifications_to_existing_products(self, existing_products: list, modifications: list, original_message: str) -> list:
+    def _apply_modifications_to_existing_products(self, existing_products: list, modifications: list, original_message: str, global_delivery_fields: dict = None) -> list:
         """
         Apply modification operations to existing products based on AI's analysis.
 
@@ -449,11 +468,14 @@ class EntityService:
             existing_products: List of existing product info dicts with "entities" key
             modifications: List of modification operations from AI
             original_message: Original user message (for logging)
+            global_delivery_fields: Dict of global delivery fields (deliveryDate, state, city, pincode) to apply to ALL products
 
         Returns:
             Updated list of product entities
         """
         print(f"EntityService: Applying {len(modifications)} modification operations to {len(existing_products)} existing products")
+        if global_delivery_fields:
+            print(f"EntityService: Will apply global delivery fields: {list(global_delivery_fields.keys())}")
 
         # Create a copy of existing products to work with
         updated_products = []
@@ -481,7 +503,11 @@ class EntityService:
         indices_to_remove = set()
 
         # Track global field modifications (apply to all products)
+        # Start with the global delivery fields passed in (from new schema format)
         global_field_updates = {}
+        if global_delivery_fields:
+            global_field_updates.update(global_delivery_fields)
+            print(f"EntityService: Initialized global_field_updates with delivery fields: {list(global_delivery_fields.keys())}")
 
         # Apply each modification operation
         for modification in modifications:
