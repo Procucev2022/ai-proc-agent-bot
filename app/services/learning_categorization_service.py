@@ -43,7 +43,7 @@ class LearningCategorizationService:
         """Initialize the learning categorization service."""
         self.openai_service = OpenAIService()
     
-    def create_3_level_category(
+    async def create_3_level_category(
         self, 
         item_description: str, 
         client_category: str, 
@@ -82,7 +82,7 @@ class LearningCategorizationService:
                 }
             
             # Generate 3-level categorization using OpenAI
-            categorization_result = self.openai_service.generate_3_level_categorization(
+            categorization_result = await self.openai_service.generate_3_level_categorization(
                 item_description=item_description,
                 similar_items=similar_items or [],
                 client_category=client_category
@@ -344,7 +344,7 @@ class LearningCategorizationService:
         finally:
             db.close()
     
-    def validate_learning_category(
+    async def validate_learning_category(
         self, 
         level_1: str, 
         level_2: str, 
@@ -364,7 +364,7 @@ class LearningCategorizationService:
             Dict with validation results
         """
         try:
-            validation_result = self.openai_service.validate_learning_category(
+            validation_result = await self.openai_service.validate_learning_category(
                 level_1=level_1,
                 level_2=level_2,
                 level_3=level_3,
