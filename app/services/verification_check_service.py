@@ -124,9 +124,19 @@ class VerificationCheckService:
                             }
                         }
                 else:
-                    # FIXED: Sellers need only EMAIL_VERIFIED status - NO domain matching or approval checks
-                    logger.info(f"Access granted - seller with EMAIL_VERIFIED status (no domain check required)")
-                    return {"access_granted": True, "user_data": user_dict}
+                    # Sellers with EMAIL_VERIFIED status - still require OTP for authentication
+                    logger.info(f"Seller with EMAIL_VERIFIED status - sending OTP for authentication")
+                    otp_result = await self._send_verification_otp(user_phone, email)
+                    return {
+                        "verification_required": True,
+                        "otp_sent": otp_result.get("status") == "otp_sent",
+                        "redirect_info": {
+                            "flow": "email_verification",
+                            "reason": "seller_authentication",
+                            "message": f"Please verify your email ({email}) to continue with seller menu.",
+                            "email": email
+                        }
+                    }
             
             # Step 3: Unknown/invalid verification status - require verification
             logger.warning(f"Unknown verification status: {verification_status} - requiring verification")

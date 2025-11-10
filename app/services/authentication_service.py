@@ -69,47 +69,15 @@ class AuthenticationService:
             normalized_phone = user_phone.lstrip('+')
             user_data = await self.auth_redis_service.retrieve(normalized_phone)
             if user_data:
-                # Check verification status before granting access
-                verification_check = await self.verification_check_service.check_and_enforce_verification(user_phone, user_data)
+                # For users with existing auth tokens, grant access directly without additional verification
+                logger.info(f"Found existing auth token for {user_phone} - granting access")
                 
-                if verification_check.get("access_granted"):
-                    # Use the updated user data from verification check instead of stale data
-                    updated_user_data = verification_check.get("user_data", user_data)
-                    # Convert to User object to ensure proper field mapping
-                    user_obj = User.from_mixed_data(updated_user_data)
-                    user_dict = user_obj.dict()
-                    # Save user details in global context with updated data
-                    user_context.set(normalized_phone, {"user_details": user_dict})
-                    return user_dict  # Return dict instead of User object
-                else:
-                    # Verification required - refresh user data and retry
-                    refresh_result = await self.verification_check_service.refresh_user_verification_status(user_phone)
-                    
-                    # Check if max retries exceeded and support redirection needed
-                    if refresh_result.get("exit_flow"):
-                        return False  # Exit the authentication flow
-                    
-                    if refresh_result.get("success"):
-                        # Re-check with fresh data
-                        fresh_data = refresh_result.get("data", [])
-                        if fresh_data:
-                            # Use first user data for verification check
-                            fresh_user_data = fresh_data[0] if isinstance(fresh_data, list) else fresh_data
-                            fresh_check = await self.verification_check_service.check_and_enforce_verification(user_phone, fresh_user_data)
-                            
-                            if fresh_check.get("access_granted"):
-                                # Use the updated user data from fresh verification check
-                                updated_fresh_data = fresh_check.get("user_data", fresh_user_data)
-                                # Update cached data and grant access
-                                await self.auth_redis_service.store(normalized_phone, updated_fresh_data, expiry_seconds=43200)
-                                # Convert to User object to ensure proper field mapping
-                                user_obj = User.from_mixed_data(updated_fresh_data)
-                                user_dict = user_obj.dict()
-                                user_context.set(normalized_phone, {"user_details": user_dict})
-                                return user_dict  # Return dict instead of raw data
-                    
-                    # Still requires verification - return verification info
-                    return {"verification_required": True, "verification_info": verification_check.get("redirect_info", {})}
+                # Convert to User object to ensure proper field mapping
+                user_obj = User.from_mixed_data(user_data)
+                user_dict = user_obj.dict()
+                # Save user details in global context
+                user_context.set(normalized_phone, {"user_details": user_dict})
+                return user_dict  # Return dict instead of User object
 
             # Token expired or not found
             return False
@@ -646,8 +614,8 @@ Return only the selected email address or "none" if no clear selection.
                     if verification_check.get("redirect_to_support"):
                         # Call exit service and redirect to support
                         from app.services.exit_service import ExitService
-                        exit_service = ExitService(self.whatsapp_service, self, 
-                                                 self.session_manager, None)
+                        exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
+                        await exit_service.handle_exit_intent(user_phone, session, show_message=False)
                         
                         # Send support message
                         support_message = redirect_info.get("message", "Please contact our support team for assistance.")
@@ -723,7 +691,7 @@ Return only the selected email address or "none" if no clear selection.
                     if verification_check.get("redirect_to_support"):
                         # Call exit service and redirect to support
                         from app.services.exit_service import ExitService
-                        exit_service = ExitService(self.whatsapp_service, self, 
+                        exit_service = ExitService(self.whatsapp_service, self,
                                                  self.session_manager, None)
                         
                         redirect_info = verification_check.get("redirect_info", {})
@@ -757,33 +725,21 @@ Return only the selected email address or "none" if no clear selection.
                             "workflow_type": "authentication"
                         }
                 else:
-                    # Seller is already verified - complete authentication immediately
-                    logger.info(f"Seller {user_phone} already verified - completing authentication")
-                    session_stored = await self.store_user_session_with_email(user_phone, filtered_users, selected_email)
+                    # Seller needs OTP verification even if EMAIL_VERIFIED - send OTP first
+                    logger.info(f"Seller {user_phone} with EMAIL_VERIFIED status - sending OTP for additional verification")
+                    WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="authentication_service")
+                    session.workflow_state["authentication_stage"] = "email_otp"
+                    session.workflow_state["otp_email"] = selected_email
+                    session.workflow_state["otp_retry_count"] = 0
+                    session.workflow_state["selected_user"] = selected_user
+                    session.workflow_state["filtered_users"] = filtered_users
 
-                    if session_stored:
-                        logger.info(f"User session stored successfully for verified seller {user_phone}")
-                    else:
-                        logger.error(f"Failed to store user session for verified seller {user_phone}")
-
-                    # Get username from fullName or fallback to firstName or generic "there"
-                    username = selected_user.get("fullName") or selected_user.get("name") or selected_user.get("firstName") or "there"
-                    message = f"Hi {username}! Email verified successfully! You can now proceed."
-                    await self.whatsapp_service.send_message(user_phone, message)
-
-                    # Preserve original message from workflow state for processing after authentication
-                    original_message = session.workflow_state.get("original_message") if session.workflow_state else None
-
-                    # Clear authentication workflow state after successful authentication
-                    session.workflow_type = None
-                    session.workflow_state = {}
-                    logger.info(f"Cleared authentication workflow state for verified seller {user_phone}")
-
+                    # Send OTP and return status indicating OTP flow started
+                    otp_result = await self.otp_service.send_otp(user_phone, selected_email, session)
                     return {
-                        "status": "authentication_completed",
+                        "status": "otp_sent",
                         "user_type": "seller",
-                        "redirect_to_main_flow": True,
-                        "original_message": original_message
+                        "workflow_type": "authentication"
                     }
             else:
                 return {"status": "redirect_to_support", "reason": "unknown_user_type"}
@@ -855,161 +811,119 @@ Return only the selected email address or "none" if no clear selection.
                     logger.error(f"Missing selected_user or otp_email in workflow state for {user_phone}")
                     return {"status": "error", "error": "Authentication data missing"}
                 
-                # CRITICAL: Refresh user data to get updated verification status after OTP validation
-                refresh_result = await self.verification_check_service.refresh_user_verification_status(user_phone)
+                # CRITICAL: After successful OTP validation, user is verified - no need to check verification again
+                logger.info(f"User {user_phone} now has EMAIL_VERIFIED status after OTP validation")
                 
-                if refresh_result.get("success"):
-                    fresh_data = refresh_result.get("data", [])
-                    if fresh_data:
-                        # Find the specific user we're processing by matching email/username
-                        fresh_user_data = None
-                        if isinstance(fresh_data, list):
-                            for user_data in fresh_data:
-                                user_email = user_data.get("username") or user_data.get("email")
-                                if user_email == selected_email:
-                                    fresh_user_data = user_data
-                                    break
-                        else:
-                            fresh_user_data = fresh_data
-                        
-                        # Fallback to selected_user if no match found
-                        if not fresh_user_data:
-                            fresh_user_data = selected_user
-                        
-                        # Check if verification status is now EMAIL_VERIFIED
-                        verification_status = fresh_user_data.get("verificationStatus") or fresh_user_data.get("verification_status")
-                        user_type = "buyer" if fresh_user_data.get("selfClient", True) else "seller"
-                        
-                        if verification_status == "EMAIL_VERIFIED":
-                            logger.info(f"User {user_phone} now has EMAIL_VERIFIED status after OTP validation")
-                            
-                            # For buyers with EMAIL_VERIFIED status, check domain matching
-                            if user_type == "buyer":
-                                logger.info(f"Buyer with EMAIL_VERIFIED status - checking domain matching")
-                                
-                                # Check if already approved
-                                if fresh_user_data.get("approved") is True:
-                                    logger.info(f"Buyer already approved - granting access")
-                                    # Store session and grant access
-                                    success = await self._store_verified_user_session(user_phone, fresh_user_data, selected_email)
-                                    
-                                    if success:
-                                        session.workflow_type = None
-                                        session.workflow_state = {}
-                                        return {
-                                            "status": "authentication_completed",
-                                            "user_type": "buyer",
-                                            "redirect_to_main_flow": True
-                                        }
-                                else:
-                                    # Trigger domain check for non-approved buyers
-                                    logger.info(f"Buyer not approved - triggering domain check")
-                                    
-                                    user_id = fresh_user_data.get("id")
-                                    if user_id:
-                                        # Perform AI-based domain matching first
-                                        ai_domain_result = await self.domain_check_service.check_domain_match(
-                                            fresh_user_data.get("username") or fresh_user_data.get("email"),
-                                            fresh_user_data.get("companyName") or fresh_user_data.get("company_name")
-                                        )
-                                        logger.info(f"AI domain check result for {user_phone}: {ai_domain_result}")
-                                        
-                                        # Process user approval with the AI domain result
-                                        domain_check_result = await self.domain_check_service.process_user_approval(
-                                            user_phone, user_id, session, ai_domain_result
-                                        )
-                                        
-                                        if domain_check_result.get("status") == "approved_and_updated":
-                                            return {
-                                                "status": "authentication_completed",
-                                                "user_type": "buyer",
-                                                "approved": True,
-                                                "redirect_to_main_flow": True
-                                            }
-                                        else:
-                                            # Domain check failed - send message and notification
-                                            message = (
-                                                "*Registration received—thank you!*\n\n"
-                                                "We're reviewing your details to ensure everything is set up perfectly for your onboarding. "
-                                                "Our team will get in touch shortly to complete the process, and once verified, "
-                                                "you'll be able to access your account and start raising RFQs.\n\n"
-                                                "Thank you for choosing Procucev!"
-                                            )
-                                            await self.whatsapp_service.send_message(user_phone, message)
-                                            
-                                            # Send buyer registration not approved notification
-                                            try:
-                                                full_name = fresh_user_data.get("fullName", "Unknown")
-                                                email_for_notification = fresh_user_data.get("username") or fresh_user_data.get("email", "Unknown")
-                                                notification_result = await self.support_notification_service.notify_buyer_registration_not_approved(full_name, email_for_notification, user_phone)
-                                                logger.info(f"Support notification sent for domain mismatch: {email_for_notification}, result: {notification_result}")
-                                            except Exception as notification_error:
-                                                logger.error(f"Failed to send support notification: {notification_error}")
-                                            
-                                            # Call exit without showing exit message
-                                            from app.services.exit_service import ExitService
-                                            exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
-                                            await exit_service.handle_exit_intent(user_phone, session, show_message=False)
-                                            
-                                            # Return status indicating exit completed to prevent further processing
-                                            return {
-                                                "status": "redirected_to_support",
-                                                "user_type": "buyer",
-                                                "approved": False,
-                                                "exit_completed": True,
-                                                "reason": "domain_check_failed"
-                                            }
-                                    else:
-                                        logger.error(f"No user ID found for domain check")
-                                        return {"status": "error", "error": "User ID missing for domain check"}
-                            else:
-                                # Sellers with EMAIL_VERIFIED status - grant access immediately
-                                logger.info(f"Seller with EMAIL_VERIFIED status - granting access")
-                                success = await self._store_verified_user_session(user_phone, fresh_user_data, selected_email)
-                                
-                                if success:
-                                    session.workflow_type = None
-                                    session.workflow_state = {}
-                                    await self.whatsapp_service.send_message(user_phone, "Email verified successfully!")
-                                    return {
-                                        "status": "authentication_completed",
-                                        "user_type": "seller",
-                                        "redirect_to_main_flow": True
-                                    }
-                        else:
-                            logger.warning(f"Verification status still not EMAIL_VERIFIED after OTP: {verification_status}")
-                            # Fall back to original user data
-                            fresh_user_data = selected_user
-                
-                # Fallback: Store user session with validated email (for cases where refresh fails)
+                # Use the selected user data and mark as verified
                 updated_user = selected_user.copy()
                 updated_user["verificationStatus"] = "EMAIL_VERIFIED"
                 
-                success = await self._store_verified_user_session(user_phone, updated_user, selected_email)
+                # Determine user type
+                is_self_client = updated_user.get("selfClient") or updated_user.get("self_client")
+                user_type = "buyer" if is_self_client else "seller"
                 
-                if success:
-                    # Determine user type
-                    is_self_client = updated_user.get("selfClient") or updated_user.get("self_client")
-                    user_type = "buyer" if is_self_client else "seller"
+                if user_type == "buyer":
+                    logger.info(f"Buyer with EMAIL_VERIFIED status - checking domain matching")
                     
-                    # Preserve original message from workflow state
-                    original_message = session.workflow_state.get("original_message")
-                    
-                    # Clear authentication workflow state
-                    session.workflow_type = None
-                    session.workflow_state = {}
-                    logger.info(f"Authentication completed after OTP validation for {user_phone}")
-                    
-                    await self.whatsapp_service.send_message(user_phone, "Email verified successfully!")
-                    
-                    return {
-                        "status": "authentication_completed",
-                        "user_type": user_type,
-                        "redirect_to_main_flow": True,
-                        "original_message": original_message
-                    }
+                    # Check if already approved
+                    if updated_user.get("approved") is True:
+                        logger.info(f"Buyer already approved - granting access")
+                        # Store session and grant access
+                        success = await self._store_verified_user_session(user_phone, updated_user, selected_email)
+                        
+                        if success:
+                            session.workflow_type = None
+                            session.workflow_state = {}
+                            return {
+                                "status": "authentication_completed",
+                                "user_type": "buyer",
+                                "redirect_to_main_flow": True
+                            }
+                    else:
+                        # Trigger domain check for non-approved buyers
+                        logger.info(f"Buyer not approved - triggering domain check")
+                        
+                        user_id = updated_user.get("id")
+                        if user_id:
+                            # Perform AI-based domain matching first
+                            ai_domain_result = await self.domain_check_service.check_domain_match(
+                                updated_user.get("username") or updated_user.get("email"),
+                                updated_user.get("companyName") or updated_user.get("company_name")
+                            )
+                            logger.info(f"AI domain check result for {user_phone}: {ai_domain_result}")
+                            
+                            # Process user approval with the AI domain result
+                            domain_check_result = await self.domain_check_service.process_user_approval(
+                                user_phone, user_id, session, ai_domain_result
+                            )
+                            
+                            if domain_check_result.get("status") == "approved_and_updated":
+                                return {
+                                    "status": "authentication_completed",
+                                    "user_type": "buyer",
+                                    "approved": True,
+                                    "redirect_to_main_flow": True
+                                }
+                            else:
+                                # Domain check failed - send message and notification
+                                message = (
+                                    "*Registration received—thank you!*\n\n"
+                                    "We're reviewing your details to ensure everything is set up perfectly for your onboarding. "
+                                    "Our team will get in touch shortly to complete the process, and once verified, "
+                                    "you'll be able to access your account and start raising RFQs.\n\n"
+                                    "Thank you for choosing Procucev!"
+                                )
+                                await self.whatsapp_service.send_message(user_phone, message)
+                                
+                                # Send buyer registration not approved notification
+                                try:
+                                    full_name = updated_user.get("fullName", "Unknown")
+                                    email_for_notification = updated_user.get("username") or updated_user.get("email", "Unknown")
+                                    notification_result = await self.support_notification_service.notify_buyer_registration_not_approved(full_name, email_for_notification, user_phone)
+                                    logger.info(f"Support notification sent for domain mismatch: {email_for_notification}, result: {notification_result}")
+                                except Exception as notification_error:
+                                    logger.error(f"Failed to send support notification: {notification_error}")
+                                
+                                # Call exit without showing exit message
+                                from app.services.exit_service import ExitService
+                                exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
+                                await exit_service.handle_exit_intent(user_phone, session, show_message=False)
+                                
+                                # Return status indicating exit completed to prevent further processing
+                                return {
+                                    "status": "redirected_to_support",
+                                    "user_type": "buyer",
+                                    "approved": False,
+                                    "exit_completed": True,
+                                    "reason": "domain_check_failed"
+                                }
+                        else:
+                            logger.error(f"No user ID found for domain check")
+                            return {"status": "error", "error": "User ID missing for domain check"}
                 else:
-                    return {"status": "error", "error": "Failed to store session"}
+                    # Sellers with EMAIL_VERIFIED status - grant access and show seller menu
+                    logger.info(f"Seller with EMAIL_VERIFIED status - granting access and showing seller menu")
+                    success = await self._store_verified_user_session(user_phone, updated_user, selected_email)
+                    
+                    if success:
+                        session.workflow_type = None
+                        session.workflow_state = {}
+                        
+                        # Get email for personalized message
+                        email = updated_user.get("username") or updated_user.get("email") or selected_email
+                        
+                        # Send success message with seller menu options
+                        await self._send_seller_menu_options(user_phone, email)
+                        
+                        return {
+                            "status": "authentication_completed",
+                            "user_type": "seller",
+                            "redirect_to_main_flow": True
+                        }
+                
+                # Fallback: If we reach here, something went wrong - return error
+                logger.error(f"Unexpected fallback in OTP validation for {user_phone}")
+                return {"status": "error", "error": "Authentication flow error"}
             
             return otp_result
             
@@ -1330,6 +1244,31 @@ Respond only with: "yes" or "no"
             return "there"
         except Exception:
             return "there"
+    
+    async def _send_seller_menu_options(self, user_phone: str, username: str) -> None:
+        """Send seller menu options after successful authentication."""
+        try:
+            # Send welcome message with seller menu options
+            welcome_message = f"Perfect! Continuing with your Seller profile ({username}).\nWhat would you like to do?"
+            
+            # Seller menu options using configurable buttons
+            buttons_config = [
+                {"id": "rfq_status", "title": "Check RFQs Status"},
+                {"id": "contact_support", "title": "Contact Support"}
+            ]
+            
+            await self.whatsapp_service.send_configurable_buttons(
+                user_phone,
+                welcome_message,
+                buttons_config
+            )
+            
+            logger.info(f"Sent seller menu options to {user_phone}")
+            
+        except Exception as e:
+            logger.error(f"Error sending seller menu options: {e}")
+            # Fallback to simple text message
+            await self.whatsapp_service.send_message(user_phone, f"Hi {username}! Email verified successfully! You can now access seller features.")
     
     async def _clear_session_only(self, session: ConversationSession) -> bool:
         """Clear session data without sending goodbye message."""

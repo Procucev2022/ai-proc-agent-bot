@@ -883,14 +883,24 @@ class ProfileSelectionService:
             # Get user data and perform verification check
             user_data = profile['user_data']
 
-            # CRITICAL: Perform verification check (including domain check) before storing session
-            verification_check = await self.authentication_service.verification_check_service.check_and_enforce_verification(
-                user_phone, user_data
-            )
+            # CRITICAL: Check if user already has valid auth token first
+            normalized_phone = user_phone.lstrip('+')
+            existing_token = await self.authentication_service.auth_redis_service.retrieve(normalized_phone)
+            
+            if existing_token:
+                # User already has valid auth token - skip verification and proceed
+                logger.info(f"User {user_phone} has existing auth token - skipping verification")
+                verification_check = {"access_granted": True, "user_data": user_data}
+            else:
+                # No existing token - perform verification check
+                verification_check = await self.authentication_service.verification_check_service.check_and_enforce_verification(
+                    user_phone, user_data
+                )
 
             if not verification_check.get("access_granted"):
                 # User doesn't meet verification requirements
                 logger.info(f"Profile selection blocked due to verification requirements: {verification_check}")
+
                 redirect_info = verification_check.get("redirect_info", {})
 
                 if verification_check.get("redirect_to_support"):
