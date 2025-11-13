@@ -69,5 +69,5 @@ volumes:
 #  celery_redis_data:
 
 networks:
-  procucev_network:
+  procurev_network:
     driver: bridge
