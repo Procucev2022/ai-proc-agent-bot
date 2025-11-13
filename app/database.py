@@ -103,8 +103,14 @@ def init_database():
 
     settings = get_settings()
 
-    # SSL configuration handled in connection URL
+    # SSL configuration for Azure MySQL
     connect_args = {}
+    if settings.database_mode == "client":
+        connect_args = {
+            "ssl_disabled": False,
+            "ssl_verify_cert": False,
+            "ssl_verify_identity": False
+        }
 
     engine = create_engine(
         settings.get_database_url(),
@@ -202,8 +208,14 @@ def get_db_session():
         # Initialize with SSL configuration based on database mode
         settings = get_settings()
 
-        # SSL configuration handled in connection URL
+        # SSL configuration for Azure MySQL
         connect_args = {}
+        if settings.database_mode == "client":
+            connect_args = {
+                "ssl_disabled": False,
+                "ssl_verify_cert": False,
+                "ssl_verify_identity": False
+            }
 
         try:
             engine = create_engine(
