@@ -1,4 +1,16 @@
 services:
+  # Redis for general use
+  redis:
+    container_name: procurev_redis
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - procurev_network
+
   # Redis for Celery broker and result backend
   celery_redis:
     container_name: procucev_celery_redis
@@ -53,6 +65,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  redis_data:
   celery_redis_data:
 
 networks:

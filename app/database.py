@@ -107,9 +107,11 @@ def init_database():
     connect_args = {}
     if settings.database_mode == "client":
         connect_args = {
-            "ssl_disabled": False,
-            "ssl_verify_cert": False,
-            "ssl_verify_identity": False
+            "ssl": {
+                "ssl_disabled": False,
+                "ssl_check_hostname": False,
+                "ssl_verify_cert": False
+            }
         }
 
     engine = create_engine(
@@ -212,9 +214,11 @@ def get_db_session():
         connect_args = {}
         if settings.database_mode == "client":
             connect_args = {
-                "ssl_disabled": False,
-                "ssl_verify_cert": False,
-                "ssl_verify_identity": False
+                "ssl": {
+                    "ssl_disabled": False,
+                    "ssl_check_hostname": False,
+                    "ssl_verify_cert": False
+                }
             }
 
         try:
