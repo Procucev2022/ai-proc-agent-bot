@@ -65,8 +65,8 @@ services:
   #   restart: unless-stopped
 
 volumes:
-  redis_data:
-  # celery_redis_data:
+  # redis_data:
+  celery_redis_data:
 
 networks:
   procucev_network:
