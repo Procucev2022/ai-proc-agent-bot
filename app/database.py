@@ -2,6 +2,9 @@
 Database connection and session management for the AI Procurement Agent.
 """
 
+import pymysql
+pymysql.install_as_MySQLdb()
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.attributes import flag_modified
