@@ -1,17 +1,29 @@
 services:
   # Redis for general use
+
   redis:
     container_name: procurev_redis
     image: redis:7.2-alpine
     ports:
       - "6379:6379"
-    command: redis-server --appendonly yes
+    command: >
+      redis-server --appendonly yes
+                   --loglevel notice
+                   --logfile ""   # empty = stdout
+                   --save 900 1
+                   --save 300 10
+                   --save 60 10000
     volumes:
       - redis_data:/data
     networks:
       - procurev_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
 
-  # # Redis for Celery broker and result backend
+    # # Redis for Celery broker and result backend
   # celery_redis:
   #   container_name: procucev_celery_redis
   #   image: redis:6.2-alpine
