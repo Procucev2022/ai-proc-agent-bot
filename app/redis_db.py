@@ -183,7 +183,10 @@ class SessionRedisService(BaseRedisService):
     def __init__(self):
         super().__init__()
         self.settings = get_settings()
-        self.default_ttl = self.settings.redis_session_ttl_seconds  # 1800 (30 min)
+        # Default TTL = workflow_timeout + 10-minute buffer (safety net for missed timeouts)
+        # InactivityTimeoutService handles timeout at workflow_timeout_seconds
+        # Redis TTL expires sessions at workflow_timeout_seconds + 600 (cleanup safety net)
+        self.default_ttl = self.settings.workflow_timeout_seconds + 600
 
     async def store_session(self, session_id: str, session_data: Dict[str, Any], ttl: Optional[int] = None) -> bool:
         """

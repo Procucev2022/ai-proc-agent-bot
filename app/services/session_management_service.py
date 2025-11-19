@@ -226,68 +226,29 @@ class SessionManagementService:
         return session
     
     async def handle_session_expiry_check(self, user_phone: str, session: ConversationSession) -> ConversationSession:
-        """Handle session expiry check and renewal.
-
-        For Redis-enabled:
-        - If session is fresh (just created), check if a previous session exists in DB
-        - If previous session found with messages, send welcome back message
-        - This handles TTL expiry without doing DB GET in main flow
         """
-        # For Redis-enabled: Check if this is a fresh session after timeout/abandonment
-        if self.redis_enabled and session:
-            # Check if session is freshly created (no messages yet)
-            messages = session.conversation_history.get("messages", []) if session.conversation_history else []
-            if len(messages) == 0:
-                # IMPORTANT: Only show "welcome back" if user actually needs re-authentication
-                # Check if auth token exists - if it does, user is still authenticated
-                from app.redis_db import get_auth_redis_service
-                auth_redis_service = get_auth_redis_service()
-                normalized_phone = user_phone.lstrip('+')
-                has_auth_token = await auth_redis_service.is_authenticated(normalized_phone)
-
-                if has_auth_token:
-                    # User is still authenticated - don't show welcome back message
-                    logger.info(f"Session {session.session_id} has 0 messages but user {normalized_phone} is still authenticated - skipping welcome back")
-                else:
-                    # User has no auth token - check if there's a previous session in DB
-                    # This DB GET only happens once when user returns after timeout/exit - acceptable
-                    db_session = self.db_manager.get_conversation_session(session.session_id)
-                    if db_session and db_session.outcome == ConversationOutcome.timeout:
-                        # Previous session timed out - send welcome back message
-                        logger.info(f"Session {session.session_id} is fresh, found previous timeout session, no auth token - sending welcome back")
-                        await self.whatsapp_service.send_message(
-                            user_phone,
-                            "Welcome back! Kindly wait while I verify your profile to proceed."
-                        )
-                    elif db_session and db_session.outcome == ConversationOutcome.abandoned:
-                        # User explicitly exited - don't show welcome back, just proceed with re-auth silently
-                        logger.info(f"Session {session.session_id} is fresh, found previous abandoned (exit) session - proceeding with silent re-auth (no welcome back)")
-                    else:
-                        logger.info(f"Session {session.session_id} has 0 messages, no auth token, but no previous timeout/abandoned session in DB - skipping welcome back")
-
-        # For Redis-disabled mode: Use old logic
-        elif not self.redis_enabled:
-            # Check if session has expired
-            if await SessionHelpers.is_session_expired(session):
-                # Only send expiration message if appropriate
-                if await SessionHelpers.should_send_expiration_message(session):
-                    await self.whatsapp_service.send_message(
-                        user_phone,
-                        "Welcome back! Kindly wait while I verify your profile to proceed."
-                    )
-
-                    # Generate enhanced session summary for timeout (non-blocking)
-                    await self._handle_session_completion_enhanced(session)
-
-                # Handle session expiry properly (appends to DB, returns reset session)
-                session = await SessionHelpers.handle_session_expiry(session, self.db_manager)
-            else:
-                # Session is active, renew its activity timestamp
-                session = await SessionHelpers.renew_session_activity(session)
-                current_workflow = session.workflow_type or WorkflowType.general_inquiry
-                await self.save_session(session, current_workflow)
-
-        return session
+        DEPRECATED: Session expiry now handled by InactivityTimeoutService.
+        
+        This method is kept for backward compatibility but does nothing.
+        The InactivityTimeoutService actively monitors user activity and handles
+        timeouts at the configured interval (default: 30 minutes).
+        
+        Redis TTL serves as a safety net for any sessions that bypass timeout monitoring.
+        
+        To be removed in future version after InactivityTimeoutService is stable.
+        
+        Args:
+            user_phone: User's phone number
+            session: Current conversation session
+            
+        Returns:
+            Unchanged session (no processing)
+        """
+        logger.debug(
+            f"handle_session_expiry_check called for {user_phone} but disabled "
+            f"(using InactivityTimeoutService for timeout management)"
+        )
+        return session  # Just return session unchanged
     
     def add_message_to_history(self, session: ConversationSession, role: str, content: str, message_type: str = "text", intent: str = None, confidence: float = None):
         """Add message to conversation history."""

@@ -361,8 +361,10 @@ class ChatService:
             # Get or create user session using extracted service
             session = await self.session_manager.get_conversation_context(user_phone)
 
-            # Handle session expiry using extracted service
-            session = await self.session_manager.handle_session_expiry_check(user_phone, session)
+            # DISABLED: Session expiry now handled by InactivityTimeoutService (30-minute proactive timeout)
+            # The timeout service actively monitors user activity and cleans up timed-out sessions
+            # Redis TTL (40 min) serves as a safety net for any sessions that bypass timeout monitoring
+            # session = await self.session_manager.handle_session_expiry_check(user_phone, session)
 
             # Track user message in conversation history using extracted service
             # Classify intent for all user messages to enable proper message routing after auth
