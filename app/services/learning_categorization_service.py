@@ -88,6 +88,9 @@ class LearningCategorizationService:
                 client_category=client_category
             )
             
+            # Close OpenAI client to prevent event loop errors
+            self.openai_service.close_sync()
+            
             if not categorization_result.get("success"):
                 return {
                     "success": False,
@@ -370,6 +373,9 @@ class LearningCategorizationService:
                 level_3=level_3,
                 item_description=item_description
             )
+            
+            # Close OpenAI client to prevent event loop errors
+            self.openai_service.close_sync()
             
             return validation_result
             
