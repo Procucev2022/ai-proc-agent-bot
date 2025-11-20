@@ -86,11 +86,11 @@ class WhatsAppService:
             from app.redis_db import get_redis_service
             redis_service = get_redis_service()
             cache_key = f"user_cache:{formatted_recipient}"
-            print("key", cache_key)
+            logger.info(f"\n\nuser cahce key is:{cache_key}\n\n")
             cache_data = await redis_service.get(cache_key, as_json=True)
             if cache_data and cache_data.get("irrelevant_response"):
                 irrelevant_response = cache_data["irrelevant_response"].get("user_message")
-                print("irrr", irrelevant_response)
+                logger.info(f"\n\n irrr: {irrelevant_response}\n\n")
                 if irrelevant_response:
                     combined_message = f"{irrelevant_response}\n\n{message}"
                     # Clear the irrelevant response after using it
