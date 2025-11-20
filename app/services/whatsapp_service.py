@@ -58,7 +58,7 @@ class WhatsAppService:
         self.retry_service = get_retry_service()
         self.retry_service.max_retries = settings.retry_max_attempts
         self.retry_service.initial_delay = settings.retry_initial_delay
-        
+
     async def send_message(self, recipient_id: str, message: str) -> MessageResponse:
         """
         Send text message to WhatsApp user with retry mechanism.
@@ -66,24 +66,7 @@ class WhatsAppService:
         Sends formatted text message with API authentication,
         message formatting, error handling, and automatic retries.
         """
-        # Check for irrelevant response in context manager and combine with existing response
-        
-        try:
-            print("receipient id", recipient_id)
-            # Access the saved irrelevant response using user phone as key
-            irrelevant_key = f"irrelevant_{recipient_id}"
-            message_data = param_context.get(irrelevant_key)
-            print("message", message_data)
-            if message_data:
-                irrelevant_response = message_data.get("irrelevant_response")
-                print("iirelevbant", irrelevant_response)
-                if irrelevant_response:
-                    message = f"{irrelevant_response}\n\n{message}"
-                    # Clear the irrelevant response after using it
-                    param_context.delete(irrelevant_key)
-        except Exception as e:
-            logger.warning(f"Error checking irrelevant response in context manager: {e}")
-        
+
         async def send_text_message():
             if self.mock_mode:
                 logger.info(f"[MOCK] Sending message to {recipient_id}: {message}")
@@ -97,6 +80,19 @@ class WhatsAppService:
                 logger.error(f"Invalid phone number format: {recipient_id}")
                 return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}")
 
+            # Prepare message
+            combined_message = message  # default
+            # Access the saved irrelevant response using user phone as key
+            irrelevant_key = f"irrelevant_{formatted_recipient}"
+            message_data = param_context.get(irrelevant_key)
+            print("message", message_data)
+            if message_data:
+                irrelevant_response = message_data.get("irrelevant_response")
+                print("iirelevbant", irrelevant_response)
+                if irrelevant_response:
+                    combined_message = f"{irrelevant_response}\n\n{message}"
+                    # Clear the irrelevant response after using it
+                    param_context.delete(irrelevant_key)
             payload = {
                 "user": self.username,
                 "pass": self.password,
@@ -105,26 +101,26 @@ class WhatsAppService:
                     "to": formatted_recipient,
                     "type": "text",
                     "message": {
-                        "text": message
+                        "text": combined_message or message
                     }
                 }
             }
 
             logger.info(f"WhatsApp payload - from: {self.from_number}, to: {formatted_recipient}")
             logger.info(f"FROM_NUMBER config: {self.from_number}")
-            
+
             response = requests.post(
                 f"{self.base_url}/sessioncomm",
                 json=payload,
                 headers={"Content-Type": "application/json"},
                 timeout=30
             )
-            
+
             return self._handle_api_response(response)
-        
+
         # Use retry service for reliable delivery
         retry_result = await self.retry_service.retry_with_backoff(send_text_message)
-        
+
         if retry_result["success"]:
             return retry_result["result"]
         else:
