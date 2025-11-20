@@ -31,10 +31,12 @@ from app.services.chat_service import ChatService
 from app.services.cancel_service import CancelService
 from app.services.session_management_service import SessionManagementService
 from app.services.message_queue_service import MessageQueueService
+from app.services.inactivity_timeout_service import get_timeout_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 message_queue_service = MessageQueueService()  # Instantiate message_queue service
+timeout_service = get_timeout_service()  # Get singleton timeout service instance
 
 # Set up WhatsApp webhook payload logger
 webhook_payload_logger = logging.getLogger("whatsapp_webhook")
@@ -342,6 +344,12 @@ async def enqueue_message_async(webhook_data: Dict[str, Any]):
     """
     from_number = None
     try:
+        from_number = webhook_data.get("from")
+        
+        # Update activity timestamp FIRST (for timeout tracking)
+        if from_number:
+            await timeout_service.update_user_activity(from_number)
+        
         logger.info(f"Enqueueing text message: {webhook_data}")
 
         # Enqueue the message - the service will handle batching and processing
@@ -376,6 +384,12 @@ async def process_message_async(webhook_data: Dict[str, Any]):
 
     from_number = None
     try:
+        from_number = webhook_data.get("from")
+        
+        # Update activity timestamp FIRST (for timeout tracking)
+        if from_number:
+            await timeout_service.update_user_activity(from_number)
+        
         processing_start_time = datetime.now()
         logger.info(f"Processing non-text message directly: {webhook_data}")
         logger.info(f"Background task started at: {processing_start_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")

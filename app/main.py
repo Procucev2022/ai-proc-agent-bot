@@ -130,6 +130,21 @@ async def lifespan(app: FastAPI):
             logger.error(f"Failed to start webhook health monitoring: {e}")
             # Continue without monitoring rather than failing startup
     
+    # Start inactivity timeout monitoring (optimized for multi-worker)
+    timeout_service = None
+    try:
+        from app.services.inactivity_timeout_service import get_timeout_service
+        timeout_service = get_timeout_service()  # Use singleton
+        
+        # Optimized: Only start monitor if not already running on another worker
+        if await timeout_service.try_start_monitoring_if_available():
+            logger.info("Inactivity timeout monitoring started on this worker")
+        else:
+            logger.info("Inactivity timeout monitoring already running on another worker")
+    except Exception as e:
+        logger.error(f"Failed to start timeout monitoring: {e}")
+        # Continue without timeout monitoring rather than failing startup
+    
     yield
     
     logger.info("Shutting down AI Procurement Agent application")
@@ -172,6 +187,14 @@ async def lifespan(app: FastAPI):
                 await webhook_monitor._close_session()
             except Exception:
                 pass
+    
+    # Stop timeout monitoring gracefully
+    if timeout_service:
+        try:
+            await timeout_service.stop_monitoring()
+            logger.info("Inactivity timeout monitoring stopped")
+        except Exception as e:
+            logger.error(f"Error stopping timeout monitoring: {e}")
     
     # Cleanup any remaining aiohttp sessions
     import aiohttp
