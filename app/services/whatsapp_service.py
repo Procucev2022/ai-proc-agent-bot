@@ -84,6 +84,7 @@ class WhatsAppService:
             combined_message = message  # default
             # Access the saved irrelevant response using user phone as key
             irrelevant_key = f"irrelevant_{formatted_recipient}"
+            print("key", irrelevant_key)
             message_data = param_context.get(irrelevant_key)
             print("message", message_data)
             if message_data:

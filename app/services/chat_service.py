@@ -454,7 +454,7 @@ class ChatService:
                     logger.info(f"Generated irrelevant response: {irrelevant_response}")
                     
                     if irrelevant_response:
-                        print("setting data into context")
+                        print(f"setting data into context to :{user_phone}")
                         # Save irrelevant response in param_context for WhatsApp service to access
                         # Use a simple key since we don't have access to request object here
                         param_context.set(f"irrelevant_{user_phone}", {
