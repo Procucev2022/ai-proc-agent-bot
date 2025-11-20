@@ -158,8 +158,6 @@ class OpenAIService:
         """
         try:
             prompt_file = self.prompts_dir / category / f"{prompt_name}.txt"
-            print("self dir", self.prompts_dir)
-            print("prompt file", prompt_file)
             with open(prompt_file, 'r', encoding='utf-8') as f:
                 prompt_template = f.read()
             

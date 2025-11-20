@@ -217,7 +217,6 @@ class UserCacheService:
         """Generate Redis cache key for user data."""
         # Normalize phone number for consistent key generation
         normalized_phone = phone_number.lstrip('+').replace(' ', '').replace('-', '')
-        logger.info(f"normalie phone:{normalized_phone}")
         return f"user_cache:{normalized_phone}"
 
     async def store_meaningful_message(self, phone_number: str, message: str, intent_result: Dict[str, Any]) -> bool:
