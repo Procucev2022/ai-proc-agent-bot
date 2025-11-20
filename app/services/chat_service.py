@@ -746,7 +746,7 @@ class ChatService:
             # Only proceed to main flow if user is properly authenticated
             user = auth_result
             if message_type == "text" and message_intent_result.get('relevant_message'):
-                result = await self._process_text_message(user, session, message_content, message_intent_result)
+                result = await self._process_text_message(user, session, message_intent_result.get('relevant_message') or message_content, message_intent_result)
             elif message_type == "interactive":
                 result = await self._process_interactive_message(user, session, message_content)
             elif message_type == "excel_upload":
