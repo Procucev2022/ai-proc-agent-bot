@@ -27,6 +27,21 @@ from .learning_categorization_service import LearningCategorizationService
 
 logger = logging.getLogger(__name__)
 
+# Global singleton instance
+_auto_categorization_service_instance = None
+
+def get_auto_categorization_service() -> 'AutoCategorizationService':
+    """
+    Get singleton instance of AutoCategorizationService.
+    This ensures the model is loaded only once and reused across requests.
+    """
+    global _auto_categorization_service_instance
+    if _auto_categorization_service_instance is None:
+        logger.info("Initializing AutoCategorizationService singleton")
+        _auto_categorization_service_instance = AutoCategorizationService()
+        logger.info("AutoCategorizationService singleton initialized")
+    return _auto_categorization_service_instance
+
 def get_project_root() -> Path:
     """
     Find the project root directory by looking for the 'app' folder.
@@ -122,29 +137,41 @@ class AutoCategorizationService:
                 # Simple document text: item + category for better matching
                 doc_text = f"{item['item']} {item['category']}"
                 documents.append(doc_text)
-                
+
                 # Metadata includes division for remote data but isn't used in search
                 metadata = {
                     "category": item['category'],
                     "item": item['item'],
                     "mapping_id": item['id']
                 }
-                
+
                 # Add division for remote data (stored but not used in search)
                 if 'division' in item:
                     metadata["division"] = item['division']
                 if 'serial_no' in item:
                     metadata["serial_no"] = item['serial_no']
-                
+
                 metadatas.append(metadata)
                 ids.append(item['id'])
-            
-            # Add to ChromaDB collection (embeddings generated automatically)
-            self.collection.add(
-                documents=documents,
-                metadatas=metadatas,
-                ids=ids
-            )
+
+            # Add to ChromaDB collection in batches to avoid max batch size error
+            # ChromaDB has a max batch size limit, so we process in chunks
+            batch_size = 5000  # Safe batch size for ChromaDB
+            total_items = len(items_data)
+
+            for i in range(0, total_items, batch_size):
+                end_idx = min(i + batch_size, total_items)
+                batch_documents = documents[i:end_idx]
+                batch_metadatas = metadatas[i:end_idx]
+                batch_ids = ids[i:end_idx]
+
+                logger.info(f"Adding batch {i//batch_size + 1}: items {i+1} to {end_idx} of {total_items}")
+
+                self.collection.add(
+                    documents=batch_documents,
+                    metadatas=batch_metadatas,
+                    ids=batch_ids
+                )
             
             source = "remote item_category" if settings.enable_remote_categorization else "local CategoryMapping"
             logger.info(f"Successfully populated ChromaDB with {len(items_data)} items from {source}")
@@ -332,7 +359,7 @@ class AutoCategorizationService:
             "suggestion": "Manual categorization required or expand reference database"
         }
     
-    def categorize_item(self, 
+    async def categorize_item(self,
                        item_description: str,
                        user_id: str,
                        session_id: Optional[str] = None,
@@ -342,19 +369,19 @@ class AutoCategorizationService:
         """
         import time
         start_time = time.time()
-        
+
         try:
             # Step 1: Vector search for top 3 similar items
             similar_items = self._get_similar_items(item_description)
-            
+
             if not similar_items:
                 return self._handle_no_similar_items(
-                    item_description, user_id, session_id, rfq_id, 
+                    item_description, user_id, session_id, rfq_id,
                     int((time.time() - start_time) * 1000)
                 )
-            
+
             # Step 2: OpenAI final selection with context
-            openai_result = self.openai_service.categorize_with_similar_items(
+            openai_result = await self.openai_service.categorize_with_similar_items(
                 item_description, similar_items
             )
             

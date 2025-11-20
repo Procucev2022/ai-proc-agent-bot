@@ -403,7 +403,32 @@ class RegistrationService:
             registration_data = AuthenticationHelpers.build_registration_payload_dynamic(
                 user_schema, mapped_entities, user_phone
             )
-            
+
+            # For sellers: Parse and categorize their products/services BEFORE registration
+            if user_type == "seller" and "details" in registration_data:
+                division_categories = await self._categorize_seller_products(
+                    seller_details=registration_data["details"],
+                    user_phone=user_phone,
+                    session=session
+                )
+
+                # Add divisionCategories to registration payload
+                if division_categories:
+                    registration_data["divisionCategories"] = division_categories
+                    logger.info(f"Added {len(division_categories)} divisionCategories to seller registration")
+
+                    # Log the categories for visibility
+                    import json
+                    logger.info(f"Seller registration divisionCategories: {json.dumps(division_categories, indent=2)}")
+
+            # Log the complete registration payload (excluding sensitive fields)
+            import json
+            payload_for_logging = registration_data.copy()
+            # Mask sensitive fields for logging
+            if "gstin" in payload_for_logging:
+                payload_for_logging["gstin"] = "***MASKED***"
+            logger.info(f"Seller registration payload: {json.dumps(payload_for_logging, indent=2)}")
+
             # Call appropriate API based on user type
             if user_type == "buyer":
                 result = await self.register_api_service.register_buyer(registration_data)
@@ -925,7 +950,90 @@ class RegistrationService:
         from app.services.exit_service import ExitService
         exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
         return await exit_service.handle_exit_intent(user_phone, session, show_message=False)
-    
+
+    async def _categorize_seller_products(self, seller_details: str, user_phone: str, session: ConversationSession) -> List[Dict[str, str]]:
+        """
+        Parse and categorize seller products during registration.
+        Args:
+            seller_details: The seller's product/service details string
+            user_phone: User's phone number for tracking
+            session: Current conversation session
+        Returns:
+            List of divisionCategories in format: [{"category": "...", "division": ""}, ...]
+        """
+        try:
+            logger.info(f"Starting product categorization for seller {user_phone}")
+
+            # Step 1: Parse seller details into individual items
+            parsing_result = await self.openai_service.parse_seller_product_items(seller_details)
+
+            if not parsing_result.get("success") or not parsing_result.get("items"):
+                logger.warning(f"Failed to parse seller details or no items found: {parsing_result}")
+                return []
+
+            items = parsing_result.get("items", [])
+            logger.info(f"Parsed {len(items)} items from seller details")
+
+            # Step 2: Get auto categorization service singleton (reuses preloaded model)
+            from app.services.auto_categorization_service import get_auto_categorization_service
+            categorization_service = get_auto_categorization_service()
+
+            # Step 3: Categorize each item
+            categorizations = []
+            division_categories = []
+
+            for item in items:
+                logger.info(f"Categorizing seller item: '{item}'")
+
+                try:
+                    categorization_result = await categorization_service.categorize_item(
+                        item_description=item,
+                        user_id=user_phone,  # Use phone as user_id during registration
+                        session_id=session.session_id if hasattr(session, 'session_id') else None
+                    )
+
+                    if categorization_result.get("success"):
+                        client_category = categorization_result.get("category")
+
+                        categorizations.append({
+                            "item": item,
+                            "client_category": client_category,
+                            "confidence_score": categorization_result.get("confidence_score"),
+                            "method": categorization_result.get("method")
+                        })
+
+                        # Add to divisionCategories array (division field empty)
+                        if client_category:
+                            division_categories.append({
+                                "category": client_category,
+                                "division": ""
+                            })
+
+                        logger.info(f"Categorized '{item}' as '{client_category}'")
+                    else:
+                        logger.warning(f"Failed to categorize '{item}': {categorization_result.get('error')}")
+
+                except Exception as e:
+                    logger.error(f"Error categorizing item '{item}': {e}")
+
+            # Step 4: Store results in session for reference
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state["seller_categorizations"] = {
+                "original_details": seller_details,
+                "parsed_items": items,
+                "categorizations": categorizations,
+                "total_items": len(items),
+                "successfully_categorized": len([c for c in categorizations if c.get("client_category")])
+            }
+
+            logger.info(f"Seller categorization complete: {len(categorizations)}/{len(items)} items categorized")
+            return division_categories
+
+        except Exception as e:
+            logger.error(f"Error in seller product categorization: {e}")
+            # Don't fail registration if categorization fails
+            return []
+
     async def _handle_neutral_greeting(self, user_phone: str, profiles: List[Dict],
                                      session: ConversationSession) -> Dict[str, Any]:
         """Handle Case 1: Neutral/Greeting Start."""
