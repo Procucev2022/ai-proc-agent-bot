@@ -19,15 +19,18 @@ logger = logging.getLogger(__name__)
 
 class PurchaseIntentHandler:
     """Handles purchase intent workflow orchestration."""
-    
+
     def __init__(self, whatsapp_service: WhatsAppService, response_helpers: ResponseHelpers,
-                 entity_service, chat_summary_service, products_array_handler, session_manager):
+                 entity_service, chat_summary_service, products_array_handler, session_manager,
+                 confirmation_handler=None, attachment_decision_handler=None):
         self.whatsapp_service = whatsapp_service
         self.response_helpers = response_helpers
         self.entity_service = entity_service
         self.chat_summary_service = chat_summary_service
         self.products_array_handler = products_array_handler
         self.session_manager = session_manager
+        self.confirmation_handler = confirmation_handler
+        self.attachment_decision_handler = attachment_decision_handler
     
     async def handle_purchase_intent(self, user: User, session: ConversationSession,
                                    message: str, intent_result: Dict[str, Any] = None,
@@ -39,6 +42,40 @@ class PurchaseIntentHandler:
             if session.workflow_state and 'session_archive' in session.workflow_state:
                 logger.warning(f"[CLEANUP] Removing lingering session_archive from workflow_state")
                 del session.workflow_state['session_archive']
+
+            # CHECK FOR SECTIONED RFQ WORKFLOW (Track 3)
+            # Check global configuration flag
+            from app.config import get_settings
+            settings = get_settings()
+
+            # If sectioned RFQ is already active OR global flag is enabled
+            if WorkflowManager.is_sectioned_rfq_active(session) or settings.use_sectioned_rfq:
+                logger.info(f"[SECTIONED_RFQ] Routing to sectioned RFQ handler (global flag: {settings.use_sectioned_rfq}, already active: {WorkflowManager.is_sectioned_rfq_active(session)})")
+
+                # Initialize sectioned RFQ if not already active
+                if not WorkflowManager.is_sectioned_rfq_active(session):
+                    logger.info(f"[SECTIONED_RFQ] Initializing sectioned RFQ workflow")
+                    WorkflowManager.initialize_sectioned_rfq(session)
+                    WorkflowManager.set_sectioned_rfq_section(session, "date_location")
+                    if "sectioned_rfq" in session.workflow_state:
+                        session.workflow_state["sectioned_rfq"]["active"] = True
+
+                # Get or create sectioned RFQ handler (lazy initialization)
+                from app.services.handlers.sectioned_rfq_creation_handler import SectionedRFQCreationHandler
+                if not hasattr(self, 'sectioned_rfq_handler'):
+                    from app.services.cancel_service import CancelService
+                    cancel_service = CancelService(self.whatsapp_service, self.session_manager)
+                    self.sectioned_rfq_handler = SectionedRFQCreationHandler(
+                        entity_service=self.entity_service,
+                        whatsapp_service=self.whatsapp_service,
+                        cancel_service=cancel_service,
+                        session_manager=self.session_manager,
+                        confirmation_handler=self.confirmation_handler,
+                        attachment_decision_handler=self.attachment_decision_handler
+                    )
+
+                # Route to sectioned RFQ handler
+                return await self.sectioned_rfq_handler.handle_sectioned_rfq(user, session, message, attachments=[])
 
             # 1. Extract entities using EntityService (focused service)
             # Include both existing entities and incomplete products in context
@@ -128,13 +165,19 @@ class PurchaseIntentHandler:
                     user, session, message, entity_result, chat_summaries
                 )
 
-            if "products" in entity_result and entity_result["products"]:
-                print(f"PurchaseIntentHandler: Taking PRODUCTS ARRAY path with {len(entity_result['products'])} products")
-                logger.info(f"Taking PRODUCTS ARRAY path with {len(entity_result['products'])} products")
-                # Products array detected - process all products and create RFQs
+            # Handle products array path OR supplementary data only (e.g., just delivery date)
+            if "products" in entity_result:
                 products = entity_result["products"]
-                date_validation_error = entity_result.get("date_validation_error", False)
-                return await self.products_array_handler.handle_products_array(user, session, message, products, chat_summaries, date_validation_error)
+                global_supplementary_fields = entity_result.get("global_supplementary_fields")
+
+                # Call handler if we have products OR global supplementary fields to store
+                if products or global_supplementary_fields:
+                    print(f"PurchaseIntentHandler: Taking PRODUCTS ARRAY path with {len(products)} products and global fields: {global_supplementary_fields}")
+                    logger.info(f"Taking PRODUCTS ARRAY path with {len(products)} products")
+                    date_validation_error = entity_result.get("date_validation_error", False)
+                    return await self.products_array_handler.handle_products_array(
+                        user, session, message, products, chat_summaries, date_validation_error, global_supplementary_fields
+                    )
             elif "entities" in entity_result:
                 print(f"PurchaseIntentHandler: Taking BACKWARD COMPATIBILITY path with entities: {entity_result['entities']}")
                 logger.info(f"Taking BACKWARD COMPATIBILITY path with entities: {entity_result['entities']}")

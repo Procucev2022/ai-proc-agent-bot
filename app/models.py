@@ -147,10 +147,61 @@ class RFQVendorAssignment:
 class ConversationSession(Base):
     """
     Enhanced model for managing user conversation sessions and outcomes.
-    
+
     Stores comprehensive conversation state, extracted entities, workflow progress,
-    WhatsApp context, error details, performance metrics, session management 
+    WhatsApp context, error details, performance metrics, session management
     information, and new B2B WhatsApp architecture fields for business analytics.
+
+    WORKFLOW_STATE SCHEMA:
+    =====================
+    The workflow_state JSON column structure varies based on USE_TRACK2_RFQ_FLOW flag.
+
+    LEGACY FLOW (USE_TRACK2_RFQ_FLOW = False):
+    {
+        "extracted_entities": [...],         # List of extracted product entities
+        "incomplete_products": [...],        # Products with missing mandatory fields
+        "complete_products": [...],          # Products with all mandatory fields
+        "pending_rfq": {...},               # Single product pending confirmation
+        "pending_combined_rfq": {...},      # Multiple products pending confirmation
+        "pending_optional_rfq": {...},      # Single product with optional fields
+        "pending_optional_combined_rfq": {...},  # Multiple with optional fields
+        "optional_fields_asked": False,     # Whether optional fields were asked
+        "stage": "collecting",              # Workflow stage (collecting/confirming/submitting)
+        "last_activity_at": "ISO datetime"
+    }
+
+    TRACK 2 FLOW (USE_TRACK2_RFQ_FLOW = True):
+    {
+        # Legacy fields (may still exist but not actively used in Track 2)
+        "extracted_entities": [...],
+        "stage": "collecting",
+
+        # Track 2 Delivery Module (Delivery-first approach)
+        "delivery_details": {
+            "delivery_date": "2025-11-12",  # ISO date format
+            "pincode": "411005",
+            "city": "Pune",                 # Auto-filled from pincode lookup
+            "state": "Maharashtra"          # Auto-filled from pincode lookup
+        },
+        "delivery_confirmed": False,        # True after user confirms delivery details
+
+        # Track 2 Items Module (One-time extraction)
+        "initial_items_extracted": False,   # True after first successful extraction (prevents re-extraction)
+
+        # Track 2 Format Modification (Structured text editing)
+        "awaiting_delivery_modification": False,  # True when user is editing delivery format
+        "awaiting_items_modification": False,     # True when user is editing items format
+        "format_modification_subtype": None,      # "delivery" or "items"
+        "original_format": None,                  # Stores formatted text for retry display
+        "format_retry_count": 0                   # Increments on parse errors (max 3)
+    }
+
+    Track 2 Key Principles:
+    - Delivery-first: Delivery must be confirmed before items collection
+    - One-time extraction: initial_items_extracted flag prevents AI re-extraction on modifications
+    - Format-based modifications: Users edit structured text (parsed by Track 1), not AI interpretation
+    - Retry limits: Max 3 format parsing attempts before cancellation
+    - Interruption handling: FAQ/greeting during RFQ flow supported
     """
     __tablename__ = "conversation_sessions"
     

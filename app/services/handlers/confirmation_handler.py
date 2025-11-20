@@ -19,20 +19,25 @@ from app.utils.datetime_utils import utc_now
 from app.tools.confirmation_tool import ConfirmationTool
 from app.services.confirmation_service import ConfirmationService
 from app.services.openai_service import OpenAIService
+from app.services.cancel_service import CancelService
+from app.services.session_management_service import SessionManagementService
 
 logger = logging.getLogger(__name__)
 
 
 class ConfirmationHandler:
     """Handles RFQ confirmation workflow."""
-    
-    def __init__(self, whatsapp_service: WhatsAppService, response_helpers: ResponseHelpers):
+
+    def __init__(self, whatsapp_service: WhatsAppService, response_helpers: ResponseHelpers,
+                 cancel_service: CancelService = None, session_manager: SessionManagementService = None):
         self.whatsapp_service = whatsapp_service
         self.response_helpers = response_helpers
-        
+        self.cancel_service = cancel_service
+        self.session_manager = session_manager
+
         # Initialize confirmation service
 
-        
+
         openai_service = OpenAIService()
         confirmation_tool = ConfirmationTool(openai_service)
         self.confirmation_service = ConfirmationService(confirmation_tool)
@@ -61,6 +66,11 @@ class ConfirmationHandler:
             # User clicked "Continue" from modification clarification - treat as acceptance
             logger.info(f"Confirmation service: Button 'confirm_no_changes' - user confirmed no changes needed from {user.phone_number}")
             return await self._handle_rfq_acceptance(user, session, "Continue")
+
+        elif button_id == "restart_rfq":
+            # User clicked "Restart" - cancel workflow and return to buyer menu
+            logger.info(f"Confirmation service: Button 'restart_rfq' - restarting workflow from {user.phone_number}")
+            return await self._handle_restart_workflow(user, session)
 
         return {"status": "unknown_button", "button_id": button_id}
     
@@ -347,7 +357,7 @@ class ConfirmationHandler:
             # Send confirmation message with buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
-                {"id": "no_rfq", "title": "Add or Modify"}
+                {"id": "restart_rfq", "title": "Restart"}
             ]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
@@ -397,7 +407,7 @@ class ConfirmationHandler:
             # Send confirmation message with buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
-                {"id": "no_rfq", "title": "Add or Modify"}
+                {"id": "restart_rfq", "title": "Restart"}
             ]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
@@ -591,7 +601,7 @@ class ConfirmationHandler:
                 # Send confirmation message with buttons
                 buttons_config = [
                     {"id": "confirm_rfq", "title": "Confirm"},
-                    {"id": "no_rfq", "title": "Add or Modify"}
+                    {"id": "restart_rfq", "title": "Restart"}
                 ]
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
@@ -629,7 +639,7 @@ class ConfirmationHandler:
                 # Send confirmation message with buttons
                 buttons_config = [
                     {"id": "confirm_rfq", "title": "Confirm"},
-                    {"id": "no_rfq", "title": "Add or Modify"}
+                    {"id": "restart_rfq", "title": "Restart"}
                 ]
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
@@ -728,6 +738,29 @@ class ConfirmationHandler:
         except Exception as e:
             logger.error(f"Error formatting captured info for modification: {e}")
             return "*Here's what I have captured so far:*\n\nUnable to display captured information."
+
+    async def _handle_restart_workflow(self, user: User, session: ConversationSession) -> Dict[str, Any]:
+        """
+        Handle restart button - cancels workflow and returns to buyer menu.
+
+        Uses cancel_service to clear the workflow and show buyer options.
+        """
+        logger.info(f"[CONFIRMATION] Restart button clicked by user {user.phone_number}")
+
+        if not self.cancel_service or not self.session_manager:
+            logger.error(f"[CONFIRMATION] Cancel service or session manager not initialized")
+            return {"status": "error", "message": "Unable to restart at this time"}
+
+        # Use cancel_service to handle restart with confirmation
+        cancel_result = await self.cancel_service.handle_cancel_intent(
+            user.phone_number,
+            session,
+            message="restart"
+        )
+
+        logger.info(f"[CONFIRMATION] Cancel service result: {cancel_result}")
+
+        return cancel_result
 
     # async def _check_bfs_availability(self, user_phone: str) -> None:
     #     """Check BFS availability after successful RFQ creation."""
