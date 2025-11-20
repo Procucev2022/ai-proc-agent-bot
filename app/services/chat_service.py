@@ -447,15 +447,19 @@ class ChatService:
                     irrelevant_response = await self._handle_irrelevant_message(user_phone, irrelevant_msg, context_data)
                     logger.info(f"Generated irrelevant response: {irrelevant_response}")
                     if irrelevant_response:
+                        logger.info("have irrevalnt respjnse")
                         # Save irrelevant response in user cache
                         from app.redis_db import get_redis_service
                         redis_service = get_redis_service()
                         cache_key = f"user_cache:{user_phone}"
                         cache_data = await redis_service.get(cache_key, as_json=True) or {}
+                        logger.info(f"\n\n cahced dtaa:{cache_data}")
                         cache_data["irrelevant_response"] = {
                             "user_message": irrelevant_response,
                             "timestamp": utc_now().isoformat()
                         }
+                        logger.info(f"f\n\n chekcing nee:{cache_data}")
+
                         await redis_service.set(cache_key, cache_data, ex=43200)
 
 
