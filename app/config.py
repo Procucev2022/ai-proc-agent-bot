@@ -80,7 +80,7 @@ class Settings:
 
         # Redis session storage configuration
         self.redis_session_storage_enabled = os.getenv("REDIS_SESSION_STORAGE_ENABLED", "true").lower() == "true"
-        self.redis_session_ttl_seconds = int(os.getenv("REDIS_SESSION_TTL_SECONDS", "1800"))  # 30 minutes default
+        self.redis_session_ttl_seconds = int(os.getenv("REDIS_SESSION_TTL_SECONDS", "900"))  # 15 minutes default (timeout + buffer)
         
         # Security configuration
         self.secret_key = os.getenv("SECRET_KEY")
@@ -212,6 +212,11 @@ class Settings:
         # Queue Configuration
         self.batch_window_seconds: int = int(os.getenv("BATCH_WINDOW_SECONDS", "3"))
         self.please_wait_threshold_seconds: int = int(os.getenv("PLEASE_WAIT_THRESHOLD_SECONDS", "15"))
+        
+        # Inactivity timeout configuration
+        self.workflow_timeout_enabled: bool = os.getenv("WORKFLOW_TIMEOUT_ENABLED", "true").lower() == "true"
+        self.workflow_timeout_seconds: int = int(os.getenv("WORKFLOW_TIMEOUT_SECONDS", "300"))  # 5 minutes default
+        self.timeout_poll_interval_seconds: int = int(os.getenv("TIMEOUT_POLL_INTERVAL_SECONDS", "30"))  # Check every 30 seconds
 
         # Webhook Health Monitoring Configuration
         self.webhook_health_monitoring_enabled = os.getenv(

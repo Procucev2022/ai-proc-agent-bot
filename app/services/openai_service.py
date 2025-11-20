@@ -70,6 +70,26 @@ class OpenAIService:
             logger.debug("OpenAI client closed successfully")
         except Exception as e:
             logger.warning(f"Error closing OpenAI client: {e}")
+    
+    def close_sync(self):
+        """Synchronous close for Celery tasks to prevent event loop errors."""
+        try:
+            import asyncio
+            try:
+                # Try to get existing event loop
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If loop is running, schedule close as task
+                    asyncio.create_task(self.client.close())
+                else:
+                    # If loop exists but not running, run close
+                    loop.run_until_complete(self.client.close())
+            except RuntimeError:
+                # No event loop exists, create new one
+                asyncio.run(self.client.close())
+            logger.debug("OpenAI client closed synchronously")
+        except Exception as e:
+            logger.warning(f"Error closing OpenAI client synchronously: {e}")
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -2165,6 +2185,8 @@ Determine the best category for the input item based on the similar items and th
                     logger.info(f"Generated 3-level categorization: {result['categorization']}")
                     return result
             
+            # Close client synchronously to prevent event loop errors
+            self.close_sync()
             return {
                 "success": False,
                 "error": "No function call in response",
@@ -2176,6 +2198,8 @@ Determine the best category for the input item based on the similar items and th
             processing_time = time.time() - start_time
             
             logger.error(f"3-level categorization failed: {error_msg}")
+            # Close client synchronously to prevent event loop errors
+            self.close_sync()
             return {
                 "success": False,
                 "error": error_msg,

@@ -245,6 +245,9 @@ class EnhancedAutoCategorizationService:
                 openai_result = await self.openai_service.categorize_with_similar_items(
                     item_description, top_matches, available_categories
                 )
+                
+                # Close OpenAI client to prevent event loop errors
+                self.openai_service.close_sync()
 
                 processing_time = int((time.time() - start_time) * 1000)
 
@@ -426,6 +429,9 @@ class EnhancedAutoCategorizationService:
                     if create_result.get("success"):
                         # Created new learning category, now get client category from fallback service
                         logger.info("Created new learning category, proceeding to fallback for client category")
+                        
+                        # Close OpenAI client to prevent event loop errors
+                        self.openai_service.close_sync()
 
                         # Store learning taxonomy info for later logging
                         learning_taxonomy_data = {
