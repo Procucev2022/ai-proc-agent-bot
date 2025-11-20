@@ -54,6 +54,8 @@ class UserCacheService:
                     cache_data["meaningful_intent_result"] = existing_cache["meaningful_intent_result"]
                 if "meaningful_message_cached_at" in existing_cache:
                     cache_data["meaningful_message_cached_at"] = existing_cache["meaningful_message_cached_at"]
+                if "irrelevant_response" in existing_cache:
+                    cache_data["irrelevant_response"]= existing_cache["irrelevant_response"]
             else:
                 logger.info(f"No existing cache found or no meaningful message to preserve in store_user_data")
 
