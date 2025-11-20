@@ -1160,7 +1160,6 @@ Analyze their response to determine their true choice.
             if prompt_file:
                 # Use prompt file if specified
                 category, filename = prompt_file.split("/")
-                print("caytegoyr", category,"file nme", filename)
                 prompt = self._load_prompt(category, filename, **context)
             else:
                 # Build prompt inline (legacy behavior)
@@ -1169,7 +1168,6 @@ Analyze their response to determine their true choice.
                     prompt += f"Search results: {json.dumps(query_results)}\n\n"
                 prompt += "Generate an appropriate response for the user based on their context and any available results."
 
-            print("prinpt",prompt)
             response = await self.client.responses.create(
                 model=self.default_model,
                 input=self._build_messages_with_history(context, prompt),
