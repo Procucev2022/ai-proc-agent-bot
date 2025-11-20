@@ -462,6 +462,8 @@ class ChatService:
 
                         await redis_service.set(cache_key, cache_data, ex=43200)
 
+                        logger.info(f"\n\ndta after daving is:{cache_data}\n\n")
+
 
             auth_result = await self.authentication_orchestrator_flow(user_phone,message_intent_result.get('relevant_message') or message_content,session, message_intent_result)
 
