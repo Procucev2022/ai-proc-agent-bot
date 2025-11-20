@@ -150,12 +150,26 @@ class EntityService:
         if "products" in response:
             # New multi-product format with global + item structure
             products = response.get("products", [])
-            global_fields = {
+
+            # Get newly extracted global fields
+            newly_extracted_global_fields = {
                 "deliveryDate": response.get("deliveryDate"),
                 "state": response.get("state"),
                 "city": response.get("city"),
                 "pincode": response.get("pincode")
             }
+
+            # Retrieve existing global supplementary fields from workflow_state
+            existing_global_fields = {}
+            if context and context.get("workflow_state"):
+                existing_global_fields = context["workflow_state"].get("global_supplementary_fields", {})
+                if existing_global_fields:
+                    print(f"EntityService: Found existing global fields: {existing_global_fields}")
+
+            # Merge newly extracted global fields with existing ones (new values override old)
+            # Only use new values if they are not None and not empty string
+            global_fields = {**existing_global_fields, **{k: v for k, v in newly_extracted_global_fields.items() if v is not None and v != ''}}
+            print(f"EntityService: Accumulated global fields: {global_fields}")
 
             # Merge global fields into each product for backward compatibility
             merged_products = self._merge_global_fields_into_products(products, global_fields)
@@ -207,6 +221,11 @@ class EntityService:
                 print(f"  Product {i+1}: {product}")
             return {
                 "products": validated_products,
+                "deliveryDate": global_fields.get("deliveryDate"),
+                "state": global_fields.get("state"),
+                "city": global_fields.get("city"),
+                "pincode": global_fields.get("pincode"),
+                "global_supplementary_fields": global_fields,  # Include accumulated fields
                 "confidence": response.get("confidence", 0),
                 "success": response.get("success", True),
                 "date_validation_error": has_date_validation_error
@@ -1108,8 +1127,8 @@ class EntityService:
                 print(f"EntityService: Skipping NO_PRODUCTS_MENTIONED entry in merge")
                 continue
 
-            # Handle None or non-string descriptions
-            if new_desc is None or not isinstance(new_desc, str):
+            # Handle None, non-string, or empty string descriptions
+            if new_desc is None or not isinstance(new_desc, str) or not new_desc.strip():
                 # This product has no description - it's supplementary data for ALL existing products
                 print(f"EntityService: Product has no description - treating as supplementary data for all existing products")
                 for i in range(len(merged_products)):

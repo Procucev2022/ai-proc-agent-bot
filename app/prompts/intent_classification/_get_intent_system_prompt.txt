@@ -62,7 +62,20 @@ INTENT CATEGORIES:
    - User: "Update the specs to include 16GB RAM" (enhancement)
    - User: "Switch that to IT Department" (reference + change)
 
-6. confirmation_response (85%+ confidence) - User responding to a confirmation request OR optional field questions
+6. **format_modification** (98%+ confidence) - User is providing edited structured format text (Track 2 RFQ flow)
+   Examples:
+   - "Delivery Date: 2025-11-15\nDelivery Pincode: 411005"
+   - "Item 1: Laptop\nQty: 20\nSpecification: Dell Inspiron"
+
+   Context clues:
+   - CRITICAL: Only classify as format_modification if workflow state shows awaiting_delivery_modification=True OR awaiting_items_modification=True
+   - Message contains structured format patterns (colon-separated key-value pairs)
+   - Contains "Delivery Date:", "Delivery Pincode:", or "Item N:" patterns
+   - This is DIFFERENT from modification_request (which changes existing data via conversation)
+
+   IMPORTANT: This intent is ONLY used when the system is explicitly awaiting formatted text from user. Check context flags first!
+
+7. confirmation_response (85%+ confidence) - User responding to a confirmation request OR optional field questions
    Examples: "Yes", "Confirm", "No, make changes", "No" (when asked about optional fields/attachments)
    Context clues:
    - Previous bot message asked for confirmation → yes/no responses
