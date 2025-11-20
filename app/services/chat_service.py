@@ -442,19 +442,9 @@ class ChatService:
                         'available_workflow_types': [wf.value for wf in WorkflowType],
                     }
                     
-                    # Start parallel task
-                    irrelevant_task = asyncio.create_task(
-                        self._handle_irrelevant_message(user_phone, irrelevant_msg, context_data)
-                    )
-                    
-                    # Continue with other processing...
-                    
-                    # Await result when needed
-                    irrelevant_response = await irrelevant_task
+                    irrelevant_response = await self._handle_irrelevant_message(user_phone, irrelevant_msg, context_data)
                     logger.info(f"Generated irrelevant response: {irrelevant_response}")
-                    
                     if irrelevant_response:
-                        print(f"setting data into context to :{user_phone}")
                         # Save irrelevant response in param_context for WhatsApp service to access
                         # Use a simple key since we don't have access to request object here
                         param_context.set(f"irrelevant_{user_phone}", {
