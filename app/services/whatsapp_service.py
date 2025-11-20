@@ -88,6 +88,7 @@ class WhatsAppService:
             cache_key = f"user_cache:{formatted_recipient}"
             logger.info(f"\n\nuser cahce key is:{cache_key}\n\n")
             cache_data = await redis_service.get(cache_key, as_json=True)
+            logger.info(f"\n\ncahced data isnide whatssqwjwqe:{cache_data}")
             if cache_data and cache_data.get("irrelevant_response"):
                 irrelevant_response = cache_data["irrelevant_response"].get("user_message")
                 logger.info(f"\n\n irrr: {irrelevant_response}\n\n")
