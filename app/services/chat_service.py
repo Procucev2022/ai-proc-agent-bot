@@ -445,12 +445,16 @@ class ChatService:
                     irrelevant_response = await self._handle_irrelevant_message(user_phone, irrelevant_msg, context_data)
                     logger.info(f"Generated irrelevant response: {irrelevant_response}")
                     if irrelevant_response:
-                        # Save irrelevant response in param_context for WhatsApp service to access
-                        # Use a simple key since we don't have access to request object here
-                        param_context.set(f"irrelevant_{user_phone}", {
+                        # Save irrelevant response in user cache
+                        from app.redis_db import get_redis_service
+                        redis_service = get_redis_service()
+                        cache_key = f"user_cache:{user_phone}"
+                        cache_data = await redis_service.get(cache_key, as_json=True) or {}
+                        cache_data["irrelevant_response"] = {
                             "user_message": irrelevant_response,
                             "timestamp": utc_now().isoformat()
-                        })
+                        }
+                        await redis_service.set(cache_key, cache_data, ex=43200)
 
 
             auth_result = await self.authentication_orchestrator_flow(user_phone,message_intent_result.get('relevant_message') or message_content,session, message_intent_result)

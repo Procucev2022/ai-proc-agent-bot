@@ -82,18 +82,20 @@ class WhatsAppService:
 
             # Prepare message
             combined_message = message  # default
-            # Access the saved irrelevant response using user phone as key
-            irrelevant_key = f"irrelevant_{formatted_recipient}"
-            print("key", irrelevant_key)
-            message_data = param_context.get(irrelevant_key)
-            print("message", message_data)
-            if message_data:
-                irrelevant_response = message_data.get("irrelevant_response")
-                print("iirelevbant", irrelevant_response)
+            # Access the saved irrelevant response from user cache
+            from app.redis_db import get_redis_service
+            redis_service = get_redis_service()
+            cache_key = f"user_cache:{formatted_recipient}"
+            print("key", cache_key)
+            cache_data = await redis_service.get(cache_key, as_json=True)
+            if cache_data and cache_data.get("irrelevant_response"):
+                irrelevant_response = cache_data["irrelevant_response"].get("user_message")
+                print("irrr", irrelevant_response)
                 if irrelevant_response:
                     combined_message = f"{irrelevant_response}\n\n{message}"
                     # Clear the irrelevant response after using it
-                    param_context.delete(irrelevant_key)
+                    cache_data.pop("irrelevant_response", None)
+                    await redis_service.set(cache_key, cache_data, ex=43200)
             payload = {
                 "user": self.username,
                 "pass": self.password,
