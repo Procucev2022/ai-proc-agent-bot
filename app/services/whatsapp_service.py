@@ -69,6 +69,7 @@ class WhatsAppService:
         # Check for irrelevant response in context manager and combine with existing response
         
         try:
+            print("receipient id", recipient_id)
             # Access the saved irrelevant response using user phone as key
             irrelevant_key = f"irrelevant_{recipient_id}"
             message_data = param_context.get(irrelevant_key)
