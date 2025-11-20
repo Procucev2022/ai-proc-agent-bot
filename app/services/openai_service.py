@@ -138,6 +138,8 @@ class OpenAIService:
         """
         try:
             prompt_file = self.prompts_dir / category / f"{prompt_name}.txt"
+            print("self dir", self.prompts_dir)
+            print("prompt file", prompt_file)
             with open(prompt_file, 'r', encoding='utf-8') as f:
                 prompt_template = f.read()
             
@@ -287,7 +289,7 @@ class OpenAIService:
                 # Add current session state (optimized - reduced verbosity)
                 if context.get('workflow_state'):
                     workflow_state = context['workflow_state']
-                    context_info += f"\n\nCURRENT SESSION STATE:"
+                    context_info += f"\n\nCURRENT SESSION STATE:{workflow_state}"
                     context_info += f"\n- Workflow Type: {context.get('workflow_type', 'unknown')}"
                     context_info += f"\n- Has Pending Confirmations: {bool(workflow_state.get('pending_combined_rfq') or workflow_state.get('pending_rfq'))}"
                     context_info += f"\n- Has Pending Optional Fields: {bool(workflow_state.get('pending_optional_rfq'))}"
@@ -352,6 +354,8 @@ class OpenAIService:
                     result = {
                         "intent": args.get("intent"),
                         "confidence": args.get("confidence"),
+                        "relevant_message":args.get("relevant_message"),
+                        "irrelevant_message":args.get("irrelevant_message"),
                         "all_intent_scores": args.get("all_intent_scores", {}),
                         "context_analysis": args.get("context_analysis", {}),
                         "reasoning": args.get("reasoning", ""),
@@ -1138,6 +1142,7 @@ Analyze their response to determine their true choice.
             if prompt_file:
                 # Use prompt file if specified
                 category, filename = prompt_file.split("/")
+                print("caytegoyr", category,"file nme", filename)
                 prompt = self._load_prompt(category, filename, **context)
             else:
                 # Build prompt inline (legacy behavior)
@@ -1146,6 +1151,7 @@ Analyze their response to determine their true choice.
                     prompt += f"Search results: {json.dumps(query_results)}\n\n"
                 prompt += "Generate an appropriate response for the user based on their context and any available results."
 
+            print("prinpt",prompt)
             response = await self.client.responses.create(
                 model=self.default_model,
                 input=self._build_messages_with_history(context, prompt),

@@ -59,6 +59,8 @@ class IntentService:
         try:
             # Get classification from OpenAI (FAQ intent can be detected from prompt alone, no need for full FAQ context)
             classification_result = await self.openai_service.classify_intent(message, context)
+
+            print("classfication result", classification_result)
             
             if not classification_result.get("success", False):
                 logger.warning(f"OpenAI classification failed, using fallback")

@@ -16,6 +16,15 @@
                 "maximum": 100,
                 "description": "Confidence score as percentage (0-100) for the primary classification"
             },
+            "relevant_message": {
+                    "type": ["string", "null"],
+                    "description": "The portion of user message that is relevant to the primary intent and current workflow. Null if entire message is irrelevant."
+                },
+                "irrelevant_message": {
+                    "type": ["string", "null"],
+                    "description": "The portion of user message that is out-of-scope or unrelated to current workflow. Null if entire message is relevant."
+                },
+
             "all_intent_scores": {
                 "type": "object",
                 "additionalProperties": {
@@ -103,7 +112,7 @@
                 "description": "If confidence is low or intents are similar, suggest what clarification question to ask"
             }
         },
-        "required": ["intent", "confidence", "all_intent_scores", "context_analysis", "reasoning", "suggested_clarification"],
+        "required": ["intent", "confidence","relevant_message","irrelevant_message", "all_intent_scores", "context_analysis", "reasoning", "suggested_clarification"],
         "additionalProperties": false
     },
     "strict": false

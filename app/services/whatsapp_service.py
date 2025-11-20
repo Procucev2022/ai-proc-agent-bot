@@ -24,6 +24,7 @@ from dataclasses import dataclass
 
 from app.config import get_settings
 from app.tools.retry_service import get_retry_service
+from app.context import param_context, get_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,23 @@ class WhatsAppService:
         Sends formatted text message with API authentication,
         message formatting, error handling, and automatic retries.
         """
+        # Check for irrelevant response in context manager and combine with existing response
+        
+        try:
+            # Access the saved irrelevant response using user phone as key
+            irrelevant_key = f"irrelevant_{recipient_id}"
+            message_data = param_context.get(irrelevant_key)
+            print("message", message_data)
+            if message_data:
+                irrelevant_response = message_data.get("irrelevant_response")
+                print("iirelevbant", irrelevant_response)
+                if irrelevant_response:
+                    message = f"{irrelevant_response}\n\n{message}"
+                    # Clear the irrelevant response after using it
+                    param_context.delete(irrelevant_key)
+        except Exception as e:
+            logger.warning(f"Error checking irrelevant response in context manager: {e}")
+        
         async def send_text_message():
             if self.mock_mode:
                 logger.info(f"[MOCK] Sending message to {recipient_id}: {message}")

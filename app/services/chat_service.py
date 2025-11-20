@@ -72,6 +72,7 @@ from app.database import SessionLocal, DatabaseManager, get_db_session, get_db_s
 from app.models import ConversationSession, WorkflowType, ConversationOutcome
 from app.schemas.user import User
 from sqlalchemy.orm import Session
+from app.context import param_context, get_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -375,6 +376,7 @@ class ChatService:
                 message_intent_result = await self.intent_service.classify_intent(message_content, conversation_context)
                 intent = message_intent_result.get('intent')
                 confidence = message_intent_result.get('confidence', 0)
+
                 self.session_manager.add_message_to_history(session, "user", message_content, message_type, intent, confidence)
             except Exception as e:
                 # If intent classification fails, still track the message without intent
@@ -382,8 +384,9 @@ class ChatService:
                 self.session_manager.add_message_to_history(session, "user", message_content, message_type)
                 message_intent_result = {"intent": "general_inquiry", "confidence": 0}
 
+            print("message intent", message_intent_result)
             # Track meaningful messages during auth/registration flows for later processing
-            self._track_meaningful_message_during_auth_flow(session, message_content, message_intent_result)
+            self._track_meaningful_message_during_auth_flow(session, message_intent_result.get('relevant_message') or message_content, message_intent_result)
 
             # User Authentication flow
             # Preserve meaningful message in cache for post-auth/registration processing
@@ -424,18 +427,43 @@ class ChatService:
                 await self.session_manager.save_session(session, session.workflow_type)
                 return cancel_result
 
-            if intent=='faq':
-                # Handle FAQ directly without authentication for quick responses
-                faq_answer = await self.faq_service.get_faq_answer(message_content)
-                if faq_answer:
-                    full_response = f"{faq_answer}\n\nWhat can I assist you with next?"
-                    await self.whatsapp_service.send_message(user_phone, full_response)
-                    return {"status": "faq_handled", "answer_provided": True}
-                else:
-                    fallback_message = "I don't have specific information about that. For detailed assistance, please contact our support team."
-                    await self.whatsapp_service.send_message(user_phone, fallback_message)
-                    return {"status": "faq_no_answer", "answer_provided": False}
-            auth_result = await self.authentication_orchestrator_flow(user_phone, message_content, session, message_intent_result)
+            if intent=='faq' or message_intent_result.get("irrelevant_message"):
+                relevant_msg = message_intent_result.get('relevant_message')
+                irrelevant_msg = message_intent_result.get('irrelevant_message')
+
+                # Handle irrelevant messages
+                if irrelevant_msg:
+                    logger.info(f"Processing irrelevant message: {irrelevant_msg}")
+                    context_data = {
+                        'relevant_message': relevant_msg or '',
+                        'irrelevant_message': irrelevant_msg,
+                        'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
+                        'workflow_state': session.workflow_state or {},
+                        'available_workflow_types': [wf.value for wf in WorkflowType],
+                    }
+                    
+                    # Start parallel task
+                    irrelevant_task = asyncio.create_task(
+                        self._handle_irrelevant_message(user_phone, irrelevant_msg, context_data)
+                    )
+                    
+                    # Continue with other processing...
+                    
+                    # Await result when needed
+                    irrelevant_response = await irrelevant_task
+                    logger.info(f"Generated irrelevant response: {irrelevant_response}")
+                    
+                    if irrelevant_response:
+                        print("setting data into context")
+                        # Save irrelevant response in param_context for WhatsApp service to access
+                        # Use a simple key since we don't have access to request object here
+                        param_context.set(f"irrelevant_{user_phone}", {
+                            "user_message": irrelevant_response,
+                            "timestamp": utc_now().isoformat()
+                        })
+
+
+            auth_result = await self.authentication_orchestrator_flow(user_phone,message_intent_result.get('relevant_message') or message_content,session, message_intent_result)
 
             # Check if authentication is still in progress
             if isinstance(auth_result, dict):
@@ -748,6 +776,35 @@ class ChatService:
             )
             
             return {"status": "technical_failure", "error": str(e)}
+    
+    async def _handle_irrelevant_message(self, user_phone: str, message: str, context) -> str:
+        """Handle irrelevant messages by searching FAQ first, then generating LLM response."""
+        try:
+            # First search in FAQ
+            faq_answer = await self.faq_service.get_faq_answer(message)
+            if faq_answer and not faq_answer.startswith("I don't have specific information"):
+                return faq_answer
+            
+            # If not found in FAQ, generate LLM response
+            # Pass context with the correct structure expected by the prompt
+            prompt_context = {
+                'workflow_type': context.get('workflow_type', 'unknown'),
+                'workflow_state': str(context.get('workflow_state', {})),
+                'relevant_message': context.get('relevant_message', ''),
+                'irrelevant_message': context.get('irrelevant_message', message),
+                'available_workflow_types': ', '.join(context.get('available_workflow_types', []))
+            }
+            
+            llm_response = await self.openai_service.generate_response(
+                prompt_context, 
+                None, 
+                "response_generation/_get_irrelevant_message_response_prompt"
+            )
+            return llm_response
+            
+        except Exception as e:
+            logger.error(f"Error handling irrelevant message: {e}")
+            return "I'm having trouble processing that request right now. Please try again or contact support."
 
     async def authentication_orchestrator_flow(self, user_phone: str, message_content: str,
                                                session: ConversationSession, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -1923,7 +1980,6 @@ class ChatService:
                     ]
                     profile_message = "How can I help you with your procurement needs today?"
                     header = "Please choose an option:"
-
             # ✅ Send interactive buttons
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
@@ -1951,10 +2007,6 @@ class ChatService:
                 # Send FAQ answer
                 full_response = f"{faq_answer}\n\nWhat can I assist you with next?"
                 await self.whatsapp_service.send_message(user.phone_number, full_response)
-                
-
-                
-
                 return {"status": "faq_handled", "answer_provided": True}
             else:
                 # No FAQ answer found, provide fallback
