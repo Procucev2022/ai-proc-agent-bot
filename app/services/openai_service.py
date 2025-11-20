@@ -1408,7 +1408,7 @@ Analyze their response to determine their true choice.
                 "session_inquiry": 5,
                 "workflow_rejection": 5,
                 "alternative_request": 5,
-                "faq": 10
+                "greeting": 10
             },
             "context_analysis": {
                 "references_existing_data": False,

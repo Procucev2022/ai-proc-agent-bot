@@ -20,7 +20,7 @@
                         "type": ["string", "null"],
                         "description": "Business email address"
                     },
-                    "address": {
+                    "address1": {
                         "type": ["string", "null"],
                         "description": "Company location/address"
                     },
@@ -37,7 +37,7 @@
                         "description": "Products or services offered"
                     }
                 },
-                "required": ["name", "companyName", "email", "address", "zipCode", "gstin", "details"],
+                "required": ["name", "companyName", "email", "address1", "zipCode", "gstin", "details"],
                 "additionalProperties": false
             },
             "completeness": {

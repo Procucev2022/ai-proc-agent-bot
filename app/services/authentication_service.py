@@ -367,7 +367,8 @@ class AuthenticationService:
                 profile_service = ProfileSelectionService(
                     whatsapp_service=self.whatsapp_service,
                     authentication_service=self,
-                    openai_service=self.openai_service
+                    openai_service=self.openai_service,
+                    chat_service=None
                 )
                 
                 # Handle profile selection response
@@ -1172,7 +1173,8 @@ Respond only with: "yes" or "no"
             profile_service = ProfileSelectionService(
                 whatsapp_service=self.whatsapp_service,
                 authentication_service=self,
-                openai_service=self.openai_service
+                openai_service=self.openai_service,
+                chat_service=None
             )
             
             # Convert filtered_users to profiles format expected by ProfileSelectionService

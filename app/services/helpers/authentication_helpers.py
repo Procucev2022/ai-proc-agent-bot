@@ -83,7 +83,7 @@ class AuthenticationHelpers:
 
             for name, field_info in fields.items():
                 # Skip internal or system fields and address field
-                if name in {"source_type", "address"}:
+                if name in {"sourceType", "address1"}:
                     continue
 
                 # Only include required fields
@@ -124,7 +124,7 @@ class AuthenticationHelpers:
     def get_required_fields(schema: Type[BaseModel]) -> List[str]:
         """Return required field names from a Pydantic schema."""
         return [name for name, field_info in schema.model_fields.items() 
-                if field_info.is_required() and name not in {"source_type"}]
+                if field_info.is_required() and name not in {"sourceType"}]
     
     @staticmethod
     def get_missing_fields(schema: Type[BaseModel], collected_entities: Dict) -> List[str]:
@@ -141,7 +141,7 @@ class AuthenticationHelpers:
             # Iterate all schema fields dynamically
             for name, field_info in schema.model_fields.items():
                 # Skip internal/system fields
-                if name in {"source_type"}:
+                if name in {"sourceType"}:
                     continue
                 
                 # Use description if present, otherwise humanize field name
@@ -178,7 +178,7 @@ class AuthenticationHelpers:
             if collected_entities:
                 collected = []
                 for name, field_info in schema.model_fields.items():
-                    if name in {"source_type", "address"}:  # Skip internal fields and location
+                    if name in {"sourceType", "address1"}:  # Skip internal fields and location
                         continue
                     value = collected_entities.get(name)
                     if value:
@@ -202,7 +202,7 @@ class AuthenticationHelpers:
                         continue
                     
                     # Skip location/address field from questions
-                    if field == "address":
+                    if field == "address1":
                         continue
                     
                     if field == "zipCode":
@@ -241,11 +241,11 @@ class AuthenticationHelpers:
             payload = {
                 "organizationPhonenumber": normalize_phone_number(user_phone),
                 "whatsApp": True,
-                "source_type": "W"
+                "sourceType": "W"
             }
 
             for name, field_info in schema.model_fields.items():
-                if name in {"source_type", "organizationPhonenumber", "whatsApp"}:
+                if name in {"sourceType", "organizationPhonenumber", "whatsApp"}:
                     continue  # Already handled
 
                 value = collected_entities.get(name)
@@ -265,7 +265,7 @@ class AuthenticationHelpers:
             # Fallback minimal payload
             return {
                 "organizationPhonenumber": user_phone,
-                "source_type": "W",
+                "sourceType": "W",
                 "whatsApp": True
             }
     

@@ -7,7 +7,7 @@
         "properties": {
             "intent": {
                 "type": "string",
-                "enum": ["buy_something", "sell_something", "bfs_search", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "ambiguous", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request", "support", "faq", "exit_system", "cancel_workflow"],
+                "enum": ["buy_something", "sell_something", "bfs_search", "account_switch", "register_account", "general_inquiry", "modification_request", "confirmation_response", "rfq_status_check", "ambiguous", "contextual_reference", "session_inquiry", "workflow_rejection", "alternative_request", "support", "greeting", "exit_system", "cancel_workflow"],
                 "description": "The primary classified intent category based on user message analysis and conversation context"
             },
             "confidence": {

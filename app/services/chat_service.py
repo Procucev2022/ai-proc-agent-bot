@@ -384,7 +384,7 @@ class ChatService:
                 # If intent classification fails, still track the message without intent
                 logger.warning(f"Intent classification failed during message tracking: {e}")
                 self.session_manager.add_message_to_history(session, "user", message_content, message_type)
-                message_intent_result = {"intent": "general_inquiry", "confidence": 0}
+                message_intent_result = {"intent": "greeting", "confidence": 0}
 
             print("message intent", message_intent_result)
             # Track meaningful messages during auth/registration flows for later processing
@@ -429,40 +429,9 @@ class ChatService:
                 await self.session_manager.save_session(session, session.workflow_type)
                 return cancel_result
 
-            if intent=='faq' or message_intent_result.get("irrelevant_message"):
-                relevant_msg = message_intent_result.get('relevant_message')
-                irrelevant_msg = message_intent_result.get('irrelevant_message')
-
-                # Handle irrelevant messages
-                if irrelevant_msg:
-                    logger.info(f"Processing irrelevant message: {irrelevant_msg}")
-                    context_data = {
-                        'relevant_message': relevant_msg or '',
-                        'irrelevant_message': irrelevant_msg,
-                        'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
-                        'workflow_state': session.workflow_state or {},
-                        'available_workflow_types': [wf.value for wf in WorkflowType],
-                    }
-                    
-                    irrelevant_response = await self._handle_irrelevant_message(user_phone, irrelevant_msg, context_data)
-                    logger.info(f"Generated irrelevant response: {irrelevant_response}")
-                    if irrelevant_response:
-                        logger.info("have irrevalnt respjnse")
-                        # Save irrelevant response in user cache
-                        from app.redis_db import get_redis_service
-                        redis_service = get_redis_service()
-                        cache_key = f"user_cache:{user_phone}"
-                        cache_data = await redis_service.get(cache_key, as_json=True) or {}
-                        logger.info(f"\n\n cahced dtaa:{cache_data}")
-                        cache_data["irrelevant_response"] = {
-                            "user_message": irrelevant_response,
-                            "timestamp": utc_now().isoformat()
-                        }
-                        logger.info(f"f\n\n chekcing nee:{cache_data}")
-
-                        await redis_service.set(cache_key, cache_data, ex=43200)
-
-                        logger.info(f"\n\ndta after daving is:{cache_data}\n\n")
+            # Handle irrelevant messages using reusable function
+            if intent =='general_inquiry' or message_intent_result.get("irrelevant_message"):
+                await self.handle_irrelevant_message_flow(user_phone, message_intent_result, session)
 
 
             auth_result = await self.authentication_orchestrator_flow(user_phone,message_intent_result.get('relevant_message') or message_content,session, message_intent_result)
@@ -473,9 +442,9 @@ class ChatService:
                 
                 # Authentication/registration flow statuses - stay in auth loop
                 auth_in_progress_statuses = [
-                    "clarification_sent", "general_inquiry_handled", "fallback_handled",
+                    "clarification_sent", "general_inquiry_handled", "greeting_handled", "fallback_handled",
                     "redirected_to_registration", "redirected_to_buyer_registration", "redirected_to_seller_registration",
-                    "redirected_to_email_confirmation", "otp_sent",
+                    "redirected_to_email_confirmation", "otp_sent","dual_intent_clarification_sent",
                     "email_selection_requested", "registration_initiated", "data_collection_in_progress",
                     "awaiting_confirmation", "registration_restarted", "otp_validated", "otp_invalid", "otp_format_invalid",
                     "domain_approved", "domain_approval_required", "email_confirmation_requested",
@@ -565,7 +534,7 @@ class ChatService:
 
                             # Make fresh API call to get updated user data including new account
                             auth_response = await self.authentication_service.user_authenticate(
-                                user_phone, "refresh_cache_post_registration", session, intent="general_inquiry"
+                                user_phone, "refresh_cache_post_registration", session, intent="greeting"
                             )
                             if not auth_response.get("success"):
                                 logger.warning(f"Failed to refresh user cache after registration for {user_phone}")
@@ -609,7 +578,7 @@ class ChatService:
                     # Authentication completed - check user type before processing
                     user_type = auth_result.get("user_type")
                     original_message = auth_result.get("original_message", message_content)
-                    original_intent = auth_result.get("original_intent", "general_inquiry")
+                    original_intent = auth_result.get("original_intent", "greeting")
 
                     if user_type == "seller":
                         # For sellers, process the meaningful message after authentication
@@ -671,7 +640,7 @@ class ChatService:
                             if not cached_data:
                                 # No cache exists, make API call to populate it
                                 auth_response = await self.authentication_service.user_authenticate(
-                                    user_phone, "refresh_cache_post_auth", session, intent="general_inquiry"
+                                    user_phone, "refresh_cache_post_auth", session, intent="greeting"
                                 )
                                 if not auth_response.get("success"):
                                     logger.warning(f"Failed to populate user cache after authentication for {user_phone}")
@@ -779,6 +748,39 @@ class ChatService:
             
             return {"status": "technical_failure", "error": str(e)}
     
+    async def handle_irrelevant_message_flow(self, user_phone: str, message_intent_result: Dict[str, Any], session: ConversationSession) -> None:
+        """Handle irrelevant message flow and cache response."""
+        try:
+            relevant_msg = message_intent_result.get('relevant_message')
+            irrelevant_msg = message_intent_result.get('irrelevant_message')
+
+            if irrelevant_msg:
+                logger.info(f"Processing irrelevant message: {irrelevant_msg}")
+                context_data = {
+                    'relevant_message': relevant_msg or '',
+                    'irrelevant_message': irrelevant_msg,
+                    'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
+                    'workflow_state': session.workflow_state or {},
+                    'available_workflow_types': [wf.value for wf in WorkflowType],
+                }
+                
+                irrelevant_response = await self._handle_irrelevant_message(user_phone, irrelevant_msg, context_data)
+                logger.info(f"Generated irrelevant response: {irrelevant_response}")
+                
+                if irrelevant_response:
+                    from app.redis_db import get_redis_service
+                    redis_service = get_redis_service()
+                    cache_key = f"user_cache:{user_phone}"
+                    cache_data = await redis_service.get(cache_key, as_json=True) or {}
+                    cache_data["irrelevant_response"] = {
+                        "user_message": irrelevant_response,
+                        "timestamp": utc_now().isoformat()
+                    }
+                    await redis_service.set(cache_key, cache_data, ex=43200)
+                    logger.info(f"\n\ndata after saving is:{cache_data}\n\n")
+        except Exception as e:
+            logger.error(f"Error in handle_irrelevant_message_flow: {e}")
+
     async def _handle_irrelevant_message(self, user_phone: str, message: str, context) -> str:
         """Handle irrelevant messages by searching FAQ first, then generating LLM response."""
         try:
@@ -908,10 +910,9 @@ class ChatService:
             has_excel_confirmation_pending = bool(session.workflow_state.get("awaiting_excel_confirmation"))
 
             # Handle FAQ requests FIRST - can interrupt any workflow (highest priority after exit)
-            if intent == "faq" and confidence > 0.6:
-                logger.info(f"FAQ intent detected with {confidence}% confidence - handling immediately (interrupting workflow)")
-                result = await self._handle_faq_request(user, message)
-                return result
+            if intent == "general_inquiry" and confidence > 0.6:
+                await self.handle_irrelevant_message_flow(user.phone_number, message_intent_result, session)
+
 
             # Handle cancel workflow intent - highest priority after FAQ and exit
             if intent == "cancel_workflow" and confidence > 50:
@@ -1006,7 +1007,9 @@ class ChatService:
                     elif new_intent == "sell_something":
                         return await self._handle_seller_flow(user, session, message)
                     elif new_intent == "general_inquiry":
-                        return await self._handle_general_inquiry(user, new_message, intent_result)
+                        await self.handle_irrelevant_message_flow(user.phone_number, message_intent_result, session)
+                    elif new_intent == "greeting":
+                        return await self._handle_greeting_inquiry(user, new_message, intent_result)
                     else:
                         return await self._handle_fallback(user, new_message)
                 elif result.get("status") == "error":
@@ -1075,8 +1078,7 @@ class ChatService:
             # Handle FAQ requests immediately - even during active workflows (highest priority after exit/cancel)
             if intent == "faq" and confidence > 0.6:
                 logger.info(f"FAQ intent detected with {confidence}% confidence - handling immediately")
-                result = await self._handle_faq_request(user, message)
-                return result
+                await self.handle_irrelevant_message_flow(user.phone_number, message_intent_result, session)
 
             # Handle support requests immediately - even during active workflows
             if intent == "support" and confidence > 0.7:
@@ -1368,9 +1370,9 @@ class ChatService:
             elif intent == "faq":
                 # Handle FAQ requests
                 logger.info(f"FAQ intent detected with {confidence}% confidence in main routing")
-                return await self._handle_faq_request(user, message)
-            elif intent == "general_inquiry":
-                return await self._handle_general_inquiry(user, message, intent_result)
+                await self.handle_irrelevant_message_flow(user.phone_number, message_intent_result, session)
+            elif intent == "greeting":
+                return await self._handle_greeting_inquiry(user, message, intent_result)
 
             elif confidence < 0.5:
                 return await self._handle_clarification_request(user, message)
@@ -1908,12 +1910,12 @@ class ChatService:
             return await self._handle_error_response(e, user.phone_number, "registration_workflow",
                                                      "Please tell me your name to get started")
 
-    async def _handle_general_inquiry(
+    async def _handle_greeting_inquiry(
             self, user: User, message: str, intent_result: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """Handle general inquiries using OpenAI."""
         try:
-            context = ChatServiceHelpers.build_context("general_inquiry", message)
+            context = ChatServiceHelpers.build_context("greeting", message)
             logger.info(f"intent result in handle general inquiry :{intent_result}")
 
             # Determine user role
@@ -1991,7 +1993,7 @@ class ChatService:
             )
 
 
-            return {"status": "general_inquiry_handled"}
+            return {"status": "greeting_handled"}
 
         except Exception as e:
             return await self._handle_error_response(e, user.phone_number, "general_inquiry",
@@ -3345,7 +3347,7 @@ class ChatService:
 
             # Check if this is a meaningful message that should be processed after auth/registration
             meaningful_intents = [
-                "buy_something", "sell_something", "general_inquiry",
+                "buy_something", "sell_something", "greeting",
                 "modification_request", "reference_request", "rfq_status_check"
             ]
 
@@ -3468,7 +3470,7 @@ class ChatService:
                     # Return a default general inquiry since user completed auth/registration without meaningful business request
                     default_message = "What can I assist you with today?"
                     default_intent_result = {
-                        "intent": "general_inquiry",
+                        "intent": "greeting",
                         "confidence": 75,
                         "context_analysis": {"conversation_stage": "post_auth_default", "show_buttons": True}
                     }

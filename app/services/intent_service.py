@@ -185,7 +185,7 @@ class IntentService:
             "cancel_workflow": 5,
             "alternative_request": 5,
             "support": 10,
-            "faq": 10,
+            "greeting": 10,
             "ambiguous": 20
         }
         all_scores[intent] = confidence
@@ -227,11 +227,11 @@ class IntentService:
             "information about", "details about", "faq", "frequently asked", 
             "question about", "help with", "is there any charge", "cost to use", 
             "free to use", "pricing", "fees", "charges", "benefits of", 
-            "how can i", "what can", "do you provide", "tell me more"
+            "how can i", "what can", "do you provide", "tell me more","what can"
         ]):
-            return "faq", 85
-        elif any(keyword in message_lower for keyword in ["help", "how", "what can"]):
-            return "general_inquiry", 60
+            return "general_inquiry", 85
+        elif any(keyword in message_lower for keyword in ["hi","hello","good evening"]):
+            return "greeting", 60
         # Check for mixed intent (both buy and sell keywords)
         elif (any(buy_word in message_lower for buy_word in ["buy", "purchase", "need", "looking for"]) and
               any(sell_word in message_lower for sell_word in ["sell", "selling", "offer", "provide", "supply"])):
