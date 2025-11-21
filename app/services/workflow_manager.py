@@ -538,3 +538,737 @@ class WorkflowManager:
             if 'session_archive' in session.workflow_state:
                 logger.warning(f"[WORKFLOW_INIT] Session {session.session_id}: Removing lingering session_archive")
                 del session.workflow_state['session_archive']
+
+    # ===== TRACK 2 RFQ FLOW METHODS =====
+
+    @staticmethod
+    def set_delivery_details(session: ConversationSession, delivery_data: Dict[str, Any],
+                            caller: Optional[str] = None) -> None:
+        """
+        Set delivery details in workflow state (Track 2).
+
+        Args:
+            session: Conversation session
+            delivery_data: Dict with delivery_date, pincode, city, state
+            caller: Optional caller identification
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[DELIVERY_SET] Session {session.session_id}: "
+                   f"Setting delivery details (caller: {caller_info})")
+
+        session.workflow_state['delivery_details'] = delivery_data
+        session.workflow_state['delivery_confirmed'] = False
+
+    @staticmethod
+    def get_delivery_details(session: ConversationSession) -> Optional[Dict[str, Any]]:
+        """
+        Get delivery details from workflow state (Track 2).
+
+        Args:
+            session: Conversation session
+
+        Returns:
+            Delivery details dict or None
+        """
+        if not session.workflow_state:
+            return None
+        return session.workflow_state.get('delivery_details')
+
+    @staticmethod
+    def confirm_delivery(session: ConversationSession, caller: Optional[str] = None) -> None:
+        """
+        Mark delivery details as confirmed (Track 2).
+
+        Args:
+            session: Conversation session
+            caller: Optional caller identification
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[DELIVERY_CONFIRM] Session {session.session_id}: "
+                   f"Delivery confirmed (caller: {caller_info})")
+
+        session.workflow_state['delivery_confirmed'] = True
+        session.workflow_state['awaiting_delivery_modification'] = False
+
+    @staticmethod
+    def is_delivery_confirmed(session: ConversationSession) -> bool:
+        """
+        Check if delivery details are confirmed (Track 2).
+
+        Args:
+            session: Conversation session
+
+        Returns:
+            True if delivery confirmed
+        """
+        if not session.workflow_state:
+            return False
+        return session.workflow_state.get('delivery_confirmed', False)
+
+    @staticmethod
+    def mark_initial_extraction_complete(session: ConversationSession,
+                                        caller: Optional[str] = None) -> None:
+        """
+        Mark that initial items extraction has been completed (Track 2).
+        This prevents re-extraction on subsequent modifications.
+
+        Args:
+            session: Conversation session
+            caller: Optional caller identification
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[EXTRACTION_FLAG] Session {session.session_id}: "
+                   f"Initial extraction complete (caller: {caller_info})")
+
+        session.workflow_state['initial_items_extracted'] = True
+
+    @staticmethod
+    def is_initial_extraction_complete(session: ConversationSession) -> bool:
+        """
+        Check if initial items extraction has been completed (Track 2).
+
+        Args:
+            session: Conversation session
+
+        Returns:
+            True if initial extraction is done
+        """
+        if not session.workflow_state:
+            return False
+        return session.workflow_state.get('initial_items_extracted', False)
+
+    @staticmethod
+    def set_awaiting_modification(session: ConversationSession,
+                                  subtype: str,
+                                  original_format: str,
+                                  caller: Optional[str] = None) -> None:
+        """
+        Set awaiting modification state with original format (Track 2).
+
+        Args:
+            session: Conversation session
+            subtype: "delivery" or "items"
+            original_format: Formatted text to show user
+            caller: Optional caller identification
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[AWAITING_MOD] Session {session.session_id}: "
+                   f"Awaiting {subtype} modification (caller: {caller_info})")
+
+        if subtype == "delivery":
+            session.workflow_state['awaiting_delivery_modification'] = True
+        elif subtype == "items":
+            session.workflow_state['awaiting_items_modification'] = True
+        else:
+            logger.error(f"[AWAITING_MOD_ERROR] Invalid subtype: {subtype}")
+            return
+
+        session.workflow_state['format_modification_subtype'] = subtype
+        session.workflow_state['original_format'] = original_format
+        session.workflow_state['format_retry_count'] = 0
+
+    @staticmethod
+    def clear_awaiting_modification(session: ConversationSession,
+                                    caller: Optional[str] = None) -> None:
+        """
+        Clear awaiting modification state (Track 2).
+
+        Args:
+            session: Conversation session
+            caller: Optional caller identification
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        subtype = session.workflow_state.get('format_modification_subtype')
+        logger.info(f"[CLEAR_AWAITING_MOD] Session {session.session_id}: "
+                   f"Clearing {subtype} modification (caller: {caller_info})")
+
+        session.workflow_state['awaiting_delivery_modification'] = False
+        session.workflow_state['awaiting_items_modification'] = False
+        session.workflow_state['format_modification_subtype'] = None
+        session.workflow_state['original_format'] = None
+        session.workflow_state['format_retry_count'] = 0
+
+    @staticmethod
+    def is_awaiting_modification(session: ConversationSession) -> tuple[bool, Optional[str]]:
+        """
+        Check if awaiting modification and return subtype (Track 2).
+
+        Args:
+            session: Conversation session
+
+        Returns:
+            Tuple of (is_awaiting, subtype)
+            Example: (True, "items") or (False, None)
+        """
+        if not session.workflow_state:
+            return (False, None)
+
+        if session.workflow_state.get('awaiting_delivery_modification'):
+            return (True, "delivery")
+        elif session.workflow_state.get('awaiting_items_modification'):
+            return (True, "items")
+        else:
+            return (False, None)
+
+    @staticmethod
+    def increment_retry_count(session: ConversationSession,
+                             caller: Optional[str] = None) -> int:
+        """
+        Increment format retry count and return new count (Track 2).
+
+        Args:
+            session: Conversation session
+            caller: Optional caller identification
+
+        Returns:
+            New retry count
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        current_count = session.workflow_state.get('format_retry_count', 0)
+        new_count = current_count + 1
+        session.workflow_state['format_retry_count'] = new_count
+
+        logger.warning(f"[RETRY_INCREMENT] Session {session.session_id}: "
+                      f"Retry count: {new_count} (caller: {caller_info})")
+
+        return new_count
+
+    @staticmethod
+    def reset_retry_count(session: ConversationSession,
+                         caller: Optional[str] = None) -> None:
+        """
+        Reset format retry count to 0 (Track 2).
+
+        Args:
+            session: Conversation session
+            caller: Optional caller identification
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[RETRY_RESET] Session {session.session_id}: "
+                   f"Retry count reset (caller: {caller_info})")
+
+        session.workflow_state['format_retry_count'] = 0
+
+    @staticmethod
+    def get_retry_count(session: ConversationSession) -> int:
+        """
+        Get current retry count (Track 2).
+
+        Args:
+            session: Conversation session
+
+        Returns:
+            Current retry count
+        """
+        if not session.workflow_state:
+            return 0
+        return session.workflow_state.get('format_retry_count', 0)
+
+    @staticmethod
+    def can_proceed_to_items(session: ConversationSession) -> bool:
+        """
+        Check if can proceed to items collection (Track 2).
+        Requires delivery to be confirmed first.
+
+        Args:
+            session: Conversation session
+
+        Returns:
+            True if delivery is confirmed
+        """
+        return WorkflowManager.is_delivery_confirmed(session)
+
+    @staticmethod
+    def get_track2_context(session: ConversationSession) -> Dict[str, Any]:
+        """
+        Get relevant context for current Track 2 workflow step.
+
+        Args:
+            session: Conversation session
+
+        Returns:
+            Dict with current context information
+        """
+        if not session.workflow_state:
+            return {}
+
+        is_awaiting, subtype = WorkflowManager.is_awaiting_modification(session)
+
+        return {
+            "delivery_confirmed": WorkflowManager.is_delivery_confirmed(session),
+            "delivery_details": WorkflowManager.get_delivery_details(session),
+            "initial_extraction_complete": WorkflowManager.is_initial_extraction_complete(session),
+            "is_awaiting_modification": is_awaiting,
+            "modification_subtype": subtype,
+            "retry_count": WorkflowManager.get_retry_count(session),
+            "can_proceed_to_items": WorkflowManager.can_proceed_to_items(session)
+        }
+
+    @staticmethod
+    def save_interruption_context(session: ConversationSession,
+                                   interrupted_by: str,
+                                   caller: Optional[str] = None) -> None:
+        """
+        Save workflow context before interruption (Track 2 - Module 2.3).
+
+        Args:
+            session: Conversation session
+            interrupted_by: Type of interruption ("faq", "greeting", "help")
+            caller: Optional caller identification
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[INTERRUPTION_SAVE] Session {session.session_id}: "
+                   f"Saving context before {interrupted_by} interruption (caller: {caller_info})")
+
+        # Save current workflow position
+        is_awaiting, subtype = WorkflowManager.is_awaiting_modification(session)
+
+        interruption_context = {
+            "interrupted_by": interrupted_by,
+            "delivery_confirmed": WorkflowManager.is_delivery_confirmed(session),
+            "awaiting_modification": is_awaiting,
+            "modification_subtype": subtype,
+            "has_delivery_details": WorkflowManager.get_delivery_details(session) is not None,
+            "has_extracted_entities": bool(session.workflow_state.get("extracted_entities")),
+            "retry_count": WorkflowManager.get_retry_count(session)
+        }
+
+        session.workflow_state["interrupted_by"] = interrupted_by
+        session.workflow_state["resume_context"] = interruption_context
+        session.workflow_state["can_resume"] = True
+
+    @staticmethod
+    def can_resume_workflow(session: ConversationSession) -> bool:
+        """
+        Check if workflow can be resumed after interruption (Track 2 - Module 2.3).
+
+        Args:
+            session: Conversation session
+
+        Returns:
+            True if can resume workflow
+        """
+        if not session.workflow_state:
+            return False
+
+        return session.workflow_state.get("can_resume", False)
+
+    @staticmethod
+    def get_resume_prompt(session: ConversationSession) -> Optional[str]:
+        """
+        Generate contextual resume prompt after interruption (Track 2 - Module 2.3).
+
+        Args:
+            session: Conversation session
+
+        Returns:
+            Resume prompt message or None
+        """
+        if not WorkflowManager.can_resume_workflow(session):
+            return None
+
+        resume_context = session.workflow_state.get("resume_context", {})
+        interrupted_by = resume_context.get("interrupted_by", "interruption")
+
+        # Build contextual message based on workflow state
+        if resume_context.get("awaiting_modification"):
+            subtype = resume_context.get("modification_subtype", "items")
+            return (f"Let's continue with your RFQ. "
+                   f"You were modifying your {subtype}. "
+                   f"Please send the updated format when ready.")
+
+        elif resume_context.get("has_extracted_entities"):
+            return ("Let's continue with your RFQ. "
+                   "You were reviewing your items. "
+                   "Would you like to confirm or modify them?")
+
+        elif resume_context.get("has_delivery_details") and not resume_context.get("delivery_confirmed"):
+            return ("Let's continue with your RFQ. "
+                   "You were confirming your delivery details. "
+                   "Please confirm or modify them.")
+
+        elif resume_context.get("delivery_confirmed"):
+            return ("Let's continue with your RFQ. "
+                   "Please share the items you need with name, brand/specs (if any), and quantity.")
+
+        else:
+            return "Let's continue with your RFQ. What would you like to do next?"
+
+    @staticmethod
+    def resume_workflow(session: ConversationSession,
+                       caller: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Resume workflow after interruption (Track 2 - Module 2.3).
+
+        Args:
+            session: Conversation session
+            caller: Optional caller identification
+
+        Returns:
+            Dict with resume context information
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[WORKFLOW_RESUME] Session {session.session_id}: "
+                   f"Resuming workflow (caller: {caller_info})")
+
+        resume_context = session.workflow_state.get("resume_context", {})
+
+        # Clear interruption flags
+        session.workflow_state["interrupted_by"] = None
+        session.workflow_state["can_resume"] = False
+
+        return resume_context
+
+    # ========================================================================
+    # SECTIONED RFQ WORKFLOW METHODS (Track 3)
+    # ========================================================================
+
+    @staticmethod
+    def initialize_sectioned_rfq(session: ConversationSession,
+                                 caller: Optional[str] = None) -> None:
+        """
+        Initialize sectioned RFQ workflow state.
+
+        Args:
+            session: Conversation session
+            caller: Optional caller identification
+        """
+        from app.schemas.sectioned_rfq_state import initialize_sectioned_rfq_state
+
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[SECTIONED_RFQ_INIT] Session {session.session_id}: "
+                   f"Initializing sectioned RFQ (caller: {caller_info})")
+
+        session.workflow_state["sectioned_rfq"] = initialize_sectioned_rfq_state()
+
+    @staticmethod
+    def is_sectioned_rfq_active(session: ConversationSession) -> bool:
+        """
+        Check if sectioned RFQ workflow is active.
+
+        Args:
+            session: Conversation session
+
+        Returns:
+            True if sectioned RFQ is active
+        """
+        if not session.workflow_state:
+            return False
+        sectioned_rfq = session.workflow_state.get("sectioned_rfq", {})
+        return sectioned_rfq.get("active", False)
+
+    @staticmethod
+    def set_sectioned_rfq_section(session: ConversationSession,
+                                  section: str,
+                                  caller: Optional[str] = None) -> None:
+        """
+        Set current section in sectioned RFQ workflow.
+
+        Args:
+            session: Conversation session
+            section: Section name (date_location, items, attachments, final_confirmation)
+            caller: Optional caller identification
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[SECTIONED_RFQ_SECTION] Session {session.session_id}: "
+                   f"Setting section to '{section}' (caller: {caller_info})")
+
+        if "sectioned_rfq" not in session.workflow_state:
+            WorkflowManager.initialize_sectioned_rfq(session)
+
+        session.workflow_state["sectioned_rfq"]["current_section"] = section
+
+    @staticmethod
+    def get_sectioned_rfq_section(session: ConversationSession) -> Optional[str]:
+        """
+        Get current section in sectioned RFQ workflow.
+
+        Args:
+            session: Conversation session
+
+        Returns:
+            Current section name or None
+        """
+        if not session.workflow_state:
+            return None
+        sectioned_rfq = session.workflow_state.get("sectioned_rfq", {})
+        return sectioned_rfq.get("current_section")
+
+    @staticmethod
+    def confirm_sectioned_section(session: ConversationSession,
+                                  section: str,
+                                  caller: Optional[str] = None) -> None:
+        """
+        Mark section as confirmed in sectioned RFQ workflow.
+
+        Args:
+            session: Conversation session
+            section: Section name to confirm
+            caller: Optional caller identification
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[SECTIONED_RFQ_CONFIRM] Session {session.session_id}: "
+                   f"Confirming section '{section}' (caller: {caller_info})")
+
+        if "sectioned_rfq" not in session.workflow_state:
+            WorkflowManager.initialize_sectioned_rfq(session)
+
+        sections = session.workflow_state["sectioned_rfq"].get("sections", {})
+        if section in sections:
+            sections[section]["confirmed"] = True
+
+    @staticmethod
+    def is_section_confirmed(session: ConversationSession, section: str) -> bool:
+        """
+        Check if section is confirmed in sectioned RFQ workflow.
+
+        Args:
+            session: Conversation session
+            section: Section name to check
+
+        Returns:
+            True if section is confirmed
+        """
+        if not session.workflow_state:
+            return False
+        sectioned_rfq = session.workflow_state.get("sectioned_rfq", {})
+        sections = sectioned_rfq.get("sections", {})
+        if section in sections:
+            return sections[section].get("confirmed", False)
+        return False
+
+    @staticmethod
+    def get_section_data(session: ConversationSession, section: str) -> Optional[Any]:
+        """
+        Get data for specific section in sectioned RFQ workflow.
+
+        Args:
+            session: Conversation session
+            section: Section name
+
+        Returns:
+            Section data or None
+        """
+        if not session.workflow_state:
+            return None
+        sectioned_rfq = session.workflow_state.get("sectioned_rfq", {})
+        sections = sectioned_rfq.get("sections", {})
+        if section in sections:
+            return sections[section].get("data")
+        return None
+
+    @staticmethod
+    def update_section_data(session: ConversationSession,
+                           section: str,
+                           data: Any,
+                           caller: Optional[str] = None) -> None:
+        """
+        Update data for specific section in sectioned RFQ workflow.
+
+        Args:
+            session: Conversation session
+            section: Section name
+            data: Data to store
+            caller: Optional caller identification
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[SECTIONED_RFQ_DATA] Session {session.session_id}: "
+                   f"Updating data for section '{section}' (caller: {caller_info})")
+
+        if "sectioned_rfq" not in session.workflow_state:
+            WorkflowManager.initialize_sectioned_rfq(session)
+
+        sections = session.workflow_state["sectioned_rfq"].get("sections", {})
+        if section in sections:
+            sections[section]["data"] = data
+
+    @staticmethod
+    def increment_section_retry(session: ConversationSession,
+                                section: str,
+                                caller: Optional[str] = None) -> int:
+        """
+        Increment retry counter for section in sectioned RFQ workflow.
+
+        Args:
+            session: Conversation session
+            section: Section name
+            caller: Optional caller identification
+
+        Returns:
+            New retry count
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        if "sectioned_rfq" not in session.workflow_state:
+            WorkflowManager.initialize_sectioned_rfq(session)
+
+        sections = session.workflow_state["sectioned_rfq"].get("sections", {})
+        if section in sections:
+            current_retry = sections[section].get("retry_count", 0)
+            new_retry = current_retry + 1
+            sections[section]["retry_count"] = new_retry
+
+            logger.info(f"[SECTIONED_RFQ_RETRY] Session {session.session_id}: "
+                       f"Section '{section}' retry count: {new_retry} (caller: {caller_info})")
+
+            return new_retry
+        return 0
+
+    @staticmethod
+    def reset_section_retry(session: ConversationSession,
+                           section: str,
+                           caller: Optional[str] = None) -> None:
+        """
+        Reset retry counter for section in sectioned RFQ workflow.
+
+        Args:
+            session: Conversation session
+            section: Section name
+            caller: Optional caller identification
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[SECTIONED_RFQ_RETRY_RESET] Session {session.session_id}: "
+                   f"Resetting retry count for section '{section}' (caller: {caller_info})")
+
+        if "sectioned_rfq" not in session.workflow_state:
+            return
+
+        sections = session.workflow_state["sectioned_rfq"].get("sections", {})
+        if section in sections:
+            sections[section]["retry_count"] = 0
+
+    @staticmethod
+    def set_awaiting_section_modification(session: ConversationSession,
+                                          section: str,
+                                          value: bool,
+                                          caller: Optional[str] = None) -> None:
+        """
+        Set awaiting modification flag for section in sectioned RFQ workflow.
+
+        Args:
+            session: Conversation session
+            section: Section name
+            value: True if awaiting modification
+            caller: Optional caller identification
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[SECTIONED_RFQ_AWAITING_MOD] Session {session.session_id}: "
+                   f"Section '{section}' awaiting modification: {value} (caller: {caller_info})")
+
+        if "sectioned_rfq" not in session.workflow_state:
+            WorkflowManager.initialize_sectioned_rfq(session)
+
+        sections = session.workflow_state["sectioned_rfq"].get("sections", {})
+        if section in sections:
+            sections[section]["awaiting_modification"] = value
+
+    @staticmethod
+    def is_awaiting_section_modification(session: ConversationSession,
+                                         section: str) -> bool:
+        """
+        Check if awaiting modification for section in sectioned RFQ workflow.
+
+        Args:
+            session: Conversation session
+            section: Section name
+
+        Returns:
+            True if awaiting modification
+        """
+        if not session.workflow_state:
+            return False
+        sectioned_rfq = session.workflow_state.get("sectioned_rfq", {})
+        sections = sectioned_rfq.get("sections", {})
+        if section in sections:
+            return sections[section].get("awaiting_modification", False)
+        return False
+
+    @staticmethod
+    def set_sectioned_rfq_pending_restart(session: ConversationSession,
+                                          value: bool,
+                                          caller: Optional[str] = None) -> None:
+        """
+        Set pending restart flag for sectioned RFQ workflow.
+
+        Args:
+            session: Conversation session
+            value: True if restart confirmation pending
+            caller: Optional caller identification
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[SECTIONED_RFQ_RESTART] Session {session.session_id}: "
+                   f"Pending restart: {value} (caller: {caller_info})")
+
+        if "sectioned_rfq" not in session.workflow_state:
+            WorkflowManager.initialize_sectioned_rfq(session)
+
+        session.workflow_state["sectioned_rfq"]["pending_restart"] = value
+
+    @staticmethod
+    def is_sectioned_rfq_pending_restart(session: ConversationSession) -> bool:
+        """
+        Check if restart confirmation is pending for sectioned RFQ workflow.
+
+        Args:
+            session: Conversation session
+
+        Returns:
+            True if pending restart
+        """
+        if not session.workflow_state:
+            return False
+        sectioned_rfq = session.workflow_state.get("sectioned_rfq", {})
+        return sectioned_rfq.get("pending_restart", False)
+
+    @staticmethod
+    def reset_sectioned_rfq(session: ConversationSession,
+                           caller: Optional[str] = None) -> None:
+        """
+        Reset sectioned RFQ workflow to initial state.
+
+        Args:
+            session: Conversation session
+            caller: Optional caller identification
+        """
+        from app.schemas.sectioned_rfq_state import initialize_sectioned_rfq_state
+
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[SECTIONED_RFQ_RESET] Session {session.session_id}: "
+                   f"Resetting sectioned RFQ (caller: {caller_info})")
+
+        session.workflow_state["sectioned_rfq"] = initialize_sectioned_rfq_state()

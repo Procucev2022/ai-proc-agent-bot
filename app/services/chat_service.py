@@ -132,6 +132,7 @@ class ChatService:
         self._image_processor = None
         self._seller_service = None
         self._rfq_status_service = None
+        self._format_modification_handler = None
 
         # Initialize only lightweight services that need database sessions
         self.chat_summary_service = ChatSummaryService(db_session=db_session)
@@ -267,14 +268,29 @@ class ChatService:
         return self._products_array_handler
 
     @property
+    def format_modification_handler(self):
+        """Lazy-load FormatModificationHandler only when needed."""
+        if self._format_modification_handler is None:
+            from app.services.handlers.format_modification_handler import FormatModificationHandler
+            self._format_modification_handler = FormatModificationHandler(
+                self.whatsapp_service
+            )
+        return self._format_modification_handler
+
+    @property
     def purchase_intent_handler(self):
         """Lazy-load PurchaseIntentHandler only when needed."""
         if self._purchase_intent_handler is None:
             from app.services.handlers.purchase_intent_handler import PurchaseIntentHandler
+            # Initialize WITHOUT circular dependencies first
             self._purchase_intent_handler = PurchaseIntentHandler(
                 self.whatsapp_service, self.response_helpers, self.entity_service,
-                self.chat_summary_service, self.products_array_handler, self.session_manager
+                self.chat_summary_service, self.products_array_handler, self.session_manager,
+                None, None  # Pass None to avoid circular dependency
             )
+            # Set handlers AFTER initialization to break circular dependency
+            self._purchase_intent_handler.confirmation_handler = self.confirmation_handler
+            self._purchase_intent_handler.attachment_decision_handler = self.attachment_decision_handler
         return self._purchase_intent_handler
 
     @property
@@ -282,10 +298,13 @@ class ChatService:
         """Lazy-load AttachmentDecisionHandler only when needed."""
         if self._attachment_decision_handler is None:
             from app.services.handlers.attachment_decision_handler import AttachmentDecisionHandler
+            # Initialize WITHOUT circular dependency first
             self._attachment_decision_handler = AttachmentDecisionHandler(
                 self.whatsapp_service, self.response_helpers,
-                self.purchase_intent_handler, self.session_manager
+                None, self.session_manager  # Pass None to avoid circular dependency
             )
+            # Set handler AFTER initialization to break circular dependency
+            self._attachment_decision_handler.purchase_intent_handler = self.purchase_intent_handler
         return self._attachment_decision_handler
 
     @property
@@ -347,6 +366,46 @@ class ChatService:
             return WorkflowType(default)
         except (ValueError, KeyError):
             return WorkflowType.general_inquiry
+
+    async def _activate_sectioned_rfq(self, user: User, session: ConversationSession,
+                                     message: str = "") -> Dict[str, Any]:
+        """
+        Helper method to activate sectioned RFQ workflow.
+
+        This can be called manually for testing or triggered by configuration.
+        Once activated, the sectioned RFQ handler will take over the RFQ creation process.
+
+        Args:
+            user: User object
+            session: Conversation session
+            message: Initial message (if any)
+
+        Returns:
+            Dict with response data
+        """
+        logger.info(f"[SECTIONED_RFQ] Activating sectioned RFQ workflow for user {user.phone_number}")
+
+        # Initialize sectioned RFQ workflow
+        WorkflowManager.initialize_sectioned_rfq(session)
+        WorkflowManager.set_sectioned_rfq_section(session, "date_location")
+
+        # Mark as active
+        if "sectioned_rfq" in session.workflow_state:
+            session.workflow_state["sectioned_rfq"]["active"] = True
+
+        # Set workflow type
+        WorkflowManager.set_workflow_type(session, WorkflowType.rfq_creation, caller='activate_sectioned_rfq')
+
+        await self.session_manager.save_session(session, persist_to_db=False)
+
+        # Send initial prompt for date/location section
+        initial_msg = ("Let's start with the Delivery Date and Delivery Pincode.\n\n"
+                      "Note: If you are expecting the delivery at different locations or on different dates, "
+                      "we request you create separate RFQs.")
+
+        await self.whatsapp_service.send_message(user.phone_number, initial_msg)
+
+        return {"status": "sectioned_rfq_activated"}
 
     @log_service_method("chat_service")
     async def process_message(self, user_phone: str, message_content: str, message_type: str = "text") -> Dict[
@@ -1040,9 +1099,13 @@ class ChatService:
                 session.workflow_state.get("pending_optional_rfq") or session.workflow_state.get(
                     "pending_optional_combined_rfq"))
             has_pending_attachment_decision = bool(session.workflow_state.get("awaiting_attachment_decision"))
+
+            # Check if sectioned RFQ workflow is active
+            has_sectioned_rfq_active = WorkflowManager.is_sectioned_rfq_active(session)
+
             # has_excel_confirmation_pending already defined above for early use in intent handling
             print(
-                f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}, has_excel_confirmation_pending={has_excel_confirmation_pending}")
+                f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}, has_excel_confirmation_pending={has_excel_confirmation_pending}, has_sectioned_rfq_active={has_sectioned_rfq_active}")
 
             # Debug logging for optional fields state
 
@@ -1173,6 +1236,16 @@ class ChatService:
                     await self.session_manager.save_session(session, WorkflowType.rfq_creation)
 
                 return result
+
+            # If sectioned RFQ is active, always route to it regardless of intent
+            if has_sectioned_rfq_active:
+                logger.info("Sectioned RFQ workflow active - routing to sectioned RFQ handler")
+                # Clear any preserved meaningful message - we want the actual current message
+                if session.workflow_state:
+                    session.workflow_state.pop("last_meaningful_message", None)
+                    session.workflow_state.pop("last_meaningful_intent_result", None)
+                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None,
+                                                                                 self._should_use_summary_aware_extraction)
 
             if has_existing_data or has_incomplete_products:
                 # Check for intent switch during active workflow BEFORE continuing
@@ -1309,15 +1382,65 @@ class ChatService:
                     if tracked_message and tracked_intent and session.workflow_type not in [WorkflowType.authentication, WorkflowType.registration]:
                         logger.info(f"Using preserved meaningful message '{str(tracked_message)[:50]}...' instead of current message '{str(message)[:50]}...'")
                         message_to_process = tracked_message
-                        intent_to_process = tracked_intent
+
+                        # DEFENSIVE: Sanitize tracked_intent to prevent recursion from old stored data
+                        # This handles cases where the session has unsafe intent_result from before the fix
+                        try:
+                            if isinstance(tracked_intent, dict):
+                                # Safe copy with explicit type conversion to prevent circular refs
+                                safe_all_intent_scores = {}
+                                if isinstance(tracked_intent.get("all_intent_scores"), dict):
+                                    for k, v in tracked_intent.get("all_intent_scores", {}).items():
+                                        if isinstance(v, (int, float, str, bool, type(None))):
+                                            safe_all_intent_scores[k] = v
+
+                                safe_context_analysis = {}
+                                if isinstance(tracked_intent.get("context_analysis"), dict):
+                                    for k, v in tracked_intent.get("context_analysis", {}).items():
+                                        if isinstance(v, (int, float, str, bool, type(None))):
+                                            safe_context_analysis[k] = v
+                                        elif isinstance(v, dict):
+                                            # Shallow copy only primitives
+                                            safe_context_analysis[k] = {k2: v2 for k2, v2 in v.items() if isinstance(v2, (int, float, str, bool, type(None)))}
+
+                                intent_to_process = {
+                                    "intent": str(tracked_intent.get("intent")) if tracked_intent.get("intent") else None,
+                                    "confidence": int(tracked_intent.get("confidence", 0)),
+                                    "all_intent_scores": safe_all_intent_scores,
+                                    "context_analysis": safe_context_analysis,
+                                    "reasoning": str(tracked_intent.get("reasoning")) if tracked_intent.get("reasoning") else None,
+                                    "suggested_clarification": str(tracked_intent.get("suggested_clarification")) if tracked_intent.get("suggested_clarification") else None,
+                                    "success": bool(tracked_intent.get("success", True))
+                                }
+                                logger.info(f"[SANITIZE] Successfully sanitized tracked_intent")
+                            else:
+                                # If not a dict, use current intent_result as fallback
+                                logger.warning(f"[SANITIZE] tracked_intent is not a dict, using current intent_result")
+                                intent_to_process = intent_result
+                        except Exception as e:
+                            # If sanitization fails, use current intent_result as fallback
+                            logger.error(f"[SANITIZE_ERROR] Failed to sanitize tracked_intent: {e}, using current intent_result")
+                            intent_to_process = intent_result
 
                         # Clear the tracked message now that we're using it
                         session.workflow_state.pop("last_meaningful_message", None)
                         session.workflow_state.pop("last_meaningful_intent_result", None)
+                        # Set flag to prevent re-tracking this message (prevents recursion loop)
+                        session.workflow_state["meaningful_message_used"] = True
 
                 # Normal buy_something flow - user wants to buy with current account
-                return await self.purchase_intent_handler.handle_purchase_intent(user, session, message_to_process, intent_to_process,
-                                                                                 self._should_use_summary_aware_extraction)
+                logger.info(f"[DEBUG] About to call handle_purchase_intent with message_to_process type: {type(message_to_process)}, intent_to_process type: {type(intent_to_process)}")
+                try:
+                    return await self.purchase_intent_handler.handle_purchase_intent(user, session, message_to_process, intent_to_process,
+                                                                                     self._should_use_summary_aware_extraction)
+                except RecursionError as e:
+                    import traceback
+                    logger.error(f"[RECURSION_ERROR] Traceback: {traceback.format_exc()}")
+                    raise
+            elif intent == "format_modification":
+                # Handle format modification (Track 2)
+                logger.info(f"Format modification intent detected - routing to handler")
+                return await self._handle_format_modification(user, session, message)
             elif intent == "confirmation_response" and confidence > 0.7:
                 # Handle confirmation responses - these should already be handled by pending confirmations check above
                 # But if we reach here, treat as continuation of existing workflow
@@ -1362,6 +1485,17 @@ class ChatService:
             elif intent == "sell_something" and confidence > 0.7:
                 # Normal sell_something flow - user wants to sell with current account
                 return await self._handle_seller_flow(user, session, message)
+            elif (user.role.value if hasattr(user.role, "value") else user.role) == "seller":
+                # Handle seller flow routing based on intent clarity
+                if intent == "rfq_status_check" and confidence > 0.7:
+                    # Clear intent for RFQ status check - redirect to RFQ status service
+                    return await self._handle_rfq_status_inquiry(user, message, session)
+                elif intent == "support" and confidence > 0.7:
+                    # Clear intent for support - redirect to support flow
+                    return await self._handle_support_request(user, message)
+                else:
+                    # Intent is not clear or general inquiry - redirect to seller flow (get active RFQs)
+                    return await self._handle_seller_flow(user, session, message)
             elif intent == "account_switch" and confidence > 0.7:
                 return await self._handle_account_switch_intent(user, session, message, intent_result)
             elif intent == "faq":
@@ -1996,14 +2130,43 @@ class ChatService:
             return await self._handle_error_response(e, user.phone_number, "general_inquiry",
                                                      "How can I assist you today?")
 
+    async def _handle_format_modification(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+        """
+        Handle format modification intent (Track 2).
+
+        Delegates to FormatModificationHandler which orchestrates:
+        - Parsing/validation (via Track 1)
+        - State management (retry counter, flags)
+        - Error handling with retry limits
+        """
+        try:
+            logger.info(f"Processing format modification for user {user.phone_number}")
+
+            # Delegate to format modification handler
+            result = await self.format_modification_handler.handle_format_modification(
+                message, session, user
+            )
+
+            # Save session after modification
+            await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error in format modification handler: {e}", exc_info=True)
+            return await self._handle_error_response(
+                e, user.phone_number, "format_modification",
+                "An error occurred while processing your modification. Please try again."
+            )
+
     async def _handle_faq_request(self, user: User, message: str) -> Dict[str, Any]:
         """Handle FAQ requests by providing answers from FAQ service."""
         try:
             logger.info(f"Processing FAQ request for user {user.phone_number}: '{message[:50]}...'")
-            
+
             # Get FAQ answer from FAQ service
             faq_answer = await self.faq_service.get_faq_answer(message)
-            
+
             if faq_answer:
                 # Send FAQ answer
                 full_response = f"{faq_answer}\n\nWhat can I assist you with next?"
@@ -2291,6 +2454,34 @@ class ChatService:
     async def _handle_button_response(self, user: User, session: ConversationSession, button_id: str) -> Dict[
         str, Any]:
         """Handle button interaction responses."""
+        # Handle sectioned RFQ buttons (Track 3)
+        # IMPORTANT: Exclude confirm_rfq from sectioned RFQ handling - it should be handled by confirmation_handler
+        # Only handle section-specific buttons like confirm_date_location, confirm_items, etc.
+        is_sectioned_rfq_button = button_id.startswith(("confirm_", "modify_", "final_", "attachments_", "restart_"))
+
+        # Exclude generic confirm_rfq (final confirmation) and continue_rfq from sectioned routing
+        if is_sectioned_rfq_button and button_id not in ["confirm_rfq", "continue_rfq"]:
+            logger.info(f"[SECTIONED_RFQ] Button click detected: {button_id}")
+            if WorkflowManager.is_sectioned_rfq_active(session):
+                # Get or create sectioned RFQ handler
+                if not hasattr(self.purchase_intent_handler, 'sectioned_rfq_handler'):
+                    from app.services.handlers.sectioned_rfq_creation_handler import SectionedRFQCreationHandler
+                    from app.services.cancel_service import CancelService
+                    cancel_service = CancelService(self.whatsapp_service, self.session_manager)
+                    self.purchase_intent_handler.sectioned_rfq_handler = SectionedRFQCreationHandler(
+                        entity_service=self.entity_service,
+                        whatsapp_service=self.whatsapp_service,
+                        cancel_service=cancel_service,
+                        session_manager=self.session_manager,
+                        confirmation_handler=self.confirmation_handler,
+                        attachment_decision_handler=self.attachment_decision_handler
+                    )
+
+                # Route to sectioned RFQ button handler
+                return await self.purchase_intent_handler.sectioned_rfq_handler.handle_section_button_click(
+                    user, session, button_id
+                )
+
         # Handle new menu buttons
         if button_id == "new_rfq" or button_id == "raise_rfq" or button_id == "create_rfq":
             # Check if we have a tracked meaningful message from auth/registration flow
@@ -2313,6 +2504,8 @@ class ChatService:
                 # Clear the tracked message since we're using it
                 workflow_state.pop("last_meaningful_message", None)
                 workflow_state.pop("last_meaningful_intent_result", None)
+                # Set flag to prevent re-tracking this message (prevents recursion loop)
+                workflow_state["meaningful_message_used"] = True
 
                 message_to_process = tracked_message
                 intent_result = tracked_intent_result
@@ -3363,6 +3556,14 @@ class ChatService:
                 logger.info(f"Skipping profile selection response during auth: '{str(message_content)[:50]}...'")
                 return
 
+            # CRITICAL: Check if this message was already used/consumed to prevent recursion
+            # If meaningful_message_used flag is set, don't re-track the same message
+            if session.workflow_state and session.workflow_state.get("meaningful_message_used"):
+                logger.info(f"Skipping re-tracking of already used meaningful message: '{str(message_content)[:50]}...'")
+                # Clear the flag for next time
+                session.workflow_state.pop("meaningful_message_used", None)
+                return
+
             # Check if we already have a meaningful message preserved (e.g., after options presented)
             existing_meaningful = session.workflow_state.get("last_meaningful_message") if session.workflow_state else None
 
@@ -3370,21 +3571,27 @@ class ChatService:
             if intent in meaningful_intents and confidence > 50:
                 session.workflow_state = session.workflow_state or {}
 
-                # Check if this is a button response to options (which should be ignored)
-                # vs a new meaningful business request (which should replace existing)
-                is_button_response = (
-                    existing_meaningful and 
-                    session.workflow_type not in [WorkflowType.authentication, WorkflowType.registration] and
-                    message_content.lower().strip() in ["1", "2", "3", "create new rfq", "check rfq status", "search stocks", "get_support"]
-                )
-                
-                if is_button_response:
-                    logger.info(f"Preserving existing meaningful message '{str(existing_meaningful)[:50]}...' (ignoring button response '{str(message_content)[:50]}...')")
-                else:
-                    # Normal case or new meaningful message: track/update the meaningful message
-                    session.workflow_state["last_meaningful_message"] = message_content
-                    session.workflow_state["last_meaningful_intent_result"] = intent_result
-                    logger.info(f"Tracked meaningful message: '{str(message_content)[:50]}...' with intent: {intent} (confidence: {confidence}%)")
+                # REMOVED: Button response check that was causing issues when users type button text manually
+                # The button handler itself will set the meaningful_message_used flag to prevent re-tracking
+                # For all other cases, we should track the new meaningful message
+
+                # Always track/update the meaningful message (button handler will use the flag to prevent re-tracking)
+                session.workflow_state["last_meaningful_message"] = message_content
+
+                # Create a safe copy of intent_result without circular references
+                # This prevents maximum recursion depth errors during workflow_state processing
+                safe_intent_result = {
+                    "intent": intent_result.get("intent"),
+                    "confidence": intent_result.get("confidence", 0),
+                    "all_intent_scores": intent_result.get("all_intent_scores", {}),
+                    "context_analysis": intent_result.get("context_analysis", {}),
+                    "reasoning": intent_result.get("reasoning"),
+                    "suggested_clarification": intent_result.get("suggested_clarification"),
+                    "success": intent_result.get("success", True)
+                }
+
+                session.workflow_state["last_meaningful_intent_result"] = safe_intent_result
+                logger.info(f"Tracked meaningful message: '{str(message_content)[:50]}...' with intent: {intent} (confidence: {confidence}%)")
 
         except Exception as e:
             logger.error(f"Error tracking meaningful message: {e}")

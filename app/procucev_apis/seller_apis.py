@@ -45,11 +45,15 @@ class SellerAPIService:
 
                     if delivery_locations and len(delivery_locations) > 0:
                         location_state = delivery_locations[0].get("state")
+                    
+                    description = rfq.get("description", "")
+                    short_description = " ".join(description.split()[:20]) if description else ""
 
                     transformed_rfqs.append({
                         "rfq_id": rfq.get("rfqId"),
                         "location": location_state,
-                        "submission_date": rfq.get("deliveryDate")
+                        "submission_date": rfq.get("deliveryDate"),
+                        "description": short_description
                     })
 
                 return {

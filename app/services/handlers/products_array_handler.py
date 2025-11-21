@@ -31,11 +31,17 @@ class ProductsArrayHandler:
     
     async def handle_products_array(self, user: User, session: ConversationSession,
                                   message: str, products: list, chat_summaries: list = None,
-                                  date_validation_error: bool = False) -> Dict[str, Any]:
+                                  date_validation_error: bool = False,
+                                  global_supplementary_fields: dict = None) -> Dict[str, Any]:
         """Handle products array (single or multiple products)."""
         try:
             print(f"ProductsArrayHandler: Processing {len(products)} products")
             logger.info(f"Handling {len(products)} products from message")
+
+            # Store global supplementary fields in workflow_state if provided
+            if global_supplementary_fields:
+                session.workflow_state["global_supplementary_fields"] = global_supplementary_fields
+                print(f"ProductsArrayHandler: Stored global supplementary fields: {global_supplementary_fields}")
 
             # Check if we have existing incomplete products that need to be merged with new data
             existing_incomplete = session.workflow_state.get("incomplete_products", [])
@@ -68,12 +74,20 @@ class ProductsArrayHandler:
                 # Clear the caption after applying it
                 del session.workflow_state["attachment_caption"]
 
+            # Handle edge case: if products is empty but we stored global fields, ask for product details
+            if not products and global_supplementary_fields:
+                print(f"ProductsArrayHandler: No products mentioned, but global fields stored. Asking user for product details.")
+                return {
+                    "status": "need_product_description",
+                    "response": "I've noted your requirements. What would you like to purchase?"
+                }
+
             # Track categories from all products in product_items
             await self._track_product_categories(session, products)
 
             # Check completeness for each product and identify which ones need more info
             incomplete_products, complete_products = await self._categorize_products_by_completeness(products)
-            
+
             # If any product is incomplete, collect all questions from data model
             if incomplete_products:
                 return await self._handle_incomplete_products(

@@ -35,17 +35,20 @@ class IntentService:
     async def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
         """
         Classify user message intent using OpenAI with conversation context awareness.
-        
-        Analyzes the message and conversation context to determine
-        the user's intent, including modification requests and confirmation responses.
-        
+
+        TRACK 2 PRIORITY ORDER (checked before OpenAI):
+        1. Exit/cancel keywords
+        2. Format modification (if awaiting flag set)
+        3. Interruptions (FAQ/greeting/help during RFQ)
+        4. Regular OpenAI classification
+
         Args:
             message: User message to classify
             context: Optional conversation context including session state, history, and entities
-            
+
         Returns:
             Dict containing:
-            - intent: classified intent (buy_something, general_inquiry, modification_request, confirmation_response, reference_request, ambiguous, contextual_reference, session_inquiry, exit_system, cancel_workflow, account_switch, register_account, alternative_request, support, faq)
+            - intent: classified intent (buy_something, general_inquiry, modification_request, confirmation_response, reference_request, ambiguous, contextual_reference, session_inquiry, exit_system, cancel_workflow, account_switch, register_account, alternative_request, support, faq, format_modification)
             - confidence: confidence score (0-100)
             - reasoning: explanation of classification including context analysis
             - all_intent_scores: scores for all possible intents
@@ -57,6 +60,44 @@ class IntentService:
             - should_update_entities: whether entities should be updated from contextual reference
         """
         try:
+            # Get session from context if available (for Track 2 checks)
+            session = context.get('session') if context else None
+
+            # PRIORITY 1: Check for exit/cancel keywords (Track 2)
+            if self.detect_exit_keywords(message):
+                return {
+                    "intent": "exit_system",
+                    "confidence": 95,
+                    "reasoning": "User wants to exit or cancel workflow",
+                    "success": True,
+                    "context_analysis": {"conversation_stage": "exiting"}
+                }
+
+            # PRIORITY 2: Check for format modification (Track 2)
+            if session and self.detect_format_modification_intent(message, session):
+                return {
+                    "intent": "format_modification",
+                    "confidence": 98,
+                    "reasoning": "User is providing formatted modification response",
+                    "success": True,
+                    "context_analysis": {"conversation_stage": "modifying"}
+                }
+
+            # PRIORITY 3: Check for interruptions (Track 2)
+            if session:
+                interruption_result = self.detect_interruption_intent(message, session)
+                if interruption_result["is_interruption"]:
+                    interruption_type = interruption_result["interruption_type"]
+                    return {
+                        "intent": interruption_type,  # "faq", "greeting", or "help"
+                        "confidence": 85,
+                        "reasoning": f"User interrupted RFQ flow with {interruption_type}",
+                        "success": True,
+                        "is_interruption": True,
+                        "context_analysis": {"conversation_stage": "interrupted"}
+                    }
+
+            # PRIORITY 4: Regular OpenAI classification
             # Get classification from OpenAI (FAQ intent can be detected from prompt alone, no need for full FAQ context)
             classification_result = await self.openai_service.classify_intent(message, context)
 
@@ -292,3 +333,124 @@ class IntentService:
                 'should_change_workflow': False
             })
             return fallback_result
+
+    # ===== TRACK 2 INTENT DETECTION METHODS =====
+
+    def detect_format_modification_intent(self, message: str, session) -> bool:
+        """
+        Detect if message should be treated as format modification intent.
+
+        Track 2 responsibility: Check if we're awaiting modification.
+        If yes, route to format modification handler (Track 1 will validate).
+
+        Args:
+            message: User message
+            session: Conversation session
+
+        Returns:
+            True if this should be treated as format modification
+        """
+        from app.services.workflow_manager import WorkflowManager
+
+        # Check if awaiting modification flag is set
+        is_awaiting, subtype = WorkflowManager.is_awaiting_modification(session)
+        return is_awaiting
+
+    def detect_interruption_intent(self, message: str, session) -> Dict[str, Any]:
+        """
+        Detect if message is an interruption (FAQ/greeting/help) during RFQ flow.
+
+        Args:
+            message: User message
+            session: Conversation session
+
+        Returns:
+            Dict with:
+            - is_interruption: bool
+            - interruption_type: "faq" | "greeting" | "help" | None
+        """
+        from app.models import WorkflowType
+        from app.services.workflow_manager import WorkflowManager
+
+        # Only check for interruptions if in active RFQ workflow
+        workflow_type = WorkflowManager.get_workflow_type(session)
+        if workflow_type not in [WorkflowType.rfq_creation, WorkflowType.buy_something]:
+            return {"is_interruption": False, "interruption_type": None}
+
+        # Check if actually started RFQ (has delivery or items data)
+        has_delivery = WorkflowManager.get_delivery_details(session) is not None
+        has_items = session.workflow_state and session.workflow_state.get('extracted_entities')
+
+        if not (has_delivery or has_items):
+            # Not yet started RFQ, no interruption
+            return {"is_interruption": False, "interruption_type": None}
+
+        message_lower = message.lower().strip()
+
+        # Check for greeting patterns
+        greeting_patterns = [
+            "hello", "hi", "hey", "good morning", "good afternoon",
+            "good evening", "namaste"
+        ]
+        if any(pattern in message_lower for pattern in greeting_patterns):
+            return {
+                "is_interruption": True,
+                "interruption_type": "greeting"
+            }
+
+        # Check for help patterns
+        help_patterns = [
+            "help", "how to", "what can you do", "assist me"
+        ]
+        if any(pattern in message_lower for pattern in help_patterns):
+            return {
+                "is_interruption": True,
+                "interruption_type": "help"
+            }
+
+        # Check for FAQ patterns (common question words)
+        faq_patterns = [
+            "what is", "how does", "why", "when", "where",
+            "can i", "is it possible", "do you"
+        ]
+        if any(pattern in message_lower for pattern in faq_patterns):
+            return {
+                "is_interruption": True,
+                "interruption_type": "faq"
+            }
+
+        return {"is_interruption": False, "interruption_type": None}
+
+    def detect_exit_keywords(self, message: str) -> bool:
+        """
+        Detect if message contains exit/cancel keywords.
+
+        Args:
+            message: User message
+
+        Returns:
+            True if contains exit keywords
+        """
+        message_lower = message.lower().strip()
+
+        exit_keywords = [
+            "exit", "quit", "cancel", "stop", "abort",
+            "start over", "restart", "reset"
+        ]
+
+        return any(keyword in message_lower for keyword in exit_keywords)
+
+    def should_allow_exit(self, session) -> bool:
+        """
+        Check if exit is allowed from current workflow step.
+
+        For Track 2, exit is always allowed (may show confirmation).
+
+        Args:
+            session: Conversation session
+
+        Returns:
+            True (always allowed for now)
+        """
+        # Track 2: Always allow exit, but may show confirmation in handler
+        return True

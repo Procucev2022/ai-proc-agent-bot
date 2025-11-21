@@ -138,6 +138,12 @@ class Settings:
         self.max_chat_summaries_for_context = int(os.getenv("MAX_CHAT_SUMMARIES_FOR_CONTEXT", "3"))
         self.summarization_model = os.getenv("SUMMARIZATION_MODEL", "gpt-4o-mini")
         self.max_context_tokens = int(os.getenv("MAX_CONTEXT_TOKENS", "4000"))
+
+        # RFQ Workflow configuration (Global application-level setting)
+        # Set to "sectioned" to use the new sectioned RFQ workflow (Track 3) - DEFAULT
+        # Set to "legacy" to use the old RFQ creation workflow (Track 1/2)
+        self.rfq_workflow_mode = os.getenv("RFQ_WORKFLOW_MODE", "sectioned").lower()
+        self.use_sectioned_rfq = self.rfq_workflow_mode == "sectioned"
         
         # Daily aggregation configuration
         self.enable_daily_aggregation = os.getenv("ENABLE_DAILY_AGGREGATION", "true").lower() == "true"
@@ -217,6 +223,9 @@ class Settings:
         self.workflow_timeout_enabled: bool = os.getenv("WORKFLOW_TIMEOUT_ENABLED", "true").lower() == "true"
         self.workflow_timeout_seconds: int = int(os.getenv("WORKFLOW_TIMEOUT_SECONDS", "300"))  # 5 minutes default
         self.timeout_poll_interval_seconds: int = int(os.getenv("TIMEOUT_POLL_INTERVAL_SECONDS", "30"))  # Check every 30 seconds
+
+        # Feature Flags
+        self.USE_TRACK2_RFQ_FLOW = os.getenv("USE_TRACK2_RFQ_FLOW", "false").lower() == "true"
 
         # Webhook Health Monitoring Configuration
         self.webhook_health_monitoring_enabled = os.getenv(

@@ -144,7 +144,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to start timeout monitoring: {e}")
         # Continue without timeout monitoring rather than failing startup
-    
+
+    # Preload AutoCategorizationService model for faster first categorization
+    try:
+        from app.services.auto_categorization_service import get_auto_categorization_service
+        logger.info("Preloading AutoCategorizationService and sentence transformer model...")
+        preload_start = time.time()
+        service = get_auto_categorization_service()
+        stats = service.get_collection_stats()
+        preload_time = time.time() - preload_start
+        logger.info(f"AutoCategorizationService preloaded successfully in {preload_time:.2f}s")
+        logger.info(f"Vector store ready with {stats.get('total_items', 0)} items")
+    except Exception as e:
+        logger.warning(f"Failed to preload AutoCategorizationService: {e}")
+        # Continue without preloading - model will load on first use
+
     yield
     
     logger.info("Shutting down AI Procurement Agent application")

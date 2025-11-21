@@ -462,11 +462,21 @@ class SessionManagementService:
         except Exception as e:
             logger.error(f"Error sending authentication placeholder: {e}")
     
-    def _clean_for_json_serialization(self, obj):
-        """Recursively clean object for JSON serialization."""
+    def _clean_for_json_serialization(self, obj, _visited=None):
+        """Recursively clean object for JSON serialization with circular reference protection."""
         import json
         from datetime import datetime, date
-        
+
+        # Initialize visited set for circular reference detection
+        if _visited is None:
+            _visited = set()
+
+        # Check for circular reference using object id
+        obj_id = id(obj)
+        if obj_id in _visited:
+            logger.warning(f"[CIRCULAR_REF] Detected circular reference in object, converting to placeholder")
+            return "<circular_reference>"
+
         if obj is None:
             return None
         elif hasattr(obj, 'value'):  # Enum object
@@ -474,9 +484,20 @@ class SessionManagementService:
         elif isinstance(obj, (datetime, date)):
             return obj.isoformat()
         elif isinstance(obj, dict):
-            return {key: self._clean_for_json_serialization(value) for key, value in obj.items()}
+            # Add to visited set before recursion
+            _visited.add(obj_id)
+            try:
+                return {key: self._clean_for_json_serialization(value, _visited) for key, value in obj.items()}
+            finally:
+                # Remove after processing to allow same object in different branches
+                _visited.discard(obj_id)
         elif isinstance(obj, (list, tuple)):
-            return [self._clean_for_json_serialization(item) for item in obj]
+            # Add to visited set before recursion
+            _visited.add(obj_id)
+            try:
+                return [self._clean_for_json_serialization(item, _visited) for item in obj]
+            finally:
+                _visited.discard(obj_id)
         elif isinstance(obj, (str, int, float, bool)):
             return obj
         else:
@@ -484,7 +505,7 @@ class SessionManagementService:
             try:
                 json.dumps(obj)
                 return obj
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, RecursionError):
                 return str(obj)
 
     def _session_to_dict(self, session: ConversationSession) -> Dict[str, Any]:

@@ -1951,6 +1951,113 @@ Analyze their response to determine their true choice.
             logger.error(f"Excel column mapping failed: {str(e)}")
             return {"column_mapping": {}, "confidence": 20, "unmapped_headers": headers, "reasoning": f"Error: {str(e)}", "success": False}
 
+    async def parse_seller_product_items(self, details: str) -> Dict[str, Any]:
+        """
+        Parse seller's product/service details string into individual categorizable items.
+        This method uses AI to intelligently parse the seller's description of their
+        products/services (which could be comma-separated, line-separated, or natural text)
+        into individual items that can be categorized separately.
+        Args:
+            details: The seller's product/service details as a string
+        Returns:
+            Dict containing:
+                - success: Boolean indicating if parsing was successful
+                - items: List of individual product/service strings
+                - confidence: Confidence score (0-100)
+                - original_text: The original details text
+        Example:
+            Input: "Medical equipment, surgical instruments, hospital supplies"
+            Output: {
+                "success": True,
+                "items": ["Medical equipment", "Surgical instruments", "Hospital supplies"],
+                "confidence": 95,
+                "original_text": "Medical equipment, surgical instruments, hospital supplies"
+            }
+        """
+        start_time = time.time()
+
+        try:
+            # Track this OpenAI call
+            self._track_openai_call("parse_seller_products")
+
+            # Load tool definition
+            with open(self.tools_dir / "parse_seller_products.json", 'r') as f:
+                parse_tool = json.load(f)
+
+            # Load system prompt
+            system_prompt = self._load_prompt("seller_product_parsing", "_parse_seller_products_prompt")
+
+            api_call_start = time.time()
+            response = await self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": f"Parse this seller's product/service details:\n\n{details}"}],
+                instructions=system_prompt,
+                tools=[parse_tool],
+                tool_choice={"type": "function", "name": "parse_product_items"}
+            )
+            api_call_time = time.time() - api_call_start
+
+            # Log cache usage
+            usage = getattr(response, 'usage', None)
+            if usage:
+                total_input_tokens = getattr(usage, 'input_tokens', 0)
+                input_tokens_details = getattr(usage, 'input_tokens_details', None)
+                cached_tokens = getattr(input_tokens_details, 'cached_tokens', 0) if input_tokens_details else 0
+                output_tokens = getattr(usage, 'output_tokens', 0)
+
+                cache_percentage = (cached_tokens / total_input_tokens * 100) if total_input_tokens > 0 else 0
+                logger.info(f"Parse seller products API call: {api_call_time:.2f}s | Input: {total_input_tokens} | Cached: {cached_tokens} ({cache_percentage:.1f}%) | Output: {output_tokens}")
+
+            processing_time = time.time() - start_time
+            logger.info(f"Total seller product parsing time: {processing_time:.2f}s")
+
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+
+                    items = args.get("items", [])
+                    confidence = args.get("confidence", 0)
+
+                    logger.info(f"Parsed {len(items)} items from seller details with {confidence}% confidence")
+
+                    return {
+                        "success": True,
+                        "items": items,
+                        "confidence": confidence,
+                        "original_text": details,
+                        "processing_time": processing_time
+                    }
+
+            # Fallback: if parsing fails, return the original text as a single item
+            logger.warning("Failed to parse seller details, using fallback")
+            return {
+                "success": True,
+                "items": [details],
+                "confidence": 50,
+                "original_text": details,
+                "processing_time": processing_time,
+                "fallback_used": True
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            processing_time = time.time() - start_time
+
+            logger.error(f"Error parsing seller product items: {error_msg}")
+
+            # Fallback: return original text as single item
+            return {
+                "success": True,
+                "items": [details],
+                "confidence": 30,
+                "original_text": details,
+                "processing_time": processing_time,
+                "error": error_msg,
+                "fallback_used": True
+            }
+
     @log_service_method("openai_service")
     async def categorize_with_similar_items(self, item_description: str, similar_items: List[Dict[str, Any]], available_categories: Optional[List[str]] = None) -> Dict[str, Any]:
         """
