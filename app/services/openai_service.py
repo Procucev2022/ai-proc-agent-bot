@@ -1156,6 +1156,7 @@ Analyze their response to determine their true choice.
         Returns:
             Generated response string
         """
+        start_time = time.time()
         try:
             if prompt_file:
                 # Use prompt file if specified
@@ -1172,6 +1173,16 @@ Analyze their response to determine their true choice.
                 model=self.default_model,
                 input=self._build_messages_with_history(context, prompt),
                 instructions=self._load_prompt("response_generation", "_get_response_system_prompt")
+            )
+            processing_time = time.time() - start_time
+            result = response.choices[0].message.content
+
+            self.interaction_logger.log_response_generation(
+                context={"prompt_type": "generating response "},
+                generated_response=result,
+                conversation_stage="completion",
+                model_used=self.default_model,
+                processing_time=processing_time
             )
             
             return response.output_text or "I apologize, but I'm having trouble generating a response right now."

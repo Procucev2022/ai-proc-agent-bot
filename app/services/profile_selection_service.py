@@ -113,7 +113,7 @@ class ProfileSelectionService:
 
             # Case 5: General Inquiry
             elif intent == 'general_inquiry':
-                pass
+                return {"status": "general_inquiry_already_handled"}
 
             # Case 6: Invalid or Ambiguous
             else:

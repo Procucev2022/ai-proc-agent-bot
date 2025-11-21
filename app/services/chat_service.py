@@ -67,12 +67,11 @@ from app.tools.confirmation_tool import ConfirmationTool
 from app.services.confirmation_service import ConfirmationService
 from app.services.workflow_manager import WorkflowManager, WorkflowStage, PendingFlag
 from app.services.message_queue_service import MessageQueueService
-
+from app.redis_db import get_redis_service
 from app.database import SessionLocal, DatabaseManager, get_db_session, get_db_session_context
 from app.models import ConversationSession, WorkflowType, ConversationOutcome
 from app.schemas.user import User
 from sqlalchemy.orm import Session
-from app.context import param_context, get_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -386,7 +385,6 @@ class ChatService:
                 self.session_manager.add_message_to_history(session, "user", message_content, message_type)
                 message_intent_result = {"intent": "greeting", "confidence": 0}
 
-            print("message intent", message_intent_result)
             # Track meaningful messages during auth/registration flows for later processing
             self._track_meaningful_message_during_auth_flow(session, message_intent_result.get('relevant_message') or message_content, message_intent_result)
 
@@ -444,7 +442,7 @@ class ChatService:
                 auth_in_progress_statuses = [
                     "clarification_sent", "general_inquiry_handled", "greeting_handled", "fallback_handled",
                     "redirected_to_registration", "redirected_to_buyer_registration", "redirected_to_seller_registration",
-                    "redirected_to_email_confirmation", "otp_sent","dual_intent_clarification_sent",
+                    "redirected_to_email_confirmation", "otp_sent","dual_intent_clarification_sent","general_inquiry_already_handled",
                     "email_selection_requested", "registration_initiated", "data_collection_in_progress",
                     "awaiting_confirmation", "registration_restarted", "otp_validated", "otp_invalid", "otp_format_invalid",
                     "domain_approved", "domain_approval_required", "email_confirmation_requested",
@@ -768,7 +766,6 @@ class ChatService:
                 logger.info(f"Generated irrelevant response: {irrelevant_response}")
                 
                 if irrelevant_response:
-                    from app.redis_db import get_redis_service
                     redis_service = get_redis_service()
                     cache_key = f"user_cache:{user_phone}"
                     cache_data = await redis_service.get(cache_key, as_json=True) or {}
