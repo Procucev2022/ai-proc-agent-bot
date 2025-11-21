@@ -1429,6 +1429,17 @@ class ChatService:
             elif intent == "sell_something" and confidence > 0.7:
                 # Normal sell_something flow - user wants to sell with current account
                 return await self._handle_seller_flow(user, session, message)
+            elif (user.role.value if hasattr(user.role, "value") else user.role) == "seller":
+                # Handle seller flow routing based on intent clarity
+                if intent == "rfq_status_check" and confidence > 0.7:
+                    # Clear intent for RFQ status check - redirect to RFQ status service
+                    return await self._handle_rfq_status_inquiry(user, message, session)
+                elif intent == "support" and confidence > 0.7:
+                    # Clear intent for support - redirect to support flow
+                    return await self._handle_support_request(user, message)
+                else:
+                    # Intent is not clear or general inquiry - redirect to seller flow (get active RFQs)
+                    return await self._handle_seller_flow(user, session, message)
             elif intent == "account_switch" and confidence > 0.7:
                 return await self._handle_account_switch_intent(user, session, message, intent_result)
             elif intent == "faq":
