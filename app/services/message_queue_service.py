@@ -491,14 +491,14 @@ class MessageQueueService:
                                     
                                     if log_flag_set:
                                         if duration > 50:
-                                            logger.critical(
-                                                f"[MONITOR-CRITICAL] Batch {session.batch_id} "
+                                            logger.warning(
+                                                f"[MONITOR-WARNING] Batch {session.batch_id} "
                                                 f"for {user_phone} processing for {duration:.1f}s "
                                                 f"(approaching TTL limit!)"
                                             )
                                         else:  # 30-50 seconds
-                                            logger.error(
-                                                f"[MONITOR-ERROR] Batch {session.batch_id} "
+                                            logger.info(
+                                                f"[MONITOR-INFO] Batch {session.batch_id} "
                                                 f"for {user_phone} processing for {duration:.1f}s"
                                             )
                                 except Exception:

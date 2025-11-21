@@ -383,19 +383,17 @@ class InactivityTimeoutService:
         activity_key: str
     ) -> None:
         """
-        Handle a timed-out workflow following exit/cancel patterns.
+        Handle a timed-out workflow following cancel pattern.
         
-        Steps (matching exit_service.py pattern):
+        Steps:
         1. Get session from Redis (preserve conversation history)
         2. Double-check activity (race condition protection)
         3. Set outcome = ConversationOutcome.timeout
         4. Persist to database (audit trail)
         5. Clear all message queues
-        6. Delete session from Redis
+        6. Reset session in Redis (preserves auth, like CancelService)
         7. Clean up activity key
         8. Send timeout notification LAST (after cleanup complete)
-        
-        Note: Follows same pattern as exit_service for consistency
         """
         try:
             logger.info(f"[TIMEOUT_SERVICE] Handling timeout for {user_phone}")
@@ -483,12 +481,59 @@ class InactivityTimeoutService:
             deleted_count = await self.redis.delete(*queue_keys)
             logger.info(f"[TIMEOUT_SERVICE] Cleared {deleted_count} queue keys for {user_phone}")
             
-            # 6. Delete session from Redis (timeout completed)
-            try:
-                await self.redis_session.delete_session(session_id)
-                logger.info(f"[TIMEOUT_SERVICE] Deleted session from Redis for {user_phone}")
-            except Exception as redis_error:
-                logger.error(f"[TIMEOUT_SERVICE] Failed to delete Redis session for {user_phone}: {redis_error}")
+            # 6. Reset session in Redis instead of deleting (preserves auth, like CancelService)
+            
+            # Extract user_type BEFORE resetting workflow_state (needed for timeout message)
+            user_type = None
+            
+            if session_data:
+                workflow_state = session_data.get('workflow_state', {})
+                if isinstance(workflow_state, dict):
+                    user_type = workflow_state.get('user_type')
+            
+            if session_data:
+                try:
+                    from app.utils.datetime_utils import utc_now
+                    from app.services.helpers.session_helpers import SessionHelpers
+                    
+                    # Get current timestamp
+                    now_iso = utc_now().isoformat()
+                    
+                    # Reset workflow data for fresh start (matching CancelService._clear_workflow_state)
+                    session_data['workflow_state'] = {}
+                    session_data['extracted_entities'] = {}
+                    session_data['conversation_history'] = {"messages": [], "metadata": [], "openai_messages": []}
+                    session_data['workflow_type'] = None
+                    session_data['outcome'] = None
+                    session_data['completed_at'] = None
+                    
+                    # Update top-level last_activity_at (matching save_session pattern)
+                    session_data['last_activity_at'] = now_iso
+                    
+                    # Preserve important fields that should NOT be reset:
+                    # - session_id (already in session_data)
+                    # - external_user_id (already in session_data)
+                    # - whatsapp_context (preserves auth and other context)
+                    # - retention_date (preserves data retention policy)
+                    # - created_at (preserves session creation time)
+                    
+                    # Clean for JSON serialization (matching save_session → _session_to_dict pattern)
+                    clean_session_data = SessionHelpers.clean_for_json_serialization(session_data)
+                    
+                    # Save reset session back to Redis (preserves auth state)
+                    await self.redis_session.store_session(session_id, clean_session_data)
+                    logger.info(f"[TIMEOUT_SERVICE] Reset session in Redis for {user_phone} (preserved auth)")
+                    
+                    # Clear meaningful message cache (user is starting fresh)
+                    from app.services.user_cache_service import get_user_cache_service
+                    user_cache_service = get_user_cache_service()
+                    meaningful_cleared = await user_cache_service.clear_meaningful_message(user_phone)
+                    logger.info(f"[TIMEOUT_SERVICE] Meaningful message cleared: {meaningful_cleared}")
+                    
+                except Exception as reset_error:
+                    logger.error(f"[TIMEOUT_SERVICE] Failed to reset Redis session for {user_phone}: {reset_error}")
+            else:
+                logger.warning(f"[TIMEOUT_SERVICE] No session data to reset for {user_phone}")
             
             # 7. Clean up activity tracking key
             try:
@@ -498,13 +543,6 @@ class InactivityTimeoutService:
                 logger.error(f"[TIMEOUT_SERVICE] Failed to clean activity key for {user_phone}: {cleanup_error}")
             
             # 8. Send timeout notification LAST (after all cleanup complete)
-            # Extract user_type from session data for personalized message
-            user_type = None
-            if session_data:
-                workflow_state = session_data.get('workflow_state', {})
-                if isinstance(workflow_state, dict):
-                    user_type = workflow_state.get('user_type')
-            
             # Generate user-type-specific timeout message
             timeout_message = self._generate_timeout_message(user_type)
             
