@@ -74,7 +74,7 @@ class BuyerRegistrationSchema(BaseModel):
     zipCode: str = Field(..., description="Pincode")
     organizationPhonenumber: Optional[str] = Field(None, description="Phone number")
     whatsApp: Optional[bool] = Field(None, description="WhatsApp flag")
-    source_type: str = "W"
+    sourceType: str = "W"
 
     @field_validator("name")
     def validate_name(cls, v: str) -> str:
@@ -117,13 +117,13 @@ class SellerRegistrationSchema(BaseModel):
     name: str = Field(..., description="Full name")
     companyName: str = Field(..., description="Company name")
     email: str = Field(..., description="Organization email")
-    address: str = Field(..., description="Location")
+    address1: str = Field(..., description="Location")
     zipCode: str = Field(..., description="Pincode")
     gstin: str = Field(..., description="GSTIN number")
     details: str = Field(..., description="Products or Services offered")
     organizationPhonenumber: Optional[str] = Field(None, description="Phone number")
     whatsApp: Optional[bool] = Field(None, description="WhatsApp flag")
-    source_type: str = "W"
+    sourceType: str = "W"
 
     @field_validator("name")
     def validate_name(cls, v: str) -> str:
@@ -137,7 +137,7 @@ class SellerRegistrationSchema(BaseModel):
         v = v.strip().title()
         return v
 
-    @field_validator("address")
+    @field_validator("address1")
     def validate_address(cls, v: str) -> str:
         v = v.strip().title()
         return v

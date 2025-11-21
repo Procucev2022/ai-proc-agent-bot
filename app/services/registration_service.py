@@ -500,7 +500,7 @@ class RegistrationService:
                     required_field_labels = []
 
                     for name, field_info in fields.items():
-                        if name in {"source_type", "address"}:
+                        if name in {"sourceType", "address1"}:
                             continue
                         if field_info.is_required():
                             label = field_info.description or name.replace("_", " ").title()
@@ -916,7 +916,7 @@ class RegistrationService:
         """Auto-fill address from pincode if valid pincode is provided."""
         try:
             pincode = entities.get("zipCode")
-            if not pincode or entities.get("address"):  # Skip if no pincode or address already exists
+            if not pincode or entities.get("address1"):  # Skip if no pincode or address1 already exists
                 return
             
             # Validate pincode format
@@ -931,9 +931,9 @@ class RegistrationService:
                 state = location_data.get("state", "")
                 
                 if city and state:
-                    # Auto-fill address with city and state
-                    entities["address"] = f"{city}, {state}"
-                    logger.info(f"Auto-filled address for {user_phone}: {city}, {state} from pincode {pincode}")
+                    # Auto-fill address1 with city and state
+                    entities["address1"] = f"{city}, {state}"
+                    logger.info(f"Auto-filled address1 for {user_phone}: {city}, {state} from pincode {pincode}")
                 else:
                     logger.warning(f"Incomplete location data for pincode {pincode}: {location_data}")
             else:
