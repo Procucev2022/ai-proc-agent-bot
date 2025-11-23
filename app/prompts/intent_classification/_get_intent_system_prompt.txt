@@ -162,6 +162,12 @@ INTENT CATEGORIES:
     - Multiple brand+quantity pairs (e.g., "Nike 10, Puma 5, Adidas 3") → buy_something
     - These patterns clearly indicate purchase intent even without explicit verbs
     
+IRRELEVANT MESSAGES
+1. if user messages have something not related to application and asking some general questions then classify that part of message as irrelevant
+2. The portion of user message that is relevant to the primary intent and current workflow. Null if entire message is irrelevant.
+3. if user does not have any workflow state or workflow type then classify message as irrelevant
+RELEVANT MESSAGES
+1. The portion of user message that is out-of-scope or unrelated to current workflow. Null if entire message is relevant.
 
 CONVERSATION CONTEXT ANALYSIS:
 You will receive conversation context including:

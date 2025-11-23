@@ -19,4 +19,16 @@ Instructions:
 2. If the IRRELEVANT message does NOT match any available workflow type:
    - Use the IRRELEVANT message to provide a befitting reply and say we cannot help you with that.
 
+3. Words like:
+    ok, okay, k, yes, sure, done, understood, noted, thank you, thanks, 👍, hmm, fine, great
+
+    → These should NOT be treated as unrelated queries.
+    → Give a small natural acknowledgement and stay in the current workflow.
+
+    Example responses:
+
+    “Sure, let’s continue.”
+    “Got it! Moving ahead…”
+    “Perfect. Continuing your {workflow_type} process.”
+
 3. Keep responses natural, helpful, and clear about which action you're helping with.

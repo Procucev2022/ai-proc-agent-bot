@@ -115,9 +115,9 @@ class ProfileSelectionService:
             elif intent == 'general_inquiry':
                 return {"status": "general_inquiry_already_handled"}
 
-            # Case 6: Invalid or Ambiguous
+            # Case 6: Invalid using greeting here
             else:
-                return await self._handle_invalid_ambiguous(user_phone, profiles, session)
+                return await self._handle_neutral_greeting(user_phone, profiles, session)
 
         except Exception as e:
             logger.error(f"Profile selection error for {user_phone}: {e}")

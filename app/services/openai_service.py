@@ -398,7 +398,9 @@ class OpenAIService:
                         model_used=self.default_model,
                         processing_time=processing_time,
                         all_scores=result["all_intent_scores"],
-                        openai_input=openai_input_data
+                        openai_input=openai_input_data,
+                        relevant_message=result.get("relevant_message"),
+                        irrelevant_message=result.get("irrelevant_message")
                     )
                     
                     return result
@@ -1175,12 +1177,11 @@ Analyze their response to determine their true choice.
                 instructions=self._load_prompt("response_generation", "_get_response_system_prompt")
             )
             processing_time = time.time() - start_time
-            result = response.choices[0].message.content
 
             self.interaction_logger.log_response_generation(
-                context={"prompt_type": "generating response "},
-                generated_response=result,
-                conversation_stage="completion",
+                context={"prompt_type": "generating response"},
+                generated_response=response,
+                conversation_stage="generating_response",
                 model_used=self.default_model,
                 processing_time=processing_time
             )

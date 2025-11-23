@@ -804,14 +804,44 @@ class ChatService:
             )
             
             return {"status": "technical_failure", "error": str(e)}
-    
-    async def handle_irrelevant_message_flow(self, user_phone: str, message_intent_result: Dict[str, Any], session: ConversationSession) -> None:
+
+    async def handle_irrelevant_message_flow(self, user_phone: str, message_intent_result: Dict[str, Any],
+                                             session: ConversationSession) -> None:
         """Handle irrelevant message flow and cache response."""
         try:
+            intent = message_intent_result.get('intent')
             relevant_msg = message_intent_result.get('relevant_message')
             irrelevant_msg = message_intent_result.get('irrelevant_message')
 
-            if irrelevant_msg:
+            # Handle general inquiry intent (both relevant and irrelevant)
+            if intent == 'general_inquiry':
+                # When both messages exist, prioritize irrelevant message for general inquiry
+                query_message = irrelevant_msg if irrelevant_msg else relevant_msg
+
+                if query_message:
+                    logger.info(f"Processing general inquiry: {query_message}")
+                    if relevant_msg and irrelevant_msg:
+                        logger.info(f"Both messages present - using irrelevant message for general inquiry")
+
+                    # Search FAQ first, then fallback to LLM
+                    context_data = {
+                        'relevant_message': relevant_msg or '',
+                        'irrelevant_message': irrelevant_msg or query_message,
+                        'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
+                        'workflow_state': session.workflow_state or {},
+                        'available_workflow_types': [wf.value for wf in WorkflowType],
+                    }
+
+                    response = await self._handle_irrelevant_message(user_phone, query_message, context_data)
+                    logger.info(f"Generated response: {response}")
+
+                    # Cache response
+                    if response:
+                        await self._cache_irrelevant_response(user_phone, response)
+
+
+            # Handle other irrelevant messages (non-general inquiry)
+            elif irrelevant_msg:
                 logger.info(f"Processing irrelevant message: {irrelevant_msg}")
                 context_data = {
                     'relevant_message': relevant_msg or '',
@@ -820,20 +850,16 @@ class ChatService:
                     'workflow_state': session.workflow_state or {},
                     'available_workflow_types': [wf.value for wf in WorkflowType],
                 }
-                
-                irrelevant_response = await self._handle_irrelevant_message(user_phone, irrelevant_msg, context_data)
-                logger.info(f"Generated irrelevant response: {irrelevant_response}")
-                
-                if irrelevant_response:
-                    redis_service = get_redis_service()
-                    cache_key = f"user_cache:{user_phone}"
-                    cache_data = await redis_service.get(cache_key, as_json=True) or {}
-                    cache_data["irrelevant_response"] = {
-                        "user_message": irrelevant_response,
-                        "timestamp": utc_now().isoformat()
-                    }
-                    await redis_service.set(cache_key, cache_data, ex=43200)
-                    logger.info(f"\n\ndata after saving is:{cache_data}\n\n")
+
+                response = await self._handle_irrelevant_message(user_phone, irrelevant_msg, context_data)
+                logger.info(f"Generated irrelevant response: {response}")
+
+
+                # Cache response
+                if response:
+                    await self._cache_irrelevant_response(user_phone, response)
+
+
         except Exception as e:
             logger.error(f"Error in handle_irrelevant_message_flow: {e}")
 
@@ -841,10 +867,15 @@ class ChatService:
         """Handle irrelevant messages by searching FAQ first, then generating LLM response."""
         try:
             # First search in FAQ
+            logger.info(f"Searching FAQ for: {message}")
             faq_answer = await self.faq_service.get_faq_answer(message)
+
             if faq_answer and not faq_answer.startswith("I don't have specific information"):
+                logger.info(f"FAQ answer found: {faq_answer}")
                 return faq_answer
-            
+
+            logger.info("No FAQ match found - generating LLM response")
+
             # If not found in FAQ, generate LLM response
             # Pass context with the correct structure expected by the prompt
             prompt_context = {
@@ -854,17 +885,34 @@ class ChatService:
                 'irrelevant_message': context.get('irrelevant_message', message),
                 'available_workflow_types': ', '.join(context.get('available_workflow_types', []))
             }
-            
+
             llm_response = await self.openai_service.generate_response(
-                prompt_context, 
-                None, 
+                prompt_context,
+                None,
                 "response_generation/_get_irrelevant_message_response_prompt"
             )
+
+            logger.info(f"LLM response generated: {llm_response}")
             return llm_response
-            
+
         except Exception as e:
             logger.error(f"Error handling irrelevant message: {e}")
             return "I'm having trouble processing that request right now. Please try again or contact support."
+
+    async def _cache_irrelevant_response(self, user_phone: str, response: str) -> None:
+        """Cache irrelevant response in Redis."""
+        try:
+            redis_service = get_redis_service()
+            cache_key = f"user_cache:{user_phone}"
+            cache_data = await redis_service.get(cache_key, as_json=True) or {}
+            cache_data["irrelevant_response"] = {
+                "user_message": response,
+                "timestamp": utc_now().isoformat()
+            }
+            await redis_service.set(cache_key, cache_data, ex=43200)
+            logger.info(f"Cached response for {user_phone}")
+        except Exception as e:
+            logger.error(f"Error caching irrelevant response: {e}")
 
     async def authentication_orchestrator_flow(self, user_phone: str, message_content: str,
                                                session: ConversationSession, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -965,10 +1013,6 @@ class ChatService:
             # Check workflow state flags early for use in intent handling
             has_excel_confirmation_pending = bool(session.workflow_state.get("awaiting_excel_confirmation"))
 
-            # Handle FAQ requests FIRST - can interrupt any workflow (highest priority after exit)
-            if intent == "general_inquiry" and confidence > 0.6:
-                await self.handle_irrelevant_message_flow(user.phone_number, message_intent_result, session)
-
 
             # Handle cancel workflow intent - highest priority after FAQ and exit
             if intent == "cancel_workflow" and confidence > 50:
@@ -1063,6 +1107,7 @@ class ChatService:
                     elif new_intent == "sell_something":
                         return await self._handle_seller_flow(user, session, message)
                     elif new_intent == "general_inquiry":
+                        logger.info("calling from process text message inside new intent")
                         await self.handle_irrelevant_message_flow(user.phone_number, message_intent_result, session)
                     elif new_intent == "greeting":
                         return await self._handle_greeting_inquiry(user, new_message, intent_result)

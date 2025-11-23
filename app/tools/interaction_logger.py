@@ -41,7 +41,9 @@ class InteractionLogger:
         processing_time: float = None,
         all_scores: Dict[str, float] = None,
         phone_number: str = None,
-        openai_input: Dict = None
+        openai_input: Dict = None,
+        relevant_message: str = None,
+        irrelevant_message: str = None
     ):
         """Log intent classification interaction with full OpenAI input."""
         log_entry = {
@@ -54,6 +56,8 @@ class InteractionLogger:
             "response_data": {
                 "intent": intent,
                 "confidence": confidence,
+                "irrelevant_message": irrelevant_message,
+                "relevant_message":relevant_message,
                 "reasoning": reasoning,
                 "all_intent_scores": all_scores or {},
                 "success": True
