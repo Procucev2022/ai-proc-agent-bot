@@ -105,6 +105,7 @@ class WhatsAppService:
                     }
                 }
             }
+            logger.info(f"\n\npaylof is :{payload}\n\n")
 
             logger.info(f"WhatsApp payload - from: {self.from_number}, to: {formatted_recipient}")
             logger.info(f"FROM_NUMBER config: {self.from_number}")
