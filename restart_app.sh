@@ -1,4 +1,3 @@
-@ -1,39 +0,0 @@
 #!/bin/bash
 
 # Configuration
