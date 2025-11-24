@@ -18,8 +18,12 @@ class CustomFormatter(logging.Formatter):
     """Custom formatter that includes timestamp, source, and user phone number."""
 
     def format(self, record):
-        # Add timestamp
-        record.timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        # Add timestamp - handle shutdown gracefully
+        try:
+            record.timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        except (ImportError, AttributeError):
+            # Python is shutting down, datetime module may be None
+            record.timestamp = "SHUTDOWN"
 
         # Add source (module name)
         record.source = record.name
