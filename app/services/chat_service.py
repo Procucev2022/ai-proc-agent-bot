@@ -813,7 +813,6 @@ class ChatService:
             relevant_msg = message_intent_result.get('relevant_message')
             irrelevant_msg = message_intent_result.get('irrelevant_message')
             conversation_history = session.conversation_history or {"openai_messages": [], "metadata": []}
-            print("conversation histriy", conversation_history)
 
             # Handle general inquiry intent (both relevant and irrelevant)
             if intent in ( 'general_inquiry', 'support'):
@@ -833,7 +832,6 @@ class ChatService:
                         'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
                         'workflow_state': session.workflow_state or {},
                         'available_workflow_types': [wf.value for wf in WorkflowType],
-                        'conversation_history': conversation_history
                     }
 
 
@@ -855,7 +853,6 @@ class ChatService:
                     'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
                     'workflow_state': session.workflow_state or {},
                     'available_workflow_types': [wf.value for wf in WorkflowType],
-                    'conversation_history': conversation_history
                 }
 
                 response = await self._handle_irrelevant_message(user_phone, irrelevant_msg, context_data)
@@ -879,8 +876,7 @@ class ChatService:
                         'irrelevant_message': irrelevant_msg or query_message,
                         'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
                         'workflow_state': session.workflow_state or {},
-                        'available_workflow_types': [wf.value for wf in WorkflowType],
-                        'conversation_history': conversation_history,
+                        'available_workflow_types': [wf.value for wf in WorkflowType]
                     }
 
                     # Generate response directly without FAQ search
