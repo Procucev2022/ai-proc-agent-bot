@@ -913,7 +913,7 @@ Return only the selected email address or "none" if no clear selection.
                         email = updated_user.get("username") or updated_user.get("email") or selected_email
                         
                         # Send success message with seller menu options
-                        await self._send_seller_menu_options(user_phone, email)
+                        # await self._send_seller_menu_options(user_phone, email)
                         
                         return {
                             "status": "authentication_completed",
