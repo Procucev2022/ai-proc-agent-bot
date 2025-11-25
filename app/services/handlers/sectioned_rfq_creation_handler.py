@@ -356,8 +356,8 @@ class SectionedRFQCreationHandler:
 
             items_data = entity_result.get("products", [])
             WorkflowManager.update_section_data(session, "items", items_data)
-        else:
-            # We have existing items - user might be providing missing fields
+        elif message and message.strip():
+            # We have existing items AND user provided a message - user might be providing missing fields
             # Re-extract and merge with existing items
             logger.info(f"[SECTIONED_RFQ] Re-extracting to merge with existing {len(items_data)} items")
 
@@ -373,6 +373,9 @@ class SectionedRFQCreationHandler:
                 items_data = new_items  # Use the merged result from entity service
                 WorkflowManager.update_section_data(session, "items", items_data)
                 logger.info(f"[SECTIONED_RFQ] Updated items after re-extraction: {len(items_data)} items")
+        else:
+            # We have existing items and message is empty - just use existing items
+            logger.info(f"[SECTIONED_RFQ] Using existing {len(items_data)} items from initial message")
 
         # Check if we have at least one item
         if not items_data or len(items_data) == 0:
@@ -1029,6 +1032,14 @@ class SectionedRFQCreationHandler:
                                      next_section: str) -> Dict[str, Any]:
         """Initiate next section with appropriate prompt."""
         if next_section == "items":
+            # Check if items were already provided in the initial message
+            items_data = WorkflowManager.get_section_data(session, "items")
+            if items_data and len(items_data) > 0:
+                logger.info(f"[SECTIONED_RFQ] Items already exist from initial message ({len(items_data)} items), displaying confirmation")
+                # Items already exist, go directly to items section handler which will display confirmation
+                return await self._handle_items_section(user, session, "", [])
+
+            # No items yet, ask for them
             msg = ("Please share the items for your RFQ with name, brand/specs (if any), and quantity — "
                   "you can add multiple items together in one message.\n\n"
                   "📝 Example:\n"

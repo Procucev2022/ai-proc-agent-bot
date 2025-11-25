@@ -17,12 +17,11 @@
                         },
                         "quantity": {
                             "type": ["number", "null"],
-                            "description": "Required quantity - numeric value ONLY. Do NOT confuse specifications with quantity. If uncertain, use null. Examples: '100 laptops' -> 100, 'Motors 1000KV' -> null (1000KV is spec, not quantity), '25 meters cable, 100 qty' -> 100."
+                            "description": "HOW MANY items/units the user wants. Extract only when explicitly stated. IMPORTANT: '500m cable' has NO quantity stated (500m is product specification, like '1000ml bottle'). '100kg rice' has NO quantity (100kg is bag size). Only extract when clearly stated: '5 cables' -> 5, '100 bottles' -> 100, '10 bags' -> 10. If not explicitly stated, use null. Examples: '500m cable Polycab' -> null (need to ask: how many 500m cables?), '1000ml bottles' -> null (need to ask: how many bottles?), '5 laptops' -> 5, '10 bags of rice' -> 10."
                         },
                         "unitofMeasures": {
                             "type": "string",
-                            "description": "Unit of measurement extracted from context: pcs, kg, meters, liters, boxes, sets, etc. Extract from user's message if explicitly mentioned (e.g., '25 meters cables' -> 'meters', '50kg rice' -> 'kg'). Use empty string ONLY if no unit is mentioned AND cannot be inferred. DO NOT default to 'pcs' unless explicitly stated or clearly implied for countable items."
-
+                            "description": "ONLY the BASE unit of measurement for QUANTITY (how many items): m, ml, l, kg, g, pcs, units etc. CRITICAL: DO NOT put specifications like '500m', '100kg', '1000ml' in this field - those MUST go in remarks field. This field should ONLY contain the unit for counting items. Examples: '500m cable' -> 'm' (500m goes to remarks), '100kg rice' -> 'pcs' (100kg goes to remarks), '10 cables of 500m' -> 'm', '5 bags of 50kg rice' -> 'kg', '100 laptops' -> 'pcs', '1000ml bottles' -> 'ml'. Use empty string if no unit is mentioned."
                         },
                         "brand": {
                             "type": "string",
@@ -30,7 +29,7 @@
                         },
                         "remarks": {
                             "type": "string",
-                            "description": "Item-specific remarks or requirements. Use empty string if not provided."
+                            "description": "Item-specific remarks, requirements, or specifications. CRITICAL: This field MUST contain size/length/weight/capacity specifications. Include: (1) Size/length/weight/capacity like '500m', '1000ml', '50kg', '2TB', '64GB' - THESE ARE REQUIRED; (2) Technical specifications like 'FR-LSH 4Cx10sqmm 1100V', '3Cx2.5sqmm+1Cx1.5sqmm(E)'; (3) Other requirements. Examples: '1000ml water bottles' -> '1000ml', 'Laptop 16GB RAM' -> '16GB RAM', '500m cable Polycab FR-LSH 4Cx10sqmm 1100V' -> '500m, FR-LSH 4Cx10sqmm 1100V', '100kg rice bags' -> '100kg', '100m cable Havells 3Cx2.5sqmm' -> '100m, 3Cx2.5sqmm'. Use empty string ONLY if truly not provided."
                         }
                     },
                     "required": ["description", "quantity", "unitofMeasures", "brand", "remarks"],
