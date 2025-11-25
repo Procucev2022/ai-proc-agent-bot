@@ -79,7 +79,7 @@ class SellerService:
         )
         self.response_helpers = ResponseHelpers(self.openai_service)
 
-    async def handle_seller_workflow(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+    async def handle_seller_workflow(self, user: User, session: ConversationSession, message: str ,intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Main seller workflow handler with complete state management.
 
@@ -98,21 +98,39 @@ class SellerService:
 
             logger.info(f"Seller workflow - Current state: {current_state}")
 
-            # Handle different workflow states
-            if current_state == "awaiting_rfq_selection":
+            # ------------------------------
+            # Route workflow based on existing state
+            # ------------------------------
+
+            # Step 1: Seller is selecting an RFQ
+            if (
+                    current_state == "awaiting_rfq_selection"
+                    or (
+                        str(session.workflow_type) == "seller_rfq_view"
+                        and intent_result
+                        and intent_result.get("intent") == "rfq_status_check"
+                    )
+                ):
+
                 return await self._handle_rfq_selection_response(user, session, message)
+
+            # Step 2: Seller is selecting subscription plan
             elif current_state == "awaiting_plan_selection":
                 return await self._handle_plan_selection_response(user, session, message)
+
+            # Step 3: Seller is providing general follow-up responses
+            # AI Based Flow decided ( seller intent + ochrestartor )
             elif current_state == "awaiting_general_response":
                 return await self._handle_general_seller_response(user, session, message)
+
             else:
-                # Initial seller flow
-                # return await self._handle_initial_seller_flow(user, session, message)
+                # Step 4. Initial workflow entry point. If the seller is entering the workflow for the first time,
+                # we begin by displaying available RFQs.
                 return await self._display_rfqs_to_seller(user, session, message)
 
         except Exception as e:
-            logger.error(f"Error in seller workflow: {e}")
-            return await self._handle_workflow_error(user, session, str(e))
+                logger.error(f"Error in seller workflow: {e}")
+                return await self._handle_workflow_error(user, session, str(e))
 
     async def _handle_initial_seller_flow(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
         """Handle initial seller flow with credit checking and RFQ listing."""
@@ -299,9 +317,6 @@ class SellerService:
             if intent_type == "plan_upgrade_request" and confidence > 0.7:
                 return await self._handle_plan_upgrade_request(user, session, message)
 
-            elif intent_type == "rfq_status_check" and confidence > 0.7:
-                return await self.rfq_status_service.handle_rfq_status_inquiry(user, message, session)
-
             elif intent_type == "rfq_access_request" and confidence > 0.7:
                 print("credits avaiable", credits_available)
                 # Check if they have credits for RFQ access
@@ -311,6 +326,9 @@ class SellerService:
                 else:
                     # They have credits, treat as RFQ selection attempt
                     return await self._handle_rfq_selection_response(user, session, message)
+
+            elif intent_type == "rfq_status_check" and confidence > 0.7:
+                return await self.rfq_status_service.handle_rfq_status_inquiry(user, message, session)
 
             elif intent_type == "general_question" and confidence > 0.7:
                 context = {

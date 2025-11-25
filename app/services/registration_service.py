@@ -760,30 +760,24 @@ class RegistrationService:
                     stored_intent_result = session.workflow_state.get("current_intent_result", {})
                     intent = stored_intent_result.get("intent", "general_inquiry")
                     
-
-                    # Show seller options
-                    selling_message = (
+                    logger.info(f"Seller registration completed - processing intent: {intent}")
+                    
+                    # Send success message without buttons
+                    name = entities.get('name', 'there').split()[0].title()
+                    success_message = (
+                        f"Hi {name}! Your OTP has been verified successfully.\n\n"
                         f"Got it, you'd like to sell items!\n"
                         f"Let's continue with your Seller profile ({entities.get('email', 'your profile')}).\n"
                     )
-                    name = entities.get('name', 'there').split()[0].title()
-                    header = f"Hi {name}! Your OTP has been verified successfully."
-                    buttons_config = [
-                        {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "get_support", "title": "Get Support Info"}
-                    ]
 
-                    await self.whatsapp_service.send_configurable_buttons(
-                        user_phone,
-                        selling_message,
-                        buttons_config,
-                        header
-                    )
-
+                    # Return status to continue processing the original message based on intent
                     return {
-                        "status": "seller_options_presented",
+                        "status": "registration_completed",
                         "user_type": "seller",
-                        "email": entities.get('email')
+                        "email": entities.get('email'),
+                        "redirect_to_main_flow": True,
+                        "original_intent": intent,
+                        "original_message": stored_intent_result.get("original_message", "I want to sell items")
                     }
             
             # Handle maximum OTP attempts exceeded - call exit without message

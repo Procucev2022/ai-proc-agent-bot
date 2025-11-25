@@ -570,7 +570,7 @@ class ChatService:
                         exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
                         return exit_result
 
-                elif auth_status == "registration_completed":
+                elif auth_status == "registration_completed" and auth_result.get("user_type") == "buyer":
                     # Registration completed - check if this is truly complete or needs further processing
                     registration_flow_complete = auth_result.get("registration_flow_complete", False)
                     user_type = auth_result.get("user_type", "unknown")
@@ -636,7 +636,7 @@ class ChatService:
                                 return {"status": "registration_completed", "message": "Buyer registration successful - awaiting approval"}
                     else:
                         return {"status": "error", "error": "Session not found after registration"}
-                elif auth_status in ["authentication_completed", "profile_selected_and_authenticated", "profile_selection_sent"]:
+                elif auth_status in ["authentication_completed", "profile_selected_and_authenticated", "profile_selection_sent","registration_completed"]:
                     # Authentication completed - check user type before processing
                     user_type = auth_result.get("user_type")
                     original_message = auth_result.get("original_message", message_content)
@@ -1006,7 +1006,7 @@ class ChatService:
                     elif new_intent == "rfq_status_check":
                         return await self._handle_rfq_status_inquiry(user, new_message,session)
                     elif new_intent == "sell_something":
-                        return await self._handle_seller_flow(user, session, message)
+                        return await self._handle_seller_flow(user, session, message, intent_result)
                     elif new_intent == "general_inquiry":
                         return await self._handle_general_inquiry(user, new_message, intent_result)
                     else:
@@ -1205,13 +1205,33 @@ class ChatService:
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None,
                                                                                  self._should_use_summary_aware_extraction)
 
-            # Handle seller RFQ selection workflow BEFORE intent classification
-            if session.workflow_type and hasattr(session.workflow_type,
-                                                 'value') and session.workflow_type.value == "seller_rfq_view":
-                workflow_state = session.workflow_state or {}
-                current_seller_state = workflow_state.get("seller_workflow_state")
-                # Seller is responding to RFQ list - handle this immediately
-                return await self._handle_seller_flow(user, session, message)
+            # Redirect to Seller Flow and its Orchestrator
+            if (user.role.value if hasattr(user.role, "value") else user.role) == "seller":
+
+                # If workflow already in RFQ view → continue that flow first (highest priority)
+                if session.workflow_type and hasattr(session.workflow_type, "value") and session.workflow_type.value == "seller_rfq_view":
+                    workflow_state = session.workflow_state or {}
+                    current_seller_state = workflow_state.get("seller_workflow_state")
+
+                    # Continue seller RFQ view flow immediately
+                    return await self._handle_seller_flow(
+                        user, session, message, message_intent_result
+                    )
+
+                # Otherwise → fresh seller flow routing based on intent clarity
+                if intent == "rfq_status_check" and confidence > 0.7:
+                    # Clear intent → RFQ Status inquiry
+                    return await self._handle_rfq_status_inquiry(user, message, session)
+
+                elif intent == "support" and confidence > 0.7:
+                    # Support inquiry routing
+                    return await self._handle_support_request(user, message)
+
+                else:
+                    # Intent unclear or general → default seller flow (Active RFQs)
+                    return await self._handle_seller_flow(
+                        user, session, message, intent_result
+                    )
 
             # Check if user recently completed registration and handle follow-up messages
             recently_registered = session.workflow_state.get("recently_completed_registration", False)
@@ -1424,22 +1444,11 @@ class ChatService:
                 )
                 
                 return {"status": "bfs_search_handled"}
-            elif intent == "rfq_status_check" and confidence > 0.7:
-                return await self._handle_rfq_status_inquiry(user, message, session)
             elif intent == "sell_something" and confidence > 0.7:
                 # Normal sell_something flow - user wants to sell with current account
-                return await self._handle_seller_flow(user, session, message)
-            elif (user.role.value if hasattr(user.role, "value") else user.role) == "seller":
-                # Handle seller flow routing based on intent clarity
-                if intent == "rfq_status_check" and confidence > 0.7:
-                    # Clear intent for RFQ status check - redirect to RFQ status service
-                    return await self._handle_rfq_status_inquiry(user, message, session)
-                elif intent == "support" and confidence > 0.7:
-                    # Clear intent for support - redirect to support flow
-                    return await self._handle_support_request(user, message)
-                else:
-                    # Intent is not clear or general inquiry - redirect to seller flow (get active RFQs)
-                    return await self._handle_seller_flow(user, session, message)
+                return await self._handle_seller_flow(user, session, message, intent_result)
+            elif intent == "rfq_status_check" and confidence > 0.7:
+                return await self._handle_rfq_status_inquiry(user, message, session)
             elif intent == "account_switch" and confidence > 0.7:
                 return await self._handle_account_switch_intent(user, session, message, intent_result)
             elif intent == "faq":
@@ -2860,7 +2869,7 @@ class ChatService:
         """Handle RFQ status inquiry requests."""
         return await self.rfq_status_service.handle_rfq_status_inquiry(user, message, session)
 
-    async def _handle_seller_flow(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+    async def _handle_seller_flow(self, user: User, session: ConversationSession, message: str, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Enhanced handler for seller flow with complete workflow state management.
 
@@ -2872,77 +2881,69 @@ class ChatService:
         - General seller queries
         """
         try:
-            # Check if we're already in a seller workflow
             workflow_state = session.workflow_state or {}
             current_seller_state = workflow_state.get("seller_workflow_state")
 
             logger.info(f"ChatService: Handling seller flow - Current state: {current_seller_state}")
 
-            # Handle different seller workflow states
-            if session.workflow_type and hasattr(session.workflow_type, 'value'):
-                workflow_type = session.workflow_type.value
-            else:
-                workflow_type = str(session.workflow_type) if session.workflow_type else None
+            # Normalize workflow type
+            workflow_type = (
+                session.workflow_type.value
+                if getattr(session.workflow_type, "value", None)
+                else str(session.workflow_type) if session.workflow_type
+                else None
+            )
 
-            if workflow_type == "seller_rfq_view":
-                # We're in an active seller workflow - delegate to seller service
-                result = await self.seller_service.handle_seller_workflow(user, session, message)
+            # Check if user is already inside seller workflow
+            is_existing = workflow_type == "seller_rfq_view"
 
-                # The seller service handles session updates internally
-                # Only send message if not already sent
-                response_message = result.get("message")
-                if response_message and not result.get("message_already_sent"):
-                    await self.whatsapp_service.send_message(user.phone_number, response_message)
-                    self.session_manager.add_message_to_history(session, "assistant", response_message)
+            # --- Helper: send message once only ---
+            async def send_response(result):
+                msg = result.get("message")
+                if msg and not result.get("message_already_sent"):
+                    await self.whatsapp_service.send_message(user.phone_number, msg)
+                    self.session_manager.add_message_to_history(session, "assistant", msg)
 
-                return {
-                    "status": "seller_workflow_handled",
-                    **result
-                }
-            else:
-                # Initial seller flow - starting new workflow
-                result = await self.seller_service.handle_seller_workflow(user, session, message)
+            # --- Single call to seller workflow handler ---
+            result = await self.seller_service.handle_seller_workflow(
+                user, session, message, intent_result
+            )
 
-                # Handle workflow initialization
-                if result.get("success"):
-                    workflow_step = result.get("workflow_step")
+            # --- Workflow init logic (only for new flows) ---
+            if not is_existing and result.get("success"):
+                if result.get("workflow_step") in [
+                    "display_rfqs_to_seller",
+                    "show_subscription_plans"
+                ]:
+                    WorkflowManager.set_workflow_type(
+                        session, WorkflowType.seller_rfq_view, caller="seller_flow_init"
+                    )
+                    await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
-                    # Update session workflow type based on result
-                    if workflow_step in ["display_rfqs_to_seller", "show_subscription_plans"]:
-                        WorkflowManager.set_workflow_type(session, WorkflowType.seller_rfq_view, caller='seller_flow_init')
-                        await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
+            # Send message
+            await send_response(result)
 
-                # Send response message if provided and not already sent
-                response_message = result.get("message")
-                if response_message and not result.get("message_already_sent"):
-                    await self.whatsapp_service.send_message(user.phone_number, response_message)
-                    self.session_manager.add_message_to_history(session, "assistant", response_message)
-
-                return {
-                    "status": "seller_flow_initiated",
-                    **result
-                }
+            return {"status": "seller_flow_processed", **result}
 
         except Exception as e:
             logger.error(f"Error in seller flow handler: {e}")
 
-            # Generate error response using AI
-            error_context = {
-                "workflow_state": "seller_flow_error",
-                "error_message": str(e)
-            }
-
+            # AI-generated contextual response fallback
             try:
-                error_response = await self.response_helpers.generate_seller_contextual_response(error_context)
-                await self.whatsapp_service.send_message(user.phone_number, error_response)
-            except Exception as response_error:
-                logger.error(f"Error generating seller error response: {response_error}")
+                err_msg = await self.response_helpers.generate_seller_contextual_response({
+                    "workflow_state": "seller_flow_error",
+                    "error_message": str(e),
+                })
+                await self.whatsapp_service.send_message(user.phone_number, err_msg)
+            except Exception as resp_err:
+                logger.error(f"Error generating seller error response: {resp_err}")
                 await self.whatsapp_service.send_message(
                     user.phone_number,
                     "I encountered an issue processing your request. Please contact support@procurev.com"
                 )
 
             return {"status": "error", "error": str(e)}
+
 
     def _should_use_summary_aware_extraction(self, message: str) -> bool:
         """

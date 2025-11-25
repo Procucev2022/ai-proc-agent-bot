@@ -37,6 +37,9 @@ class SellerAPIService:
             if response.get('success'):
                 result = response.get('data', {})
                 rfqs_raw = result.get("rfqs", [])
+
+                # ✅ LIMIT TO TOP 5 RFQs
+                rfqs_raw = rfqs_raw[:5]
                 transformed_rfqs = []
 
                 for rfq in rfqs_raw:
