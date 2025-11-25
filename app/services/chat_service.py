@@ -832,6 +832,7 @@ class ChatService:
                         'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
                         'workflow_state': session.workflow_state or {},
                         'available_workflow_types': [wf.value for wf in WorkflowType],
+                        'conversation_history': conversation_history
                     }
 
 
@@ -853,6 +854,7 @@ class ChatService:
                     'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
                     'workflow_state': session.workflow_state or {},
                     'available_workflow_types': [wf.value for wf in WorkflowType],
+                    'conversation_history': conversation_history
                 }
 
                 response = await self._handle_irrelevant_message(user_phone, irrelevant_msg, context_data)
@@ -876,7 +878,8 @@ class ChatService:
                         'irrelevant_message': irrelevant_msg or query_message,
                         'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
                         'workflow_state': session.workflow_state or {},
-                        'available_workflow_types': [wf.value for wf in WorkflowType]
+                        'available_workflow_types': [wf.value for wf in WorkflowType],
+                        'conversation_history': conversation_history
                     }
 
                     # Generate response directly without FAQ search
@@ -896,9 +899,10 @@ class ChatService:
     async def _handle_irrelevant_message(self, user_phone: str, message: str, context) -> str:
         """Handle irrelevant messages by searching FAQ first, then generating LLM response."""
         try:
-            # First search in FAQ
+            # First search in FAQ with conversation history
             logger.info(f"Searching FAQ for: {message}")
-            faq_answer = await self.faq_service.get_faq_answer(message)
+            conversation_history = context.get('conversation_history')
+            faq_answer = await self.faq_service.get_faq_answer(message, conversation_history)
 
             if faq_answer and not faq_answer.startswith("I don't have specific information"):
                 logger.info(f"FAQ answer found: {faq_answer}")
@@ -914,12 +918,30 @@ class ChatService:
     async def _generate_llm_response(self, user_phone: str, message: str, context) -> str:
         """Generate LLM response without FAQ search."""
         try:
+            # Extract conversation history for context
+            conversation_context = ""
+            conversation_history = context.get('conversation_history')
+            if conversation_history:
+                messages = conversation_history.get('messages', [])
+                # Get last 10 messages (5 user + 5 bot pairs)
+                recent_messages = messages[-10:] if len(messages) > 10 else messages
+                
+                if recent_messages:
+                    conversation_context = "\n\nRecent conversation context:\n"
+                    for msg in recent_messages:
+                        role = msg.get('role', 'unknown')
+                        content = msg.get('content', '')
+                        if role in ['user', 'assistant']:
+                            role_label = 'User' if role == 'user' else 'Bot'
+                            conversation_context += f"{role_label}: {content}\n"
+
             prompt_context = {
                 'workflow_type': context.get('workflow_type', 'unknown'),
                 'workflow_state': str(context.get('workflow_state', {})),
                 'relevant_message': context.get('relevant_message', ''),
                 'irrelevant_message': context.get('irrelevant_message', message),
-                'available_workflow_types': ', '.join(context.get('available_workflow_types', []))
+                'available_workflow_types': ', '.join(context.get('available_workflow_types', [])),
+                'conversation_context': conversation_context
             }
 
             llm_response = await self.openai_service.generate_response(
