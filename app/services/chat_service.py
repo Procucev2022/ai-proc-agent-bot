@@ -487,7 +487,7 @@ class ChatService:
                 return cancel_result
 
             # Handle irrelevant messages using reusable function
-            if intent =='general_inquiry' or message_intent_result.get("irrelevant_message"):
+            if intent in ('general_inquiry','greeting','support') or message_intent_result.get("irrelevant_message"):
                 await self.handle_irrelevant_message_flow(user_phone, message_intent_result, session)
 
 
@@ -499,7 +499,7 @@ class ChatService:
                 
                 # Authentication/registration flow statuses - stay in auth loop
                 auth_in_progress_statuses = [
-                    "clarification_sent", "general_inquiry_handled", "greeting_handled", "fallback_handled",
+                    "clarification_sent", "general_inquiry_handled", "greeting_handled", "fallback_handled","filtered_seller_profiles_shown",
                     "redirected_to_registration", "redirected_to_buyer_registration", "redirected_to_seller_registration",
                     "redirected_to_email_confirmation", "otp_sent","dual_intent_clarification_sent","general_inquiry_already_handled",
                     "email_selection_requested", "registration_initiated", "data_collection_in_progress",
@@ -812,9 +812,11 @@ class ChatService:
             intent = message_intent_result.get('intent')
             relevant_msg = message_intent_result.get('relevant_message')
             irrelevant_msg = message_intent_result.get('irrelevant_message')
+            conversation_history = session.conversation_history or {"openai_messages": [], "metadata": []}
+            print("conversation histriy", conversation_history)
 
             # Handle general inquiry intent (both relevant and irrelevant)
-            if intent == 'general_inquiry':
+            if intent in ( 'general_inquiry', 'support'):
                 # When both messages exist, prioritize irrelevant message for general inquiry
                 query_message = irrelevant_msg if irrelevant_msg else relevant_msg
 
@@ -825,12 +827,15 @@ class ChatService:
 
                     # Search FAQ first, then fallback to LLM
                     context_data = {
+                        'intent':intent,
                         'relevant_message': relevant_msg or '',
                         'irrelevant_message': irrelevant_msg or query_message,
                         'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
                         'workflow_state': session.workflow_state or {},
                         'available_workflow_types': [wf.value for wf in WorkflowType],
+                        'conversation_history': conversation_history
                     }
+
 
                     response = await self._handle_irrelevant_message(user_phone, query_message, context_data)
                     logger.info(f"Generated response: {response}")
@@ -844,11 +849,13 @@ class ChatService:
             elif irrelevant_msg:
                 logger.info(f"Processing irrelevant message: {irrelevant_msg}")
                 context_data = {
+                    'intent':intent,
                     'relevant_message': relevant_msg or '',
                     'irrelevant_message': irrelevant_msg,
                     'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
                     'workflow_state': session.workflow_state or {},
                     'available_workflow_types': [wf.value for wf in WorkflowType],
+                    'conversation_history': conversation_history
                 }
 
                 response = await self._handle_irrelevant_message(user_phone, irrelevant_msg, context_data)
@@ -858,6 +865,33 @@ class ChatService:
                 # Cache response
                 if response:
                     await self._cache_irrelevant_response(user_phone, response)
+
+            # Handle greeting intent - response generation only, no FAQ search
+            elif intent == 'greeting':
+                query_message = irrelevant_msg or relevant_msg
+
+                if query_message:
+                    logger.info(f"Processing greeting: {query_message}")
+
+                    context_data = {
+                        'intent':intent,
+                        'relevant_message': relevant_msg or '',
+                        'irrelevant_message': irrelevant_msg or query_message,
+                        'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
+                        'workflow_state': session.workflow_state or {},
+                        'available_workflow_types': [wf.value for wf in WorkflowType],
+                        'conversation_history': conversation_history,
+                    }
+
+                    # Generate response directly without FAQ search
+                    response = await self._generate_llm_response(user_phone, query_message, context_data)
+                    logger.info(f"Generated greeting response: {response}")
+
+                    if response:
+                        await self._cache_irrelevant_response(user_phone, response)
+
+
+
 
 
         except Exception as e:
@@ -875,9 +909,15 @@ class ChatService:
                 return faq_answer
 
             logger.info("No FAQ match found - generating LLM response")
+            return await self._generate_llm_response(user_phone, message, context)
 
-            # If not found in FAQ, generate LLM response
-            # Pass context with the correct structure expected by the prompt
+        except Exception as e:
+            logger.error(f"Error handling irrelevant message: {e}")
+            return "I'm having trouble processing that request right now. Please try again or contact support."
+
+    async def _generate_llm_response(self, user_phone: str, message: str, context) -> str:
+        """Generate LLM response without FAQ search."""
+        try:
             prompt_context = {
                 'workflow_type': context.get('workflow_type', 'unknown'),
                 'workflow_state': str(context.get('workflow_state', {})),
@@ -896,9 +936,8 @@ class ChatService:
             return llm_response
 
         except Exception as e:
-            logger.error(f"Error handling irrelevant message: {e}")
+            logger.error(f"Error generating LLM response: {e}")
             return "I'm having trouble processing that request right now. Please try again or contact support."
-
     async def _cache_irrelevant_response(self, user_phone: str, response: str) -> None:
         """Cache irrelevant response in Redis."""
         try:
