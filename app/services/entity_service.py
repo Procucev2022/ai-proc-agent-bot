@@ -1089,26 +1089,39 @@ class EntityService:
                 products_without_desc.append(i)
 
         # Check if we should use positional matching
-        # Condition: existing products without descriptions, new products with descriptions, same count
+        # Condition 1: existing products without descriptions, new products with descriptions, same count
+        # Condition 2: same number of existing and new products (suggests supplementary data for same items)
         new_products_with_desc = [p for p in new_products if p.get("description")]
         use_positional_matching = (
-            len(products_without_desc) > 0 and
-            len(new_products_with_desc) > 0 and
-            len(products_without_desc) == len(new_products_with_desc) and
-            len(new_products) == len(new_products_with_desc)  # All new products have descriptions
+            (len(products_without_desc) > 0 and
+             len(new_products_with_desc) > 0 and
+             len(products_without_desc) == len(new_products_with_desc) and
+             len(new_products) == len(new_products_with_desc)) or  # All new products have descriptions
+            (len(existing_products) == len(new_products) and len(new_products) > 1)  # Same count, multiple items
         )
 
         if use_positional_matching:
-            print(f"EntityService: Using positional matching - {len(products_without_desc)} existing products without descriptions, {len(new_products_with_desc)} new products with descriptions")
+            print(f"EntityService: Using positional matching - merging {len(new_products)} new products with {len(existing_products)} existing products by position")
             # Positional merge: match by index order
             merged_products = [prod.copy() for prod in existing_products]
 
-            for existing_idx, new_prod in zip(products_without_desc, new_products_with_desc):
-                print(f"EntityService: Positionally merging new product '{new_prod.get('description')}' into existing product at index {existing_idx}")
-                for key, value in new_prod.items():
-                    if value is not None:
-                        merged_products[existing_idx][key] = value
-                        print(f"  Updated {key}={value}")
+            # If matching products without descriptions with new products
+            if len(products_without_desc) == len(new_products_with_desc):
+                for existing_idx, new_prod in zip(products_without_desc, new_products_with_desc):
+                    print(f"EntityService: Positionally merging new product '{new_prod.get('description')}' into existing product at index {existing_idx}")
+                    for key, value in new_prod.items():
+                        if value is not None and value != '':
+                            merged_products[existing_idx][key] = value
+                            print(f"  Updated {key}={value}")
+            else:
+                # Same count of existing and new products - merge by position
+                for i, new_prod in enumerate(new_products):
+                    if i < len(merged_products):
+                        print(f"EntityService: Positionally merging new product at index {i}")
+                        for key, value in new_prod.items():
+                            if value is not None and value != '':
+                                merged_products[i][key] = value
+                                print(f"  Updated {key}={value}")
 
             return merged_products
 
@@ -1147,9 +1160,11 @@ class EntityService:
                 existing_index = existing_descriptions[new_desc_lower]
                 print(f"EntityService: Merging data for existing product: {new_desc_lower}")
 
-                # Merge non-None fields from new product into existing
+                # Merge non-None and non-empty fields from new product into existing
                 for key, value in new_prod.items():
-                    if value is not None:
+                    # Only update if value is not None and not empty string
+                    # This prevents overwriting existing good data with empty values
+                    if value is not None and value != '':
                         merged_products[existing_index][key] = value
                         print(f"  Updated {key}={value}")
             elif new_desc_lower:
