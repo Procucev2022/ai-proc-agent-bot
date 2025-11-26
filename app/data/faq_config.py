@@ -3,9 +3,11 @@ FULL_FAQ_CONTEXT =\
     """
 - Platform Overview:
     Procucev’s Get My Quote (GMT) is an AI-powered procurement and RFQ platform connecting buyers and sellers. Buyers access many vendors and receive fast, competitive quotes, while sellers gain leads, efficiency, and more business opportunities.
-- Registration & Access:
-    Register as a buyer or seller via WhatsApp AI Agent (“Hi” to our number) or the website (www.procucev.com). 
-    Multiple buyer or seller accounts can be linked to the same phone number using different email addresses; you will be prompted to select your profile when the session starts.
+- Registration & Access: 
+    You can register as a buyer or seller through our WhatsApp AI Agent (simply send “Hi” to our number) or via our website (www.procucev.com).
+    Multiple buyer or seller accounts can be linked to the same phone number using different email addresses. When your session begins, you will be prompted to select the appropriate profile.
+    To register as a buyer, the following details are required: Name, Company Name, Pincode, and Email ID. All these fields are mandatory to complete buyer registration.
+    To register as a seller, the following details are required: Name, Company Name, Pincode, GST Number, Email ID, and the services you offer. All these fields are mandatory to complete seller registration.
 - RFQ Process:
     Raise, track, and customize RFQs (quotes) through the WhatsApp AI Agent or the web portal. To create an RFQ, you will need to provide Delivery Date, Pincode, Procurable Items, Quantity, and (optional) Item Specifications.
     You can also attach files and define criteria. Sellers receive curated RFQs that match their offerings via email and the portal, and can respond or track quotations from their dashboard.

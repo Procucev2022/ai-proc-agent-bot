@@ -307,7 +307,7 @@ class OpenAIService:
                 # Add current session state (optimized - reduced verbosity)
                 if context.get('workflow_state'):
                     workflow_state = context['workflow_state']
-                    context_info += f"\n\nCURRENT SESSION STATE"
+                    context_info += f"\n\nCURRENT SESSION STATE:"
                     context_info += f"\n- Workflow Type: {context.get('workflow_type', 'unknown')}"
                     context_info += f"\n- Has Pending Confirmations: {bool(workflow_state.get('pending_combined_rfq') or workflow_state.get('pending_rfq'))}"
                     context_info += f"\n- Has Pending Optional Fields: {bool(workflow_state.get('pending_optional_rfq'))}"

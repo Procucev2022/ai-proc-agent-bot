@@ -1237,10 +1237,6 @@ class ChatService:
                     # Any other status, return the result
                     return cancel_result
 
-            # Handle FAQ requests immediately - even during active workflows (highest priority after exit/cancel)
-            if intent == "faq" and confidence > 0.6:
-                logger.info(f"FAQ intent detected with {confidence}% confidence - handling immediately")
-                await self.handle_irrelevant_message_flow(user.phone_number, message_intent_result, session)
 
             # Handle support requests immediately - even during active workflows
             if intent == "support" and confidence > 0.7:
@@ -1600,9 +1596,9 @@ class ChatService:
                     return await self._handle_seller_flow(user, session, message)
             elif intent == "account_switch" and confidence > 0.7:
                 return await self._handle_account_switch_intent(user, session, message, intent_result)
-            elif intent == "faq":
+            elif intent == "general_inquiry":
                 # Handle FAQ requests
-                logger.info(f"FAQ intent detected with {confidence}% confidence in main routing")
+                logger.info(f"general inquiry intent detected with {confidence}% confidence in main routing")
                 await self.handle_irrelevant_message_flow(user.phone_number, message_intent_result, session)
             elif intent == "greeting":
                 return await self._handle_greeting_inquiry(user, message, intent_result)
