@@ -50,7 +50,7 @@ class ProfileSelectionService:
         Analyzes user intent and presents appropriate profile selection interface.
         """
         try:
-            intent = intent_result.get('intent', 'general_inquiry')
+            intent = intent_result.get('intent', 'greeting')
             confidence = intent_result.get('confidence', 0)
 
             logger.info(f"Profile selection for {user_phone}: intent={intent}, confidence={confidence}")
@@ -92,7 +92,7 @@ class ProfileSelectionService:
             profiles = profiles_result.get('profiles', [])
 
             # Case 1: Neutral/Greeting Start
-            if intent in ['general_inquiry', 'ambiguous'] or confidence < 50:
+            if intent in ['greeting', 'ambiguous'] or confidence < 50:
                 return await self._handle_neutral_greeting(user_phone, profiles, session)
 
             # Case 2: Buyer Intent Detected
@@ -111,9 +111,13 @@ class ProfileSelectionService:
             elif intent == 'rfq_status_check' and confidence > 70:
                 return await self._handle_rfq_status_check(user_phone, profiles, session)
 
-            # Case 5: Invalid or Ambiguous
+            # Case 5: General Inquiry
+            elif intent == 'general_inquiry':
+                return {"status": "general_inquiry_already_handled"}
+
+            # Case 6: Invalid using greeting here
             else:
-                return await self._handle_invalid_ambiguous(user_phone, profiles, session)
+                return await self._handle_neutral_greeting(user_phone, profiles, session)
 
         except Exception as e:
             logger.error(f"Profile selection error for {user_phone}: {e}")
@@ -972,7 +976,7 @@ class ProfileSelectionService:
 
             # Set active profile first with verification check
             result = await self._set_active_profile_and_proceed(
-                user_phone, profile, session, "", "general_inquiry"
+                user_phone, profile, session, "", "greeting"
             )
 
             if result.get('status') != 'profile_selected_and_authenticated':
@@ -1236,6 +1240,46 @@ class ProfileSelectionService:
             logger.error(f"Error handling registration type response for {user_phone}: {e}")
             return {"status": "error", "error": str(e)}
 
+    async def _detect_user_intent_with_ai(self, message: str) -> Optional[str]:
+        """Use AI to detect user intent for buy/sell choice."""
+        try:
+            if not self.user_selection_tool or not hasattr(self.user_selection_tool, 'openai_service'):
+                return None
+
+            # Use OpenAI to understand the user's intent
+            prompt = f"""User message: "{message}"
+
+    The user was asked to choose between:
+    1. Buy — Create or check my RFQs
+    2. Sell — View or respond to RFQs
+
+    Analyze the user's message and determine their intent. Look for:
+    - Numbers (1 for buy, 2 for sell)
+    - Words like "buy", "buyer", "purchase", "procurement", "RFQ"
+    - Words like "sell", "seller", "vendor", "supplier", "respond"
+    - Variations and typos of these words
+
+    IMPORTANT: If the message contains BOTH buying and selling intent (e.g., "I want to buy laptops and sell motor"), respond with "dual".
+    
+    Respond with exactly one word: "buy", "sell", "dual", or "unclear"""
+
+            # Get OpenAI service from user selection tool
+            openai_service = self.user_selection_tool.openai_service
+
+            response = await openai_service.get_completion(prompt)
+
+            if response:
+                response_clean = response.strip().lower()
+                if response_clean in ['buy', 'sell', 'dual']:
+                    logger.info(f"AI detected intent '{response_clean}' for message: '{message}'")
+                    return response_clean
+
+            logger.info(f"AI could not determine clear intent for message: '{message}'")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error in AI intent detection: {e}")
+            return None
     async def _detect_registration_intent(self, message: str) -> Optional[str]:
         """Detect explicit registration intent from user message using user selection tool."""
         try:
@@ -1532,7 +1576,7 @@ class ProfileSelectionService:
             profiles_result = await self._get_user_profiles(user_phone, "", session)
 
             if not profiles_result.get('success'):
-                return await self._handle_no_profiles_found(user_phone, "general_inquiry", session)
+                return await self._handle_no_profiles_found(user_phone, "greeting", session)
 
             profiles = profiles_result.get('profiles', [])
 
@@ -1620,7 +1664,7 @@ class ProfileSelectionService:
             profiles_result = await self._get_user_profiles(user_phone, "", session)
 
             if not profiles_result.get('success'):
-                return await self._handle_no_profiles_found(user_phone, "general_inquiry", session)
+                return await self._handle_no_profiles_found(user_phone, "greeting", session)
 
             profiles = profiles_result.get('profiles', [])
 
@@ -1638,8 +1682,8 @@ class ProfileSelectionService:
             message_lower = message.strip().lower()
             profiles = session.workflow_state.get('profiles', [])
 
-            # Check for buy intent (1 or buy)
-            if message_lower in ['1', 'buy', 'buyer','buying'] or 'buy' in message_lower:
+            # Check for exact matches first (highest priority)
+            if message_lower in ['1', 'buy', 'buyer', 'buying']:
                 # Clear neutral greeting stage
                 session.workflow_state.pop('profile_selection_stage', None)
                 session.workflow_state.pop('profiles', None)
@@ -1647,8 +1691,7 @@ class ProfileSelectionService:
                 intent_result = {'intent': 'buy_something', 'confidence': 100}
                 return await self._handle_buyer_intent(user_phone, profiles, message, session, intent_result)
 
-            # Check for sell intent (2 or sell)
-            elif message_lower in ['2', 'sell', 'seller'] or 'sell' in message_lower:
+            elif message_lower in ['2', 'sell', 'seller', 'selling']:
                 # Clear neutral greeting stage
                 session.workflow_state.pop('profile_selection_stage', None)
                 session.workflow_state.pop('profiles', None)
@@ -1656,15 +1699,69 @@ class ProfileSelectionService:
                 intent_result = {'intent': 'sell_something', 'confidence': 100}
                 return await self._handle_seller_intent(user_phone, profiles, message, session, intent_result)
 
-            else:
-                # Invalid response - show the greeting again
-                retry_message = (
-                    "Please choose a valid option:\n\n"
+            # Check for dual intent (both buy and sell in the same message)
+            has_buy_intent = any(word in message_lower for word in ['buy', 'buyer', 'buying', 'purchase', 'procure'])
+            has_sell_intent = any(word in message_lower for word in ['sell', 'seller', 'selling', 'vendor', 'supplier'])
+
+            if has_buy_intent and has_sell_intent:
+                # User mentioned both intents - ask for clarification
+                clarification_message = (
+                    "I see you mentioned both buying and selling. "
+                    "Please choose what you'd like to do first:\n\n"
                     "1 - Buy (create or check RFQs)\n"
                     "2 - Sell (view or respond to RFQs)\n\n"
                     "Reply with 1 or 2, or type Buy or Sell to continue."
                 )
-                await self.whatsapp_service.send_message(user_phone, retry_message)
+                await self.whatsapp_service.send_message(user_phone, clarification_message)
+                return {
+                    "status": "dual_intent_clarification_sent"
+                }
+
+            # Check for single intent with keywords
+            elif has_buy_intent:
+                # Clear neutral greeting stage
+                session.workflow_state.pop('profile_selection_stage', None)
+                session.workflow_state.pop('profiles', None)
+                # Create fake intent result for buyer intent
+                intent_result = {'intent': 'buy_something', 'confidence': 90}
+                return await self._handle_buyer_intent(user_phone, profiles, message, session, intent_result)
+
+            elif has_sell_intent:
+                # Clear neutral greeting stage
+                session.workflow_state.pop('profile_selection_stage', None)
+                session.workflow_state.pop('profiles', None)
+                # Create fake intent result for seller intent
+                intent_result = {'intent': 'sell_something', 'confidence': 90}
+                return await self._handle_seller_intent(user_phone, profiles, message, session, intent_result)
+
+            else:
+                # Try AI-based intent detection for better understanding
+                ai_intent = await self._detect_user_intent_with_ai(message)
+
+                if ai_intent == 'buy':
+                    # Clear neutral greeting stage
+                    session.workflow_state.pop('profile_selection_stage', None)
+                    session.workflow_state.pop('profiles', None)
+                    # Create intent result for buyer intent
+                    intent_result = {'intent': 'buy_something', 'confidence': 95}
+                    return await self._handle_buyer_intent(user_phone, profiles, message, session, intent_result)
+
+                elif ai_intent == 'sell':
+                    # Clear neutral greeting stage
+                    session.workflow_state.pop('profile_selection_stage', None)
+                    session.workflow_state.pop('profiles', None)
+                    # Create intent result for seller intent
+                    intent_result = {'intent': 'sell_something', 'confidence': 95}
+                    return await self._handle_seller_intent(user_phone, profiles, message, session, intent_result)
+                else:
+                    # Invalid response - show the greeting again
+                    retry_message = (
+                        "Please choose a valid option:\n\n"
+                        "1 - Buy (create or check RFQs)\n"
+                        "2 - Sell (view or respond to RFQs)\n\n"
+                        "Reply with 1 or 2, or type Buy or Sell to continue."
+                    )
+                    await self.whatsapp_service.send_message(user_phone, retry_message)
 
                 return {
                     "status": "neutral_greeting_retry_sent"
@@ -1750,4 +1847,10 @@ class ProfileSelectionService:
 
         except Exception as e:
             logger.error(f"Error handling seller no accounts response for {user_phone}: {e}")
+            return {"status": "error", "error": str(e)}
+
+
+
+        except Exception as e:
+            logger.error(f"Error handling general inquiry for {user_phone}: {e}")
             return {"status": "error", "error": str(e)}

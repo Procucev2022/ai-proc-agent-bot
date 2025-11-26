@@ -372,6 +372,8 @@ class OpenAIService:
                     result = {
                         "intent": args.get("intent"),
                         "confidence": args.get("confidence"),
+                        "relevant_message":args.get("relevant_message"),
+                        "irrelevant_message":args.get("irrelevant_message"),
                         "all_intent_scores": args.get("all_intent_scores", {}),
                         "context_analysis": args.get("context_analysis", {}),
                         "reasoning": args.get("reasoning", ""),
@@ -396,7 +398,9 @@ class OpenAIService:
                         model_used=self.default_model,
                         processing_time=processing_time,
                         all_scores=result["all_intent_scores"],
-                        openai_input=openai_input_data
+                        openai_input=openai_input_data,
+                        relevant_message=result.get("relevant_message"),
+                        irrelevant_message=result.get("irrelevant_message")
                     )
                     
                     return result
@@ -1154,6 +1158,7 @@ Analyze their response to determine their true choice.
         Returns:
             Generated response string
         """
+        start_time = time.time()
         try:
             if prompt_file:
                 # Use prompt file if specified
@@ -1170,6 +1175,15 @@ Analyze their response to determine their true choice.
                 model=self.default_model,
                 input=self._build_messages_with_history(context, prompt),
                 instructions=self._load_prompt("response_generation", "_get_response_system_prompt")
+            )
+            processing_time = time.time() - start_time
+
+            self.interaction_logger.log_response_generation(
+                context={"prompt_type": "generating response"},
+                generated_response=response,
+                conversation_stage="generating_response",
+                model_used=self.default_model,
+                processing_time=processing_time
             )
             
             return response.output_text or "I apologize, but I'm having trouble generating a response right now."
@@ -1406,7 +1420,7 @@ Analyze their response to determine their true choice.
                 "session_inquiry": 5,
                 "workflow_rejection": 5,
                 "alternative_request": 5,
-                "faq": 10
+                "greeting": 10
             },
             "context_analysis": {
                 "references_existing_data": False,

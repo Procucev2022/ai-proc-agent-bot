@@ -152,7 +152,7 @@ class AuthenticationOrchestrator:
                 )
 
             # Step 6: Use profile selection service for clear intents
-            if intent in ["buy_something", "sell_something", "rfq_status_check", "general_inquiry", "register_account"]:
+            if intent in ["buy_something", "sell_something", "rfq_status_check","greeting", "register_account"]:
                 logger.info(f"Using profile selection service for intent: {intent} ({confidence}%)")
                 return await self.profile_selection_service.handle_profile_selection(
                     user_phone, message_content, session, intent_result

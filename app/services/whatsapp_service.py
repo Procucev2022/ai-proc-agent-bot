@@ -24,6 +24,7 @@ from dataclasses import dataclass
 
 from app.config import get_settings
 from app.tools.retry_service import get_retry_service
+from app.redis_db import get_redis_service
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class WhatsAppService:
         self.retry_service = get_retry_service()
         self.retry_service.max_retries = settings.retry_max_attempts
         self.retry_service.initial_delay = settings.retry_initial_delay
-        
+
     async def send_message(self, recipient_id: str, message: str) -> MessageResponse:
         """
         Send text message to WhatsApp user with retry mechanism.
@@ -65,6 +66,7 @@ class WhatsAppService:
         Sends formatted text message with API authentication,
         message formatting, error handling, and automatic retries.
         """
+
         async def send_text_message():
             if self.mock_mode:
                 logger.info(f"[MOCK] Sending message to {recipient_id}: {message}")
@@ -78,6 +80,19 @@ class WhatsAppService:
                 logger.error(f"Invalid phone number format: {recipient_id}")
                 return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}")
 
+            # Prepare message
+            combined_message = message  # default
+            # Access the saved irrelevant response from user cache
+            redis_service = get_redis_service()
+            cache_key = f"user_cache:{formatted_recipient}"
+            cache_data = await redis_service.get(cache_key, as_json=True)
+            if cache_data and cache_data.get("irrelevant_response"):
+                irrelevant_response = cache_data["irrelevant_response"].get("user_message")
+                if irrelevant_response:
+                    combined_message = f"{irrelevant_response}\n\n{message}"
+                    # Clear the irrelevant response after using it
+                    cache_data.pop("irrelevant_response", None)
+                    await redis_service.set(cache_key, cache_data, ex=43200)
             payload = {
                 "user": self.username,
                 "pass": self.password,
@@ -86,26 +101,27 @@ class WhatsAppService:
                     "to": formatted_recipient,
                     "type": "text",
                     "message": {
-                        "text": message
+                        "text": combined_message or message
                     }
                 }
             }
+            logger.info(f"\n\npaylof is :{payload}\n\n")
 
             logger.info(f"WhatsApp payload - from: {self.from_number}, to: {formatted_recipient}")
             logger.info(f"FROM_NUMBER config: {self.from_number}")
-            
+
             response = requests.post(
                 f"{self.base_url}/sessioncomm",
                 json=payload,
                 headers={"Content-Type": "application/json"},
                 timeout=30
             )
-            
+
             return self._handle_api_response(response)
-        
+
         # Use retry service for reliable delivery
         retry_result = await self.retry_service.retry_with_backoff(send_text_message)
-        
+
         if retry_result["success"]:
             return retry_result["result"]
         else:
@@ -346,6 +362,26 @@ class WhatsAppService:
                 logger.warning(f"WhatsApp supports maximum 3 buttons, trimming to first 3 from {len(buttons_config)} provided")
                 buttons_config = buttons_config[:3]
             
+            # Format phone number for WhatsApp API
+            formatted_recipient = self._format_phone_number(recipient_id)
+            if not formatted_recipient:
+                logger.error(f"Invalid phone number format: {recipient_id}")
+                return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}")
+
+            # Access the saved irrelevant response from user cache
+            redis_service = get_redis_service()
+            cache_key = f"user_cache:{formatted_recipient}"
+            cache_data = await redis_service.get(cache_key, as_json=True)
+            combined_body = body  # default
+            if cache_data and cache_data.get("irrelevant_response"):
+                irrelevant_response = cache_data["irrelevant_response"].get("user_message")
+                if irrelevant_response:
+                    combined_body = f"{irrelevant_response}\n\n{body}"
+                    logger.info(f"combined message for buttons is  :{combined_body}")
+                    # Clear the irrelevant response after using it
+                    cache_data.pop("irrelevant_response", None)
+                    await redis_service.set(cache_key, cache_data, ex=43200)
+            
             # Log button details for debugging
             button_titles = [btn.get('title', 'Unknown') for btn in buttons_config]
             logger.info(f"Sending buttons to {recipient_id}: {button_titles}")
@@ -366,10 +402,11 @@ class WhatsAppService:
                 })
             
             content = {
-                "body": {"text": body},
+                "body": {"text": combined_body},
                 "footer": {"text": footer},
                 "action": {"buttons": button_list}
             }
+
             
             if header:
                 content["header"] = {"type": "text", "text": header}
