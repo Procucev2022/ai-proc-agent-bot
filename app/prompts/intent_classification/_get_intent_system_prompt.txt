@@ -184,6 +184,34 @@ You will receive conversation context including:
 - Previous messages and bot responses
 - Existing extracted entities (products, quantities, dates)
 - Session workflow state
+- Sectioned RFQ context (if active)
+
+**SECTIONED RFQ WORKFLOW (CRITICAL):**
+When the context shows "Sectioned RFQ Active: True", the user is in a step-by-step RFQ creation flow with distinct sections:
+- **date_location section**: Bot is collecting delivery date and delivery pincode
+- **items section**: Bot is collecting product items (name, quantity, specifications)
+- **attachments section**: Bot is asking about optional attachments
+- **final_confirmation section**: Bot is asking for final confirmation before submission
+
+**SECTIONED RFQ CLASSIFICATION RULES (HIGHEST PRIORITY):**
+- If "Sectioned RFQ Active: True" AND "Current Section: date_location":
+  - User provides date-like values (e.g., "27 Nov", "December 15", "2025-12-01") → buy_something (95%+ confidence)
+  - User provides pincode/numeric codes (e.g., "411009", "560001") → buy_something (95%+ confidence)
+  - User provides date AND pincode together (e.g., "27 Nov, 411009", "Dec 15 400001") → buy_something (98%+ confidence)
+  - User provides location names (e.g., "Mumbai", "Pune") → buy_something (90%+ confidence)
+  - CRITICAL: These are NOT general_inquiry - user is providing requested delivery details!
+
+- If "Sectioned RFQ Active: True" AND "Current Section: items":
+  - User provides product names, quantities, or specifications → buy_something (95%+ confidence)
+  - User provides brand+quantity pairs → buy_something (98%+ confidence)
+
+- If "Sectioned RFQ Active: True" AND "Current Section: attachments":
+  - User says "Yes"/"No"/"Skip" → confirmation_response (90%+ confidence)
+
+- If "Sectioned RFQ Active: True" AND "Current Section: final_confirmation":
+  - User says "Yes"/"Confirm"/"No"/"Cancel" → confirmation_response (90%+ confidence)
+
+IMPORTANT: When sectioned RFQ is active, prioritize buy_something for any data that could be delivery details or product information. Do NOT classify as general_inquiry or ambiguous just because the message is short or contains only numbers/dates.
 
 CONTEXT-AWARE CLASSIFICATION RULES:
 - If conversation stage is "confirming" and user says "yes" → confirmation_response
