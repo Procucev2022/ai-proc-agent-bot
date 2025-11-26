@@ -435,6 +435,7 @@ class ChatService:
                 logger.info(f"conversation context is:{conversation_context}")
                 # Now using async OpenAI service
                 message_intent_result = await self.intent_service.classify_intent(message_content, conversation_context)
+                logger.info(f"intent classifed arssssssssss:{message_intent_result}")
                 intent = message_intent_result.get('intent')
                 confidence = message_intent_result.get('confidence', 0)
 
