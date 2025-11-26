@@ -259,8 +259,6 @@ class ProfileSelectionService:
         """Handle Case 1: Neutral/Greeting Start."""
         try:
             message = (
-                "Hi there! I’m QUA, your Procurement Partner.\n\n"
-                "How can I help you today?\n\n"
                 "Reply with the number or word:\n"
                 "1. Buy — Create or check my RFQs\n"
                 "2. Sell — View or respond to RFQs\n\n"

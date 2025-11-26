@@ -29,6 +29,7 @@ Instructions:
 
       → If the user is NOT in a workflow:
          Give a simple acknowledgement of user message
+         also include this line in your acknowledgement message "I’m QUA, your Procurement Partner. How can I help you today?\n\n"
 
 
    **B. Support Intent**
