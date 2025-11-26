@@ -184,15 +184,18 @@ class SectionedRFQCreationHandler:
         # This handles the case where user directly copies and modifies the confirmation format
         if delivery_data and self._is_delivery_complete(delivery_data):
             # Check if message looks like it's attempting the structured format
-            # Look for format keywords to detect modification attempts
-            if any(keyword in message.lower() for keyword in ["delivery date:", "delivery pincode:", "delivery city:", "delivery state:"]):
+            # Look for format keywords to detect modification attempts (only date and pincode shown to user)
+            if any(keyword in message.lower() for keyword in ["delivery date:", "delivery pincode:"]):
                 logger.info(f"[SECTIONED_RFQ] User sent message in structured format - routing to modification handler")
                 return await self._process_delivery_modification_direct(user, session, message)
         elif delivery_data:
             # We have delivery data but it's not complete - check if user sent data in format
-            if any(keyword in message.lower() for keyword in ["delivery date:", "delivery pincode:", "delivery city:", "delivery state:"]):
+            if any(keyword in message.lower() for keyword in ["delivery date:", "delivery pincode:"]):
                 logger.info(f"[SECTIONED_RFQ] User sent message in structured format - routing to modification handler")
                 return await self._process_delivery_modification_direct(user, session, message)
+
+        # Track date validation error to show to user if needed
+        date_validation_error = None
 
         if not delivery_data or not self._has_delivery_basics(delivery_data):
             # Need to extract delivery details - ONE TIME entity extraction
@@ -210,6 +213,19 @@ class SectionedRFQCreationHandler:
                 "city": entity_result.get("city", ""),
                 "state": entity_result.get("state", "")
             }
+
+            # Validate and normalize delivery date if provided
+            if delivery_data.get("deliveryDate"):
+                date_validation = await self._validate_delivery_date(delivery_data["deliveryDate"])
+                if date_validation.get("is_valid"):
+                    # Use normalized date format
+                    delivery_data["deliveryDate"] = date_validation.get("normalized_date", delivery_data["deliveryDate"])
+                    logger.info(f"[SECTIONED_RFQ] Delivery date validated and normalized: {delivery_data['deliveryDate']}")
+                else:
+                    # Invalid date - clear it and store error to show user
+                    date_validation_error = date_validation.get("error", "Invalid delivery date")
+                    logger.warning(f"[SECTIONED_RFQ] Invalid delivery date during extraction: {date_validation_error}")
+                    delivery_data["deliveryDate"] = ""
 
             # Auto-fill city/state from pincode if pincode is available
             if delivery_data.get("pincode") and (not delivery_data.get("city") or not delivery_data.get("state")):
@@ -246,10 +262,13 @@ class SectionedRFQCreationHandler:
 
             if has_date or has_pincode:
                 # Partial data - show format with missing field indicators
-                return await self._display_delivery_missing_fields(user, session, delivery_data)
+                return await self._display_delivery_missing_fields(user, session, delivery_data, date_validation_error)
             else:
-                # No data extracted - just ask for details normally
-                msg = "Please provide your delivery date and delivery pincode."
+                # No data extracted - check if there was a date validation error
+                if date_validation_error:
+                    msg = f"{date_validation_error}\n\nPlease provide a valid delivery date and delivery pincode."
+                else:
+                    msg = "Please provide your delivery date and delivery pincode."
                 buttons_config = [
                     {"id": "restart_rfq", "title": "Restart"}
                 ]
@@ -439,14 +458,18 @@ class SectionedRFQCreationHandler:
         return {"status": "awaiting_delivery_confirmation"}
 
     async def _display_delivery_missing_fields(self, user: User, session: ConversationSession,
-                                               delivery_data: Dict) -> Dict[str, Any]:
+                                               delivery_data: Dict, validation_error: str = None) -> Dict[str, Any]:
         """Display delivery format with missing field indicators and Modify button."""
         display_text, missing_fields = sectioned_rfq_format_parser.generate_delivery_display_with_missing(delivery_data)
 
         # Build the missing field label
         missing_label = " / ".join(missing_fields) if missing_fields else "Missing Field"
 
-        message = f"{missing_label} Required\n\nDelivery Details:\n\n{display_text}\n\nPlease provide the missing details to move forward."
+        # Include validation error if provided
+        if validation_error:
+            message = f"{validation_error}\n\n{missing_label} Required\n\nDelivery Details:\n\n{display_text}\n\nPlease copy the format above and provide the correct details."
+        else:
+            message = f"{missing_label} Required\n\nDelivery Details:\n\n{display_text}\n\nPlease provide the missing details to move forward."
 
         # Send message with Modify/Restart buttons (no Confirm since data is incomplete)
         buttons_config = [

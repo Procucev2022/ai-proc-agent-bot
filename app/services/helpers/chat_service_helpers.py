@@ -206,19 +206,27 @@ class ChatServiceHelpers:
                     bot_last_message = msg_data.get("content", "")
                     break
 
+        # Determine conversation stage using centralized logic
+        conversation_stage = ChatServiceHelpers.determine_conversation_stage(session)
+
+        workflow_state = session.workflow_state or {}
+
         # Minimal session_status with only the critical flag used by intent_service fallback
         # has_incomplete_products is used in intent_service.py line 121
         return {
             'workflow_type': session.workflow_type,
             'conversation_history': conversation_history,
             'bot_last_message': bot_last_message,
-            'workflow_state': session.workflow_state or {},
+            'workflow_state': workflow_state,
+            'conversation_stage': conversation_stage,  # Pre-computed stage for OpenAI context
             'session_status': {
                 'has_incomplete_products': bool(
-                    session.workflow_state.get("incomplete_products") and
-                    len(session.workflow_state.get("incomplete_products", [])) > 0
+                    workflow_state.get("incomplete_products") and
+                    len(workflow_state.get("incomplete_products", [])) > 0
                 )
-            }
+            },
+            # Pass session for Track 2 checks in intent_service
+            'session': session
         }
     
     @staticmethod
@@ -228,6 +236,21 @@ class ChatServiceHelpers:
         Note: Order matters! Check more specific/advanced stages first.
         """
         workflow_state = session.workflow_state or {}
+
+        # SECTIONED RFQ: Check if sectioned RFQ workflow is active (highest priority)
+        sectioned_rfq = workflow_state.get("sectioned_rfq", {})
+        if sectioned_rfq.get("active"):
+            current_section = sectioned_rfq.get("current_section", "date_location")
+            # Map section to stage for intent classification context
+            section_to_stage = {
+                "date_location": "collecting_delivery",
+                "items": "collecting_items",
+                "attachments": "collecting_attachments",
+                "final_confirmation": "confirming"
+            }
+            stage = section_to_stage.get(current_section, "collecting")
+            logger.debug(f"Sectioned RFQ active - section: {current_section}, stage: {stage}")
+            return stage
 
         # Confirmation stage - highest priority (final stage before submission)
         if workflow_state.get("pending_combined_rfq") or workflow_state.get("pending_rfq"):
