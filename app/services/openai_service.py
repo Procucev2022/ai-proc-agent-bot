@@ -241,45 +241,7 @@ class OpenAIService:
                 return True
 
         return False
-
-    def extract_text_from_message(self, msg):
-        """
-        Safely extracts meaningful user/assistant text from an OpenAI or WhatsApp message.
-        Handles:
-        - WhatsApp button replies
-        - Normal text messages
-        - Multimodal array messages
-        - Dict-based messages
-        """
-        content = msg.get("content", "")
-
-        # 1. Handle WhatsApp button reply
-        if isinstance(content, dict) and content.get("type") == "button_reply":
-            btn = content.get("button_reply", {})
-            return btn.get("title") or btn.get("id") or "[button reply]"
-
-        # 2. Content as simple text string
-        if isinstance(content, str):
-            return content
-
-        # 3. Content as dict with text
-        if isinstance(content, dict):
-            return content.get("text", "[non-text content]")
-
-        # 4. Content as list of fragments (multimodal)
-        if isinstance(content, list):
-            text_parts = [
-                c.get("text", "")
-                for c in content
-                if isinstance(c, dict) and c.get("type") == "text"
-            ]
-            if text_parts:
-                return " ".join(text_parts)
-            return "[multimodal content]"
-
-        # Fallback
-        return "[unknown content]"
-
+        
     @log_service_method("openai_service")
     async def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
         """
@@ -325,16 +287,23 @@ class OpenAIService:
             if context:
                 # Add conversation history
                 if context.get('conversation_history', {}).get('openai_messages'):
-                    recent_messages = context['conversation_history']['openai_messages'][-2:]
+                    recent_messages = context['conversation_history']['openai_messages'][-2:]  # Last 2 messages for context (optimized)
+                    # Safely extract text content from messages (handle both string and object content)
                     history_parts = []
                     for msg in recent_messages:
-                        role = msg.get("role", "unknown")
-                        text = self.extract_text_from_message(msg)
-                        history_parts.append(f"{role}: {text}")
-
+                        role = msg.get('role', 'unknown')
+                        content = msg.get('content', '')
+                        # If content is an object or array, extract text
+                        if isinstance(content, dict):
+                            content = content.get('text', '[non-text content]')
+                        elif isinstance(content, list):
+                            # Extract text from array of content objects
+                            text_parts = [c.get('text', '') for c in content if isinstance(c, dict) and c.get('type') == 'text']
+                            content = ' '.join(text_parts) if text_parts else '[multimodal content]'
+                        history_parts.append(f"{role}: {content}")
                     history_text = "\n".join(history_parts)
                     context_info += f"\n\nRECENT CONVERSATION HISTORY:\n{history_text}"
-
+                
                 # Add current session state (optimized - reduced verbosity)
                 if context.get('workflow_state'):
                     workflow_state = context['workflow_state']

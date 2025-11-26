@@ -173,6 +173,7 @@ IRRELEVANT MESSAGES
 1. if user messages have something not related to application and asking some general questions then classify that part of message as irrelevant
 2. The portion of user message that is relevant to the primary intent and current workflow. Null if entire message is irrelevant.
 3. if user does not have any workflow state or workflow type then classify message as irrelevant
+Important: Do NOT classify user message as irrelevant if the user message contains numeric values, or structured data that appears to be part of an ongoing workflow (e.g., registration, RFQ creation, updating profile, verification, or any data-collection flow).
 
 RELEVANT MESSAGES
 1. The portion of user message that is out-of-scope or unrelated to current workflow. Null if entire message is relevant.
@@ -211,7 +212,6 @@ When the context shows "Sectioned RFQ Active: True", the user is in a step-by-st
   - User says "Yes"/"Confirm"/"No"/"Cancel" → confirmation_response (90%+ confidence)
 
 IMPORTANT: When sectioned RFQ is active, prioritize buy_something for any data that could be delivery details or product information. Do NOT classify as general_inquiry or ambiguous just because the message is short or contains only numbers/dates.
-Important: Do NOT classify user message as irrelevant and intent as general_inquiry  if the user message contains numeric values, or structured data that appears to be part of an ongoing workflow (e.g., registration, RFQ creation, updating profile, verification, or any data-collection flow).
 
 CONTEXT-AWARE CLASSIFICATION RULES:
 - If conversation stage is "confirming" and user says "yes" → confirmation_response
