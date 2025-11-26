@@ -493,6 +493,7 @@ class ChatService:
 
             auth_result = await self.authentication_orchestrator_flow(user_phone,message_intent_result.get('relevant_message') or message_content,session, message_intent_result)
 
+
             # Check if authentication is still in progress
             if isinstance(auth_result, dict):
                 auth_status = auth_result.get("status")
@@ -771,7 +772,7 @@ class ChatService:
 
             # Only proceed to main flow if user is properly authenticated
             user = auth_result
-            if message_type == "text" and message_intent_result.get('relevant_message'):
+            if message_type == "text" and (message_intent_result.get('relevant_message') or message_content):
                 result = await self._process_text_message(user, session, message_intent_result.get('relevant_message') or message_content, message_intent_result)
             elif message_type == "interactive":
                 result = await self._process_interactive_message(user, session, message_content)
