@@ -309,6 +309,21 @@ class OpenAIService:
                     workflow_state = context['workflow_state']
                     context_info += f"\n\nCURRENT SESSION STATE:"
                     context_info += f"\n- Workflow Type: {context.get('workflow_type', 'unknown')}"
+
+                    # Add pre-computed conversation stage if available
+                    if context.get('conversation_stage'):
+                        context_info += f"\n- Conversation Stage: {context.get('conversation_stage')}"
+
+                    # Add sectioned RFQ context if active
+                    sectioned_rfq = workflow_state.get('sectioned_rfq', {})
+                    if sectioned_rfq.get('active'):
+                        context_info += f"\n- Sectioned RFQ Active: True"
+                        context_info += f"\n- Current Section: {sectioned_rfq.get('current_section', 'unknown')}"
+                        if sectioned_rfq.get('awaiting_delivery_modification'):
+                            context_info += f"\n- Awaiting Delivery Modification: True"
+                        if sectioned_rfq.get('awaiting_items_modification'):
+                            context_info += f"\n- Awaiting Items Modification: True"
+
                     context_info += f"\n- Has Pending Confirmations: {bool(workflow_state.get('pending_combined_rfq') or workflow_state.get('pending_rfq'))}"
                     context_info += f"\n- Has Pending Optional Fields: {bool(workflow_state.get('pending_optional_rfq'))}"
                     context_info += f"\n- Has Pending Attachment Decision: {bool(workflow_state.get('pending_attachment_decision'))}"

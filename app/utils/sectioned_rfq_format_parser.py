@@ -260,16 +260,12 @@ def parse_delivery_format(text: str) -> Dict[str, Any]:
             if match:
                 result[field] = match.group(1).strip()
 
-        # Validate required fields
+        # Validate required fields (only date and pincode - city/state are auto-filled from pincode)
         missing_fields = []
         if not result["deliveryDate"]:
             missing_fields.append("Delivery Date")
         if not result["pincode"]:
             missing_fields.append("Delivery Pincode")
-        if not result["city"]:
-            missing_fields.append("Delivery City")
-        if not result["state"]:
-            missing_fields.append("Delivery State")
 
         if missing_fields:
             error_msg = f"Missing required field(s): {', '.join(missing_fields)}"
@@ -440,28 +436,28 @@ def parse_items_format(text: str) -> Dict[str, Any]:
 def generate_delivery_display(data: Dict[str, str]) -> str:
     """
     Generate display format for delivery details.
+    Note: City and State are stored internally but not shown to user.
 
     Args:
         data: Dictionary with deliveryDate, pincode, city, state
 
     Returns:
-        Formatted string for display
+        Formatted string for display (only Date and Pincode shown)
     """
     return f"""Delivery Date: {data.get('deliveryDate', '')}
-Delivery Pincode: {data.get('pincode', '')}
-Delivery City: {data.get('city', '')}
-Delivery State: {data.get('state', '')}"""
+Delivery Pincode: {data.get('pincode', '')}"""
 
 
 def generate_delivery_display_with_missing(data: Dict[str, str]) -> tuple[str, list[str]]:
     """
     Generate display format for delivery details with missing field indicators.
+    Note: City and State are stored internally but not shown to user.
 
     Args:
         data: Dictionary with deliveryDate, pincode, city, state (some may be missing)
 
     Returns:
-        Tuple of (formatted_string, list_of_missing_fields)
+        Tuple of (formatted_string, list_of_missing_fields) - only Date and Pincode shown
     """
     missing_fields = []
 
@@ -477,19 +473,9 @@ def generate_delivery_display_with_missing(data: Dict[str, str]) -> tuple[str, l
         pincode_value = "[Please provide 6-digit pincode]"
         missing_fields.append("Delivery Pincode")
 
-    # City and state are auto-filled from pincode, so show placeholder if pincode missing
-    city_value = data.get('city', '').strip() if data.get('city') else ''
-    state_value = data.get('state', '').strip() if data.get('state') else ''
-
-    if not city_value:
-        city_value = "[Auto-filled from pincode]"
-    if not state_value:
-        state_value = "[Auto-filled from pincode]"
-
+    # City and state are auto-filled from pincode but not shown to user
     display = f"""Delivery Date: {date_value}
-Delivery Pincode: {pincode_value}
-Delivery City: {city_value}
-Delivery State: {state_value}"""
+Delivery Pincode: {pincode_value}"""
 
     return display, missing_fields
 
