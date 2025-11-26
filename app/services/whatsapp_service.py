@@ -362,6 +362,26 @@ class WhatsAppService:
                 logger.warning(f"WhatsApp supports maximum 3 buttons, trimming to first 3 from {len(buttons_config)} provided")
                 buttons_config = buttons_config[:3]
             
+            # Format phone number for WhatsApp API
+            formatted_recipient = self._format_phone_number(recipient_id)
+            if not formatted_recipient:
+                logger.error(f"Invalid phone number format: {recipient_id}")
+                return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}")
+
+            # Access the saved irrelevant response from user cache
+            redis_service = get_redis_service()
+            cache_key = f"user_cache:{formatted_recipient}"
+            cache_data = await redis_service.get(cache_key, as_json=True)
+            combined_body = body  # default
+            if cache_data and cache_data.get("irrelevant_response"):
+                irrelevant_response = cache_data["irrelevant_response"].get("user_message")
+                if irrelevant_response:
+                    combined_body = f"{irrelevant_response}\n\n{body}"
+                    logger.info(f"combined message for buttons is  :{combined_body}")
+                    # Clear the irrelevant response after using it
+                    cache_data.pop("irrelevant_response", None)
+                    await redis_service.set(cache_key, cache_data, ex=43200)
+            
             # Log button details for debugging
             button_titles = [btn.get('title', 'Unknown') for btn in buttons_config]
             logger.info(f"Sending buttons to {recipient_id}: {button_titles}")
@@ -382,10 +402,11 @@ class WhatsAppService:
                 })
             
             content = {
-                "body": {"text": body},
+                "body": {"text": combined_body},
                 "footer": {"text": footer},
                 "action": {"buttons": button_list}
             }
+
             
             if header:
                 content["header"] = {"type": "text", "text": header}
