@@ -60,11 +60,19 @@ class IntentService:
             - should_update_entities: whether entities should be updated from contextual reference
         """
         try:
+            # Handle non-string message types early
+            if isinstance(message, dict):
+                message_str = "image attachment"
+            elif not isinstance(message, str):
+                message_str = str(message)
+            else:
+                message_str = message
+            
             # Get session from context if available (for Track 2 checks)
             session = context.get('session') if context else None
 
             # PRIORITY 1: Check for exit/cancel keywords (Track 2)
-            if self.detect_exit_keywords(message):
+            if self.detect_exit_keywords(message_str):
                 return {
                     "intent": "exit_system",
                     "confidence": 95,
@@ -74,7 +82,7 @@ class IntentService:
                 }
 
             # PRIORITY 2: Check for format modification (Track 2)
-            if session and self.detect_format_modification_intent(message, session):
+            if session and self.detect_format_modification_intent(message_str, session):
                 return {
                     "intent": "format_modification",
                     "confidence": 98,
@@ -85,7 +93,7 @@ class IntentService:
 
             # PRIORITY 3: Check for interruptions (Track 2)
             if session:
-                interruption_result = self.detect_interruption_intent(message, session)
+                interruption_result = self.detect_interruption_intent(message_str, session)
                 if interruption_result["is_interruption"]:
                     interruption_type = interruption_result["interruption_type"]
                     return {
