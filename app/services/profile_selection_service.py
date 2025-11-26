@@ -851,11 +851,11 @@ class ProfileSelectionService:
                             {"id": "contact_support", "title": "Contact Support"}
                         ]
 
-                        await self.whatsapp_service.send_configurable_buttons(
-                            user_phone,
-                            seller_message,
-                            buttons_config
-                        )
+                        # await self.whatsapp_service.send_configurable_buttons(
+                        #     user_phone,
+                        #     seller_message,
+                        #     buttons_config
+                        # )
 
                         return {
                             "status": "seller_options_presented",
