@@ -15,6 +15,7 @@ Key features:
 """
 
 import logging
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 from app.models import User, ConversationSession, WorkflowType
 from app.services.workflow_manager import WorkflowManager
@@ -26,6 +27,45 @@ from app.utils.datetime_utils import utc_now
 from app.utils.pincode_lookup import get_location_from_pincode_async
 
 logger = logging.getLogger(__name__)
+
+
+def _format_date_for_display(date_str: str) -> str:
+    """
+    Format date string to 'dd Month' format (e.g., '30 November').
+
+    Args:
+        date_str: Date string in various formats (YYYY-MM-DD, dd Mon, etc.)
+
+    Returns:
+        Formatted date string as 'dd Month' or original string if parsing fails
+    """
+    if not date_str:
+        return date_str
+
+    # Try parsing common formats
+    formats_to_try = [
+        "%Y-%m-%d",      # 2025-11-30
+        "%d-%m-%Y",      # 30-11-2025
+        "%d/%m/%Y",      # 30/11/2025
+        "%d %b %Y",      # 30 Nov 2025
+        "%d %B %Y",      # 30 November 2025
+        "%d %b",         # 30 Nov
+        "%d %B",         # 30 November
+    ]
+
+    for fmt in formats_to_try:
+        try:
+            parsed_date = datetime.strptime(date_str.strip(), fmt)
+            # If year was not in format, use current year
+            if "%Y" not in fmt and "%y" not in fmt:
+                parsed_date = parsed_date.replace(year=datetime.now().year)
+            # Format as "d Month" (no leading zero for day)
+            return f"{parsed_date.day} {parsed_date.strftime('%B')}"
+        except ValueError:
+            continue
+
+    # If all parsing fails, return original
+    return date_str
 
 # Maximum retry attempts per section
 MAX_RETRY_ATTEMPTS = 3
@@ -200,12 +240,28 @@ class SectionedRFQCreationHandler:
 
         # Check if we have basics (date + pincode) - city/state will be auto-filled
         if not self._has_delivery_basics(delivery_data):
-            # Missing required delivery basics, ask user
-            missing_msg = self._generate_delivery_missing_fields_message(delivery_data)
-            await self.whatsapp_service.send_message(user.phone_number, missing_msg)
-            # Save session before returning
-            await self.session_manager.save_session(session, persist_to_db=False)
-            return {"status": "awaiting_delivery_details"}
+            # Check if user provided at least one field (partial data)
+            has_date = bool(delivery_data and delivery_data.get("deliveryDate") and str(delivery_data.get("deliveryDate")).strip())
+            has_pincode = bool(delivery_data and delivery_data.get("pincode") and str(delivery_data.get("pincode")).strip())
+
+            if has_date or has_pincode:
+                # Partial data - show format with missing field indicators
+                return await self._display_delivery_missing_fields(user, session, delivery_data)
+            else:
+                # No data extracted - just ask for details normally
+                msg = "Please provide your delivery date and delivery pincode."
+                buttons_config = [
+                    {"id": "restart_rfq", "title": "Restart"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    msg,
+                    buttons_config,
+                    "Details Required",
+                    footer=""
+                )
+                await self.session_manager.save_session(session, persist_to_db=False)
+                return {"status": "awaiting_delivery_details"}
 
         # Check full completeness (including city/state after auto-fill)
         if not self._is_delivery_complete(delivery_data):
@@ -253,24 +309,94 @@ class SectionedRFQCreationHandler:
                 # Max retries - cancel workflow
                 return await self._cancel_after_max_retries(user, session, "date_location")
 
-            # Send error with retry count
-            error_msg = f"❌ Format is not valid. {parsed_result['error']}\n\n"
+            # Send error with retry count and Restart button
+            error_msg = f"Format is not valid. {parsed_result['error']}\n\n"
             error_msg += f"Please copy paste the format and change the values as needed.\n"
             error_msg += f"Attempt {retry_count}/{MAX_RETRY_ATTEMPTS}"
 
-            await self.whatsapp_service.send_message(user.phone_number, error_msg)
+            buttons_config = [
+                {"id": "restart_rfq", "title": "Restart"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                error_msg,
+                buttons_config,
+                "Format Error",
+                footer=""
+            )
 
             # Save session to persist retry count
             await self.session_manager.save_session(session, persist_to_db=False)
 
             return {"status": "format_error", "retry_count": retry_count}
 
-        # Step 3: Format valid - DIRECTLY replace values (no AI processing)
+        # Step 3: Format valid - validate date and pincode before accepting
+        delivery_date = parsed_result["deliveryDate"]
+        pincode = parsed_result["pincode"]
+
+        # Step 3a: Validate delivery date (check if not in the past)
+        date_validation = await self._validate_delivery_date(delivery_date)
+        if not date_validation["is_valid"]:
+            retry_count = WorkflowManager.increment_section_retry(session, "date_location")
+            logger.warning(f"[SECTIONED_RFQ] Delivery date invalid: {date_validation['error']}, retry count: {retry_count}")
+
+            if retry_count >= MAX_RETRY_ATTEMPTS:
+                return await self._cancel_after_max_retries(user, session, "date_location")
+
+            error_msg = f"{date_validation['error']}\n\n"
+            error_msg += f"Please copy paste the format and provide a valid delivery date.\n"
+            error_msg += f"Attempt {retry_count}/{MAX_RETRY_ATTEMPTS}"
+
+            buttons_config = [
+                {"id": "restart_rfq", "title": "Restart"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                error_msg,
+                buttons_config,
+                "Invalid Date",
+                footer=""
+            )
+            await self.session_manager.save_session(session, persist_to_db=False)
+
+            return {"status": "date_validation_error", "retry_count": retry_count}
+
+        # Use normalized date from validation
+        normalized_date = date_validation.get("normalized_date", delivery_date)
+
+        # Step 3b: Validate pincode and get location
+        pincode_validation = await self._validate_pincode_and_get_location(pincode)
+        if not pincode_validation["is_valid"]:
+            retry_count = WorkflowManager.increment_section_retry(session, "date_location")
+            logger.warning(f"[SECTIONED_RFQ] Pincode invalid: {pincode_validation['error']}, retry count: {retry_count}")
+
+            if retry_count >= MAX_RETRY_ATTEMPTS:
+                return await self._cancel_after_max_retries(user, session, "date_location")
+
+            error_msg = f"{pincode_validation['error']}\n\n"
+            error_msg += f"Please copy paste the format and provide a valid 6-digit pincode.\n"
+            error_msg += f"Attempt {retry_count}/{MAX_RETRY_ATTEMPTS}"
+
+            buttons_config = [
+                {"id": "restart_rfq", "title": "Restart"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                error_msg,
+                buttons_config,
+                "Invalid Pincode",
+                footer=""
+            )
+            await self.session_manager.save_session(session, persist_to_db=False)
+
+            return {"status": "pincode_validation_error", "retry_count": retry_count}
+
+        # Step 4: All validations passed - update delivery data with validated values
         delivery_data = {
-            "deliveryDate": parsed_result["deliveryDate"],
-            "pincode": parsed_result["pincode"],
-            "city": parsed_result["city"],
-            "state": parsed_result["state"]
+            "deliveryDate": normalized_date,
+            "pincode": pincode,
+            "city": pincode_validation.get("city", parsed_result["city"]),
+            "state": pincode_validation.get("state", parsed_result["state"])
         }
 
         logger.info(f"[SECTIONED_RFQ] Updating delivery data: {delivery_data}")
@@ -283,7 +409,7 @@ class SectionedRFQCreationHandler:
 
         logger.info(f"[SECTIONED_RFQ] Delivery data updated successfully via direct modification")
 
-        # Step 4: Re-display for confirmation
+        # Step 5: Re-display for confirmation
         return await self._display_delivery_confirmation(user, session, delivery_data)
 
     async def _display_delivery_confirmation(self, user: User, session: ConversationSession,
@@ -291,7 +417,7 @@ class SectionedRFQCreationHandler:
         """Display delivery details with Confirm/Modify buttons."""
         display_text = sectioned_rfq_format_parser.generate_delivery_display(delivery_data)
 
-        message = f"This is what I have understood:\n\n{display_text}"
+        message = f"Delivery Details:\n\n{display_text}"
 
         # Send message with Confirm/Modify/Restart buttons
         buttons_config = [
@@ -303,7 +429,7 @@ class SectionedRFQCreationHandler:
             user.phone_number,
             message,
             buttons_config,
-            "Delivery Details",
+            "Confirmation Required",
             footer=""  # Empty footer to prevent accidental exit triggers
         )
 
@@ -311,6 +437,37 @@ class SectionedRFQCreationHandler:
         await self.session_manager.save_session(session, persist_to_db=False)
 
         return {"status": "awaiting_delivery_confirmation"}
+
+    async def _display_delivery_missing_fields(self, user: User, session: ConversationSession,
+                                               delivery_data: Dict) -> Dict[str, Any]:
+        """Display delivery format with missing field indicators and Modify button."""
+        display_text, missing_fields = sectioned_rfq_format_parser.generate_delivery_display_with_missing(delivery_data)
+
+        # Build the missing field label
+        missing_label = " / ".join(missing_fields) if missing_fields else "Missing Field"
+
+        message = f"{missing_label} Required\n\nDelivery Details:\n\n{display_text}\n\nPlease provide the missing details to move forward."
+
+        # Send message with Modify/Restart buttons (no Confirm since data is incomplete)
+        buttons_config = [
+            {"id": "modify_date_location", "title": "Modify"},
+            {"id": "restart_rfq", "title": "Restart"}
+        ]
+        await self.whatsapp_service.send_configurable_buttons(
+            user.phone_number,
+            message,
+            buttons_config,
+            "Missing Some Details",
+            footer=""
+        )
+
+        # Set awaiting modification so user can fill in the format directly
+        WorkflowManager.set_awaiting_section_modification(session, "date_location", True)
+
+        # Save session
+        await self.session_manager.save_session(session, persist_to_db=False)
+
+        return {"status": "awaiting_delivery_details"}
 
     # ========================================================================
     # ITEMS SECTION
@@ -381,21 +538,26 @@ class SectionedRFQCreationHandler:
         if not items_data or len(items_data) == 0:
             # No items yet, ask user
             msg = ("Please share the items for your RFQ with name, brand/specs (if any), and quantity.\n\n"
-                   "📝 Example:\n"
+                   "Example:\n"
                    "Laptop Dell Inspiron - 5, Printer HP LaserJet - 2, Desktop HP 17\" - 10")
-            await self.whatsapp_service.send_message(user.phone_number, msg)
+            buttons_config = [
+                {"id": "restart_rfq", "title": "Restart"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                msg,
+                buttons_config,
+                "Items Required",
+                footer=""
+            )
             return {"status": "awaiting_items"}
 
         # Check if all items are complete (have mandatory fields)
         incomplete_items = self._get_incomplete_items(items_data)
         if incomplete_items:
-            # Some items are missing mandatory fields - ask for them
-            logger.info(f"[SECTIONED_RFQ] {len(incomplete_items)} items are incomplete, asking for missing fields")
-            missing_fields_msg = self._generate_missing_items_fields_message(incomplete_items, items_data)
-            await self.whatsapp_service.send_message(user.phone_number, missing_fields_msg)
-            # Save session to persist items before returning
-            await self.session_manager.save_session(session, persist_to_db=False)
-            return {"status": "awaiting_missing_item_fields"}
+            # Some items are missing mandatory fields - show format with missing field indicators
+            logger.info(f"[SECTIONED_RFQ] {len(incomplete_items)} items are incomplete, showing format with missing fields")
+            return await self._display_items_missing_fields(user, session, items_data, incomplete_items)
 
         # All items complete - display items with Confirm/Modify buttons
         return await self._display_items_confirmation(user, session, items_data)
@@ -434,12 +596,21 @@ class SectionedRFQCreationHandler:
                 # Max retries - cancel workflow
                 return await self._cancel_after_max_retries(user, session, "items")
 
-            # Send error with retry count
-            error_msg = f"❌ Format is not valid. {parsed_result['error']}\n\n"
+            # Send error with retry count and Restart button
+            error_msg = f"Format is not valid. {parsed_result['error']}\n\n"
             error_msg += f"Please copy paste the format, change the values, add new products, or delete products as needed.\n"
             error_msg += f"Attempt {retry_count}/{MAX_RETRY_ATTEMPTS}"
 
-            await self.whatsapp_service.send_message(user.phone_number, error_msg)
+            buttons_config = [
+                {"id": "restart_rfq", "title": "Restart"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                error_msg,
+                buttons_config,
+                "Format Error",
+                footer=""
+            )
 
             # Save session to persist retry count
             await self.session_manager.save_session(session, persist_to_db=False)
@@ -467,7 +638,7 @@ class SectionedRFQCreationHandler:
         """Display items with Confirm/Modify buttons."""
         display_text = sectioned_rfq_format_parser.generate_items_display(items_data)
 
-        message = f"Got it!\nI've captured {len(items_data)} product(s):\n\n{display_text}"
+        message = f"RFQ Items ({len(items_data)}):\n\n{display_text}"
 
         # Send message with Confirm/Modify/Restart buttons
         buttons_config = [
@@ -479,7 +650,7 @@ class SectionedRFQCreationHandler:
             user.phone_number,
             message,
             buttons_config,
-            "Product Items",
+            "Confirmation Required",
             footer=""  # Empty footer to prevent accidental exit triggers
         )
 
@@ -487,6 +658,37 @@ class SectionedRFQCreationHandler:
         await self.session_manager.save_session(session, persist_to_db=False)
 
         return {"status": "awaiting_items_confirmation"}
+
+    async def _display_items_missing_fields(self, user: User, session: ConversationSession,
+                                            items_data: List, incomplete_items: List[Dict]) -> Dict[str, Any]:
+        """Display items format with missing field indicators and Modify button."""
+        display_text, missing_labels = sectioned_rfq_format_parser.generate_items_display_with_missing(items_data, incomplete_items)
+
+        # Build the missing field label
+        missing_label = " / ".join(missing_labels) if missing_labels else "Missing Field"
+
+        message = f"{missing_label} Required\n\nRFQ Items ({len(items_data)}):\n\n{display_text}\n\nPlease provide the missing details to move forward."
+
+        # Send message with Modify/Restart buttons (no Confirm since data is incomplete)
+        buttons_config = [
+            {"id": "modify_items", "title": "Modify"},
+            {"id": "restart_rfq", "title": "Restart"}
+        ]
+        await self.whatsapp_service.send_configurable_buttons(
+            user.phone_number,
+            message,
+            buttons_config,
+            "Missing Some Details",
+            footer=""
+        )
+
+        # Set awaiting modification so user can fill in the format directly
+        WorkflowManager.set_awaiting_section_modification(session, "items", True)
+
+        # Save session
+        await self.session_manager.save_session(session, persist_to_db=False)
+
+        return {"status": "awaiting_missing_item_fields"}
 
     # ========================================================================
     # ATTACHMENTS SECTION
@@ -683,7 +885,17 @@ class SectionedRFQCreationHandler:
         else:
             message = "Please provide your modifications."
 
-        await self.whatsapp_service.send_message(user.phone_number, message)
+        # Send with Restart button
+        buttons_config = [
+            {"id": "restart_rfq", "title": "Restart"}
+        ]
+        await self.whatsapp_service.send_configurable_buttons(
+            user.phone_number,
+            message,
+            buttons_config,
+            "Modify Details",
+            footer=""
+        )
 
         return {"status": "awaiting_modification"}
 
@@ -936,6 +1148,74 @@ class SectionedRFQCreationHandler:
             logger.error(f"[SECTIONED_RFQ] Error auto-filling location from pincode: {e}")
 
         return delivery_data
+
+    async def _validate_delivery_date(self, date_str: str) -> Dict[str, Any]:
+        """
+        Validate delivery date using OpenAI service.
+
+        Returns:
+            Dict with is_valid, normalized_date (if valid), and error (if invalid)
+        """
+        try:
+            validation_result = await self.entity_service.openai_service.validate_delivery_date(
+                raw_date_input=date_str,
+                extracted_date=date_str
+            )
+
+            if validation_result.get("is_valid"):
+                normalized = validation_result.get("normalized_date", date_str)
+                # Format date as "dd Month" for display
+                formatted_date = _format_date_for_display(normalized)
+                return {
+                    "is_valid": True,
+                    "normalized_date": formatted_date
+                }
+            else:
+                error_msg = validation_result.get("user_friendly_message", "Invalid delivery date. Please provide a valid future date.")
+                return {
+                    "is_valid": False,
+                    "error": error_msg
+                }
+        except Exception as e:
+            logger.error(f"[SECTIONED_RFQ] Error validating delivery date: {e}")
+            # On error, allow the date to pass through (fail open)
+            return {"is_valid": True, "normalized_date": date_str}
+
+    async def _validate_pincode_and_get_location(self, pincode: str) -> Dict[str, Any]:
+        """
+        Validate pincode format and lookup location.
+
+        Returns:
+            Dict with is_valid, city, state (if valid), and error (if invalid)
+        """
+        try:
+            # Validate pincode format
+            clean_pincode = str(pincode).strip()
+            if not clean_pincode.isdigit() or len(clean_pincode) != 6:
+                return {
+                    "is_valid": False,
+                    "error": f"Invalid pincode format: {pincode}. Please provide a valid 6-digit pincode."
+                }
+
+            # Lookup location
+            location_data = await get_location_from_pincode_async(clean_pincode)
+            if location_data and location_data.get("city") and location_data.get("state"):
+                return {
+                    "is_valid": True,
+                    "city": location_data["city"],
+                    "state": location_data["state"]
+                }
+            else:
+                return {
+                    "is_valid": False,
+                    "error": f"Could not find location for pincode {pincode}. Please provide a valid Indian pincode."
+                }
+        except Exception as e:
+            logger.error(f"[SECTIONED_RFQ] Error validating pincode: {e}")
+            return {
+                "is_valid": False,
+                "error": f"Error validating pincode {pincode}. Please try again."
+            }
 
     def _get_incomplete_items(self, items_data: List[Dict]) -> List[Dict]:
         """

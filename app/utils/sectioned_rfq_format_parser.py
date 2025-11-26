@@ -453,6 +453,61 @@ Delivery City: {data.get('city', '')}
 Delivery State: {data.get('state', '')}"""
 
 
+def generate_delivery_display_with_missing(data: Dict[str, str]) -> tuple[str, list[str]]:
+    """
+    Generate display format for delivery details with missing field indicators.
+
+    Args:
+        data: Dictionary with deliveryDate, pincode, city, state (some may be missing)
+
+    Returns:
+        Tuple of (formatted_string, list_of_missing_fields)
+    """
+    missing_fields = []
+
+    # Check and format each field
+    date_value = data.get('deliveryDate', '').strip() if data.get('deliveryDate') else ''
+    pincode_value = data.get('pincode', '').strip() if data.get('pincode') else ''
+
+    if not date_value:
+        date_value = "[Please provide delivery date]"
+        missing_fields.append("Delivery Date")
+
+    if not pincode_value:
+        pincode_value = "[Please provide 6-digit pincode]"
+        missing_fields.append("Delivery Pincode")
+
+    # City and state are auto-filled from pincode, so show placeholder if pincode missing
+    city_value = data.get('city', '').strip() if data.get('city') else ''
+    state_value = data.get('state', '').strip() if data.get('state') else ''
+
+    if not city_value:
+        city_value = "[Auto-filled from pincode]"
+    if not state_value:
+        state_value = "[Auto-filled from pincode]"
+
+    display = f"""Delivery Date: {date_value}
+Delivery Pincode: {pincode_value}
+Delivery City: {city_value}
+Delivery State: {state_value}"""
+
+    return display, missing_fields
+
+
+def _format_quantity(qty) -> str:
+    """Format quantity as integer if it's a whole number, otherwise as-is."""
+    if qty is None or qty == '':
+        return ''
+    try:
+        qty_float = float(qty)
+        # If it's a whole number, display as integer
+        if qty_float == int(qty_float):
+            return str(int(qty_float))
+        return str(qty)
+    except (ValueError, TypeError):
+        return str(qty)
+
+
 def generate_items_display(products: List[Dict[str, Any]]) -> str:
     """
     Generate display format for items.
@@ -470,7 +525,7 @@ def generate_items_display(products: List[Dict[str, Any]]) -> str:
 
     for idx, item in enumerate(products, 1):
         result.append(f"Item {idx}: {item.get('description', '')}")
-        result.append(f"Qty: {item.get('quantity', '')}")
+        result.append(f"Qty: {_format_quantity(item.get('quantity', ''))}")
 
         # Combine brand and remarks into specification
         spec_parts = []
@@ -487,6 +542,66 @@ def generate_items_display(products: List[Dict[str, Any]]) -> str:
             result.append("")
 
     return "\n".join(result)
+
+
+def generate_items_display_with_missing(products: List[Dict[str, Any]], incomplete_items: List[Dict]) -> tuple[str, list[str]]:
+    """
+    Generate display format for items with missing field indicators.
+
+    Args:
+        products: List of product dictionaries
+        incomplete_items: List of dicts with format: {"index": int, "item": dict, "missing_fields": list}
+
+    Returns:
+        Tuple of (formatted_string, list_of_missing_field_labels)
+    """
+    if not products:
+        return "No items", []
+
+    # Build a map of item index to missing fields
+    missing_map = {}
+    for incomplete in incomplete_items:
+        missing_map[incomplete["index"]] = incomplete["missing_fields"]
+
+    result = []
+    all_missing_labels = []
+
+    for idx, item in enumerate(products, 1):
+        missing_fields = missing_map.get(idx, [])
+
+        # Description
+        description = item.get('description', '')
+        if not description or 'description' in missing_fields:
+            description = "[Please provide product name]"
+            if "Product Name" not in all_missing_labels:
+                all_missing_labels.append("Product Name")
+        result.append(f"Item {idx}: {description}")
+
+        # Quantity
+        quantity = item.get('quantity', '')
+        if not quantity or 'quantity' in missing_fields:
+            quantity = "[Please provide quantity]"
+            if "Quantity" not in all_missing_labels:
+                all_missing_labels.append("Quantity")
+        else:
+            quantity = _format_quantity(quantity)
+        result.append(f"Qty: {quantity}")
+
+        # Combine brand and remarks into specification
+        spec_parts = []
+        if item.get('brand'):
+            spec_parts.append(item['brand'])
+        if item.get('remarks'):
+            spec_parts.append(item['remarks'])
+
+        specification = ', '.join(spec_parts) if spec_parts else ''
+        result.append(f"Specification: {specification}")
+
+        # Add blank line separator between items (except after last item)
+        if idx < len(products):
+            result.append("")
+
+    return "\n".join(result), all_missing_labels
 
 
 def validate_delivery_completeness(data: Dict[str, str]) -> bool:

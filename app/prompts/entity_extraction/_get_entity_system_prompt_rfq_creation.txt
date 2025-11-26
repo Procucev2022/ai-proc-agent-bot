@@ -61,6 +61,18 @@ GLOBAL FIELDS (extract once for all products):
 - **city**: Delivery city for ALL products (e.g., "Bangalore", "Mumbai")
 - **pincode**: Delivery pincode for ALL products (6-digit postal code)
 
+PINCODE IDENTIFICATION (CRITICAL):
+- Indian pincodes are exactly 6 digits and typically start with 1-8 (e.g., 411043, 560001, 400001)
+- When a 6-digit number appears in the message, check if it could be a valid Indian pincode:
+  * Pincodes starting with 1-8 are likely valid Indian pincodes
+  * Extract it as pincode even if it appears near product specifications
+  * Model numbers are usually alphanumeric (e.g., "R 4109", "M34567") or have clear prefixes
+- PRIORITIZE pincode extraction: If a standalone 6-digit number (starting with 1-8) appears anywhere in the message along with a date, it's very likely a delivery pincode
+- Examples:
+  * "valve model 4109, 411043, 27 Nov" → pincode="411043" (6-digit, starts with 4, appears with date)
+  * "Type R 4109 nitrogen valve" → 4109 is NOT a pincode (only 4 digits, part of model name)
+  * "product XYZ123456" → 123456 could be pincode if standalone, but likely model if attached to text
+
 ITEM-SPECIFIC FIELDS (extract for each product):
 - **description**: Product type/category (e.g., "laptop", "chairs", "printers") - keep this generic
 - **quantity**: Number of units needed - ONLY extract clear quantity values. DO NOT confuse specifications/ratings with quantity! Maximum allowed quantity is 100,000 pieces/units per product.
@@ -83,14 +95,22 @@ CRITICAL EXTRACTION RULES:
    - "motors" (no unit mentioned) → unitofMeasures: "" (empty, will be asked)
 
 3. **Measurement vs Quantity (CRITICAL)**:
-   - A measurement (meters, kg, liters) is NOT the same as quantity/count
+   - A measurement (meters, kg, liters, sq mtr, cubic ft, etc.) is NOT the same as quantity/count
    - "25 meters of rope" does NOT mean 25 ropes - it means ONE item measuring 25 meters
+   - "2500 sq mtr vinyl" does NOT mean 2500 pieces - it means vinyl of 2500 square meters area
    - NEVER assume the measurement value is the quantity count
-   - If ONLY measurement is provided (no explicit count):
+   - MEASUREMENT UNITS that are NOT quantity (always set quantity="" when these appear without explicit count):
+     * Area: sq mtr, sq ft, square meters, square feet, sqm, sft
+     * Length: meters, feet, inches, mm, cm, yards
+     * Weight: kg, grams, tons, lbs, pounds
+     * Volume: liters, ml, gallons, cubic meters, cubic feet
+     * Capacity: mAh, KV, watts, ampere
+   - If ONLY measurement is provided (no explicit count like "need 5 rolls" or "quantity 10"):
      → Set quantity to "" (empty) so system asks for actual count
      → Put measurement in unitofMeasures
    - Example: "25 meters of rope, 15 mm thick" → quantity: "", unitofMeasures: "25 meters", remarks: "15 mm thickness"
    - Example: "50kg rice" → quantity: "", unitofMeasures: "50 kg", remarks: ""
+   - Example: "2500 sq mtr vinyl 7.5mm thick" → quantity: "", unitofMeasures: "2500 sq mtr", remarks: "7.5mm thick"
 
 4. **Specifications in Remarks**: Technical details always go to remarks
    - "18gb RAM, 1tb SSD" → remarks field, NOT description
@@ -220,7 +240,28 @@ CRITICAL: Measurement is NOT quantity - leave quantity empty to ask user
 Global fields: deliveryDate="", state="", city="", pincode=""
 Products: [
   {{description: "rope", quantity: "", unitofMeasures: "25 meters", brand: "", remarks: "15 mm thickness"}}
+]
 
+Example 14: "Need 1x VANAZ Type R 4109 nitrogen gas inlet valve, stainless steel body, 2" dial, 411043, 27 Nov"
+CRITICAL PINCODE IDENTIFICATION: 411043 is a 6-digit number starting with 4 - this is a valid Indian pincode pattern
+- "Type R 4109" → 4109 is only 4 digits AND attached to model name "Type R" → NOT a pincode, goes to remarks
+- "411043" → standalone 6-digit number starting with 4, appears with date "27 Nov" → PINCODE
+- Extract 411043 as pincode, NOT as specification
+Global fields: deliveryDate="27 Nov", state="", city="", pincode="411043"
+Products: [
+  {{description: "nitrogen gas inlet valve", quantity: 1, unitofMeasures: "pcs", brand: "VANAZ", remarks: "Type R 4109, stainless steel body, 2\" dial"}}
+]
+
+Example 15: "Need 2500 sq mtr mass loaded vinyl 7.5mm thick, 3000kg/m3 density"
+CRITICAL: "2500 sq mtr" is a MEASUREMENT (area), NOT quantity count
+- User wants vinyl that covers 2500 square meters area
+- We don't know if they want 1 roll, 5 sheets, 10 pieces, etc.
+- quantity: "" (EMPTY - system must ask for count)
+- unitofMeasures: "2500 sq mtr"
+- "7.5mm thick, 3000kg/m3 density" are technical specs → remarks
+Global fields: deliveryDate="", state="", city="", pincode=""
+Products: [
+  {{description: "mass loaded vinyl", quantity: "", unitofMeasures: "2500 sq mtr", brand: "", remarks: "7.5mm thick, 3000kg/m3 density"}}
 ]
 
 Required fields for RFQ:
