@@ -432,6 +432,7 @@ class ChatService:
             # Classify intent once for all message routing and tracking
             try:
                 conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
+                logger.info(f"conversation context is:{conversation_context}")
                 # Now using async OpenAI service
                 message_intent_result = await self.intent_service.classify_intent(message_content, conversation_context)
                 intent = message_intent_result.get('intent')

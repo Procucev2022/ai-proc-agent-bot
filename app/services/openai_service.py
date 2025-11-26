@@ -321,6 +321,7 @@ class OpenAIService:
                         elif isinstance(entities, dict) and entities:
                             context_info += f"\n- Existing Products: 1 product"
                 
+                logger.info(f"context info used is :{context_info}")
                 # Add context as developer message
                 if context_info.strip():
                     input_messages.insert(0, {
