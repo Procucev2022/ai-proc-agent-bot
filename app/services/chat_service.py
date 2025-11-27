@@ -1917,6 +1917,8 @@ class ChatService:
                     result = await self._handle_excel_sectioned_rfq(user, session, products)
                     if result.get('status') == 'excel_sectioned_rfq_initialized':
                         # Continue with sectioned RFQ flow using PurchaseIntentHandler
+                        # update flag in session to hide modify btn 
+                        session.workflow_state['excel_source'] = True
                         return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result, self._should_use_summary_aware_extraction)
                     else:
                         return result

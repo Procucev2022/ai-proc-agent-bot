@@ -663,12 +663,20 @@ class SectionedRFQCreationHandler:
 
         message = f"RFQ Items ({len(items_data)}):\n\n{display_text}"
 
-        # Send message with Confirm/Modify/Restart buttons
+        # Check if data is from Excel upload
+        is_excel_source = session.workflow_state.get('excel_source', False) if session.workflow_state else False
+        
+        # Build buttons config - hide Modify button if data is from Excel upload
         buttons_config = [
-            {"id": "confirm_items", "title": "Confirm"},
-            {"id": "modify_items", "title": "Modify"},
-            {"id": "restart_rfq", "title": "Restart"}
+            {"id": "confirm_items", "title": "Confirm"}
         ]
+        
+        # Only add Modify button if data is NOT from Excel upload
+        if not is_excel_source:
+            buttons_config.append({"id": "modify_items", "title": "Modify"})
+        
+        buttons_config.append({"id": "restart_rfq", "title": "Restart"})
+        
         await self.whatsapp_service.send_configurable_buttons(
             user.phone_number,
             message,
