@@ -269,7 +269,12 @@ class ProfileSelectionService:
             session.workflow_state = session.workflow_state or {}
             session.workflow_state['profile_selection_stage'] = 'neutral_greeting'
             session.workflow_state['profiles'] = profiles
+            
+            # Send message and add to conversation history
             await self.whatsapp_service.send_message(user_phone, message)
+            # Add bot message to conversation history
+            from app.services.helpers.summarization_helpers import SummarizationHelpers
+            SummarizationHelpers.add_to_conversation_history(session, "assistant", message)
 
             return {
                 "status": "profile_selection_sent",
@@ -356,6 +361,9 @@ class ProfileSelectionService:
 
             full_message = "\n".join(message_parts)
             await self.whatsapp_service.send_message(user_phone, full_message)
+            # Add to conversation history
+            from app.services.helpers.summarization_helpers import SummarizationHelpers
+            SummarizationHelpers.add_to_conversation_history(session, "assistant", full_message)
 
             return {
                 "status": "buyer_profile_selection_presented",
@@ -415,6 +423,9 @@ class ProfileSelectionService:
 
             full_message = "\n".join(message_parts)
             await self.whatsapp_service.send_message(user_phone, full_message)
+            # Add to conversation history
+            from app.services.helpers.summarization_helpers import SummarizationHelpers
+            SummarizationHelpers.add_to_conversation_history(session, "assistant", full_message)
 
             return {
                 "status": "seller_profile_selection_presented",
@@ -470,6 +481,9 @@ class ProfileSelectionService:
 
             full_message = "\n".join(message_parts)
             await self.whatsapp_service.send_message(user_phone, full_message)
+            # Add to conversation history
+            from app.services.helpers.summarization_helpers import SummarizationHelpers
+            SummarizationHelpers.add_to_conversation_history(session, "assistant", full_message)
 
             return {
                 "status": "rfq_status_profile_selection_presented",
@@ -550,6 +564,9 @@ class ProfileSelectionService:
             session.workflow_state['profile_options'] = profile_options
 
             await self.whatsapp_service.send_message(user_phone, message)
+            # Add to conversation history
+            from app.services.helpers.summarization_helpers import SummarizationHelpers
+            SummarizationHelpers.add_to_conversation_history(session, "assistant", message)
 
             return {
                 "status": "new_user_registration_presented",

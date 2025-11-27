@@ -440,6 +440,10 @@ class AuthenticationService:
             message = await self._generate_email_confirmation_response(username, emails, filtered_users)
             
             await self.whatsapp_service.send_message(user_phone, message)
+            # Add to conversation history if session manager available
+            if self.session_manager and session:
+                from app.services.helpers.summarization_helpers import SummarizationHelpers
+                SummarizationHelpers.add_to_conversation_history(session, "assistant", message)
             
             return {
                 "status": "email_selection_requested",
@@ -666,6 +670,9 @@ Return only the selected email address or "none" if no clear selection.
                 # Send welcome message to user
                 welcome_message = f"Hi {username}! Email verified successfully! You can now proceed."
                 await self.whatsapp_service.send_message(user_phone, welcome_message)
+                # Add to conversation history
+                from app.services.helpers.summarization_helpers import SummarizationHelpers
+                SummarizationHelpers.add_to_conversation_history(session, "assistant", welcome_message)
 
                 # Preserve original message from workflow state for processing after authentication
                 original_message = session.workflow_state.get("original_message") if session.workflow_state else None
@@ -874,6 +881,9 @@ Return only the selected email address or "none" if no clear selection.
                                     "Thank you for choosing Procucev!"
                                 )
                                 await self.whatsapp_service.send_message(user_phone, message)
+                                # Add to conversation history
+                                from app.services.helpers.summarization_helpers import SummarizationHelpers
+                                SummarizationHelpers.add_to_conversation_history(session, "assistant", message)
                                 
                                 # Send buyer registration not approved notification
                                 try:
