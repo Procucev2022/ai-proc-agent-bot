@@ -124,7 +124,7 @@ def _extract_items_format_section(text: str) -> tuple[str, str]:
     Extract only the items format section from user's message.
 
     This function handles cases where users copy-paste extra text along with the format,
-    such as "Got it!", "I've captured X product(s):", etc.
+    such as "Got it!", "I've captured X product(s):", "RFQ Items (N):", etc.
 
     It looks for the first occurrence of item-related fields and extracts only that portion.
     Also returns any remaining text that appears after the format (e.g., questions).
@@ -141,17 +141,30 @@ def _extract_items_format_section(text: str) -> tuple[str, str]:
 
     # Find the first line that starts with an item field (case-insensitive)
     # Look for patterns like "Item 1:", "Name:", etc.
+    # NOTE: "Item N:" must NOT match header patterns like "RFQ Items (N):" or "Items (N):"
     lines = text.split('\n')
     start_idx = -1
     end_idx = len(lines)
 
+    # Pattern for actual item fields - Item must be followed by space+digit (not "Items")
+    # and must NOT have parentheses around the number (to exclude "RFQ Items (1):")
     item_field_pattern = re.compile(
         r'^\s*(?:item\s+\d+|name|qty|quantity|specification|brand|uom)\s*:',
         re.IGNORECASE
     )
 
-    # Find first line with an item field
+    # Pattern to detect header lines like "RFQ Items (N):" or "Items (N):" which should be skipped
+    header_pattern = re.compile(
+        r'^\s*(?:rfq\s+)?items?\s*\(\d+\)\s*:',
+        re.IGNORECASE
+    )
+
+    # Find first line with an item field (but skip header lines like "RFQ Items (N):")
     for i, line in enumerate(lines):
+        # Skip header lines like "RFQ Items (2):" or "Items (1):"
+        if header_pattern.match(line):
+            logger.debug(f"Skipping header line: {line}")
+            continue
         if item_field_pattern.match(line):
             start_idx = i
             break
@@ -352,11 +365,19 @@ def parse_items_format(text: str) -> Dict[str, Any]:
             return {"error": "No items found. Please provide at least one item."}
 
         items = []
+        item_number = 0  # Track actual item number (increment only for valid blocks)
 
-        for idx, block in enumerate(item_blocks, 1):
+        for block in item_blocks:
             block = block.strip()
             if not block:
                 continue
+
+            # Skip blocks that look like headers (e.g., "RFQ Items (2):" that weren't filtered earlier)
+            if re.match(r'^\s*(?:rfq\s+)?items?\s*\(\d+\)\s*:?\s*$', block, re.IGNORECASE):
+                logger.debug(f"Skipping header block: {block}")
+                continue
+
+            item_number += 1  # Increment for each valid item block
 
             # Parse individual item
             item = {
@@ -407,7 +428,7 @@ def parse_items_format(text: str) -> Dict[str, Any]:
                 missing_fields.append("Qty")
 
             if missing_fields:
-                error_msg = f"Item {idx} missing required field(s): {', '.join(missing_fields)}"
+                error_msg = f"Item {item_number} missing required field(s): {', '.join(missing_fields)}"
                 logger.warning(f"Items format validation failed: {error_msg}")
                 error_result = {"error": error_msg}
                 if additional_text:
