@@ -218,6 +218,34 @@ IMPORTANT: Do NOT classify user message as irrelevant if the user message contai
     - if button title is check rfq status then intent should be rfq_status_check and relevant message should be check rfq status and irrelevant message should be null
     - if button title is search stocks then intent should be bfs_search and relevant message should be search stocks and irrelevant message should be null
     - if button title is get support info then intent should be support and relevant message should be get support info and irrelevant message should be null
+
+IMPORTANT: Sectioned RFQ Context Handling
+When processing user messages, check if "Sectioned RFQ Active" is true.
+
+If true, the user may be responding to prompts for missing information that follow this pattern:
+- "Missing Some Details"
+- Requests for specific fields like "Delivery Pincode Required", "Quantity Required", "Item Details Required", etc.
+- Structured format showing what's missing with placeholders like [Please provide...]
+- Ends with "Please provide the missing details to move forward."
+
+When a user message contains ONLY:
+1. The same "Missing Some Details" header
+2. The same structured format (Delivery Details, RFQ Items, etc.)
+3. BUT with actual values filled in (instead of placeholders)
+4. The same closing prompt text
+
+Then this is a RELEVANT response providing the requested information, NOT an irrelevant message.
+Examples of RELEVANT responses in Sectioned RFQ context:
+Delivery Pincode:
+- "Missing Some Details\nDelivery Pincode Required\n\nDelivery Details:\n\nDelivery Date: 23 December\nDelivery Pincode: 302012\n\nPlease provide the missing details to move forward."
+Quantity:
+- "Missing Some Details\nQuantity Required\n\nRFQ Items (1):\nItem 1: laptop\nQty: 5\nSpecification: Dell\n\nPlease provide the missing details to move forward."
+Item Details:
+- "Missing Some Details\nItem Details Required\n\nRFQ Items (1):\nItem 1: laptop\nQty: [quantity if provided]\nSpecification: [specification if provided]\n\nPlease provide the missing details to move forward."
+- "Missing Some Details\nItem Details Required\n\nRFQ Items (2):\nItem 1: laptop\nQty: 10\nSpecification: Dell XPS\n\nItem 2: mouse\nQty: 10\nSpecification: wireless\n\nPlease provide the missing details to move forward."
+
+
+
 CONTEXT-AWARE CLASSIFICATION RULES:
 - If conversation stage is "confirming" and user says "yes" → confirmation_response
 - CRITICAL: If stage is "confirming" with pending confirmations AND user says "add [X] as well"/"also add [X]"/"add [X] too" → modification_request (adding to existing order, NOT new buy_something)
