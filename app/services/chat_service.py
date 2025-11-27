@@ -1081,7 +1081,7 @@ class ChatService:
                 # Check if user is in Excel confirmation - handle directly
                 if has_excel_confirmation_pending:
                     logger.info("Cancel workflow during Excel confirmation - treating as Excel cancellation")
-                    return await self._handle_excel_confirmation_response(user, session, "cancel")
+                    return await self._handle_excel_confirmation_response(user, session, "cancel", intent_result)
 
                 # Trigger cancel confirmation flow (will send buttons or handle confirmation)
                 cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message)
@@ -1093,7 +1093,7 @@ class ChatService:
                 # Check if user is in Excel confirmation - handle directly
                 if has_excel_confirmation_pending:
                     logger.info("Exit intent during Excel confirmation - treating as Excel cancellation")
-                    return await self._handle_excel_confirmation_response(user, session, "exit")
+                    return await self._handle_excel_confirmation_response(user, session, "exit", intent_result)
 
                 # Check if user has pending optional fields - they might mean "skip" instead of "exit"
                 has_pending_optional = bool(
@@ -1286,7 +1286,7 @@ class ChatService:
 
             # Handle Excel confirmation responses BEFORE pending confirmations
             if session.workflow_state.get("awaiting_excel_confirmation"):
-                result = await self._handle_excel_confirmation_response(user, session, message)
+                result = await self._handle_excel_confirmation_response(user, session, message, intent_result)
                 # Excel confirmation handler returns specific statuses, don't continue to normal flow
                 return result
 
@@ -1739,6 +1739,7 @@ class ChatService:
             # Prepare context using helpers
             excel_context = ExcelHelpers.prepare_excel_context(processing_result, user.phone_number)
 
+            # intiliased sectioned rfw
             # Update session
             WorkflowManager.set_workflow_type(session, WorkflowType.rfq_creation, caller='excel_upload_handler')
             WorkflowManager.initialize_workflow_state(session)
@@ -1858,7 +1859,7 @@ class ChatService:
             await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
             return await self._handle_incomplete_excel(user, session, {"excel_data": processing_result})
     
-    async def _handle_excel_confirmation_response(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+    async def _handle_excel_confirmation_response(self, user: User, session: ConversationSession, message: str, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """Handle user response to Excel confirmation message with AI-based confirmation and keyword fallback."""
         try:
             # First try AI-based confirmation parsing
@@ -1906,15 +1907,34 @@ class ChatService:
                     error_message = "❌ Sorry, I couldn't find the Excel data. Please upload your file again."
                     await self.session_manager.send_and_track_message(user.phone_number, error_message, session)
                     return {"status": "excel_data_missing"}
+
+                # Check for sectioned RFQ configuration
+                from app.config import get_settings
+                settings = get_settings()
                 
-                # Clear confirmation state
-                session.workflow_state.pop('excel_confirmation_data', None)
-                session.workflow_state.pop('awaiting_excel_confirmation', None)
-                
-                # Use existing products array handler for multiple RFQ creation
-                return await self.products_array_handler.handle_products_array(
-                    user, session, f"Excel upload: {filename}", products
-                )
+                if settings.use_sectioned_rfq:
+                    # Handle sectioned RFQ workflow
+                    result = await self._handle_excel_sectioned_rfq(user, session, products)
+                    if result.get('status') == 'excel_sectioned_rfq_initialized':
+                        # Continue with sectioned RFQ flow using PurchaseIntentHandler
+                        return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result, self._should_use_summary_aware_extraction)
+                    else:
+                        return result
+                else:
+                    # Clear session data for non-sectioned flow
+                    fields_to_clear = [
+                        'extracted_entities', 'completeness', 'missing_fields', 'conversation_stage',
+                        'user_phone', 'upload_timestamp', 'filename', 'total_items', 'delivery_date',
+                        'pincode', 'state', 'city', 'current_intent_result', 'original_message',
+                        'original_intent','excel_confirmation_data','awaiting_excel_confirmation'
+                    ]
+                    for field in fields_to_clear:
+                        session.workflow_state.pop(field, None)
+                    
+                    # Use existing products array handler for multiple RFQ creation
+                    return await self.products_array_handler.handle_products_array(
+                        user, session, f"Excel upload: {filename}", products
+                    )
                 
             elif is_cancelled:
                 logger.info(f"[EXCEL-CANCELLED] User cancelled Excel processing - clearing session")
@@ -1988,7 +2008,129 @@ class ChatService:
                 "Excel Processing:"
             )
             return {"status": "error", "error": str(e)}
+        
+    async def _handle_excel_sectioned_rfq(self, user: User, session: ConversationSession, products: List[Dict]) -> Dict[str, Any]:
+        """Handle Excel data in sectioned RFQ workflow."""
+        try:
+            from app.services.workflow_manager import WorkflowManager
+            
+            # Initialize sectioned RFQ workflow
+            if not WorkflowManager.is_sectioned_rfq_active(session):
+                logger.info(f"[EXCEL-SECTIONED] Initializing sectioned RFQ workflow")
+                WorkflowManager.initialize_sectioned_rfq(session)
+                WorkflowManager.set_sectioned_rfq_section(session, "date_location")
+                if "sectioned_rfq" in session.workflow_state:
+                    session.workflow_state["sectioned_rfq"]["active"] = True
 
+            products, delivery_details = await self.transform_rfq_to_section_rfq_format(session, products)
+            
+            # Store Excel products in items section
+            WorkflowManager.update_section_data(session, "items", products)
+            logger.info(f"[EXCEL-SECTIONED] Stored {len(products)} products in items section")
+            
+            # Store delivery details in date_location section using proper field names
+            if delivery_details:
+                WorkflowManager.update_section_data(session, "date_location", delivery_details)
+                logger.info(f"[EXCEL-SECTIONED] Stored delivery details: {delivery_details}")
+
+            # Clear existing excel session data
+            fields_to_clear = [
+                'completeness', 'missing_fields', 'conversation_stage',
+                'user_phone', 'upload_timestamp', 'filename', 'total_items', 'delivery_date',
+                'pincode', 'state', 'city', 'current_intent_result', 'original_message',
+                'original_intent','excel_confirmation_data','awaiting_excel_confirmation'
+            ]
+            
+            # Set extracted_entities to empty list
+            session.workflow_state['extracted_entities'] = []
+            
+            # Add external_user_id field
+            if session.workflow_state.get('user_phone'):
+                session.workflow_state['external_user_id'] = session.workflow_state['user_phone']
+            
+            # Clear other fields
+            for field in fields_to_clear:
+                session.workflow_state.pop(field, None)
+            
+           
+            await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+            
+            return {"status": "excel_sectioned_rfq_initialized", "message": "Sectioned RFQ workflow started"}
+            
+        except Exception as e:
+            logger.error(f"[EXCEL-SECTIONED-ERROR] Error handling Excel sectioned RFQ: {e}")
+            return {"status": "error", "error": str(e)}
+
+
+    async def transform_rfq_to_section_rfq_format(self, session: ConversationSession, products: List[Dict]) -> tuple[List[Dict], Dict]:
+        """Transform Excel RFQ format to sectioned RFQ format."""
+        try:
+            transformed_products = []
+            delivery_details = {}
+            
+            # Extract delivery details from session - map to sectioned RFQ format
+            if session.workflow_state.get('delivery_date'):
+                delivery_details['deliveryDate'] = session.workflow_state['delivery_date']
+            if session.workflow_state.get('pincode'):
+                delivery_details['pincode'] = session.workflow_state['pincode']
+            if session.workflow_state.get('city'):
+                delivery_details['city'] = session.workflow_state['city']
+            if session.workflow_state.get('state'):
+                delivery_details['state'] = session.workflow_state['state']
+            
+            # Validate and normalize delivery date if provided using sectioned RFQ handler
+            if delivery_details.get('deliveryDate'):
+                from app.services.handlers.sectioned_rfq_creation_handler import SectionedRFQCreationHandler
+                sectioned_handler = SectionedRFQCreationHandler(
+                    entity_service=self.entity_service,
+                    whatsapp_service=self.whatsapp_service,
+                    cancel_service=None,
+                    session_manager=self.session_manager
+                )
+                date_validation = await sectioned_handler._validate_delivery_date(delivery_details['deliveryDate'])
+                if date_validation.get('is_valid'):
+                    delivery_details['deliveryDate'] = date_validation.get('normalized_date', delivery_details['deliveryDate'])
+                    logger.info(f"[TRANSFORM-RFQ] Delivery date validated: {delivery_details['deliveryDate']}")
+                else:
+                    logger.warning(f"[TRANSFORM-RFQ] Invalid delivery date: {date_validation.get('error')}")
+                    delivery_details['deliveryDate'] = ''
+            
+            # Auto-fill city/state from pincode if available using sectioned RFQ handler
+            if delivery_details.get('pincode') and (not delivery_details.get('city') or not delivery_details.get('state')):
+                logger.info(f"[TRANSFORM-RFQ] Auto-filling location from pincode: {delivery_details['pincode']}")
+                from app.services.handlers.sectioned_rfq_creation_handler import SectionedRFQCreationHandler
+                sectioned_handler = SectionedRFQCreationHandler(
+                    entity_service=self.entity_service,
+                    whatsapp_service=self.whatsapp_service,
+                    cancel_service=None,
+                    session_manager=self.session_manager
+                )
+                delivery_details = await sectioned_handler._autofill_location_from_pincode(delivery_details)
+            
+            # Transform each product to match sectioned RFQ items format exactly
+            for product in products:
+                transformed_product = {
+                    'description': product.get('description', ''),
+                    'quantity': int(product.get('quantity', 0)) if product.get('quantity') and str(product.get('quantity')).isdigit() else 0,
+                    'unitofMeasures': product.get('uom', 'pcs'),
+                    'brand': product.get('projectDesc', ''),
+                    'remarks': product.get('remarks', ''),
+                    'deliveryDate': delivery_details.get('deliveryDate', ''),
+                    'pincode': delivery_details.get('pincode', ''),
+                    'city': delivery_details.get('city', ''),
+                    'state': delivery_details.get('state', '')
+                }
+                transformed_products.append(transformed_product)
+            
+            return transformed_products, delivery_details
+            
+        except Exception as e:
+            logger.error(f"[TRANSFORM-RFQ-ERROR] Error transforming RFQ format: {e}")
+            return products, {}
+    
+
+            
+            
     def _convert_excel_items_to_products_array(self, excel_items: List[Dict]) -> List[Dict]:
         """Convert Excel items to products array format for existing multiple RFQ flow."""
         products = []
@@ -2804,10 +2946,10 @@ class ChatService:
         try:
             if button_id == "confirm_excel":
                 # User confirmed - simulate "confirm" response
-                return await self._handle_excel_confirmation_response(user, session, "confirm")
+                return await self._handle_excel_confirmation_response(user, session, "confirm", None)
             elif button_id == "cancel_excel":
                 # User cancelled - simulate "cancel" response
-                return await self._handle_excel_confirmation_response(user, session, "cancel")
+                return await self._handle_excel_confirmation_response(user, session, "cancel", None)
             else:
                 return {"status": "unknown_excel_button", "button_id": button_id}
                 
