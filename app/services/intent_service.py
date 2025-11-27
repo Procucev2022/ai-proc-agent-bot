@@ -63,39 +63,41 @@ class IntentService:
             # Get session from context if available (for Track 2 checks)
             session = context.get('session') if context else None
 
-            # PRIORITY 1: Check for exit/cancel keywords (Track 2)
-            if self.detect_exit_keywords(message):
-                return {
-                    "intent": "exit_system",
-                    "confidence": 95,
-                    "reasoning": "User wants to exit or cancel workflow",
-                    "success": True,
-                    "context_analysis": {"conversation_stage": "exiting"}
-                }
+            if isinstance(message, str):
 
-            # PRIORITY 2: Check for format modification (Track 2)
-            if session and self.detect_format_modification_intent(message, session):
-                return {
-                    "intent": "format_modification",
-                    "confidence": 98,
-                    "reasoning": "User is providing formatted modification response",
-                    "success": True,
-                    "context_analysis": {"conversation_stage": "modifying"}
-                }
-
-            # PRIORITY 3: Check for interruptions (Track 2)
-            if session:
-                interruption_result = self.detect_interruption_intent(message, session)
-                if interruption_result["is_interruption"]:
-                    interruption_type = interruption_result["interruption_type"]
+                # PRIORITY 1: Check for exit/cancel keywords (Track 2)
+                if self.detect_exit_keywords(message):
                     return {
-                        "intent": interruption_type,  # "faq", "greeting", or "help"
-                        "confidence": 85,
-                        "reasoning": f"User interrupted RFQ flow with {interruption_type}",
+                        "intent": "exit_system",
+                        "confidence": 95,
+                        "reasoning": "User wants to exit or cancel workflow",
                         "success": True,
-                        "is_interruption": True,
-                        "context_analysis": {"conversation_stage": "interrupted"}
+                        "context_analysis": {"conversation_stage": "exiting"}
                     }
+
+                # PRIORITY 2: Check for format modification (Track 2)
+                if session and self.detect_format_modification_intent(message, session):
+                    return {
+                        "intent": "format_modification",
+                        "confidence": 98,
+                        "reasoning": "User is providing formatted modification response",
+                        "success": True,
+                        "context_analysis": {"conversation_stage": "modifying"}
+                    }
+
+                # PRIORITY 3: Check for interruptions (Track 2)
+                if session:
+                    interruption_result = self.detect_interruption_intent(message, session)
+                    if interruption_result["is_interruption"]:
+                        interruption_type = interruption_result["interruption_type"]
+                        return {
+                            "intent": interruption_type,  # "faq", "greeting", or "help"
+                            "confidence": 85,
+                            "reasoning": f"User interrupted RFQ flow with {interruption_type}",
+                            "success": True,
+                            "is_interruption": True,
+                            "context_analysis": {"conversation_stage": "interrupted"}
+                        }
 
             # PRIORITY 4: Regular OpenAI classification
             # Get classification from OpenAI (FAQ intent can be detected from prompt alone, no need for full FAQ context)
