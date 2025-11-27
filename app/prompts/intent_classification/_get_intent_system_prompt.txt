@@ -244,7 +244,32 @@ Item Details:
 - "Missing Some Details\nItem Details Required\n\nRFQ Items (1):\nItem 1: laptop\nQty: [quantity if provided]\nSpecification: [specification if provided]\n\nPlease provide the missing details to move forward."
 - "Missing Some Details\nItem Details Required\n\nRFQ Items (2):\nItem 1: laptop\nQty: 10\nSpecification: Dell XPS\n\nItem 2: mouse\nQty: 10\nSpecification: wireless\n\nPlease provide the missing details to move forward."
 
+MIXED MESSAGES (User adds their own text anywhere):
+If the template with placeholders is present AND user adds additional text at ANY position (top, middle, bottom, or mixed within):
+- Template portion with placeholders = RELEVANT
+- User's additional text (wherever it appears) = IRRELEVANT
 
+Examples:
+
+Question at the top:
+"Can I buy earth here?\n\nMissing Some Details\nQuantity Required\n\nRFQ Items (1):\nItem 1: laptop\nQty: [Please provide quantity]\nSpecification: \n\nPlease provide the missing details to move forward."
+→ RELEVANT: Template portion
+→ IRRELEVANT: "Can I buy earth here?"
+
+Question in the middle:
+"Missing Some Details\nQuantity Required\n\nCan I buy earth here?\n\nRFQ Items (1):\nItem 1: laptop\nQty: [Please provide quantity]\nSpecification: \n\nPlease provide the missing details to move forward."
+→ RELEVANT: Template portion
+→ IRRELEVANT: "Can I buy earth here?"
+
+Question at the bottom:
+"Missing Some Details\nQuantity Required\n\nRFQ Items (1):\nItem 1: laptop\nQty: [Please provide quantity]\nSpecification: \n\nPlease provide the missing details to move forward.\n\nCan I buy earth here?"
+→ RELEVANT: Template portion
+→ IRRELEVANT: "Can I buy earth here?"
+
+Multiple questions mixed throughout:
+"What's your return policy?\n\nMissing Some Details\nQuantity Required\n\nRFQ Items (1):\nItem 1: laptop\nQty: [Please provide quantity]\nSpecification: \n\nDo you ship internationally?\n\nPlease provide the missing details to move forward."
+→ RELEVANT: Template portion
+→ IRRELEVANT: "What are your services?" and "Do you ship internationally?"
 
 CONTEXT-AWARE CLASSIFICATION RULES:
 - If conversation stage is "confirming" and user says "yes" → confirmation_response
