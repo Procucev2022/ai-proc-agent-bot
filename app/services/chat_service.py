@@ -2714,8 +2714,8 @@ class ChatService:
         # Only handle section-specific buttons like confirm_date_location, confirm_items, etc.
         is_sectioned_rfq_button = button_id.startswith(("confirm_", "modify_", "final_", "attachments_", "restart_"))
 
-        # Exclude generic confirm_rfq (final confirmation) and continue_rfq from sectioned routing
-        if is_sectioned_rfq_button and button_id not in ["confirm_rfq", "continue_rfq"]:
+        # Exclude generic confirm_rfq (final confirmation), continue_rfq, and Excel buttons from sectioned routing
+        if is_sectioned_rfq_button and button_id not in ["confirm_rfq", "continue_rfq", "confirm_excel", "cancel_excel"]:
             logger.info(f"[SECTIONED_RFQ] Button click detected: {button_id}")
             if WorkflowManager.is_sectioned_rfq_active(session):
                 # Get or create sectioned RFQ handler
