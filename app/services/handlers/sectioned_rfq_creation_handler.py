@@ -466,10 +466,15 @@ class SectionedRFQCreationHandler:
         missing_label = " / ".join(missing_fields) if missing_fields else "Missing Field"
 
         # Include validation error if provided
+        copy_paste_instruction = (
+            "I'm sorry I do not have all the details to proceed. Can you provide some of the missing details. "
+            "In order to do please copy and paste the text provided below this line and then update your information in the correct format.\n\n"
+            "————————————————————————"
+        )
         if validation_error:
-            message = f"{validation_error}\n\n{missing_label} Required\n\nDelivery Details:\n\n{display_text}\n\nPlease copy the format above and provide the correct details."
+            message = f"{validation_error}\n\n{missing_label} Required\n\n{copy_paste_instruction}\n{display_text}"
         else:
-            message = f"{missing_label} Required\n\nDelivery Details:\n\n{display_text}\n\nPlease provide the missing details to move forward."
+            message = f"{missing_label} Required\n\n{copy_paste_instruction}\n{display_text}"
 
         # Send message with Modify/Restart buttons (no Confirm since data is incomplete)
         buttons_config = [
@@ -698,7 +703,12 @@ class SectionedRFQCreationHandler:
         # Build the missing field label
         missing_label = " / ".join(missing_labels) if missing_labels else "Missing Field"
 
-        message = f"{missing_label} Required\n\nRFQ Items ({len(items_data)}):\n\n{display_text}\n\nPlease provide the missing details to move forward."
+        copy_paste_instruction = (
+            "I'm sorry I do not have all the details to proceed. Can you provide some of the missing details. "
+            "In order to do please copy and paste the text provided below this line and then update your information in the correct format.\n\n"
+            "————————————————————————"
+        )
+        message = f"{missing_label} Required\n\n{copy_paste_instruction}\n{display_text}"
 
         # Send message with Modify/Restart buttons (no Confirm since data is incomplete)
         buttons_config = [
