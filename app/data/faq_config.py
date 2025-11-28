@@ -34,8 +34,6 @@ FULL_FAQ_CONTEXT =\
     Inactive accounts may need reverification (advance notice given).
     Each RFQ viewed/downloaded by a seller deducts one credit.
 - Helpful Links:
-    Buyer dashboard: portal.procucev.com
-    Seller dashboard: seller.procucev.com
     Company website: www.procucev.com
 - No RFQs Available
     For Buyers:If you see “no RFQs available,” you have either not created any RFQ yet, or there is no active RFQ for you in the application.

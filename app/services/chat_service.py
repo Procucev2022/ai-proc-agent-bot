@@ -431,6 +431,7 @@ class ChatService:
 
             # Classify intent once for all message routing and tracking
             try:
+                logger.info(f"message_conet is :{message_content}")
                 conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
                 logger.info(f"conversation context is:{conversation_context}")
                 # Now using async OpenAI service
@@ -494,6 +495,7 @@ class ChatService:
 
 
             auth_result = await self.authentication_orchestrator_flow(user_phone,message_intent_result.get('relevant_message') or message_content,session, message_intent_result)
+
 
             # Check if authentication is still in progress
             if isinstance(auth_result, dict):
@@ -773,7 +775,7 @@ class ChatService:
 
             # Only proceed to main flow if user is properly authenticated
             user = auth_result
-            if message_type == "text" and message_intent_result.get('relevant_message'):
+            if message_type == "text" and (message_intent_result.get('relevant_message') or message_content):
                 result = await self._process_text_message(user, session, message_intent_result.get('relevant_message') or message_content, message_intent_result)
             elif message_type == "interactive":
                 result = await self._process_interactive_message(user, session, message_content)
@@ -816,8 +818,32 @@ class ChatService:
             irrelevant_msg = message_intent_result.get('irrelevant_message')
             conversation_history = session.conversation_history or {"openai_messages": [], "metadata": []}
 
+            # Handle greeting intent - response generation only, no FAQ search
+            if intent == 'greeting':
+                query_message = irrelevant_msg or relevant_msg
+
+                if query_message:
+                    logger.info(f"Processing greeting: {query_message}")
+
+                    context_data = {
+                        'intent': intent,
+                        'relevant_message': relevant_msg or '',
+                        'irrelevant_message': irrelevant_msg or query_message,
+                        'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
+                        'workflow_state': session.workflow_state or {},
+                        'available_workflow_types': [wf.value for wf in WorkflowType],
+                        'conversation_history': conversation_history
+                    }
+
+                    # Generate response directly without FAQ search
+                    response = await self._generate_llm_response(user_phone, query_message, context_data)
+                    logger.info(f"Generated greeting response: {response}")
+
+                    if response:
+                        await self._cache_irrelevant_response(user_phone, response)
+
             # Handle general inquiry intent (both relevant and irrelevant)
-            if intent in ( 'general_inquiry', 'support'):
+            elif intent in ( 'general_inquiry', 'support'):
                 # When both messages exist, prioritize irrelevant message for general inquiry
                 query_message = irrelevant_msg if irrelevant_msg else relevant_msg
 
@@ -866,30 +892,6 @@ class ChatService:
                 # Cache response
                 if response:
                     await self._cache_irrelevant_response(user_phone, response)
-
-            # Handle greeting intent - response generation only, no FAQ search
-            elif intent == 'greeting':
-                query_message = irrelevant_msg or relevant_msg
-
-                if query_message:
-                    logger.info(f"Processing greeting: {query_message}")
-
-                    context_data = {
-                        'intent':intent,
-                        'relevant_message': relevant_msg or '',
-                        'irrelevant_message': irrelevant_msg or query_message,
-                        'workflow_type': str(session.workflow_type) if session.workflow_type else 'unknown',
-                        'workflow_state': session.workflow_state or {},
-                        'available_workflow_types': [wf.value for wf in WorkflowType],
-                        'conversation_history': conversation_history
-                    }
-
-                    # Generate response directly without FAQ search
-                    response = await self._generate_llm_response(user_phone, query_message, context_data)
-                    logger.info(f"Generated greeting response: {response}")
-
-                    if response:
-                        await self._cache_irrelevant_response(user_phone, response)
 
 
 
