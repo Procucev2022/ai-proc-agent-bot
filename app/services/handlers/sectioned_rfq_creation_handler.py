@@ -109,12 +109,16 @@ class SectionedRFQCreationHandler:
         current_section = WorkflowManager.get_sectioned_rfq_section(session)
         logger.info(f"[SECTIONED_RFQ] Current section: {current_section}")
 
+        # Check if data/message is from Excel upload
+        is_excel_source = session.workflow_state.get('excel_source', False) if session.workflow_state else False
+        
+
         # Common keyword handling for "Confirm" and "Modify" - applies to all sections
         # Check if user is confirming or requesting modification
         message_lower = message.lower().strip()
 
-        # Handle "Confirm" keyword
-        if message_lower in ["confirm", "yes", "y", "proceed", "continue", "ok"]:
+        # Handle "Confirm" keyword - but skip if data is from Excel upload to prevent auto-confirmation
+        if message_lower in ["confirm", "yes", "y", "proceed", "continue", "ok"] and not is_excel_source:
             # Check if current section has data to confirm
             if current_section == "date_location":
                 delivery_data = WorkflowManager.get_section_data(session, "date_location")
@@ -127,8 +131,8 @@ class SectionedRFQCreationHandler:
                     logger.info(f"[SECTIONED_RFQ] User confirmed {current_section}")
                     return await self._handle_section_confirm(user, session, current_section)
 
-        # Handle "Modify" keyword
-        elif message_lower in ["modify", "change", "edit", "update"]:
+        # Handle "Modify" keyword - but skip if data is from Excel upload to prevent auto-modification
+        elif message_lower in ["modify", "change", "edit", "update"] and not is_excel_source:
             # Check if current section has data to modify
             if current_section == "date_location":
                 delivery_data = WorkflowManager.get_section_data(session, "date_location")
@@ -140,6 +144,12 @@ class SectionedRFQCreationHandler:
                 if items_data and len(items_data) > 0:
                     logger.info(f"[SECTIONED_RFQ] User requested to modify {current_section}")
                     return await self._handle_section_modify(user, session, current_section)
+
+        # Clear excel_source flag after Excel confirmation is processed to allow normal flow
+        if is_excel_source and current_section == "date_location":
+            logger.info(f"[SECTIONED_RFQ] Clearing excel_source flag after Excel confirmation")
+            session.workflow_state['excel_source'] = False
+            await self.session_manager.save_session(session, persist_to_db=False)
 
         # Route to appropriate section handler
         if current_section == "date_location":
