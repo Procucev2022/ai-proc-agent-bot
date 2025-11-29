@@ -431,7 +431,7 @@ class ChatService:
 
             # Classify intent once for all message routing and tracking
             try:
-                logger.info(f"message_conet is :{message_content}")
+                logger.info(f"Message Type: {message_type}\nMessage Content: {message_content}")
                 conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
                 logger.info(f"conversation context is:{conversation_context}")
                 # Now using async OpenAI service
@@ -1780,7 +1780,7 @@ class ChatService:
             total_rows = processing_result.get('total_items', len(processing_result['items']))
             extracted_rows = len(products)
             
-            if extracted_rows == total_rows:
+            if extracted_rows :
                 # All items successfully extracted - proceed with confirmation flow
                 
                 # Save extracted data to session for confirmation flow
