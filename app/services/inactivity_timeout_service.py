@@ -20,7 +20,7 @@ from redis.asyncio import Redis
 
 from app.config import get_settings
 from app.redis_db import get_session_redis_service
-from app.models import WorkflowType, ConversationSession
+from app.models import WorkflowType, ConversationSession , User
 from app.services.whatsapp_service import WhatsAppService
 from app.services.helpers.session_helpers import SessionHelpers
 
@@ -85,7 +85,7 @@ class InactivityTimeoutService:
     # Helper Methods
     # ========================================================================
 
-    async def _generate_timeout_message(self, user_details: dict, session_data: dict) -> str:
+    async def _generate_timeout_message(self, user_details: User, session_data: ConversationSession) -> str:
         """
         Generate user-type-specific timeout message.
         
@@ -133,10 +133,17 @@ class InactivityTimeoutService:
                         from app.services.seller_service import SellerService
                         seller_service = SellerService()
                         # Create temporary objects from raw data for seller service
-                        from types import SimpleNamespace
-                        user_obj = SimpleNamespace(**user_details[0])
-                        session_obj = SimpleNamespace(**session_data)
-                        remainder_result = await seller_service.handle_seller_flow_completion(user_obj, session_obj)
+
+                        user_obj = user_details[0]
+                        # Create user object with required fields
+                        class UserObj:
+                            def __init__(self, org_id, phone_number):
+                                self.org_id = org_id
+                                self.phone_number = phone_number
+                        
+                        user = UserObj(user_obj['orgId'], user_obj['phone'])
+                        session_obj = ConversationSession(**session_data)
+                        remainder_result = await seller_service.handle_seller_flow_completion(user, session_obj)
                         logger.info(f"[TIMEOUT_MESSAGE] Seller remainder result: {remainder_result}")
                         
                         base_msg = (
