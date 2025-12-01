@@ -339,12 +339,20 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
             t1 = time.time()
             logger.info(f"[PERF] Request parsing completed: {(t1-request_start)*1000:.0f}ms")
 
-            # Store captured WhatsApp messages (same as terminal test)
+            # Store captured WhatsApp messages and interactive buttons
             whatsapp_messages = []
+            interactive_buttons = []
 
-            # Mock the WhatsApp service to capture messages (same pattern as terminal test)
+            # Mock the WhatsApp service to capture messages and buttons
             async def mock_send_message(recipient_id, message):
                 whatsapp_messages.append(message)
+                return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
+
+            async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None):
+                whatsapp_messages.append(body)
+                # Extract button info for UI
+                button_data = [{'id': btn.get('id'), 'title': btn.get('title')} for btn in buttons_config]
+                interactive_buttons.append(button_data)
                 return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
 
             # Determine message type based on content structure
@@ -354,6 +362,9 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
             # Check if message contains image data (from UI image upload)
             if isinstance(content, dict) and "image" in content:
                 message_type = "image"
+            # Check if message is a button reply (interactive message)
+            elif isinstance(content, dict) and content.get("type") == "button_reply":
+                message_type = "interactive"
 
             t2 = time.time()
             logger.info(f"[PERF] Message validation completed: {(t2-t1)*1000:.0f}ms")
@@ -371,8 +382,9 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
                 logger.info(f"[PERF] ChatService initialized: {(t5-t4)*1000:.0f}ms")
 
                 try:
-                    # Process message through ChatService with mocked WhatsApp (same as terminal test)
-                    with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message):
+                    # Process message through ChatService with mocked WhatsApp services
+                    with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message), \
+                         patch.object(chat_service.whatsapp_service, 'send_configurable_buttons', side_effect=mock_send_configurable_buttons):
                         t6 = time.time()
                         logger.info(f"[PERF] Mock patching completed: {(t6-t5)*1000:.0f}ms")
 
@@ -390,6 +402,7 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
             return {
                 "success": True,
                 "responses": whatsapp_messages,
+                "interactive_buttons": interactive_buttons,
                 "status": chat_result.get("status", "processed"),
                 "debug_info": chat_result
             }
@@ -434,11 +447,19 @@ async def upload_excel_file(
             }
         }
         
-        # Store captured WhatsApp messages
+        # Store captured WhatsApp messages and interactive buttons
         whatsapp_messages = []
+        interactive_buttons = []
         
         async def mock_send_message(recipient_id, message):
             whatsapp_messages.append(message)
+            return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
+
+        async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None):
+            whatsapp_messages.append(body)
+            # Extract button info for UI
+            button_data = [{'id': btn.get('id'), 'title': btn.get('title')} for btn in buttons_config]
+            interactive_buttons.append(button_data)
             return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
         
         # Mock the validation service to use direct content
@@ -462,6 +483,7 @@ async def upload_excel_file(
 
             # Process through ChatService with mocked services
             with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message), \
+                 patch.object(chat_service.whatsapp_service, 'send_configurable_buttons', side_effect=mock_send_configurable_buttons), \
                  patch.object(ExcelValidationService, 'validate_excel_file_from_url', mock_validate):
 
                 chat_result = await chat_service.process_message(phone, document_content, "excel_upload")
@@ -469,6 +491,7 @@ async def upload_excel_file(
         return {
             "success": True,
             "responses": whatsapp_messages,
+            "interactive_buttons": interactive_buttons,
             "status": chat_result.get("status", "processed"),
             "filename": file.filename,
             "size": len(file_content),
