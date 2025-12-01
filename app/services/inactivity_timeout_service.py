@@ -97,8 +97,8 @@ class InactivityTimeoutService:
             Appropriate timeout message based on user type
         """
         logger.info(f"[TIMEOUT_MESSAGE] Starting timeout message generation")
-        logger.info(f"[TIMEOUT_MESSAGE] User details available: {bool(user_details)}")
-        logger.info(f"[TIMEOUT_MESSAGE] Session data available: {bool(session_data)}")
+        logger.info(f"[TIMEOUT_MESSAGE] User details available: {bool(user_details)} , {user_details}")
+        logger.info(f"[TIMEOUT_MESSAGE] Session data available: {bool(session_data)}, {session_data}")
         
         try:
             # Extract user_type from user_details selfClient (false = seller, true = buyer)
