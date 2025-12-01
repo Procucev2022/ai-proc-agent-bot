@@ -191,9 +191,6 @@ class SellerService:
 
             await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
-            # ADD THIS: Schedule end-of-flow reminder after 5 minutes for payment link
-            asyncio.create_task(self._schedule_end_of_flow_reminder(user, session))
-
             return {
                 "success": True,
                 "workflow_step": "display_rfqs_to_seller",
@@ -588,9 +585,6 @@ class SellerService:
 
             await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
-            # ADD THIS: Schedule end-of-flow reminder after 5 minutes for payment link
-            asyncio.create_task(self._schedule_end_of_flow_reminder(user, session))
-
             return {
                 "success": True,
                 "workflow_step": "payment_link_generated",
@@ -603,18 +597,6 @@ class SellerService:
             logger.error(f"Error handling plan selection: {e}")
             return await self._handle_workflow_error(user, session, str(e))
 
-    async def _schedule_end_of_flow_reminder(self, user: User, session: ConversationSession):
-        """Schedule end-of-flow reminder after 5 minutes."""
-        try:
-            print("schedult end of flow reminder called")
-            # Wait for 5 minutes as specified in the document
-            await asyncio.sleep(300)  # 5 minutes = 300 seconds
-
-            # Send end-of-flow reminder
-            await self.handle_seller_flow_completion(user, session)
-
-        except Exception as e:
-            logger.error(f"Error scheduling end-of-flow reminder: {e}")
 
     async def _process_rfq_email_requests(self, user: User, session: ConversationSession,
                                           selected_rfq_ids: List[str]) -> Dict[str, Any]:
@@ -728,9 +710,6 @@ class SellerService:
 
             await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
-            # Schedule end-of-flow reminder after 5 minutes
-            asyncio.create_task(self._schedule_end_of_flow_reminder(user, session))
-
             return {
                 "success": True,
                 "workflow_step": "rfq_emails_processed",
@@ -810,9 +789,6 @@ class SellerService:
 
             await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
-            # ADD THIS: Schedule end-of-flow reminder after 5 minutes if no further interaction
-            asyncio.create_task(self._schedule_conditional_end_of_flow_reminder(user, session))
-
             return {
                 "success": True,
                 "workflow_step": "no_credits_available",
@@ -823,33 +799,6 @@ class SellerService:
         except Exception as e:
             logger.error(f"Error handling no credits response: {e}")
             return await self._handle_workflow_error(user, session, str(e))
-
-    async def _schedule_conditional_end_of_flow_reminder(self, user: User, session: ConversationSession):
-        """
-        Schedule conditional end-of-flow reminder.
-        Only send if user doesn't interact further within 5 minutes.
-        """
-        try:
-            # Store the current session state timestamp
-            current_timestamp = utc_now()
-            session.workflow_state["last_activity_timestamp"] = current_timestamp.isoformat()
-            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
-
-            # Wait for 5 minutes
-            await asyncio.sleep(300)  # 5 minutes = 300 seconds
-
-            # Check if there was any activity since we scheduled this reminder
-            updated_session = await self.session_manager.get_conversation_context(user.phone_number)
-            last_activity = updated_session.workflow_state.get("last_activity_timestamp")
-
-            # If no new activity, send end-of-flow reminder
-            if last_activity == current_timestamp.isoformat():
-                await self.handle_seller_flow_completion(user, updated_session)
-            else:
-                logger.info(f"Skipping end-of-flow reminder for {user.phone_number} due to recent activity")
-
-        except Exception as e:
-            logger.error(f"Error in conditional end-of-flow reminder: {e}")
 
     # Helper methods
 
@@ -879,6 +828,7 @@ class SellerService:
         try:
             # Fetch open RFQs where seller has not submitted bids
             reminder_result = await self._fetch_seller_open_rfqs_for_reminder(user.org_id)
+            logger.info(f"Reminder result: {reminder_result}")
 
             if not reminder_result.get("success"):
                 # If API fails, send generic closing message
