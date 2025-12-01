@@ -219,7 +219,7 @@ async def run_seller_recommendation_for_rfqs(rfq_results: List[Dict[str, Any]], 
                     for item in items:
                         item_description = item.get("description", "")
                         if item_description:
-                            enhanced_result = enhanced_seller_matching_service.find_sellers_for_item(
+                            enhanced_result = await enhanced_seller_matching_service.find_sellers_for_item(
                                 item_description=item_description,
                                 delivery_location=rfq_matching_data.get("delivery_location"),
                                 max_distance_km=200,

@@ -54,8 +54,8 @@ class EnhancedSellerMatchingService:
         # Initialize OpenAI service
         self.openai_service = OpenAIService()
     
-    def find_sellers_for_item(
-        self, 
+    async def find_sellers_for_item(
+        self,
         item_description: str,
         delivery_location: Optional[Dict[str, Any]] = None,
         max_distance_km: int = 200,
@@ -206,7 +206,7 @@ class EnhancedSellerMatchingService:
                 # Pass top candidates to OpenAI for intelligent selection
                 candidates_for_ai = matched_sellers[:max_sellers * 2]  # Give AI more options to choose from
                 
-                openai_result = self.openai_service.select_best_sellers(
+                openai_result = await self.openai_service.select_best_sellers(
                     item_description=item_description,
                     candidate_sellers=candidates_for_ai,
                     max_sellers=max_sellers

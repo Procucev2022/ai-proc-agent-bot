@@ -380,13 +380,41 @@ class AutoCategorizationService:
                     int((time.time() - start_time) * 1000)
                 )
 
+            # HIGH CONFIDENCE SHORTCUT: If top match similarity >= 0.85 and category is not "Other", skip LLM call
+            HIGH_SIMILARITY_THRESHOLD = 0.85
+            top_match = similar_items[0]
+            if top_match["similarity_score"] >= HIGH_SIMILARITY_THRESHOLD and top_match["category"] != "Other":
+                processing_time = int((time.time() - start_time) * 1000)
+                selected_category = top_match["category"]
+                logger.info(f"High similarity ({top_match['similarity_score']:.3f} >= {HIGH_SIMILARITY_THRESHOLD}), skipping LLM call. Using category: '{selected_category}'")
+
+                result = {
+                    "success": True,
+                    "method": "hybrid_vector_high_similarity",
+                    "category": selected_category,
+                    "confidence_score": 0.95,
+                    "reasoning": f"High similarity match ({top_match['similarity_score']:.3f}), LLM call skipped",
+                    "similar_items_used": similar_items,
+                    "processing_time_ms": processing_time
+                }
+
+                # Log high-confidence categorization
+                self._log_categorization(
+                    item_description, user_id, session_id, rfq_id,
+                    selected_category,
+                    0.95, top_match["similarity_score"],
+                    "hybrid_vector_high_similarity", processing_time
+                )
+
+                return result
+
             # Step 2: OpenAI final selection with context
             openai_result = await self.openai_service.categorize_with_similar_items(
                 item_description, similar_items
             )
-            
+
             processing_time = int((time.time() - start_time) * 1000)
-            
+
             if openai_result["success"]:
                 result = {
                     "success": True,

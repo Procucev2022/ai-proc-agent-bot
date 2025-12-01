@@ -216,9 +216,76 @@ class EnhancedAutoCategorizationService:
                 logger.info(f"Hierarchical match found at {matched_level}: similarity {similarity_score:.3f} for '{item_description}'")
 
                 # Proceed with match found
+                level_matches = hierarchical_result.get("all_level_matches", [])
+
+                # HIGH CONFIDENCE SHORTCUT: If similarity >= 0.85 and category is not "Other", skip LLM call
+                HIGH_SIMILARITY_THRESHOLD = 0.85
+                if similarity_score >= HIGH_SIMILARITY_THRESHOLD and best_match["client_category_name"] != "Other":
+                    processing_time = int((time.time() - start_time) * 1000)
+                    selected_category = best_match["client_category_name"]
+                    logger.info(f"High similarity ({similarity_score:.3f} >= {HIGH_SIMILARITY_THRESHOLD}), skipping LLM call. Using category: '{selected_category}'")
+
+                    # Check if best match has learning taxonomy data
+                    learning_match = None
+                    if best_match.get("learning_item_id"):
+                        learning_match = {
+                            "learning_item_id": best_match.get("learning_item_id"),
+                            "level_1_category": best_match.get("level_1_category"),
+                            "level_2_category": best_match.get("level_2_category"),
+                            "level_3_category": best_match.get("level_3_category"),
+                            "category_path": best_match.get("category_path"),
+                            "match_level": matched_level,
+                            "learning_confidence": best_match.get("confidence_score", 0.0)
+                        }
+
+                    # Log high-confidence categorization
+                    self._log_categorization(
+                        item_description, user_id, session_id, rfq_id,
+                        selected_category,
+                        0.95, similarity_score,  # High confidence for high similarity
+                        "enhanced_vector_high_similarity", processing_time,
+                        learning_match
+                    )
+
+                    result = {
+                        "success": True,
+                        "method": "enhanced_vector_high_similarity",
+                        "client_category": selected_category,
+                        "confidence_score": 0.95,
+                        "similarity_score": similarity_score,
+                        "processing_time_ms": processing_time,
+                        "reasoning": f"High similarity match ({similarity_score:.3f}), LLM call skipped",
+                        "matched_taxonomy_level": matched_level,
+                        "all_matches": [
+                            {
+                                "client_category": match_info["metadata"]["client_category_name"],
+                                "category_path": match_info["metadata"]["category_path"],
+                                "similarity_score": match_info["similarity_score"],
+                                "confidence_score": match_info["metadata"]["confidence_score"],
+                                "matched_level": match_info["matched_level"]
+                            }
+                            for match_info in level_matches
+                            if match_info["similarity_score"] >= 0.5
+                        ][:3]
+                    }
+
+                    # Add learning taxonomy data if available
+                    if learning_match:
+                        learning_category = {"level_1": None, "level_2": None, "level_3": None, "category_path": None}
+                        if matched_level == "level_1":
+                            learning_category["level_1"] = best_match.get("level_1_category")
+                        elif matched_level == "level_2":
+                            learning_category["level_2"] = best_match.get("level_2_category")
+                        elif matched_level == "level_3":
+                            learning_category["level_3"] = best_match.get("level_3_category")
+                        learning_category["category_path"] = best_match.get("category_path")
+                        result["learning_category"] = learning_category
+                        result["learning_item_id"] = best_match.get("learning_item_id")
+
+                    return result
+
                 # Prepare top matches for OpenAI final selection from hierarchical results
                 top_matches = []
-                level_matches = hierarchical_result.get("all_level_matches", [])
 
                 for match_info in level_matches:
                     meta = match_info["metadata"]
@@ -245,13 +312,29 @@ class EnhancedAutoCategorizationService:
                 openai_result = await self.openai_service.categorize_with_similar_items(
                     item_description, top_matches, available_categories
                 )
-                
-                # Close OpenAI client to prevent event loop errors
-                self.openai_service.close_sync()
 
                 processing_time = int((time.time() - start_time) * 1000)
 
                 if openai_result.get("success"):
+                    selected_category = openai_result["category"]
+                    method_used = "enhanced_vector_openai"
+
+                    # If OpenAI selected "Other", try fallback service first
+                    if selected_category == "Other":
+                        logger.info("OpenAI selected 'Other', trying fallback AutoCategorizationService")
+                        try:
+                            fallback_result = await self.fallback_service.categorize_item(
+                                item_description=item_description,
+                                user_id=user_id,
+                                session_id=session_id
+                            )
+                            if fallback_result.get("success") and fallback_result.get("category") != "Other":
+                                selected_category = fallback_result.get("category")
+                                method_used = "enhanced_vector_openai_with_fallback"
+                                logger.info(f"Fallback service returned non-Other category: '{selected_category}'")
+                        except Exception as fallback_error:
+                            logger.warning(f"Fallback service failed: {fallback_error}")
+
                     # Check if best match has learning taxonomy data
                     learning_match = None
                     if best_match.get("learning_item_id"):
@@ -268,16 +351,16 @@ class EnhancedAutoCategorizationService:
                     # Log successful categorization with learning match info if available
                     self._log_categorization(
                         item_description, user_id, session_id, rfq_id,
-                        openai_result["category"],
+                        selected_category,
                         openai_result.get("confidence", 0.8), similarity_score,
-                        "enhanced_vector_openai", processing_time,
+                        method_used, processing_time,
                         learning_match
                     )
 
                     result = {
                         "success": True,
-                        "method": "enhanced_vector_openai",
-                        "client_category": openai_result["category"],
+                        "method": method_used,
+                        "client_category": selected_category,
                         "confidence_score": openai_result.get("confidence", 0.8),
                         "similarity_score": similarity_score,
                         "processing_time_ms": processing_time,
@@ -316,8 +399,39 @@ class EnhancedAutoCategorizationService:
 
                     return result
                 else:
-                    # OpenAI failed, fallback to best vector match
-                    logger.warning(f"OpenAI categorization failed, using best vector match: {openai_result.get('error', 'Unknown error')}")
+                    # OpenAI failed - try to find a non-"Other" category before falling back
+                    logger.warning(f"OpenAI categorization failed: {openai_result.get('error', 'Unknown error')}")
+
+                    # First, check if any of the vector matches has a non-"Other" category
+                    fallback_category = None
+                    fallback_match = None
+                    for match_info in level_matches:
+                        candidate_category = match_info["metadata"]["client_category_name"]
+                        if candidate_category != "Other" and match_info["similarity_score"] >= 0.5:
+                            fallback_category = candidate_category
+                            fallback_match = match_info
+                            logger.info(f"Found non-Other category '{fallback_category}' from vector matches")
+                            break
+
+                    # If all vector matches are "Other", try the fallback AutoCategorizationService
+                    if fallback_category is None or fallback_category == "Other":
+                        logger.info("All vector matches are 'Other', trying fallback AutoCategorizationService")
+                        try:
+                            fallback_service_result = await self.fallback_service.categorize_item(
+                                item_description=item_description,
+                                user_id=user_id,
+                                session_id=session_id
+                            )
+                            if fallback_service_result.get("success") and fallback_service_result.get("category") != "Other":
+                                fallback_category = fallback_service_result.get("category")
+                                logger.info(f"Fallback service returned non-Other category: '{fallback_category}'")
+                        except Exception as fallback_error:
+                            logger.warning(f"Fallback service failed: {fallback_error}")
+
+                    # If still no good category, use the best vector match (may be "Other")
+                    if fallback_category is None:
+                        fallback_category = best_match["client_category_name"]
+                        logger.info(f"Using best vector match category: '{fallback_category}'")
 
                     # Check if best match has learning taxonomy data
                     learning_match = None
@@ -335,7 +449,7 @@ class EnhancedAutoCategorizationService:
                     # Log with fallback method with learning match info if available
                     self._log_categorization(
                         item_description, user_id, session_id, rfq_id,
-                        best_match["client_category_name"],
+                        fallback_category,
                         best_match["confidence_score"], similarity_score,
                         "enhanced_vector_openai_fallback", processing_time,
                         learning_match
@@ -344,7 +458,7 @@ class EnhancedAutoCategorizationService:
                     result = {
                         "success": True,
                         "method": "enhanced_vector_openai_fallback",
-                        "client_category": best_match["client_category_name"],
+                        "client_category": fallback_category,
                         "confidence_score": best_match["confidence_score"],
                         "similarity_score": similarity_score,
                         "processing_time_ms": processing_time,

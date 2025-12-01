@@ -10,7 +10,10 @@ Key transformations:
 - organization.vendor_class → ranking (Diamond/Platinum/Gold/Titanium)
 - user.activity_ts → last_active_at (for 24-hour filtering)
 - organization.opt_out → opted_out_notifications
-- Smart defaults for missing fields (categories, location, credits)
+- org_division_category.category → categories (JSON array aggregation)
+
+IMPORTANT: Only fetches sellers that have categories in org_division_category table.
+Sellers without categories are excluded from the matching system.
 """
 
 import json
@@ -40,12 +43,16 @@ class SellerDataAdapter:
             "state": "Karnataka"
         }
 
-        # Mapping for vendor_class to SellerRanking enum
+        # Mapping for vendor_class (numeric) to SellerRanking enum
+        # Database values: 30 (Diamond/top), 20 (Gold/mid), 10 (Titanium/low)
         self.ranking_map = {
-            'Diamond': SellerRanking.Diamond,
-            'Platinum': SellerRanking.Platinum,
-            'Gold': SellerRanking.Gold,
-            'Titanium': SellerRanking.Titanium
+            30: SellerRanking.Diamond,    # Top tier
+            20: SellerRanking.Gold,       # Mid tier
+            10: SellerRanking.Titanium,   # Low tier
+            # String fallbacks for compatibility
+            '30': SellerRanking.Diamond,
+            '20': SellerRanking.Gold,
+            '10': SellerRanking.Titanium
         }
 
     def get_sellers_from_remote(self, limit: Optional[int] = None) -> List[Seller]:
@@ -106,21 +113,17 @@ class SellerDataAdapter:
             u.activity_ts as last_active_at,
             u.uuid as user_uuid,
 
-            -- Smart category defaults based on vendor class
-            CASE COALESCE(o.vendor_class, 'Gold')
-                WHEN 'Diamond' THEN '["Premium Equipment", "Industrial Solutions", "High-Value Products"]'
-                WHEN 'Platinum' THEN '["Electronics", "Medical Equipment", "IT Equipment"]'
-                WHEN 'Gold' THEN '["General Trading", "Office Supplies", "Consumer Goods"]'
-                WHEN 'Titanium' THEN '["Basic Supplies", "General Trading"]'
-                ELSE '["General Trading"]'
-            END as categories,
+            -- Get actual categories from org_division_category table
+            JSON_ARRAYAGG(odc.category) as categories,
 
-            -- Build location from actual address data
+            -- Build location from actual address data (include pincode for distance calculation)
             CONCAT(
                 '{"lat": 12.9716, "lng": 77.5946, "city": "',
                 COALESCE(o.city, 'Unknown'),
                 '", "state": "',
                 COALESCE(o.state, 'Unknown'),
+                '", "pincode": "',
+                COALESCE(o.zip_code, ''),
                 '", "address": "',
                 COALESCE(CONCAT(o.address1, ' ', o.address2), ''),
                 '"}'
@@ -133,9 +136,14 @@ class SellerDataAdapter:
 
         FROM organization o
         LEFT JOIN user u ON o.uuid = u.org_uuid
+        LEFT JOIN org_division_category odc ON o.uuid = odc.organization_id AND odc.category IS NOT NULL
         WHERE COALESCE(o.opt_out, 0) != 1  -- Exclude opted-out sellers
           AND o.organization_name IS NOT NULL  -- Must have organization name
           AND o.organization_name != ''  -- Not empty
+        GROUP BY o.uuid, o.organization_name, o.vendor_class, o.opt_out, o.opt_out_modified_date,
+                 o.organization_phonenumber, o.email, o.rfq_credits, u.activity_ts, u.uuid,
+                 o.city, o.state, o.zip_code, o.address1, o.address2, o.created_ts, u.last_modified_ts, o.vendorcategory
+        HAVING COUNT(odc.category) > 0  -- Only sellers with at least one category
         ORDER BY u.activity_ts IS NULL, u.activity_ts DESC  -- Most recently active first, nulls last
         """
 
@@ -163,8 +171,12 @@ class SellerDataAdapter:
                 logger.warning(f"Invalid location JSON for seller {row['seller_id']}: {e}")
                 location = self.default_location  # Default fallback
 
-            # Map vendor_class to ranking enum
-            ranking = self.ranking_map.get(row['ranking'], SellerRanking.Gold)
+            # Map vendor_class (numeric) to ranking enum
+            # Convert to int if it's a numeric string
+            vendor_class = row['ranking']
+            if isinstance(vendor_class, str) and vendor_class.isdigit():
+                vendor_class = int(vendor_class)
+            ranking = self.ranking_map.get(vendor_class, SellerRanking.Titanium)  # Default to Titanium (lowest)
 
             # Handle phone number
             phone_number = row['phone_number']

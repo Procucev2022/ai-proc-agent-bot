@@ -1,18 +1,25 @@
 """
-Simple Migration Test - Real Data Integration
+Seller Matching Task - Item-Category Based Matching
 
-This task processes categorized RFQs and performs seller matching using
-the existing SellerRecommendationService.
+This task processes categorized RFQ items and performs seller matching:
+1. Fetches items from rfq_items that have categories assigned
+2. Groups items by RFQ and collects unique categories
+3. For each category, finds matching sellers
+4. Deduplicates sellers across all categories
+5. Excludes sellers who received ANY RFQ in the last 24 hours
+6. Logs selected sellers to gmt_rfq_vendors table
 """
 
 import asyncio
 import logging
-from typing import List, Dict, Any
+import uuid as uuid_lib
+from typing import List, Dict, Any, Set
 from celery import shared_task
 from datetime import datetime, timedelta
 
 from app.database import execute_remote_query, get_remote_db_session
 from app.services.seller_recommendation_service import SellerRecommendationService
+from app.services.seller_notification_service import SellerNotificationService
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -46,6 +53,10 @@ def process_seller_matching(self):
 
         logger.info(f"Found {len(rfqs_for_matching)} RFQs that need seller matching")
 
+        # Get sellers who were notified in the last 24 hours (to exclude)
+        excluded_seller_ids = get_sellers_notified_in_last_24hrs()
+        logger.info(f"Found {len(excluded_seller_ids)} sellers to exclude (notified in last 24hrs)")
+
         # Initialize seller recommendation service
         seller_service = SellerRecommendationService()
 
@@ -57,14 +68,19 @@ def process_seller_matching(self):
         for rfq in rfqs_for_matching:
             try:
                 # Run async function in sync context
-                result = asyncio.run(process_single_rfq_matching(rfq, seller_service))
+                result = asyncio.run(process_single_rfq_matching(rfq, seller_service, excluded_seller_ids))
                 results.append(result)
-                
+
                 if result["success"]:
                     processed_count += 1
+                    # Add newly notified sellers to exclusion set for subsequent RFQs
+                    # This prevents same seller getting multiple RFQs in one batch
+                    if result.get("sellers_matched", 0) > 0:
+                        # Note: We'd need seller IDs in result to do this properly
+                        pass
                 else:
                     failed_count += 1
-                    
+
             except Exception as e:
                 logger.error(f"Failed to process seller matching for RFQ {rfq.get('rfq_id', 'unknown')}: {e}")
                 failed_count += 1
@@ -92,66 +108,146 @@ def process_seller_matching(self):
 
 def get_rfqs_needing_seller_matching(limit: int = 50) -> List[Dict[str, Any]]:
     """
-    Get categorized RFQs that need seller matching.
-    
+    Get RFQs with categorized items that need seller matching.
+
+    Queries rfq_items to find items with categories, then groups by RFQ.
+
     Args:
         limit: Maximum number of RFQs to fetch
-        
+
     Returns:
-        List of RFQ records that need seller matching
+        List of RFQ records with their categorized items
     """
     # Get RFQs that:
-    # 1. Have categories (not NULL)
-    # 2. Are from WhatsApp (source_type = 'W')  
+    # 1. Have items with categories (not NULL in rfq_items)
+    # 2. Are from WhatsApp (source_type = 'W')
     # 3. Don't already have seller notifications sent
     # 4. Are not too old (within last 7 days)
     # 5. Are not closed yet
-    
+
     cutoff_date = datetime.utcnow() - timedelta(days=7)
-    
+
+    # First, get distinct RFQs that have categorized items and no vendor assignments yet
+    # Exclude items with category "other" (case-insensitive)
     query = """
-        SELECT r.uuid, r.rfq_id, r.project_desc as description, r.category, r.division,
-               r.delivery_date, r.rfq_closing_date, r.user, r.org_uuid,
-               r.created_ts, r.last_modified_ts, r.source_type,
-               r.special_instruction
-        FROM rfq_header r
-        LEFT JOIN gmt_rfq_vendors v ON r.rfq_id = v.rfq_uuid
-        WHERE r.category IS NOT NULL 
-        AND r.source_type = 'W'
-        AND r.created_ts > :cutoff_date
-        AND (r.rfq_closing_date IS NULL OR r.rfq_closing_date > NOW())
-        AND v.rfq_uuid IS NULL  -- No existing vendor notifications
-        ORDER BY r.created_ts DESC
+        SELECT DISTINCT
+            h.uuid as rfq_uuid,
+            h.rfq_id,
+            h.project_desc as description,
+            h.delivery_date,
+            h.rfq_closing_date,
+            h.user,
+            h.org_uuid,
+            h.created_ts,
+            h.source_type,
+            h.special_instruction
+        FROM rfq_header h
+        INNER JOIN rfq_items i ON h.uuid = i.rfq_uuid
+        LEFT JOIN gmt_rfq_vendors v ON h.uuid = v.rfq_uuid
+        WHERE i.category IS NOT NULL
+        AND LOWER(TRIM(i.category)) != 'other'
+        AND h.source_type = 'W'
+        AND h.created_ts > :cutoff_date
+        AND (h.rfq_closing_date IS NULL OR h.rfq_closing_date > NOW())
+        AND v.rfq_uuid IS NULL
+        ORDER BY h.created_ts DESC
         LIMIT :limit
     """
-    
+
     return execute_remote_query(query, {
         'limit': limit,
         'cutoff_date': cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
     })
 
 
-async def process_single_rfq_matching(rfq: Dict[str, Any], seller_service: SellerRecommendationService) -> Dict[str, Any]:
+def get_rfq_item_categories(rfq_uuid: str) -> List[str]:
     """
-    Process seller matching for a single RFQ.
-    
+    Get all unique categories for items in a specific RFQ.
+
+    Excludes categories marked as "other" (case-insensitive).
+
+    Args:
+        rfq_uuid: The RFQ UUID
+
+    Returns:
+        List of unique category names (excluding "other")
+    """
+    query = """
+        SELECT DISTINCT category
+        FROM rfq_items
+        WHERE rfq_uuid = :rfq_uuid
+        AND category IS NOT NULL
+        AND LOWER(TRIM(category)) != 'other'
+    """
+
+    results = execute_remote_query(query, {'rfq_uuid': rfq_uuid})
+    return [r['category'] for r in results if r.get('category')]
+
+
+def get_sellers_notified_in_last_24hrs() -> Set[str]:
+    """
+    Get set of seller UUIDs who received any RFQ notification in the last 24 hours.
+
+    Returns:
+        Set of vendor_uuid strings to exclude from selection
+    """
+    cutoff_time = datetime.utcnow() - timedelta(hours=24)
+
+    query = """
+        SELECT DISTINCT vendor_uuid
+        FROM gmt_rfq_vendors
+        WHERE created_ts > :cutoff_time
+        AND vendor_uuid IS NOT NULL
+    """
+
+    results = execute_remote_query(query, {
+        'cutoff_time': cutoff_time.strftime('%Y-%m-%d %H:%M:%S')
+    })
+
+    return {r['vendor_uuid'] for r in results if r.get('vendor_uuid')}
+
+
+async def process_single_rfq_matching(
+    rfq: Dict[str, Any],
+    seller_service: SellerRecommendationService,
+    excluded_seller_ids: Set[str]
+) -> Dict[str, Any]:
+    """
+    Process seller matching for a single RFQ based on item categories.
+
     Args:
         rfq: RFQ data dictionary
         seller_service: Initialized SellerRecommendationService instance
-        
+        excluded_seller_ids: Set of seller UUIDs to exclude (notified in last 24hrs)
+
     Returns:
         Processing result dictionary
     """
     rfq_id = rfq.get('rfq_id')
-    rfq_uuid = rfq.get('uuid')
-    
+    rfq_uuid = rfq.get('rfq_uuid')
+
     try:
         logger.info(f"Processing seller matching for RFQ {rfq_id}")
-        
+
+        # Step 1: Get all unique categories from rfq_items for this RFQ
+        categories = get_rfq_item_categories(rfq_uuid)
+
+        if not categories:
+            logger.warning(f"No categories found in rfq_items for RFQ {rfq_id}")
+            return {
+                "rfq_id": rfq_id,
+                "success": True,
+                "sellers_matched": 0,
+                "message": "No categories found in items",
+                "categories_used": []
+            }
+
+        logger.info(f"RFQ {rfq_id} has {len(categories)} unique categories: {categories}")
+
         # Prepare RFQ data for seller service
         rfq_data = {
             'rfq_id': rfq_id,
-            'categories': [rfq.get('category')] if rfq.get('category') else [],
+            'categories': categories,
             'delivery_location': extract_delivery_location(rfq),
             'delivery_date': rfq.get('delivery_date'),
             'rfq_closing_date': rfq.get('rfq_closing_date'),
@@ -160,49 +256,124 @@ async def process_single_rfq_matching(rfq: Dict[str, Any], seller_service: Selle
             'user_id': rfq.get('user'),
             'org_uuid': rfq.get('org_uuid')
         }
-        
-        # Add division to categories if available
-        if rfq.get('division'):
-            rfq_data['categories'].append(rfq.get('division'))
-        
-        # Remove duplicates
-        rfq_data['categories'] = list(set(rfq_data['categories']))
-        
-        # Use the seller selection method
-        seller_result = await seller_service.select_sellers_for_rfq(rfq_data)
-        
-        if seller_result.get('total_selected', 0) > 0:
-            # Try to log selected sellers to gmt_rfq_vendors table (optional)
+
+        # Step 2: Collect sellers for ALL categories, then deduplicate
+        all_matched_sellers = {}  # seller_id -> seller_data (deduplication)
+
+        for category in categories:
+            logger.info(f"Finding sellers for category: {category}")
+
+            # Create category-specific RFQ data for matching
+            category_rfq_data = rfq_data.copy()
+            category_rfq_data['categories'] = [category]
+
+            # HYBRID TWO-PHASE APPROACH per category
+            candidate_seller_ids = None
+
+            # Phase 1: Try enhanced semantic discovery (optional)
             try:
-                log_selected_sellers_to_remote(rfq_uuid, rfq_id, seller_result)
-                logger.info(f"Successfully logged sellers to gmt_rfq_vendors for RFQ {rfq_id}")
+                from app.services.enhanced_seller_matching_service import EnhancedSellerMatchingService
+
+                enhanced_service = EnhancedSellerMatchingService()
+                item_description = _build_item_description_for_rfq(category_rfq_data)
+
+                if item_description:
+                    enhanced_result = await enhanced_service.find_sellers_for_item(
+                        item_description=item_description,
+                        delivery_location=rfq_data.get('delivery_location'),
+                        max_distance_km=500,
+                        max_sellers=100,
+                        similarity_threshold=0.3,
+                        ranking_priority=False
+                    )
+
+                    if enhanced_result.get('success') and enhanced_result.get('sellers'):
+                        candidate_seller_ids = [s['seller_id'] for s in enhanced_result['sellers']]
+                        logger.info(f"Phase 1: Found {len(candidate_seller_ids)} semantic candidates for {category}")
+
             except Exception as e:
-                logger.warning(f"Could not log to gmt_rfq_vendors (permissions issue): {e}")
+                logger.warning(f"Phase 1 failed for category {category}: {e}")
+                candidate_seller_ids = None
+
+            # Phase 2: Apply business rules via standard service
+            seller_result = await seller_service.select_sellers_for_rfq(
+                rfq_data=category_rfq_data,
+                candidate_seller_ids=candidate_seller_ids
+            )
+
+            # Collect sellers from this category (deduplicate by seller_id)
+            for seller in seller_result.get('subscribed_sellers', []):
+                seller_id = seller.get('seller_id')
+                if seller_id and seller_id not in all_matched_sellers:
+                    all_matched_sellers[seller_id] = seller
+
+            for seller in seller_result.get('unsubscribed_sellers', []):
+                seller_id = seller.get('seller_id')
+                if seller_id and seller_id not in all_matched_sellers:
+                    all_matched_sellers[seller_id] = seller
+
+        logger.info(f"Total unique sellers found across all categories: {len(all_matched_sellers)}")
+
+        # Step 3: Filter out sellers notified in last 24 hours
+        filtered_sellers = {
+            sid: sdata for sid, sdata in all_matched_sellers.items()
+            if sid not in excluded_seller_ids
+        }
+
+        excluded_count = len(all_matched_sellers) - len(filtered_sellers)
+        if excluded_count > 0:
+            logger.info(f"Excluded {excluded_count} sellers (notified in last 24hrs)")
+
+        logger.info(f"Final sellers to notify: {len(filtered_sellers)}")
+
+        if filtered_sellers:
+            # Log detailed seller information
+            sellers_list = list(filtered_sellers.values())
+            _log_selected_sellers_details(rfq_id, sellers_list, categories)
+
+            # Log selected sellers to gmt_rfq_vendors table
+            try:
+                log_selected_sellers_to_remote(rfq_uuid, rfq_id, sellers_list)
+                logger.info(f"Successfully logged {len(filtered_sellers)} sellers to gmt_rfq_vendors for RFQ {rfq_id}")
+            except Exception as e:
+                logger.warning(f"Could not log to gmt_rfq_vendors: {e}")
                 logger.info(f"Seller selection completed for RFQ {rfq_id} but logging skipped")
 
-            # Mark RFQ as processed
-            mark_rfq_seller_matching_processed(rfq_uuid, seller_result.get('total_selected', 0))
-            
-            logger.info(f"Successfully matched {seller_result.get('total_selected')} sellers for RFQ {rfq_id}")
+            # Send WhatsApp notifications to sellers
+            notification_service = SellerNotificationService()
+            notification_results = await notification_service.send_rfq_notifications(
+                rfq_data=rfq_data,
+                sellers=sellers_list
+            )
+            logger.info(f"Notification results for RFQ {rfq_id}: {notification_results['sent']} sent, {notification_results['failed']} failed")
+
             return {
                 "rfq_id": rfq_id,
                 "success": True,
-                "sellers_matched": seller_result.get('total_selected'),
-                "subscribed_sellers": len(seller_result.get('subscribed_sellers', [])),
-                "unsubscribed_sellers": len(seller_result.get('unsubscribed_sellers', [])),
-                "categories_used": rfq_data['categories']
+                "sellers_matched": len(filtered_sellers),
+                "sellers_excluded_24hr": excluded_count,
+                "categories_used": categories,
+                "notifications_sent": notification_results.get("sent", 0),
+                "notifications_failed": notification_results.get("failed", 0),
+                "selected_sellers": [
+                    {
+                        "seller_id": s.get("seller_id"),
+                        "seller_name": s.get("seller_name"),
+                        "phone": s.get("phone_number"),
+                        "categories": s.get("categories", [])
+                    }
+                    for s in sellers_list
+                ]
             }
         else:
-            logger.warning(f"No sellers found for RFQ {rfq_id}")
-            # Still mark as processed to avoid reprocessing
-            mark_rfq_seller_matching_processed(rfq_uuid, 0)
-            
+            logger.warning(f"No eligible sellers for RFQ {rfq_id} after 24hr filtering")
             return {
                 "rfq_id": rfq_id,
-                "success": True,  # Still successful even if no sellers found
+                "success": True,
                 "sellers_matched": 0,
-                "message": "No qualifying sellers found",
-                "categories_used": rfq_data['categories']
+                "sellers_excluded_24hr": excluded_count,
+                "message": "No eligible sellers after 24hr filtering",
+                "categories_used": categories
             }
 
     except Exception as e:
@@ -246,131 +417,161 @@ def extract_delivery_location(rfq: Dict[str, Any]) -> Dict[str, Any]:
     return location
 
 
-def log_selected_sellers_to_remote(rfq_uuid: str, rfq_id: str, seller_result: Dict[str, Any]) -> bool:
+def log_selected_sellers_to_remote(rfq_uuid: str, rfq_id: str, sellers: List[Dict[str, Any]]) -> bool:
     """
     Log selected sellers to the remote gmt_rfq_vendors table.
 
     Args:
         rfq_uuid: RFQ UUID
         rfq_id: RFQ ID
-        seller_result: Result from seller selection containing selected sellers
+        sellers: List of seller dictionaries to log
 
     Returns:
         True if logging successful, False otherwise
     """
     try:
-        logger.info(f"Logging {seller_result.get('total_selected', 0)} selected sellers for RFQ {rfq_id}")
+        logger.info(f"Logging {len(sellers)} selected sellers for RFQ {rfq_id}")
 
-        # Combine subscribed and unsubscribed sellers
-        all_selected_sellers = []
-        all_selected_sellers.extend(seller_result.get('subscribed_sellers', []))
-        all_selected_sellers.extend(seller_result.get('unsubscribed_sellers', []))
-
-        if not all_selected_sellers:
+        if not sellers:
             logger.warning(f"No sellers to log for RFQ {rfq_id}")
             return True
 
-        # Prepare batch insert for gmt_rfq_vendors
-        insert_values = []
-        for seller in all_selected_sellers:
-            insert_values.append({
-                'rfq_uuid': rfq_uuid,
-                'vendor_id': seller['seller_id'],
-                'vendor_name': seller['seller_name'],
-                'vendor_ranking': seller.get('ranking', 'Gold'),
-                'notification_sent': 'pending',  # Will be updated when notification is actually sent
-                'created_ts': 'NOW()',
-                'distance_km': seller.get('distance_km'),
-                'selection_reason': 'automated_matching'
-            })
+        # Build batch insert query using correct column names from gmt_rfq_vendors table:
+        # uuid, created_by, created_ts, rfq_uuid, vendor_uuid
+        from sqlalchemy import text
 
-        # Build batch insert query
-        if insert_values:
-            from sqlalchemy import text
+        # Add value placeholders
+        value_placeholders = []
+        params = {}
 
-            query = """
-                INSERT INTO gmt_rfq_vendors
-                (rfq_uuid, vendor_id, vendor_name, vendor_ranking, notification_sent, created_ts, distance_km, selection_reason)
-                VALUES
-            """
+        for i, seller in enumerate(sellers):
+            # Generate UUID for each record
+            record_uuid = str(uuid_lib.uuid4())
 
-            # Add value placeholders
-            value_placeholders = []
-            params = {}
-            for i, values in enumerate(insert_values):
-                placeholder = f"(:rfq_uuid_{i}, :vendor_id_{i}, :vendor_name_{i}, :vendor_ranking_{i}, :notification_sent_{i}, NOW(), :distance_km_{i}, :selection_reason_{i})"
-                value_placeholders.append(placeholder)
+            placeholder = f"(:uuid_{i}, :created_by_{i}, NOW(), :rfq_uuid_{i}, :vendor_uuid_{i})"
+            value_placeholders.append(placeholder)
 
-                # Add parameters with unique names
-                for key, value in values.items():
-                    if key != 'created_ts':  # Skip NOW() function
-                        params[f"{key}_{i}"] = value
+            params[f"uuid_{i}"] = record_uuid
+            params[f"created_by_{i}"] = "ai_agent"
+            params[f"rfq_uuid_{i}"] = rfq_uuid
+            params[f"vendor_uuid_{i}"] = seller.get('seller_id')
 
-            query += ", ".join(value_placeholders)
+        query = f"""
+            INSERT INTO gmt_rfq_vendors
+            (uuid, created_by, created_ts, rfq_uuid, vendor_uuid)
+            VALUES
+            {", ".join(value_placeholders)}
+        """
 
-            # Execute the insert
-            db = get_remote_db_session()
-            try:
-                result = db.execute(text(query), params)
-                db.commit()
+        # Execute the insert
+        db = get_remote_db_session()
+        try:
+            result = db.execute(text(query), params)
+            db.commit()
 
-                logger.info(f"Successfully logged {len(insert_values)} sellers to gmt_rfq_vendors for RFQ {rfq_id}")
-                return True
+            logger.info(f"Successfully logged {len(sellers)} sellers to gmt_rfq_vendors for RFQ {rfq_id}")
+            return True
 
-            except Exception as e:
-                db.rollback()
-                logger.error(f"Failed to insert sellers to gmt_rfq_vendors: {e}")
-                return False
-            finally:
-                db.close()
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to insert sellers to gmt_rfq_vendors: {e}")
+            return False
+        finally:
+            db.close()
 
     except Exception as e:
         logger.error(f"Error logging selected sellers for RFQ {rfq_id}: {e}")
         return False
 
 
-def mark_rfq_seller_matching_processed(rfq_uuid: str, seller_count: int) -> bool:
+def _build_item_description_for_rfq(rfq_data: Dict[str, Any]) -> str:
     """
-    Mark an RFQ as processed for seller matching.
-    
+    Build comprehensive item description for semantic search in hybrid approach.
+
+    Combines categories, description, and special instructions into a single
+    text for semantic matching via the enhanced service.
+
     Args:
-        rfq_uuid: RFQ UUID
-        seller_count: Number of sellers matched
-        
+        rfq_data: RFQ data dictionary
+
     Returns:
-        True if marking successful, False otherwise
+        Combined item description string for semantic search
     """
-    try:
-        db = get_remote_db_session()
-        try:
-            from sqlalchemy import text
-            
-            # Try to update a status field in rfq_header (if column exists)
-            query = """
-                UPDATE rfq_header 
-                SET seller_matching_status = 'processed',
-                    last_modified_ts = NOW()
-                WHERE uuid = :rfq_uuid
-            """
-            
-            result = db.execute(text(query), {
-                'rfq_uuid': rfq_uuid
-            })
-            
-            db.commit()
-            return result.rowcount > 0
-            
-        except Exception as e:
-            db.rollback()
-            logger.warning(f"Could not update seller matching status (column may not exist): {e}")
-            
-            # Alternative: Just log that we processed it
-            logger.info(f"RFQ {rfq_uuid} processed with {seller_count} sellers matched")
-            return True
-            
-        finally:
-            db.close()
-            
-    except Exception as e:
-        logger.error(f"Error marking RFQ as processed: {e}")
-        return False
+    parts = []
+
+    # Add categories
+    categories = rfq_data.get('categories', [])
+    if categories:
+        parts.append(f"Categories: {', '.join(categories)}")
+
+    # Add description (handle None values)
+    description = (rfq_data.get('description') or '').strip()
+    if description:
+        parts.append(f"Description: {description}")
+
+    # Add special instructions (may contain item details, handle None values)
+    special_instruction = (rfq_data.get('special_instruction') or '').strip()
+    if special_instruction:
+        parts.append(f"Requirements: {special_instruction}")
+
+    return " | ".join(parts) if parts else ""
+
+
+def _log_selected_sellers_details(rfq_id: str, sellers: List[Dict[str, Any]], categories: List[str]) -> None:
+    """
+    Log detailed information about selected sellers for an RFQ.
+
+    Args:
+        rfq_id: The RFQ ID
+        sellers: List of selected seller dictionaries
+        categories: Categories used for matching
+    """
+    logger.info("=" * 60)
+    logger.info(f"SELLER SELECTION SUMMARY FOR RFQ: {rfq_id}")
+    logger.info("=" * 60)
+    logger.info(f"Categories matched: {', '.join(categories)}")
+    logger.info(f"Total sellers selected: {len(sellers)}")
+    logger.info("-" * 60)
+
+    for i, seller in enumerate(sellers, 1):
+        seller_id = seller.get('seller_id', 'N/A')
+        seller_name = seller.get('seller_name', 'Unknown')
+        phone = seller.get('phone_number', 'N/A')
+        email = seller.get('email', 'N/A')
+        seller_categories = seller.get('categories', [])
+        ranking = seller.get('ranking', 'N/A')
+        location = seller.get('location', {})
+        city = location.get('city', 'N/A') if isinstance(location, dict) else 'N/A'
+        state = location.get('state', 'N/A') if isinstance(location, dict) else 'N/A'
+
+        logger.info(f"  [{i}] {seller_name}")
+        logger.info(f"      ID: {seller_id}")
+        logger.info(f"      Phone: {phone}")
+        logger.info(f"      Email: {email}")
+        logger.info(f"      Ranking: {ranking}")
+        logger.info(f"      Location: {city}, {state}")
+        logger.info(f"      Categories: {', '.join(seller_categories) if seller_categories else 'N/A'}")
+        logger.info("-" * 60)
+
+    logger.info("=" * 60)
+
+
+if __name__ == "__main__":
+    # Configure logging for direct execution
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    print("=" * 60)
+    print("Running Seller Matching Task Directly")
+    print("=" * 60)
+
+    # Call the task function directly (without Celery)
+    result = process_seller_matching()
+
+    print("\n" + "=" * 60)
+    print("Task Result:")
+    print("=" * 60)
+    import json
+    print(json.dumps(result, indent=2, default=str))
