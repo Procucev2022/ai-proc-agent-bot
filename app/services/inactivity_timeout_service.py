@@ -20,7 +20,7 @@ from redis.asyncio import Redis
 
 from app.config import get_settings
 from app.redis_db import get_session_redis_service
-from app.models import WorkflowType, ConversationSession, User
+from app.models import WorkflowType, ConversationSession
 from app.services.whatsapp_service import WhatsAppService
 from app.services.helpers.session_helpers import SessionHelpers
 
@@ -126,33 +126,40 @@ class InactivityTimeoutService:
             elif user_type == "seller":
                 logger.info(f"[TIMEOUT_MESSAGE] Generating seller timeout message")
                 
-                # Convert dict data to model objects for seller service
-                user_obj = User(**user_details[0]) if user_details and len(user_details) > 0 else None
-                session_obj = ConversationSession(**session_data) if session_data else None
-                logger.info(f"[TIMEOUT_MESSAGE] Created user object: {bool(user_obj)}")
-                logger.info(f"[TIMEOUT_MESSAGE] Created session object: {bool(session_obj)}")
-                
-                if user_obj and session_obj:
-                    logger.info(f"[TIMEOUT_MESSAGE] Calling seller service for flow completion")
-                    from app.services.seller_service import SellerService
-                    seller_service = SellerService()
-                    remainder_result = await seller_service.handle_seller_flow_completion(user_obj, session_obj)
-                    logger.info(f"[TIMEOUT_MESSAGE] Seller remainder result: {remainder_result}")
-                    
-                    base_msg = (
-                        "Looks like you're away for a bit. "
-                        "Thank you for using QUA AI! "
-                        "You can resume viewing RFQs or managing bids anytime by saying 'Hi.'"
-                    )
-                    
-                    if remainder_result.get("success") and remainder_result.get("message"):
-                        logger.info(f"[TIMEOUT_MESSAGE] Using seller remainder message")
-                        return f"{remainder_result['message']}\n\n{base_msg}"
-                    else:
-                        logger.info(f"[TIMEOUT_MESSAGE] Using base seller message")
-                        return base_msg
+                # For sellers, try to get remainder message from seller service
+                if user_details and session_data:
+                    try:
+                        logger.info(f"[TIMEOUT_MESSAGE] Calling seller service for flow completion")
+                        from app.services.seller_service import SellerService
+                        seller_service = SellerService()
+                        # Create temporary objects from raw data for seller service
+                        from types import SimpleNamespace
+                        user_obj = SimpleNamespace(**user_details[0])
+                        session_obj = SimpleNamespace(**session_data)
+                        remainder_result = await seller_service.handle_seller_flow_completion(user_obj, session_obj)
+                        logger.info(f"[TIMEOUT_MESSAGE] Seller remainder result: {remainder_result}")
+                        
+                        base_msg = (
+                            "Looks like you're away for a bit. "
+                            "Thank you for using QUA AI! "
+                            "You can resume viewing RFQs or managing bids anytime by saying 'Hi.'"
+                        )
+                        
+                        if remainder_result.get("success") and remainder_result.get("message"):
+                            logger.info(f"[TIMEOUT_MESSAGE] Using seller remainder message")
+                            return f"{remainder_result['message']}\n\n{base_msg}"
+                        else:
+                            logger.info(f"[TIMEOUT_MESSAGE] Using base seller message")
+                            return base_msg
+                    except Exception as seller_error:
+                        logger.warning(f"[TIMEOUT_MESSAGE] Seller service error: {seller_error}")
+                        return (
+                            "Looks like you're away for a bit. "
+                            "Thank you for using QUA AI! "
+                            "You can resume viewing RFQs or managing bids anytime by saying 'Hi.'"
+                        )
                 else:
-                    logger.info(f"[TIMEOUT_MESSAGE] Using fallback seller message (no user/session objects)")
+                    logger.info(f"[TIMEOUT_MESSAGE] Using fallback seller message (no user/session data)")
                     return (
                         "Looks like you're away for a bit. "
                         "Thank you for using QUA AI! "
