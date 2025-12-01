@@ -627,9 +627,9 @@ class InactivityTimeoutService:
 
             # Always prefer original session snapshot for constructing reminder
             session_snapshot = remainder_session or session_data
-            logger.info(f"[TIMEOUT_SERVICE] Using session snapshot: {bool(session_snapshot)}")
+            logger.info(f"[TIMEOUT_SERVICE] Using session snapshot: {bool(timeout_session_data)}")
             
-            timeout_message = await self._generate_timeout_message(user_details,session_snapshot)
+            timeout_message = await self._generate_timeout_message(user_details,timeout_session_data)
             logger.info(f"[TIMEOUT_SERVICE] Generated timeout message: {timeout_message[:100]}...")
             
             try:
