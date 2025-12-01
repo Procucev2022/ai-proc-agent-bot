@@ -147,7 +147,6 @@ class InactivityTimeoutService:
                         logger.info(f"[TIMEOUT_MESSAGE] Seller remainder result: {remainder_result}")
                         
                         base_msg = (
-                            "Looks like you're away for a bit. "
                             "Thank you for using QUA AI! "
                             "You can resume viewing RFQs or managing bids anytime by saying 'Hi.'"
                         )

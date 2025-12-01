@@ -884,14 +884,6 @@ class SellerService:
 
         closing_message = await self.response_helpers.generate_seller_contextual_response(context)
 
-        await self.whatsapp_service.send_message(user.phone_number, closing_message)
-        self.session_manager.add_message_to_history(session, "assistant", closing_message)
-
-        # Complete the session
-        session.outcome = 'completed'
-        session.completed_at = utc_now().replace(tzinfo=None)
-        await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
-
         return {
             "success": True,
             "workflow_step": "generic_closing",
@@ -907,14 +899,6 @@ class SellerService:
         }
 
         closing_message = await self.response_helpers.generate_seller_contextual_response(context)
-
-        await self.whatsapp_service.send_message(user.phone_number, closing_message)
-        self.session_manager.add_message_to_history(session, "assistant", closing_message)
-
-        # Complete the session
-        session.outcome = 'completed'
-        session.completed_at = utc_now().replace(tzinfo=None)
-        await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
         return {
             "success": True,
