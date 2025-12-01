@@ -101,11 +101,13 @@ class InactivityTimeoutService:
         logger.info(f"[TIMEOUT_MESSAGE] Session data available: {bool(session_data)}")
         
         try:
-            # Extract user_type from user_details SelfClient (false = seller, true = buyer)
+            # Extract user_type from user_details selfClient (false = seller, true = buyer)
             user_type = None
-            if user_details and isinstance(user_details, dict):
-                self_client = user_details.get('SelfClient')
-                logger.info(f"[TIMEOUT_MESSAGE] SelfClient value: {self_client}")
+            if user_details and isinstance(user_details, list) and len(user_details) > 0:
+                # user_details is a list, get first user
+                first_user = user_details[0]
+                self_client = first_user.get('selfClient')
+                logger.info(f"[TIMEOUT_MESSAGE] selfClient value: {self_client}")
                 if self_client is True:
                     user_type = "buyer"
                 elif self_client is False:
@@ -125,7 +127,7 @@ class InactivityTimeoutService:
                 logger.info(f"[TIMEOUT_MESSAGE] Generating seller timeout message")
                 
                 # Convert dict data to model objects for seller service
-                user_obj = User(**user_details) if user_details else None
+                user_obj = User(**user_details[0]) if user_details and len(user_details) > 0 else None
                 session_obj = ConversationSession(**session_data) if session_data else None
                 logger.info(f"[TIMEOUT_MESSAGE] Created user object: {bool(user_obj)}")
                 logger.info(f"[TIMEOUT_MESSAGE] Created session object: {bool(session_obj)}")
