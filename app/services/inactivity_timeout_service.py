@@ -20,6 +20,7 @@ from redis.asyncio import Redis
 
 from app.config import get_settings
 from app.redis_db import get_session_redis_service
+from app.models import WorkflowType, ConversationSession , User
 from app.services.whatsapp_service import WhatsAppService
 from app.services.helpers.session_helpers import SessionHelpers
 
@@ -84,35 +85,112 @@ class InactivityTimeoutService:
     # Helper Methods
     # ========================================================================
 
-    def _generate_timeout_message(self, user_type: Optional[str]) -> str:
+    async def _generate_timeout_message(self, user_details: User, session_data: ConversationSession) -> str:
         """
         Generate user-type-specific timeout message.
         
         Args:
-            user_type: User type from session workflow_state ("buyer", "seller", or None)
+            user_details: User details from cache service
+            session_data: Session data containing workflow_state
             
         Returns:
             Appropriate timeout message based on user type
         """
-        if user_type == "buyer":
-            return (
-                "Looks like you're away for a bit. "
-                "Thank you for using QUA AI! "
-                "You can resume creating RFQs or checking status anytime by saying 'Hi.'"
-            )
-        elif user_type == "seller":
+        logger.info(f"[TIMEOUT_MESSAGE] Starting timeout message generation")
+        logger.info(f"[TIMEOUT_MESSAGE] User details available: {bool(user_details)} , {user_details}")
+        logger.info(f"[TIMEOUT_MESSAGE] Session data available: {bool(session_data)}, {session_data}")
+        
+        try:
+            # Extract user_type from user_details selfClient (false = seller, true = buyer)
+            user_type = None
+            if user_details and isinstance(user_details, list) and len(user_details) > 0:
+                # user_details is a list, get first user
+                first_user = user_details[0]
+                self_client = first_user.get('selfClient')
+                logger.info(f"[TIMEOUT_MESSAGE] selfClient value: {self_client}")
+                if self_client is True:
+                    user_type = "buyer"
+                elif self_client is False:
+                    user_type = "seller"
+                logger.info(f"[TIMEOUT_MESSAGE] Extracted user_type: {user_type}")
+            else:
+                logger.info(f"[TIMEOUT_MESSAGE] User details invalid or missing")
+            
+            if user_type == "buyer":
+                logger.info(f"[TIMEOUT_MESSAGE] Generating buyer timeout message")
+                return (
+                    "Looks like you're away for a bit. "
+                    "Thank you for using QUA AI! "
+                    "You can resume creating RFQs or checking status anytime by saying 'Hi.'"
+                )
+            elif user_type == "seller":
+                logger.info(f"[TIMEOUT_MESSAGE] Generating seller timeout message")
+                
+                # For sellers, try to get remainder message from seller service
+                if user_details and session_data:
+                    try:
+                        logger.info(f"[TIMEOUT_MESSAGE] Calling seller service for flow completion")
+                        from app.services.seller_service import SellerService
+                        seller_service = SellerService()
+                        # Create temporary objects from raw data for seller service
+
+                        user_obj = user_details[0]
+                        # Create user object with required fields
+                        class UserObj:
+                            def __init__(self, org_id, phone_number):
+                                self.org_id = org_id
+                                self.phone_number = phone_number
+                        
+                        user = UserObj(user_obj['orgId'], user_obj['phone'])
+                        session_obj = ConversationSession(**session_data)
+                        remainder_result = await seller_service.handle_seller_flow_completion(user, session_obj)
+                        logger.info(f"[TIMEOUT_MESSAGE] Seller remainder result: {remainder_result}")
+                        
+                        base_msg = (
+                            "Thank you for using QUA AI! "
+                            "You can resume viewing RFQs or managing bids anytime by saying 'Hi.'"
+                        )
+                        
+                        if remainder_result.get("success") and remainder_result.get("message"):
+                            logger.info(f"[TIMEOUT_MESSAGE] Using seller remainder message")
+                            return f"{remainder_result['message']}\n\n{base_msg}"
+                        else:
+                            logger.info(f"[TIMEOUT_MESSAGE] Using base seller message")
+                            return base_msg
+                    except Exception as seller_error:
+                        logger.warning(f"[TIMEOUT_MESSAGE] Seller service error: {seller_error}")
+                        return (
+                            "Looks like you're away for a bit. "
+                            "Thank you for using QUA AI! "
+                            "You can resume viewing RFQs or managing bids anytime by saying 'Hi.'"
+                        )
+                else:
+                    logger.info(f"[TIMEOUT_MESSAGE] Using fallback seller message (no user/session data)")
+                    return (
+                        "Looks like you're away for a bit. "
+                        "Thank you for using QUA AI! "
+                        "You can resume viewing RFQs or managing bids anytime by saying 'Hi.'"
+                    )
+          
+            else:
+                # Default/generic message for unspecified or other user types
+                logger.info(f"[TIMEOUT_MESSAGE] Using default timeout message for user_type: {user_type}")
+                return (
+                    "Looks like you're away for a bit. "
+                    "Thank you for using QUA AI! "
+                    "You can resume anytime by saying 'Hi.'"
+                )
+        except Exception as e:
+            logger.error(f"[TIMEOUT_MESSAGE] Error generating timeout message: {e}")
+            logger.error(f"[TIMEOUT_MESSAGE] Error type: {type(e)}")
+            import traceback
+            logger.error(f"[TIMEOUT_MESSAGE] Full traceback: {traceback.format_exc()}")
+            logger.info(f"[TIMEOUT_MESSAGE] Using fallback timeout message")
             return (
                 "Looks like you're away for a bit. "
                 "Thank you for using QUA AI! "
                 "You can resume viewing RFQs or managing bids anytime by saying 'Hi.'"
-            )
-        else:
-            # Default/generic message for unspecified or other user types
-            return (
-                "Looks like you're away for a bit. "
-                "Thank you for using QUA AI! "
-                "You can resume anytime by saying 'Hi.'"
-            )
+                )
 
     # ========================================================================
     # Public API - Activity Tracking
@@ -495,6 +573,9 @@ class InactivityTimeoutService:
                 try:
                     from app.utils.datetime_utils import utc_now
                     from app.services.helpers.session_helpers import SessionHelpers
+
+                    # Save Session object for building remiander msg
+                    remainder_session = session_data
                     
                     # Get current timestamp
                     now_iso = utc_now().isoformat()
@@ -544,16 +625,31 @@ class InactivityTimeoutService:
             
             # 8. Send timeout notification LAST (after all cleanup complete)
             # Generate user-type-specific timeout message
-            timeout_message = self._generate_timeout_message(user_type)
+            logger.info(f"[TIMEOUT_SERVICE] Generating timeout message for {user_phone}")
+            from app.services.user_cache_service import get_user_cache_service
+            user_cache_service = get_user_cache_service()
+            user_details = await user_cache_service.get_user_data(user_phone)
+            logger.info(f"[TIMEOUT_SERVICE] Retrieved user details: {bool(user_details)}")
+
+            # Always prefer original session snapshot for constructing reminder
+            session_snapshot = remainder_session or session_data
+            logger.info(f"[TIMEOUT_SERVICE] Using session snapshot: {bool(timeout_session_data)}")
+            
+            timeout_message = await self._generate_timeout_message(user_details,timeout_session_data)
+            logger.info(f"[TIMEOUT_SERVICE] Generated timeout message: {timeout_message[:100]}...")
             
             try:
+                logger.info(f"[TIMEOUT_SERVICE] Sending timeout notification to {user_phone}")
                 await self.whatsapp_service.send_message(user_phone, timeout_message)
                 logger.info(
-                    f"[TIMEOUT_SERVICE] Sent timeout notification to {user_phone} "
+                    f"[TIMEOUT_SERVICE] Successfully sent timeout notification to {user_phone} "
                     f"(user_type={user_type})"
                 )
             except Exception as msg_error:
                 logger.error(f"[TIMEOUT_SERVICE] Failed to send notification to {user_phone}: {msg_error}")
+                logger.error(f"[TIMEOUT_SERVICE] Error type: {type(msg_error)}")
+                import traceback
+                logger.error(f"[TIMEOUT_SERVICE] Full traceback: {traceback.format_exc()}")
                 # Continue - cleanup is complete, notification failure is non-critical
             
             logger.info(f"[TIMEOUT_SERVICE] Timeout handling completed for {user_phone}")
