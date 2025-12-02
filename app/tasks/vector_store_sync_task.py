@@ -436,3 +436,15 @@ def trigger_vector_store_sync():
         "status": "triggered",
         "message": "Vector store sync task has been queued"
     }
+
+
+if __name__ == "__main__":
+    # Configure logging for direct execution
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    print("Running vector store sync task directly...")
+    result = sync_vector_store()
+    print(f"\nResult: {result}")
