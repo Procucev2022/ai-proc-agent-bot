@@ -271,11 +271,326 @@ class SessionRedisService(BaseRedisService):
         key = f"session:{session_id}"
         return await self.ttl(key)
 
+    async def append_message_to_history(self, session_id: str, role: str, content: str, message_type: str = "text") -> bool:
+        """
+        Append a message to session's conversation history atomically.
+
+        This method reads the session, appends the message, and writes back.
+        Used by WhatsAppService to track bot messages without requiring session object.
+
+        Args:
+            session_id: Unique session identifier
+            role: Message role ('user' or 'assistant')
+            content: Message content
+            message_type: Type of message (default: 'text')
+
+        Returns:
+            True if message appended successfully
+        """
+        try:
+            from app.utils.datetime_utils import utc_now
+
+            key = f"session:{session_id}"
+            session_data = await self.get(key, as_json=True)
+
+            if not session_data:
+                logger.warning(f"Cannot append message - session {session_id} not found in Redis")
+                return False
+
+            # Initialize conversation_history if needed
+            if 'conversation_history' not in session_data:
+                session_data['conversation_history'] = {"messages": [], "metadata": [], "openai_messages": []}
+
+            conv_history = session_data['conversation_history']
+
+            # Ensure all required lists exist
+            if 'messages' not in conv_history:
+                conv_history['messages'] = []
+            if 'metadata' not in conv_history:
+                conv_history['metadata'] = []
+            if 'openai_messages' not in conv_history:
+                conv_history['openai_messages'] = []
+
+            # Create message entry
+            timestamp = utc_now().isoformat()
+            message_entry = {
+                "role": role,
+                "content": content,
+                "timestamp": timestamp,
+                "message_type": message_type
+            }
+
+            # Append to all history formats
+            conv_history['messages'].append(message_entry)
+            conv_history['metadata'].append({
+                "timestamp": timestamp,
+                "message_type": message_type,
+                "role": role
+            })
+            conv_history['openai_messages'].append({
+                "role": role,
+                "content": content
+            })
+
+            # Update last_activity_at
+            session_data['last_activity_at'] = timestamp
+
+            # Get current TTL to preserve it
+            current_ttl = await self.ttl(key)
+            ttl_to_use = current_ttl if current_ttl and current_ttl > 0 else self.default_ttl
+
+            # Save back to Redis
+            success = await self.set(key, session_data, ex=ttl_to_use)
+
+            if success:
+                logger.debug(f"Appended {role} message to session {session_id} conversation history")
+            else:
+                logger.error(f"Failed to save session {session_id} after appending message")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Error appending message to session {session_id}: {e}")
+            return False
+
+
+class DeferredNotificationRedisService(BaseRedisService):
+    """Specialized async Redis service for deferred RFQ notifications."""
+
+    # Key patterns
+    QUEUE_KEY = "deferred_notifications:queue"  # Sorted set by retry_after timestamp
+    DATA_KEY_PREFIX = "deferred_notifications:data:"  # Hash for notification data
+
+    def __init__(self):
+        super().__init__()
+        self.settings = get_settings()
+        # Default TTL for notification data (24 hours)
+        self.default_ttl = 86400
+
+    async def queue_notification(
+        self,
+        notification_id: str,
+        rfq_data: Dict[str, Any],
+        seller: Dict[str, Any],
+        retry_after: float,
+        attempt: int = 1
+    ) -> bool:
+        """
+        Queue a deferred notification for later delivery.
+
+        Args:
+            notification_id: Unique ID for this notification (e.g., rfq_id:seller_phone)
+            rfq_data: RFQ information dictionary
+            seller: Seller information dictionary
+            retry_after: Unix timestamp when to retry sending
+            attempt: Current attempt number
+
+        Returns:
+            True if queued successfully
+        """
+        await self.init_client()
+        try:
+            # Store notification data
+            data_key = f"{self.DATA_KEY_PREFIX}{notification_id}"
+            notification_data = {
+                "notification_id": notification_id,
+                "rfq_data": json.dumps(rfq_data),
+                "seller": json.dumps(seller),
+                "queued_at": json.dumps({"timestamp": retry_after - 300}),  # When it was queued
+                "attempt": attempt,
+                "retry_after": retry_after
+            }
+
+            # Store data with TTL
+            await self.client.hset(data_key, mapping=notification_data)
+            await self.client.expire(data_key, self.default_ttl)
+
+            # Add to sorted set (score = retry_after timestamp)
+            await self.client.zadd(self.QUEUE_KEY, {notification_id: retry_after})
+
+            logger.info(
+                f"Queued deferred notification {notification_id} for retry after "
+                f"{retry_after} (attempt {attempt})"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Error queuing deferred notification {notification_id}: {e}")
+            return False
+
+    async def get_ready_notifications(self, limit: int = 50) -> list:
+        """
+        Get notifications that are ready to be sent (retry_after <= now).
+
+        Args:
+            limit: Maximum number of notifications to return
+
+        Returns:
+            List of notification data dictionaries
+        """
+        await self.init_client()
+        try:
+            import time
+            now = time.time()
+
+            # Get notification IDs with score <= now
+            notification_ids = await self.client.zrangebyscore(
+                self.QUEUE_KEY,
+                min=0,
+                max=now,
+                start=0,
+                num=limit
+            )
+
+            if not notification_ids:
+                return []
+
+            notifications = []
+            for notification_id in notification_ids:
+                data_key = f"{self.DATA_KEY_PREFIX}{notification_id}"
+                data = await self.client.hgetall(data_key)
+
+                if data:
+                    # Parse JSON fields
+                    try:
+                        notifications.append({
+                            "notification_id": notification_id,
+                            "rfq_data": json.loads(data.get("rfq_data", "{}")),
+                            "seller": json.loads(data.get("seller", "{}")),
+                            "attempt": int(data.get("attempt", 1)),
+                            "retry_after": float(data.get("retry_after", 0))
+                        })
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Error parsing notification data for {notification_id}: {e}")
+                        # Remove corrupted entry
+                        await self.remove_notification(notification_id)
+                else:
+                    # Data expired but ID still in queue - clean up
+                    await self.client.zrem(self.QUEUE_KEY, notification_id)
+
+            return notifications
+
+        except Exception as e:
+            logger.error(f"Error getting ready notifications: {e}")
+            return []
+
+    async def remove_notification(self, notification_id: str) -> bool:
+        """
+        Remove a notification from the queue (after successful send or max retries).
+
+        Args:
+            notification_id: Notification ID to remove
+
+        Returns:
+            True if removed successfully
+        """
+        await self.init_client()
+        try:
+            data_key = f"{self.DATA_KEY_PREFIX}{notification_id}"
+
+            # Remove from sorted set
+            await self.client.zrem(self.QUEUE_KEY, notification_id)
+
+            # Remove data hash
+            await self.client.delete(data_key)
+
+            logger.debug(f"Removed deferred notification {notification_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error removing notification {notification_id}: {e}")
+            return False
+
+    async def update_retry_time(
+        self,
+        notification_id: str,
+        new_retry_after: float,
+        new_attempt: int
+    ) -> bool:
+        """
+        Update the retry time for a notification (for exponential backoff).
+
+        Args:
+            notification_id: Notification ID to update
+            new_retry_after: New Unix timestamp when to retry
+            new_attempt: New attempt number
+
+        Returns:
+            True if updated successfully
+        """
+        await self.init_client()
+        try:
+            data_key = f"{self.DATA_KEY_PREFIX}{notification_id}"
+
+            # Update data
+            await self.client.hset(data_key, mapping={
+                "retry_after": new_retry_after,
+                "attempt": new_attempt
+            })
+
+            # Update score in sorted set
+            await self.client.zadd(self.QUEUE_KEY, {notification_id: new_retry_after})
+
+            logger.debug(
+                f"Updated notification {notification_id} retry to {new_retry_after} "
+                f"(attempt {new_attempt})"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Error updating notification retry time: {e}")
+            return False
+
+    async def get_queue_size(self) -> int:
+        """Get the current size of the notification queue."""
+        await self.init_client()
+        try:
+            return await self.client.zcard(self.QUEUE_KEY)
+        except Exception as e:
+            logger.error(f"Error getting queue size: {e}")
+            return 0
+
+    async def get_pending_for_seller(self, phone_number: str) -> list:
+        """
+        Get all pending notifications for a specific seller.
+
+        Args:
+            phone_number: Seller's phone number
+
+        Returns:
+            List of notification IDs pending for this seller
+        """
+        await self.init_client()
+        try:
+            # Scan for notifications matching this seller
+            pattern = f"*:{phone_number}"
+            cursor = 0
+            matching_ids = []
+
+            while True:
+                cursor, keys = await self.client.zscan(
+                    self.QUEUE_KEY,
+                    cursor=cursor,
+                    match=pattern,
+                    count=100
+                )
+                # zscan returns list of (member, score) tuples
+                matching_ids.extend([k for k, _ in keys])
+                if cursor == 0:
+                    break
+
+            return matching_ids
+
+        except Exception as e:
+            logger.error(f"Error getting pending notifications for {phone_number}: {e}")
+            return []
+
 
 # Singleton instances
 _redis_service: Optional[BaseRedisService] = None
 _auth_service: Optional[AuthRedisService] = None
 _session_service: Optional[SessionRedisService] = None
+_deferred_notification_service: Optional[DeferredNotificationRedisService] = None
 
 def get_redis_service() -> BaseRedisService:
     """Get base Redis service singleton."""
@@ -297,3 +612,11 @@ def get_session_redis_service() -> SessionRedisService:
     if _session_service is None:
         _session_service = SessionRedisService()
     return _session_service
+
+
+def get_deferred_notification_redis_service() -> DeferredNotificationRedisService:
+    """Get deferred notification Redis service singleton."""
+    global _deferred_notification_service
+    if _deferred_notification_service is None:
+        _deferred_notification_service = DeferredNotificationRedisService()
+    return _deferred_notification_service
