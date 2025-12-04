@@ -100,11 +100,11 @@ class SellerAPIService:
     async def send_rfq_email(self, rfq_ids: List[str], seller_email: str, seller_id: str) -> Dict[str, Any]:
         """Send RFQ details to seller via email."""
         try:
-            endpoint = "/seller/sendRFQEmail"
+            endpoint = "/rest/gmt/forwardRfqsToVendor"
             
             data = {
-                "rfqId": rfq_ids,
-                "sellerEmail": seller_email,
+                "rfqIds": rfq_ids,
+                "email": seller_email,
                 "sellerId": seller_id
             }
 
