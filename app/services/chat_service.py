@@ -479,13 +479,7 @@ class ChatService:
 
             if intent == "cancel_workflow" and confidence > 50 and is_in_auth_workflow:
                 logger.info(f"Cancel workflow intent detected in auth workflow with {confidence}% confidence - handling immediately to prevent loop")
-                from app.schemas.conversation import MessageSchema
-                message = MessageSchema(
-                    content=message_content,
-                    external_user_id=user_phone,
-                    message_type=message_type
-                )
-                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message)
+                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message_content)
                 await self.session_manager.save_session(session, session.workflow_type)
                 return cancel_result
 
@@ -1086,7 +1080,7 @@ class ChatService:
                     return await self._handle_excel_confirmation_response(user, session, "cancel", intent_result)
 
                 # Trigger cancel confirmation flow (will send buttons or handle confirmation)
-                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message)
+                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message, user)
                 await self.session_manager.save_session(session, session.workflow_type)
                 return cancel_result
 
@@ -1227,7 +1221,7 @@ class ChatService:
                 # Detect confirmation from the message using confirmation service
                 confirmation_result = await self.cancel_service.confirmation_service.parse_confirmation(message)
                 is_confirmed = confirmation_result == "yes"
-                cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed)
+                cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed,user)
 
                 if cancel_result.get("status") == "cancelled":
                     # Workflow was cancelled, save session and return
@@ -2973,7 +2967,7 @@ class ChatService:
             # confirm_cancel -> Yes, decline_cancel -> No
             is_confirmed = button_id == "confirm_cancel"
 
-            cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed)
+            cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed,user)
 
             if cancel_result.get("status") == "cancelled":
                 # Workflow was cancelled, save session and return
