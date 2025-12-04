@@ -67,15 +67,39 @@ class CancelService:
             # Check if cancel is already pending - if so, this is a confirmation response
             if session.workflow_state and session.workflow_state.get("cancel_pending"):
                 logger.info(f"Cancel already pending for {user_phone}, treating message '{message}' as confirmation response")
-                # Simple yes/no detection - if message contains "yes" or similar, confirm; otherwise decline
-                message_lower = (message or "").lower()
-                is_confirmed = any(word in message_lower for word in ["yes", "confirm", "cancel", "sure", "ok"])
-                logger.info(f"Detected confirmation: {is_confirmed} from message: '{message}'")
+                
+                # Extract user response
+                user_text = ""
+                button_id = None
+
+                if isinstance(message, dict) and message.get("type") == "button_reply":
+                    button_id = message["button_reply"].get("id", "")
+                    user_text = message["button_reply"].get("title", "").lower()
+                else:
+                    user_text = (message or "").lower()
+
+                # Detect confirmation
+                is_confirmed = False
+
+                # If button press such as confirm_cancel → treat as YES
+                if button_id in ["confirm_cancel", "confirm_yes"]:
+                    is_confirmed = True
+                else:
+                    # Normal text keywords
+                    is_confirmed = any(
+                        word in user_text for word in ["yes", "confirm", "cancel", "sure", "ok"])
+
+                logger.info(f"Detected cancel confirmation: {is_confirmed} from message: '{message}'")
                 return await self.handle_cancel_confirmation(user_phone, session, is_confirmed)
 
-            # Set cancel pending state
+            # Set cancel pending state and save last bot message
             if not session.workflow_state:
                 session.workflow_state = {}
+
+            # Save the last bot message before cancel confirmation
+            last_bot_message = self._get_last_bot_message(session)
+            if last_bot_message:
+                session.workflow_state["last_bot_message_before_cancel"] = last_bot_message
 
             session.workflow_state["cancel_pending"] = True
 
@@ -153,13 +177,19 @@ class CancelService:
                 }
             else:
                 # User declined - resume workflow
-                # Send a brief acknowledgment
                 logger.info(f"User declined cancellation - resuming workflow")
 
-                await self.whatsapp_service.send_message(
-                    user_phone,
-                    "Continuing with your request..."
-                )
+                # Restore the last bot message if available
+                last_bot_message = session.workflow_state.get("last_bot_message_before_cancel")
+                if last_bot_message:
+                    await self.whatsapp_service.send_message(user_phone, last_bot_message)
+                    # Clear the saved message
+                    session.workflow_state.pop("last_bot_message_before_cancel", None)
+                else:
+                    await self.whatsapp_service.send_message(
+                        user_phone,
+                        "The cancellation request has been declined. You may continue with your request."
+                    )
 
                 # Save session
                 if self.session_manager:
@@ -307,3 +337,28 @@ class CancelService:
         except Exception as e:
             logger.error(f"Error sending cancellation message to {user_phone}: {e}")
             return False
+
+    def _get_last_bot_message(self, session: ConversationSession) -> str:
+        """
+        Extract the last bot message from conversation history.
+        
+        Args:
+            session: Current conversation session
+            
+        Returns:
+            Last bot message or None if not found
+        """
+        try:
+            conversation_history = session.conversation_history or {}
+            messages = conversation_history.get("messages", [])
+            
+            # Find the last assistant message
+            for message in reversed(messages):
+                if message.get("role") == "assistant":
+                    return message.get("content", "")
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting last bot message: {e}")
+            return None
