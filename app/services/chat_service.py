@@ -429,6 +429,100 @@ class ChatService:
             # Classify intent for all user messages to enable proper message routing after auth
             message_intent_result = None
 
+            # CRITICAL: Handle RFQ notification buttons BEFORE intent classification
+            # These buttons (rfq_interested, rfq_check_details) should skip intent classification entirely
+            if message_type == "interactive" and isinstance(message_content, dict):
+                button_id = message_content.get("button_reply", {}).get("id", "")
+                if button_id.startswith("rfq_check_details") or button_id.startswith("rfq_interested"):
+                    logger.info(f"RFQ notification button detected: {button_id} - skipping intent classification")
+                    from app.services.handlers.seller_rfq_interest_handler import SellerRFQInterestHandler, RFQ_PORTAL_BASE_URL
+
+                    # Parse button_id to extract rfq_id and seller_id
+                    # Format: rfq_interested_{rfq_id}_{seller_id} or rfq_check_details_{rfq_id}_{seller_id}
+                    # Note: RFQ ID may contain underscores (e.g., RFQ_TEST_001), seller_id is UUID with dashes
+                    # Split from right with maxsplit=1 to get seller_id, rest is rfq_id
+                    prefix = "rfq_interested_" if button_id.startswith("rfq_interested") else "rfq_check_details_"
+                    suffix = button_id[len(prefix):]
+                    parts = suffix.rsplit("_", 1)  # Split from right, max 1 split
+                    rfq_id = parts[0] if parts else None
+                    seller_id = parts[1] if len(parts) > 1 else None
+
+                    if button_id.startswith("rfq_check_details"):
+                        # Send portal link directly for Check Details
+                        rfq_details_url = f"{RFQ_PORTAL_BASE_URL}/rfq/{rfq_id}"
+                        await self.whatsapp_service.send_message(user_phone, f"For more details about this RFQ, please visit:\n{rfq_details_url}")
+                        return {"status": "rfq_check_details_handled", "rfq_id": rfq_id}
+                    else:
+                        # Handle I'm Interested - use the handler directly
+                        handler = SellerRFQInterestHandler(
+                            whatsapp_service=self.whatsapp_service,
+                            authentication_service=self.authentication_service,
+                            session_manager=self.session_manager,
+                            otp_service=self.authentication_service.otp_service if self.authentication_service else None
+                        )
+                        return await handler.handle_rfq_interest_click(user_phone, rfq_id, seller_id, session)
+
+            # CRITICAL: Handle seller_rfq_intimation workflow BEFORE intent classification
+            # This workflow has stages: switch_prompt, otp - both need dedicated handling
+            workflow_type_value = session.workflow_type.value if hasattr(session.workflow_type, 'value') else str(session.workflow_type) if session.workflow_type else None
+            if workflow_type_value == "seller_rfq_intimation":
+                auth_stage = session.workflow_state.get("auth_stage") if session.workflow_state else None
+                logger.info(f"seller_rfq_intimation workflow detected, auth_stage={auth_stage}")
+
+                from app.services.handlers.seller_rfq_interest_handler import SellerRFQInterestHandler
+
+                handler = SellerRFQInterestHandler(
+                    whatsapp_service=self.whatsapp_service,
+                    authentication_service=self.authentication_service,
+                    session_manager=self.session_manager,
+                    otp_service=self.authentication_service.otp_service if self.authentication_service else None
+                )
+
+                if auth_stage == "switch_prompt":
+                    # Handle user's response to account switch prompt
+                    logger.info(f"Handling switch response for seller_rfq_intimation")
+                    return await handler.handle_switch_response(user_phone, session, message_content)
+
+                elif auth_stage == "otp":
+                    # Handle OTP input for seller authentication
+                    logger.info(f"Handling OTP for seller_rfq_intimation, OTP input: {message_content}")
+                    # Use the OTP service to validate
+                    if self.authentication_service and self.authentication_service.otp_service:
+                        otp_result = await self.authentication_service.otp_service.validate_otp(
+                            user_phone, session, message_content
+                        )
+                        logger.info(f"OTP verification result: {otp_result}")
+
+                        if otp_result.get("status") == "otp_valid":
+                            # OTP verified - now authenticate as the seller and send portal link
+                            target_seller_email = session.workflow_state.get("target_seller_email")
+                            target_seller_id = session.workflow_state.get("target_seller_id")
+                            target_seller_user = session.workflow_state.get("target_seller_user")
+                            logger.info(f"OTP verified, authenticating as seller: {target_seller_email}, seller_id: {target_seller_id}")
+
+                            # Authenticate the user as the seller account
+                            if self.authentication_service and target_seller_user:
+                                auth_result = await self.authentication_service.store_user_session_with_email(
+                                    user_phone, [target_seller_user], target_seller_email
+                                )
+                                logger.info(f"Seller authentication result: {auth_result}")
+
+                            # Send portal link after successful auth
+                            return await handler.handle_otp_validated(user_phone, session)
+                        elif otp_result.get("status") == "max_otp_exceeded":
+                            # Max OTP attempts exceeded - clear workflow
+                            session.workflow_type = None
+                            session.workflow_state = {}
+                            await self.session_manager.save_session(session)
+                            return {"status": "max_otp_exceeded", "message": "Maximum OTP attempts exceeded"}
+                        else:
+                            # OTP verification failed - keep in OTP stage for retry
+                            return {"status": "otp_invalid", "retry": True}
+                    else:
+                        logger.error("No OTP service available for seller_rfq_intimation OTP verification")
+                        await self.whatsapp_service.send_message(user_phone, "Sorry, there was an error verifying your code. Please try again.")
+                        return {"status": "error", "message": "OTP service not available"}
+
             # Classify intent once for all message routing and tracking
             try:
                 logger.info(f"Message Type: {message_type}\nMessage Content: {message_content}")
@@ -1054,7 +1148,13 @@ class ChatService:
                 result = await auth_reg_switch.handle_account_switch_response(user, session, message, self.authentication_service)
                 await self.session_manager.save_session(session, self._get_workflow_or_default(session))
                 return result
-            
+
+            # Handle seller RFQ intimation workflow (from "I'm Interested" button)
+            if session.workflow_type == WorkflowType.seller_rfq_intimation:
+                result = await self._handle_seller_rfq_intimation_flow(user, session, message)
+                if result:
+                    return result
+
             # Use already-classified intent from message tracking or fallback to classification
             intent_result = message_intent_result
             if not intent_result:
@@ -3498,6 +3598,79 @@ class ChatService:
         except Exception as e:
             logger.error(f"Error generating session summary: {e}")
             return "I don't have any product information collected yet. What would you like to procure?"
+
+    async def _handle_seller_rfq_intimation_flow(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+        """
+        Handle seller RFQ intimation workflow (from "I'm Interested" button).
+
+        This workflow handles:
+        - switch_prompt: User is responding to account switch confirmation
+        - otp: User is entering OTP for seller authentication
+
+        Args:
+            user: User making the request
+            session: Current conversation session
+            message: User's message
+
+        Returns:
+            Dict with status and result, or None if workflow should not be handled
+        """
+        try:
+            from app.services.handlers.seller_rfq_interest_handler import SellerRFQInterestHandler
+
+            auth_stage = session.workflow_state.get("auth_stage")
+            logger.info(f"Handling seller RFQ intimation flow for {user.phone_number}, stage={auth_stage}")
+
+            if auth_stage == "switch_prompt":
+                # User is responding to account switch prompt
+                handler = SellerRFQInterestHandler(
+                    whatsapp_service=self.whatsapp_service,
+                    authentication_service=self.authentication_service,
+                    session_manager=self.session_manager,
+                    otp_service=self.authentication_service.otp_service
+                )
+                result = await handler.handle_switch_response(user.phone_number, session, message)
+                await self.session_manager.save_session(session)
+                return result
+
+            elif auth_stage == "otp":
+                # User is entering OTP for seller authentication
+                otp_result = await self.authentication_service.handle_email_otp_validation(
+                    user.phone_number, message, session
+                )
+
+                if otp_result.get("status") == "otp_valid":
+                    # OTP validated - send portal link
+                    handler = SellerRFQInterestHandler(
+                        whatsapp_service=self.whatsapp_service,
+                        authentication_service=self.authentication_service,
+                        session_manager=self.session_manager,
+                        otp_service=self.authentication_service.otp_service
+                    )
+                    result = await handler.handle_otp_validated(user.phone_number, session)
+                    await self.session_manager.save_session(session)
+                    return result
+                else:
+                    # OTP not yet valid - authentication service handles retry messages
+                    await self.session_manager.save_session(session)
+                    return otp_result
+
+            else:
+                # Unknown stage or workflow just started - let it continue
+                logger.warning(f"Unknown auth_stage in seller_rfq_intimation: {auth_stage}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error handling seller RFQ intimation flow: {e}")
+            await self.whatsapp_service.send_message(
+                user.phone_number,
+                "Sorry, there was an error processing your request. Please try again."
+            )
+            # Clear workflow on error
+            session.workflow_type = None
+            session.workflow_state = {}
+            await self.session_manager.save_session(session)
+            return {"status": "error", "error": str(e)}
 
     async def _handle_contextual_interaction(self, user: User, session: ConversationSession, message: str, intent_result: Dict[str, Any]) -> Dict[str, Any]:
         """

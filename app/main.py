@@ -150,21 +150,6 @@ async def lifespan(app: FastAPI):
     # This saves ~100-120MB RAM per worker during startup
     logger.info("AutoCategorizationService will lazy-load on first use")
 
-    # Start deferred notification monitoring (for sellers in active workflows)
-    seller_notification_service = None
-    try:
-        from app.services.seller_notification_service import get_seller_notification_service
-        seller_notification_service = get_seller_notification_service()
-
-        # Optimized: Only start monitor if not already running on another worker
-        if await seller_notification_service.try_start_monitoring_if_available():
-            logger.info("Deferred notification monitoring started on this worker")
-        else:
-            logger.info("Deferred notification monitoring already running on another worker")
-    except Exception as e:
-        logger.error(f"Failed to start deferred notification monitoring: {e}")
-        # Continue without monitoring rather than failing startup
-
     yield
     
     logger.info("Shutting down AI Procurement Agent application")
@@ -215,14 +200,6 @@ async def lifespan(app: FastAPI):
             logger.info("Inactivity timeout monitoring stopped")
         except Exception as e:
             logger.error(f"Error stopping timeout monitoring: {e}")
-
-    # Stop deferred notification monitoring gracefully
-    if seller_notification_service:
-        try:
-            await seller_notification_service.stop_monitoring()
-            logger.info("Deferred notification monitoring stopped")
-        except Exception as e:
-            logger.error(f"Error stopping deferred notification monitoring: {e}")
 
     # Cleanup any remaining aiohttp sessions
     import aiohttp

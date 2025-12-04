@@ -48,6 +48,8 @@ class WorkflowType(enum.Enum):
     # Additional workflow types found in codebase
     buy_something = "buy_something"
     modification_request = "modification_request"
+    # Seller RFQ intimation - only initiated from "I'm Interested" button handler
+    seller_rfq_intimation = "seller_rfq_intimation"
 
 class ConversationOutcome(enum.Enum):
     completed = "completed"
