@@ -75,9 +75,12 @@ def process_seller_matching(self):
                     processed_count += 1
                     # Add newly notified sellers to exclusion set for subsequent RFQs
                     # This prevents same seller getting multiple RFQs in one batch
-                    if result.get("sellers_matched", 0) > 0:
-                        # Note: We'd need seller IDs in result to do this properly
-                        pass
+                    if result.get("sellers_matched", 0) > 0 and result.get("selected_sellers"):
+                        for seller in result["selected_sellers"]:
+                            seller_id = seller.get("seller_id")
+                            if seller_id:
+                                excluded_seller_ids.add(seller_id)
+                        logger.info(f"Added {len(result['selected_sellers'])} sellers to exclusion set. Total excluded: {len(excluded_seller_ids)}")
                 else:
                     failed_count += 1
 
@@ -129,6 +132,7 @@ def get_rfqs_needing_seller_matching(limit: int = 50) -> List[Dict[str, Any]]:
 
     # First, get distinct RFQs that have categorized items and no vendor assignments yet
     # Exclude items with category "other" (case-insensitive)
+    # Join with client_delivery_location_rfq to get delivery address
     query = """
         SELECT DISTINCT
             h.uuid as rfq_uuid,
@@ -140,10 +144,14 @@ def get_rfqs_needing_seller_matching(limit: int = 50) -> List[Dict[str, Any]]:
             h.org_uuid,
             h.created_ts,
             h.source_type,
-            h.special_instruction
+            h.special_instruction,
+            dl.city as delivery_city,
+            dl.state as delivery_state,
+            dl.pincode as delivery_pincode
         FROM rfq_header h
         INNER JOIN rfq_items i ON h.uuid = i.rfq_uuid
         LEFT JOIN gmt_rfq_vendors v ON h.uuid = v.rfq_uuid
+        LEFT JOIN client_delivery_location_rfq dl ON h.uuid = dl.rfq_uuid
         WHERE i.category IS NOT NULL
         AND LOWER(TRIM(i.category)) != 'other'
         AND h.source_type = 'W'
@@ -388,32 +396,23 @@ async def process_single_rfq_matching(
 def extract_delivery_location(rfq: Dict[str, Any]) -> Dict[str, Any]:
     """
     Extract delivery location information from RFQ data.
-    
+
     Args:
         rfq: RFQ data dictionary
-        
+
     Returns:
         Location dictionary with available information
     """
     location = {}
-    
-    # Try to extract location from special instructions or description
-    description = (rfq.get('description') or '').lower()
-    special_instruction = (rfq.get('special_instruction') or '').lower()
-    combined_text = f"{description} {special_instruction}"
-    
-    # Simple location extraction (can be enhanced with NLP)
-    common_cities = [
-        'mumbai', 'delhi', 'bangalore', 'hyderabad', 'chennai', 'kolkata',
-        'pune', 'ahmedabad', 'surat', 'jaipur', 'lucknow', 'kanpur',
-        'nagpur', 'patna', 'indore', 'thane', 'bhopal', 'visakhapatnam'
-    ]
-    
-    for city in common_cities:
-        if city in combined_text:
-            location['city'] = city.title()
-            break
-    
+
+    # Get delivery location from the database fields
+    if rfq.get('delivery_city'):
+        location['city'] = rfq['delivery_city']
+    if rfq.get('delivery_state'):
+        location['state'] = rfq['delivery_state']
+    if rfq.get('delivery_pincode'):
+        location['pincode'] = rfq['delivery_pincode']
+
     return location
 
 

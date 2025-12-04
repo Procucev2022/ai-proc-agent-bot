@@ -59,12 +59,17 @@ class WhatsAppService:
         self.retry_service.max_retries = settings.retry_max_attempts
         self.retry_service.initial_delay = settings.retry_initial_delay
 
-    async def send_message(self, recipient_id: str, message: str) -> MessageResponse:
+    async def send_message(self, recipient_id: str, message: str, session=None) -> MessageResponse:
         """
         Send text message to WhatsApp user with retry mechanism.
 
         Sends formatted text message with API authentication,
         message formatting, error handling, and automatic retries.
+
+        Args:
+            recipient_id: WhatsApp number to send to
+            message: Message content to send
+            session: Optional ConversationSession for tracking message in conversation history
         """
 
         async def send_text_message():
@@ -123,11 +128,38 @@ class WhatsAppService:
         retry_result = await self.retry_service.retry_with_backoff(send_text_message)
 
         if retry_result["success"]:
-            return retry_result["result"]
+            result = retry_result["result"]
+            # Track message in conversation history if session provided
+            if session and result.success:
+                await self._track_message_in_history(session, message)
+            return result
         else:
             logger.error(f"Failed to send message after {retry_result['attempts']} attempts: {retry_result['error']}")
             return MessageResponse(success=False, error=retry_result["error"])
-        
+
+    async def _track_message_in_history(self, session, message: str, message_type: str = "text") -> None:
+        """
+        Track bot message in session conversation history (both in-memory and Redis).
+
+        Args:
+            session: ConversationSession object to track message for
+            message: Message content that was sent
+            message_type: Type of message (default: 'text')
+        """
+        try:
+            from app.redis_db import get_session_redis_service
+            from app.services.helpers.summarization_helpers import SummarizationHelpers
+
+            # Update in-memory session (for database saves)
+            SummarizationHelpers.add_to_conversation_history(session, "assistant", message, message_type)
+
+            # Also update Redis directly (for consistency)
+            redis_session = get_session_redis_service()
+            await redis_session.append_message_to_history(session.session_id, "assistant", message, message_type)
+        except Exception as e:
+            # Don't fail the send if tracking fails - just log
+            logger.warning(f"Failed to track message in history for session {session.session_id}: {e}")
+
     async def send_template_message(self, recipient_id: str, template_name: str, parameters: list) -> MessageResponse:
         """
         Send template message with parameters and retry mechanism.
@@ -338,21 +370,23 @@ class WhatsAppService:
     
 
     
-    async def send_configurable_buttons(self, 
-                                      recipient_id: str, 
-                                      body: str, 
-                                      buttons_config: List[Dict[str, str]], 
+    async def send_configurable_buttons(self,
+                                      recipient_id: str,
+                                      body: str,
+                                      buttons_config: List[Dict[str, str]],
                                       header: Optional[str] = None,
-                                      footer: str = "(Type ‘Exit’ anytime to end the chat)") -> MessageResponse:
+                                      footer: str = "(Type 'Exit' anytime to end the chat)",
+                                      session=None) -> MessageResponse:
         """
         Send fully configurable button message that can be used anywhere with any button configuration.
-        
+
         Args:
             recipient_id: WhatsApp number
             header: Message header text
             body: Message body text
             buttons_config: List of button configurations with 'id', 'title', and optional 'action'
             footer: Footer text (optional)
+            session: Optional ConversationSession for tracking message in conversation history
         """
         try:
             if not buttons_config:
@@ -410,13 +444,20 @@ class WhatsAppService:
             
             if header:
                 content["header"] = {"type": "text", "text": header}
-            
-            return await self.send_interactive_message(recipient_id, "button", content)
-            
+
+            result = await self.send_interactive_message(recipient_id, "button", content)
+
+            # Track message in conversation history if session provided
+            if session and result.success:
+                # For buttons, track the body text as the message content
+                await self._track_message_in_history(session, combined_body, "interactive_button")
+
+            return result
+
         except Exception as e:
             logger.error(f"Error sending configurable buttons: {e}")
             return MessageResponse(success=False, error=str(e))
-        
+
     def format_vendor_results(self, vendors: List[Dict[str, Any]]) -> str:
         """
         Format vendor search results for WhatsApp message.

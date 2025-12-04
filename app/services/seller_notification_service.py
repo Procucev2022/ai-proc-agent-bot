@@ -44,9 +44,8 @@ class SellerNotificationService:
         delivery_location = rfq_data.get('delivery_location', {})
 
         # Build message with the 5 required fields
+        # Note: "New RFQ Opportunity" header is passed separately via the header parameter
         lines = []
-        lines.append("*New RFQ Opportunity*")
-        lines.append("")
 
         # 1. RFQ ID
         lines.append(f"*RFQ ID:* {rfq_id}")

@@ -287,7 +287,8 @@ class SectionedRFQCreationHandler:
                     msg,
                     buttons_config,
                     "Details Required",
-                    footer=""
+                    footer="",
+                    session=session
                 )
                 await self.session_manager.save_session(session, persist_to_db=False)
                 return {"status": "awaiting_delivery_details"}
@@ -296,7 +297,7 @@ class SectionedRFQCreationHandler:
         if not self._is_delivery_complete(delivery_data):
             # We have date+pincode but city/state lookup failed
             error_msg = f"Unable to find location for pincode {delivery_data.get('pincode')}. Please provide a valid pincode."
-            await self.whatsapp_service.send_message(user.phone_number, error_msg)
+            await self.whatsapp_service.send_message(user.phone_number, error_msg, session=session)
             # Save session before returning
             await self.session_manager.save_session(session, persist_to_db=False)
             return {"status": "invalid_pincode"}
@@ -351,7 +352,8 @@ class SectionedRFQCreationHandler:
                 error_msg,
                 buttons_config,
                 "Format Error",
-                footer=""
+                footer="",
+                session=session
             )
 
             # Save session to persist retry count
@@ -384,7 +386,8 @@ class SectionedRFQCreationHandler:
                 error_msg,
                 buttons_config,
                 "Invalid Date",
-                footer=""
+                footer="",
+                session=session
             )
             await self.session_manager.save_session(session, persist_to_db=False)
 
@@ -414,7 +417,8 @@ class SectionedRFQCreationHandler:
                 error_msg,
                 buttons_config,
                 "Invalid Pincode",
-                footer=""
+                footer="",
+                session=session
             )
             await self.session_manager.save_session(session, persist_to_db=False)
 
@@ -459,7 +463,8 @@ class SectionedRFQCreationHandler:
             message,
             buttons_config,
             "Confirmation Required",
-            footer=""  # Empty footer to prevent accidental exit triggers
+            footer="",  # Empty footer to prevent accidental exit triggers
+            session=session
         )
 
         # Save session
@@ -496,7 +501,8 @@ class SectionedRFQCreationHandler:
             message,
             buttons_config,
             "Missing Some Details",
-            footer=""
+            footer="",
+            session=session
         )
 
         # Set awaiting modification so user can fill in the format directly
@@ -586,7 +592,8 @@ class SectionedRFQCreationHandler:
                 msg,
                 buttons_config,
                 "Items Required",
-                footer=""
+                footer="",
+                session=session
             )
             return {"status": "awaiting_items"}
 
@@ -647,7 +654,8 @@ class SectionedRFQCreationHandler:
                 error_msg,
                 buttons_config,
                 "Format Error",
-                footer=""
+                footer="",
+                session=session
             )
 
             # Save session to persist retry count
@@ -697,7 +705,8 @@ class SectionedRFQCreationHandler:
             message,
             buttons_config,
             "Confirmation Required",
-            footer=""  # Empty footer to prevent accidental exit triggers
+            footer="",  # Empty footer to prevent accidental exit triggers
+            session=session
         )
 
         # Save session
@@ -730,7 +739,8 @@ class SectionedRFQCreationHandler:
             message,
             buttons_config,
             "Missing Some Details",
-            footer=""
+            footer="",
+            session=session
         )
 
         # Set awaiting modification so user can fill in the format directly
@@ -785,7 +795,8 @@ class SectionedRFQCreationHandler:
                 user.phone_number,
                 optional_message,
                 buttons_config,
-                "Optional Information"
+                "Optional Information",
+                session=session
             )
 
             logger.info(f"[SECTIONED_RFQ] Asked about attachments with Continue button")
@@ -945,7 +956,8 @@ class SectionedRFQCreationHandler:
             message,
             buttons_config,
             "Modify Details",
-            footer=""
+            footer="",
+            session=session
         )
 
         return {"status": "awaiting_modification"}
@@ -990,7 +1002,7 @@ class SectionedRFQCreationHandler:
         """Handle attachment yes/no decision."""
         if button_id == "attachments_yes":
             msg = "Please send your attachments (images, documents, etc.)."
-            await self.whatsapp_service.send_message(user.phone_number, msg)
+            await self.whatsapp_service.send_message(user.phone_number, msg, session=session)
             return {"status": "awaiting_attachments"}
         else:
             # No attachments, move to final confirmation
@@ -1007,7 +1019,7 @@ class SectionedRFQCreationHandler:
         # This would call the backend API to create the RFQ
 
         msg = "✅ Your RFQ has been created successfully! (Submission integration pending)"
-        await self.whatsapp_service.send_message(user.phone_number, msg)
+        await self.whatsapp_service.send_message(user.phone_number, msg, session=session)
 
         # Mark workflow as completed
         WorkflowManager.confirm_sectioned_section(session, "final_confirmation")
@@ -1030,7 +1042,7 @@ class SectionedRFQCreationHandler:
 
         message = ("Restart workflow? All your progress will be lost and you'll start from the beginning. Please reply with 'Yes' to restart or 'No' to continue.")
 
-        await self.whatsapp_service.send_message(user.phone_number, message)
+        await self.whatsapp_service.send_message(user.phone_number, message, session=session)
 
         WorkflowManager.set_sectioned_rfq_pending_restart(session, True)
         await self.session_manager.save_session(session, persist_to_db=False)
@@ -1050,7 +1062,7 @@ class SectionedRFQCreationHandler:
         else:
             # Not a clear response, wait for button click or clearer response
             msg = "Please click Yes or No, or type 'yes' to restart or 'no' to continue."
-            await self.whatsapp_service.send_message(user.phone_number, msg)
+            await self.whatsapp_service.send_message(user.phone_number, msg, session=session)
             return {"status": "awaiting_restart_confirmation"}
 
         if confirmed:
@@ -1064,7 +1076,7 @@ class SectionedRFQCreationHandler:
             msg = "Workflow restarted. Let's start by the Delivery Date and Delivery Pincode.\n\n"
             msg += "Note: If you are expecting the delivery at different locations or on different dates, "
             msg += "we request you create separate RFQs."
-            await self.whatsapp_service.send_message(user.phone_number, msg)
+            await self.whatsapp_service.send_message(user.phone_number, msg, session=session)
 
             return {"status": "workflow_restarted"}
         else:
@@ -1074,7 +1086,7 @@ class SectionedRFQCreationHandler:
             await self.session_manager.save_session(session, persist_to_db=False)
 
             msg = "Continuing with your request..."
-            await self.whatsapp_service.send_message(user.phone_number, msg)
+            await self.whatsapp_service.send_message(user.phone_number, msg, session=session)
 
             return {"status": "restart_declined"}
 
@@ -1375,7 +1387,7 @@ class SectionedRFQCreationHandler:
                   "you can add multiple items together in one message.\n\n"
                   "📝 Example:\n"
                   "Laptop Dell Inspiron - 5, Printer HP LaserJet - 2, Desktop HP 17\" - 10")
-            await self.whatsapp_service.send_message(user.phone_number, msg)
+            await self.whatsapp_service.send_message(user.phone_number, msg, session=session)
             return {"status": "awaiting_items"}
 
         elif next_section == "attachments":
@@ -1399,7 +1411,7 @@ class SectionedRFQCreationHandler:
         msg += f"The workflow has been cancelled.\n\n"
         msg += f"What would you like to do next?"
 
-        await self.whatsapp_service.send_message(user.phone_number, msg)
+        await self.whatsapp_service.send_message(user.phone_number, msg, session=session)
 
         return {"status": "max_retries_cancelled"}
 

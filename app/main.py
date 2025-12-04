@@ -344,15 +344,35 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
             interactive_buttons = []
 
             # Mock the WhatsApp service to capture messages and buttons
-            async def mock_send_message(recipient_id, message):
+            async def mock_send_message(recipient_id, message, session=None):
                 whatsapp_messages.append(message)
+                # Track message in session if provided
+                if session:
+                    try:
+                        from app.services.helpers.summarization_helpers import SummarizationHelpers
+                        from app.redis_db import get_session_redis_service
+                        SummarizationHelpers.add_to_conversation_history(session, "assistant", message, "text")
+                        redis_session = get_session_redis_service()
+                        await redis_session.append_message_to_history(session.session_id, "assistant", message, "text")
+                    except Exception as e:
+                        logger.warning(f"Failed to track message in mock: {e}")
                 return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
 
-            async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None):
+            async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None, session=None):
                 whatsapp_messages.append(body)
                 # Extract button info for UI
                 button_data = [{'id': btn.get('id'), 'title': btn.get('title')} for btn in buttons_config]
                 interactive_buttons.append(button_data)
+                # Track message in session if provided
+                if session:
+                    try:
+                        from app.services.helpers.summarization_helpers import SummarizationHelpers
+                        from app.redis_db import get_session_redis_service
+                        SummarizationHelpers.add_to_conversation_history(session, "assistant", body, "interactive_button")
+                        redis_session = get_session_redis_service()
+                        await redis_session.append_message_to_history(session.session_id, "assistant", body, "interactive_button")
+                    except Exception as e:
+                        logger.warning(f"Failed to track button message in mock: {e}")
                 return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
 
             # Determine message type based on content structure
@@ -451,17 +471,37 @@ async def upload_excel_file(
         whatsapp_messages = []
         interactive_buttons = []
         
-        async def mock_send_message(recipient_id, message):
+        async def mock_send_message(recipient_id, message, session=None):
             whatsapp_messages.append(message)
+            # Track message in session if provided
+            if session:
+                try:
+                    from app.services.helpers.summarization_helpers import SummarizationHelpers
+                    from app.redis_db import get_session_redis_service
+                    SummarizationHelpers.add_to_conversation_history(session, "assistant", message, "text")
+                    redis_session = get_session_redis_service()
+                    await redis_session.append_message_to_history(session.session_id, "assistant", message, "text")
+                except Exception as e:
+                    logger.warning(f"Failed to track message in mock: {e}")
             return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
 
-        async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None):
+        async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None, session=None):
             whatsapp_messages.append(body)
             # Extract button info for UI
             button_data = [{'id': btn.get('id'), 'title': btn.get('title')} for btn in buttons_config]
             interactive_buttons.append(button_data)
+            # Track message in session if provided
+            if session:
+                try:
+                    from app.services.helpers.summarization_helpers import SummarizationHelpers
+                    from app.redis_db import get_session_redis_service
+                    SummarizationHelpers.add_to_conversation_history(session, "assistant", body, "interactive_button")
+                    redis_session = get_session_redis_service()
+                    await redis_session.append_message_to_history(session.session_id, "assistant", body, "interactive_button")
+                except Exception as e:
+                    logger.warning(f"Failed to track button message in mock: {e}")
             return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
-        
+
         # Mock the validation service to use direct content
         from app.services.excel_validation_service import ExcelValidationService
 

@@ -271,6 +271,88 @@ class SessionRedisService(BaseRedisService):
         key = f"session:{session_id}"
         return await self.ttl(key)
 
+    async def append_message_to_history(self, session_id: str, role: str, content: str, message_type: str = "text") -> bool:
+        """
+        Append a message to session's conversation history atomically.
+
+        This method reads the session, appends the message, and writes back.
+        Used by WhatsAppService to track bot messages without requiring session object.
+
+        Args:
+            session_id: Unique session identifier
+            role: Message role ('user' or 'assistant')
+            content: Message content
+            message_type: Type of message (default: 'text')
+
+        Returns:
+            True if message appended successfully
+        """
+        try:
+            from app.utils.datetime_utils import utc_now
+
+            key = f"session:{session_id}"
+            session_data = await self.get(key, as_json=True)
+
+            if not session_data:
+                logger.warning(f"Cannot append message - session {session_id} not found in Redis")
+                return False
+
+            # Initialize conversation_history if needed
+            if 'conversation_history' not in session_data:
+                session_data['conversation_history'] = {"messages": [], "metadata": [], "openai_messages": []}
+
+            conv_history = session_data['conversation_history']
+
+            # Ensure all required lists exist
+            if 'messages' not in conv_history:
+                conv_history['messages'] = []
+            if 'metadata' not in conv_history:
+                conv_history['metadata'] = []
+            if 'openai_messages' not in conv_history:
+                conv_history['openai_messages'] = []
+
+            # Create message entry
+            timestamp = utc_now().isoformat()
+            message_entry = {
+                "role": role,
+                "content": content,
+                "timestamp": timestamp,
+                "message_type": message_type
+            }
+
+            # Append to all history formats
+            conv_history['messages'].append(message_entry)
+            conv_history['metadata'].append({
+                "timestamp": timestamp,
+                "message_type": message_type,
+                "role": role
+            })
+            conv_history['openai_messages'].append({
+                "role": role,
+                "content": content
+            })
+
+            # Update last_activity_at
+            session_data['last_activity_at'] = timestamp
+
+            # Get current TTL to preserve it
+            current_ttl = await self.ttl(key)
+            ttl_to_use = current_ttl if current_ttl and current_ttl > 0 else self.default_ttl
+
+            # Save back to Redis
+            success = await self.set(key, session_data, ex=ttl_to_use)
+
+            if success:
+                logger.debug(f"Appended {role} message to session {session_id} conversation history")
+            else:
+                logger.error(f"Failed to save session {session_id} after appending message")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Error appending message to session {session_id}: {e}")
+            return False
+
 
 # Singleton instances
 _redis_service: Optional[BaseRedisService] = None
