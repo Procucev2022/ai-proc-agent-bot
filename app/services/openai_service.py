@@ -1317,11 +1317,14 @@ Analyze their response to determine their true choice.
 
 
 
-            tool_call = response.output[0]
-            arguments_str = tool_call.arguments
-            arguments_dict = json.loads(arguments_str)
-
-            return arguments_dict or "I apologize, but I'm having trouble generating a seller intent  response right now."
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    return args or "I apologize, but I'm having trouble generating a seller intent response right now."
+            
+            return "I apologize, but I'm having trouble generating a seller intent response right now."
 
         except Exception as e:
             logger.error(f"Response generation failed: {str(e)}")

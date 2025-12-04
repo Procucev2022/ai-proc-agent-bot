@@ -1367,7 +1367,7 @@ class ChatService:
             if (user.role.value if hasattr(user.role, "value") else user.role) == "seller":
 
                 # If workflow already in RFQ view → continue that flow first (highest priority)
-                if session.workflow_type and hasattr(session.workflow_type, "value") and session.workflow_type.value == "seller_rfq_view":
+                if session.workflow_type and hasattr(session.workflow_type, "value") and session.workflow_type.value == "seller_rfq_view" :
                     workflow_state = session.workflow_state or {}
                     current_seller_state = workflow_state.get("seller_workflow_state")
 
@@ -3199,7 +3199,7 @@ class ChatService:
             async def send_response(result):
                 msg = result.get("message")
                 if msg and not result.get("message_already_sent"):
-                    await self.whatsapp_service.send_message(user.phone_number, msg)
+                    await self.whatsapp_service.send_message(user.phone_number, msg , session = session)
                     self.session_manager.add_message_to_history(session, "assistant", msg)
 
             # --- Single call to seller workflow handler ---
@@ -3218,8 +3218,21 @@ class ChatService:
                     )
                     await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
-            # Send message
-            await send_response(result)
+            # Handle display_rfqs_to_seller workflow step with buttons
+            if result.get("workflow_step") == "display_rfqs_to_seller":
+                buttons_config = [
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+                
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    result.get("message"),
+                    buttons_config
+                )
+            else:
+                # Send message normally
+                await send_response(result , session)
 
             return {"status": "seller_flow_processed", **result}
 

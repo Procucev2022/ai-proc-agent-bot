@@ -405,7 +405,7 @@ class ResponseHelpers:
             rfq_id = rfq.get("rfq_id", "N/A")
             location = rfq.get("location", "N/A")
             date = rfq.get("submission_date", "N/A")
-            message += f"{i}. RFQ {rfq_id}\n   📍 {location}\n   📅 {date}\n\n"
+            message += f"{i}. RFQ {rfq_id}\n    {location}\n    {date}\n\n"
 
         message += "Type the RFQ IDs you want to receive via email.\nExample: '23112' or '23112, 23087'"
         return message
