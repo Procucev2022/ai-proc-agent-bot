@@ -81,14 +81,6 @@ class SummarizationHelpers:
                 "sender": sender,
                 "type": message_type
             }
-            # Add interactive payload if buttons or headers are present
-            if message_type == "interactive_button" and isinstance(message, dict):
-                message_entry["interactive_payload"] = {
-                    "body": message.get("body"),
-                    "header": message.get("header"),
-                    "footer": message.get("footer"),
-                    "buttons": message.get("buttons")
-                }
 
             # Add intent data for user messages if provided
             if sender == "user" and intent is not None:

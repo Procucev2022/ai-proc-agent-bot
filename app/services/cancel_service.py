@@ -14,7 +14,7 @@ from app.services.confirmation_service import ConfirmationService
 from app.tools.confirmation_tool import ConfirmationTool
 from app.services.openai_service import OpenAIService
 from app.database import DatabaseManager
-
+from app.utils.message_restore_utils import restore_last_bot_message
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class CancelService:
                 else:
                     # Normal text keywords
                     is_confirmed = any(
-                        word in user_text for word in ["yes", "confirm", "cancel", "sure", "ok"])
+                        word in user_text for word in ["yes", "confirm", "cancel", "sure", "ok","restart"])
 
                 logger.info(f"Detected cancel confirmation: {is_confirmed} from message: '{message}'")
                 return await self.handle_cancel_confirmation(user_phone, session, is_confirmed,user)
@@ -151,7 +151,7 @@ class CancelService:
                 user_cache_service = get_user_cache_service()
                 user_data_list = await user_cache_service.get_user_data(user_phone)
                 user_type = None
-                if user_data_list and len(user_data_list) > 0:
+                if user:
                     # selfClient: True = buyer, False = seller
                     is_self_client = user.role
                     logger.info(f"user role is:{is_self_client}")
@@ -180,18 +180,13 @@ class CancelService:
                 # User declined - resume workflow
                 # Send a brief acknowledgment
                 logger.info(f"User declined cancellation - resuming workflow")
-
-                # Restore the last bot message if available
-                last_bot_message = session.workflow_state.get("last_bot_message_before_cancel")
-                if last_bot_message:
-                    await self.whatsapp_service.send_message(user_phone, last_bot_message)
-                    # Clear the saved message
-                    session.workflow_state.pop("last_bot_message_before_cancel", None)
-                else:
-                    await self.whatsapp_service.send_message(
-                        user_phone,
-                        "The cancellation request has been declined. You may continue with your request."
-                    )
+                await restore_last_bot_message(
+                    session,
+                    self.whatsapp_service,
+                    user_phone,
+                    "The cancellation request has been declined. You may continue with your request.",
+                    "last_bot_message_before_cancel"
+                )
 
                 # Save session
                 if self.session_manager:

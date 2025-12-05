@@ -13,8 +13,7 @@ from app.services.authentication_service import AuthenticationService
 from app.services.session_management_service import SessionManagementService
 from app.database import DatabaseManager
 from app.utils.datetime_utils import utc_now
-
-
+from app.utils.message_restore_utils import restore_last_bot_message
 logger = logging.getLogger(__name__)
 
 
@@ -319,53 +318,14 @@ class ExitService:
                 logger.info(f"User declined exit - resuming workflow")
 
                 # Restore the last bot message if available
-                last_bot_message = session.workflow_state.get("last_bot_message_before_exit")
-                # if last_bot_message:
-                #     await self.whatsapp_service.send_message(user_phone, last_bot_message)
-                #     # Clear the saved message
-                #     session.workflow_state.pop("last_bot_message_before_exit", None)
-                # else:
-                #     await self.whatsapp_service.send_message(
-                #         user_phone,
-                #         "The exit request has been declined. You may continue with your request."
-                #     )
-                last_bot_message = session.workflow_state.get("last_bot_message_before_exit")
+                await restore_last_bot_message(
+                    session,
+                    self.whatsapp_service,
+                    user_phone,
+                    "The exit request has been declined. You may continue with your request.",
+                    "last_bot_message_before_exit"
+                )
 
-                if last_bot_message:
-
-                    # CASE 1 → Structured message with buttons (dict)
-                    if isinstance(last_bot_message, dict):
-                        body = last_bot_message.get("body")
-                        buttons = last_bot_message.get("buttons") or []
-                        header = last_bot_message.get("header")
-                        footer = last_bot_message.get("footer")
-
-                        if buttons or header or footer:
-                            # Send as configurable buttons message
-                            await self.whatsapp_service.send_configurable_buttons(
-                                recipient_id=user_phone,
-                                body=body,
-                                buttons_config=buttons,
-                                header=header,
-                                footer=footer,
-                            )
-                        else:
-                            # Dict but no buttons/header/footer → send only body as normal text
-                            await self.whatsapp_service.send_message(user_phone, body)
-
-                    # CASE 2 → Normal text message (string)
-                    elif isinstance(last_bot_message, str):
-                        await self.whatsapp_service.send_message(user_phone, last_bot_message)
-
-                    # Clear saved message after sending
-                    session.workflow_state.pop("last_bot_message_before_exit", None)
-
-                else:
-                    # Nothing saved → fallback message
-                    await self.whatsapp_service.send_message(
-                        user_phone,
-                        "The exit request has been declined. You may continue with your request."
-                    )
 
                 # Save session
                 if self.session_manager:

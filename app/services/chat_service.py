@@ -2853,7 +2853,7 @@ class ChatService:
         
         # Handle cancel workflow confirmation buttons
         elif button_id in ["confirm_cancel", "decline_cancel"]:
-            return await self._handle_cancel_confirmation_button(user, session, button_id,user)
+            return await self._handle_cancel_confirmation_button(user, session, button_id)
         
         # Handle exit confirmation buttons
         elif button_id in ["confirm_exit", "decline_exit"]:
