@@ -137,9 +137,10 @@ def process_seller_matching(self):
                     processed_count += 1
                     # Add newly notified sellers to exclusion set for subsequent RFQs
                     # This prevents same seller getting multiple RFQs in one batch
-                    if result.get("sellers_matched", 0) > 0:
-                        # Note: We'd need seller IDs in result to do this properly
-                        pass
+                    notified_ids = result.get("seller_ids_notified", [])
+                    if notified_ids:
+                        excluded_seller_ids.update(notified_ids)
+                        logger.info(f"Added {len(notified_ids)} sellers to batch exclusion set (total excluded: {len(excluded_seller_ids)})")
                 else:
                     failed_count += 1
 
@@ -493,6 +494,7 @@ async def process_single_rfq_matching(
                 "categories_used": categories,
                 "notifications_sent": notification_results.get("sent", 0),
                 "notifications_failed": notification_results.get("failed", 0),
+                "seller_ids_notified": [s.get('seller_id') for s in all_selected],  # For batch exclusion
                 "progress": {
                     "subscribed": subscribed_notified + len(selected_subscribed),
                     "unsubscribed": unsubscribed_notified + len(selected_unsubscribed),
