@@ -262,12 +262,15 @@ def get_rfq_item_categories(rfq_uuid: str) -> List[str]:
 
 def get_sellers_notified_in_last_24hrs() -> Set[str]:
     """
-    Get set of seller UUIDs who received any RFQ notification in the last 24 hours.
+    Get set of seller UUIDs who received any RFQ notification recently.
+
+    Note: Currently set to 15 minutes for testing. Change to hours=24 for production.
 
     Returns:
         Set of vendor_uuid strings to exclude from selection
     """
-    cutoff_time = datetime.utcnow() - timedelta(hours=24)
+    # TODO: Change to timedelta(hours=24) for production
+    cutoff_time = datetime.utcnow() - timedelta(minutes=15)
 
     query = """
         SELECT DISTINCT vendor_uuid
