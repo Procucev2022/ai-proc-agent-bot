@@ -823,7 +823,7 @@ class ProfileSelectionService:
                             user_phone,
                             buying_message,
                             buttons_config,
-                            session=session
+                            session_id=session
                         )
 
                         return {
@@ -1025,7 +1025,7 @@ class ProfileSelectionService:
                 menu_message,
                 buttons_config,
                 header,
-                session=session
+                session_id=session
             )
 
             return {

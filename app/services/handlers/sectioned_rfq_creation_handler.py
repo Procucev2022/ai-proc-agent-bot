@@ -288,7 +288,7 @@ class SectionedRFQCreationHandler:
                     buttons_config,
                     "Details Required",
                     footer="",
-                    session=session
+                    session_id=session
                 )
                 await self.session_manager.save_session(session, persist_to_db=False)
                 return {"status": "awaiting_delivery_details"}
@@ -353,7 +353,7 @@ class SectionedRFQCreationHandler:
                 buttons_config,
                 "Format Error",
                 footer="",
-                session=session
+                session_id=session
             )
 
             # Save session to persist retry count
@@ -387,7 +387,7 @@ class SectionedRFQCreationHandler:
                 buttons_config,
                 "Invalid Date",
                 footer="",
-                session=session
+                session_id=session
             )
             await self.session_manager.save_session(session, persist_to_db=False)
 
@@ -418,7 +418,7 @@ class SectionedRFQCreationHandler:
                 buttons_config,
                 "Invalid Pincode",
                 footer="",
-                session=session
+                session_id=session
             )
             await self.session_manager.save_session(session, persist_to_db=False)
 
@@ -464,7 +464,7 @@ class SectionedRFQCreationHandler:
             buttons_config,
             "Confirmation Required",
             footer="",  # Empty footer to prevent accidental exit triggers
-            session=session
+            session_id=session
         )
 
         # Save session
@@ -502,7 +502,7 @@ class SectionedRFQCreationHandler:
             buttons_config,
             "Missing Some Details",
             footer="",
-            session=session
+            session_id=session
         )
 
         # Set awaiting modification so user can fill in the format directly
@@ -593,7 +593,7 @@ class SectionedRFQCreationHandler:
                 buttons_config,
                 "Items Required",
                 footer="",
-                session=session
+                session_id=session
             )
             return {"status": "awaiting_items"}
 
@@ -655,7 +655,7 @@ class SectionedRFQCreationHandler:
                 buttons_config,
                 "Format Error",
                 footer="",
-                session=session
+                session_id=session
             )
 
             # Save session to persist retry count
@@ -706,7 +706,7 @@ class SectionedRFQCreationHandler:
             buttons_config,
             "Confirmation Required",
             footer="",  # Empty footer to prevent accidental exit triggers
-            session=session
+            session_id=session
         )
 
         # Save session
@@ -740,7 +740,7 @@ class SectionedRFQCreationHandler:
             buttons_config,
             "Missing Some Details",
             footer="",
-            session=session
+            session_id=session
         )
 
         # Set awaiting modification so user can fill in the format directly
@@ -796,7 +796,7 @@ class SectionedRFQCreationHandler:
                 optional_message,
                 buttons_config,
                 "Optional Information",
-                session=session
+                session_id=session
             )
 
             logger.info(f"[SECTIONED_RFQ] Asked about attachments with Continue button")
@@ -957,7 +957,7 @@ class SectionedRFQCreationHandler:
             buttons_config,
             "Modify Details",
             footer="",
-            session=session
+            session_id=session
         )
 
         return {"status": "awaiting_modification"}

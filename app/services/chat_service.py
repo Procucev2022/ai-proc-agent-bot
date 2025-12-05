@@ -1546,7 +1546,7 @@ class ChatService:
                     await self.whatsapp_service.send_message(
                         user.phone_number,
                         "Would you like to register as a buyer or seller?",
-                        session=session
+                        session_id=session
                     )
                     return {"status": "registration_clarification_requested"}
 
@@ -2485,7 +2485,7 @@ class ChatService:
                 profile_message,
                 buttons_config,
                 header,
-                session=session
+                session_id=session
             )
 
 
