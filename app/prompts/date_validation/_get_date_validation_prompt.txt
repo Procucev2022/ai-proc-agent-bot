@@ -127,7 +127,7 @@ USER-FRIENDLY ERROR MESSAGES:
 EXAMPLES (assuming current date is {current_date}):
 - Input: "12 sept" → Valid: "{current_year}-09-12" (current year assumed)
 - Input: "30th sept" → Valid: "{current_year}-09-30" (ordinal number handled)
-- Input: "5th jan" → If January has passed in current year, assume next year: is_valid=true
+- Input: "5th jan" → If January has passed in current year, assume next year
 - Input: "1st jan" → Valid: "{current_year}-01-01" or next year if January has passed
 - Input: "2nd feb" → Valid: "{current_year}-02-02" (ordinal number handled)
 - Input: "3rd march" → Valid: "{current_year}-03-03" (ordinal number handled)
