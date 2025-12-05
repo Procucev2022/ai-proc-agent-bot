@@ -2,18 +2,22 @@
 Seller Matching Task - Item-Category Based Matching
 
 This task processes categorized RFQ items and performs seller matching:
-1. Fetches items from rfq_items that have categories assigned
+1. Fetches RFQs that need more sellers (haven't reached target counts)
 2. Groups items by RFQ and collects unique categories
 3. For each category, finds matching sellers
-4. Deduplicates sellers across all categories
-5. Excludes sellers who received ANY RFQ in the last 24 hours
-6. Logs selected sellers to gmt_rfq_vendors table
+4. Separates sellers into subscribed (has credits) and unsubscribed (no credits)
+5. Applies filters: 24hr exclusion, workflow status (skip if busy)
+6. Selects only the remaining needed count of sellers
+7. Logs selected sellers to gmt_rfq_vendors table
+8. Repeats until target reached or RFQ closed (quotation_received)
+
+Target per RFQ: 5 subscribed sellers + 10 unsubscribed sellers
 """
 
 import asyncio
 import logging
 import uuid as uuid_lib
-from typing import List, Dict, Any, Set
+from typing import List, Dict, Any, Set, Tuple
 from celery import shared_task
 from datetime import datetime, timedelta
 
@@ -23,6 +27,64 @@ from app.services.seller_notification_service import SellerNotificationService
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# Target seller counts per RFQ
+TARGET_SUBSCRIBED_SELLERS = 5    # Sellers with rfq_credits > 0
+TARGET_UNSUBSCRIBED_SELLERS = 10  # Sellers with rfq_credits = 0
+
+
+def get_rfq_notification_progress(rfq_uuid: str) -> Dict[str, int]:
+    """
+    Get the current notification progress for an RFQ.
+
+    Counts how many subscribed and unsubscribed sellers have already been notified.
+    Subscribed = rfq_credits > 0, Unsubscribed = rfq_credits = 0
+
+    Args:
+        rfq_uuid: The RFQ UUID
+
+    Returns:
+        Dictionary with subscribed_notified, unsubscribed_notified counts
+    """
+    query = """
+        SELECT
+            COALESCE(SUM(CASE WHEN o.rfq_credits > 0 THEN 1 ELSE 0 END), 0) as subscribed_notified,
+            COALESCE(SUM(CASE WHEN o.rfq_credits = 0 THEN 1 ELSE 0 END), 0) as unsubscribed_notified
+        FROM gmt_rfq_vendors grv
+        JOIN organization o ON grv.vendor_uuid = o.uuid
+        WHERE grv.rfq_uuid = :rfq_uuid
+    """
+
+    results = execute_remote_query(query, {'rfq_uuid': rfq_uuid})
+
+    if results:
+        return {
+            'subscribed_notified': int(results[0].get('subscribed_notified', 0)),
+            'unsubscribed_notified': int(results[0].get('unsubscribed_notified', 0))
+        }
+
+    return {'subscribed_notified': 0, 'unsubscribed_notified': 0}
+
+
+def get_sellers_already_notified_for_rfq(rfq_uuid: str) -> Set[str]:
+    """
+    Get set of seller UUIDs already notified for a specific RFQ.
+
+    Args:
+        rfq_uuid: The RFQ UUID
+
+    Returns:
+        Set of vendor_uuid strings already notified for this RFQ
+    """
+    query = """
+        SELECT DISTINCT vendor_uuid
+        FROM gmt_rfq_vendors
+        WHERE rfq_uuid = :rfq_uuid
+        AND vendor_uuid IS NOT NULL
+    """
+
+    results = execute_remote_query(query, {'rfq_uuid': rfq_uuid})
+    return {r['vendor_uuid'] for r in results if r.get('vendor_uuid')}
 
 
 @shared_task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 120})
@@ -75,12 +137,11 @@ def process_seller_matching(self):
                     processed_count += 1
                     # Add newly notified sellers to exclusion set for subsequent RFQs
                     # This prevents same seller getting multiple RFQs in one batch
-                    if result.get("sellers_matched", 0) > 0 and result.get("selected_sellers"):
-                        for seller in result["selected_sellers"]:
-                            seller_id = seller.get("seller_id")
-                            if seller_id:
-                                excluded_seller_ids.add(seller_id)
-                        logger.info(f"Added {len(result['selected_sellers'])} sellers to exclusion set. Total excluded: {len(excluded_seller_ids)}")
+                    notified_ids = result.get("seller_ids_notified", [])
+                    if notified_ids:
+                        excluded_seller_ids.update(notified_ids)
+                        logger.info(f"Added {len(notified_ids)} sellers to batch exclusion set (total excluded: {len(excluded_seller_ids)})")
+
                 else:
                     failed_count += 1
 
@@ -111,28 +172,26 @@ def process_seller_matching(self):
 
 def get_rfqs_needing_seller_matching(limit: int = 50) -> List[Dict[str, Any]]:
     """
-    Get RFQs with categorized items that need seller matching.
+    Get RFQs with categorized items that need more seller matching.
 
-    Queries rfq_items to find items with categories, then groups by RFQ.
+    Fetches RFQs that:
+    1. Have items with categories (not NULL in rfq_items)
+    2. Are from WhatsApp (source_type = 'W')
+    3. Are not too old (within last 7 days)
+    4. Are not closed (quotation_received = 0)
+    5. Haven't reached target seller counts yet
 
     Args:
         limit: Maximum number of RFQs to fetch
 
     Returns:
-        List of RFQ records with their categorized items
+        List of RFQ records that need more sellers
     """
-    # Get RFQs that:
-    # 1. Have items with categories (not NULL in rfq_items)
-    # 2. Are from WhatsApp (source_type = 'W')
-    # 3. Don't already have seller notifications sent
-    # 4. Are not too old (within last 7 days)
-    # 5. Are not closed yet
-
     cutoff_date = datetime.utcnow() - timedelta(days=7)
 
-    # First, get distinct RFQs that have categorized items and no vendor assignments yet
-    # Exclude items with category "other" (case-insensitive)
-    # Join with client_delivery_location_rfq to get delivery address
+    # Get RFQs that need more sellers
+    # Uses subquery to count current subscribed/unsubscribed notifications
+
     query = """
         SELECT DISTINCT
             h.uuid as rfq_uuid,
@@ -145,26 +204,39 @@ def get_rfqs_needing_seller_matching(limit: int = 50) -> List[Dict[str, Any]]:
             h.created_ts,
             h.source_type,
             h.special_instruction,
-            dl.city as delivery_city,
-            dl.state as delivery_state,
-            dl.pincode as delivery_pincode
+            COALESCE(progress.subscribed_count, 0) as subscribed_notified,
+            COALESCE(progress.unsubscribed_count, 0) as unsubscribed_notified
         FROM rfq_header h
         INNER JOIN rfq_items i ON h.uuid = i.rfq_uuid
-        LEFT JOIN gmt_rfq_vendors v ON h.uuid = v.rfq_uuid
-        LEFT JOIN client_delivery_location_rfq dl ON h.uuid = dl.rfq_uuid
+        LEFT JOIN (
+            SELECT
+                grv.rfq_uuid,
+                SUM(CASE WHEN o.rfq_credits > 0 THEN 1 ELSE 0 END) as subscribed_count,
+                SUM(CASE WHEN o.rfq_credits = 0 THEN 1 ELSE 0 END) as unsubscribed_count
+            FROM gmt_rfq_vendors grv
+            JOIN organization o ON grv.vendor_uuid = o.uuid
+            GROUP BY grv.rfq_uuid
+        ) progress ON h.uuid = progress.rfq_uuid
+
         WHERE i.category IS NOT NULL
         AND LOWER(TRIM(i.category)) != 'other'
         AND h.source_type = 'W'
         AND h.created_ts > :cutoff_date
         AND (h.rfq_closing_date IS NULL OR h.rfq_closing_date > NOW())
-        AND v.rfq_uuid IS NULL
+        AND h.quotation_received = 0
+        AND (
+            COALESCE(progress.subscribed_count, 0) < :target_subscribed
+            OR COALESCE(progress.unsubscribed_count, 0) < :target_unsubscribed
+        )
         ORDER BY h.created_ts DESC
         LIMIT :limit
     """
 
     return execute_remote_query(query, {
         'limit': limit,
-        'cutoff_date': cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
+        'cutoff_date': cutoff_date.strftime('%Y-%m-%d %H:%M:%S'),
+        'target_subscribed': TARGET_SUBSCRIBED_SELLERS,
+        'target_unsubscribed': TARGET_UNSUBSCRIBED_SELLERS
     })
 
 
@@ -194,12 +266,15 @@ def get_rfq_item_categories(rfq_uuid: str) -> List[str]:
 
 def get_sellers_notified_in_last_24hrs() -> Set[str]:
     """
-    Get set of seller UUIDs who received any RFQ notification in the last 24 hours.
+    Get set of seller UUIDs who received any RFQ notification recently.
+
+    Note: Currently set to 15 minutes for testing. Change to hours=24 for production.
 
     Returns:
         Set of vendor_uuid strings to exclude from selection
     """
-    cutoff_time = datetime.utcnow() - timedelta(hours=24)
+    # TODO: Change to timedelta(hours=24) for production
+    cutoff_time = datetime.utcnow() - timedelta(minutes=15)
 
     query = """
         SELECT DISTINCT vendor_uuid
@@ -223,8 +298,12 @@ async def process_single_rfq_matching(
     """
     Process seller matching for a single RFQ based on item categories.
 
+    Selects only the remaining needed sellers to reach target counts:
+    - 5 subscribed sellers (rfq_credits > 0)
+    - 10 unsubscribed sellers (rfq_credits = 0)
+
     Args:
-        rfq: RFQ data dictionary
+        rfq: RFQ data dictionary (includes current progress counts)
         seller_service: Initialized SellerRecommendationService instance
         excluded_seller_ids: Set of seller UUIDs to exclude (notified in last 24hrs)
 
@@ -236,6 +315,34 @@ async def process_single_rfq_matching(
 
     try:
         logger.info(f"Processing seller matching for RFQ {rfq_id}")
+
+        # Get current progress from RFQ data (populated by query)
+        subscribed_notified = int(rfq.get('subscribed_notified', 0))
+        unsubscribed_notified = int(rfq.get('unsubscribed_notified', 0))
+
+        # Calculate remaining needed
+        subscribed_needed = max(0, TARGET_SUBSCRIBED_SELLERS - subscribed_notified)
+        unsubscribed_needed = max(0, TARGET_UNSUBSCRIBED_SELLERS - unsubscribed_notified)
+
+        logger.info(
+            f"RFQ {rfq_id} progress: {subscribed_notified}/{TARGET_SUBSCRIBED_SELLERS} subscribed, "
+            f"{unsubscribed_notified}/{TARGET_UNSUBSCRIBED_SELLERS} unsubscribed. "
+            f"Need: {subscribed_needed} subscribed, {unsubscribed_needed} unsubscribed"
+        )
+
+        if subscribed_needed == 0 and unsubscribed_needed == 0:
+            logger.info(f"RFQ {rfq_id} has reached target seller counts, skipping")
+            return {
+                "rfq_id": rfq_id,
+                "success": True,
+                "sellers_matched": 0,
+                "message": "Target seller counts already reached",
+                "subscribed_notified": subscribed_notified,
+                "unsubscribed_notified": unsubscribed_notified
+            }
+
+        # NOTE: Per-RFQ exclusion removed - sellers can be re-notified for same RFQ
+        # already_notified_for_rfq = get_sellers_already_notified_for_rfq(rfq_uuid)
 
         # Step 1: Get all unique categories from rfq_items for this RFQ
         categories = get_rfq_item_categories(rfq_uuid)
@@ -265,8 +372,9 @@ async def process_single_rfq_matching(
             'org_uuid': rfq.get('org_uuid')
         }
 
-        # Step 2: Collect sellers for ALL categories, then deduplicate
-        all_matched_sellers = {}  # seller_id -> seller_data (deduplication)
+        # Step 2: Collect sellers for ALL categories, separated by subscription status
+        subscribed_sellers = {}  # seller_id -> seller_data (rfq_credits > 0)
+        unsubscribed_sellers = {}  # seller_id -> seller_data (rfq_credits = 0)
 
         for category in categories:
             logger.info(f"Finding sellers for category: {category}")
@@ -309,40 +417,61 @@ async def process_single_rfq_matching(
                 candidate_seller_ids=candidate_seller_ids
             )
 
-            # Collect sellers from this category (deduplicate by seller_id)
+            # Collect sellers from this category, separated by subscription status
+            # The seller service already separates them
             for seller in seller_result.get('subscribed_sellers', []):
                 seller_id = seller.get('seller_id')
-                if seller_id and seller_id not in all_matched_sellers:
-                    all_matched_sellers[seller_id] = seller
+                if seller_id and seller_id not in subscribed_sellers:
+                    subscribed_sellers[seller_id] = seller
 
             for seller in seller_result.get('unsubscribed_sellers', []):
                 seller_id = seller.get('seller_id')
-                if seller_id and seller_id not in all_matched_sellers:
-                    all_matched_sellers[seller_id] = seller
+                if seller_id and seller_id not in unsubscribed_sellers:
+                    unsubscribed_sellers[seller_id] = seller
 
-        logger.info(f"Total unique sellers found across all categories: {len(all_matched_sellers)}")
+        logger.info(
+            f"Total unique sellers found: {len(subscribed_sellers)} subscribed, "
+            f"{len(unsubscribed_sellers)} unsubscribed"
+        )
 
-        # Step 3: Filter out sellers notified in last 24 hours
-        filtered_sellers = {
-            sid: sdata for sid, sdata in all_matched_sellers.items()
+        # Step 3: Apply filters - time-based exclusion only (per-RFQ exclusion removed)
+        filtered_subscribed = {
+            sid: sdata for sid, sdata in subscribed_sellers.items()
+            if sid not in excluded_seller_ids
+        }
+        filtered_unsubscribed = {
+            sid: sdata for sid, sdata in unsubscribed_sellers.items()
             if sid not in excluded_seller_ids
         }
 
-        excluded_count = len(all_matched_sellers) - len(filtered_sellers)
-        if excluded_count > 0:
-            logger.info(f"Excluded {excluded_count} sellers (notified in last 24hrs)")
+        excluded_count = len(subscribed_sellers) + len(unsubscribed_sellers) - \
+                        len(filtered_subscribed) - len(filtered_unsubscribed)
 
-        logger.info(f"Final sellers to notify: {len(filtered_sellers)}")
+        logger.info(
+            f"After filtering: {len(filtered_subscribed)} subscribed, "
+            f"{len(filtered_unsubscribed)} unsubscribed available. "
+            f"Excluded {excluded_count} (time-based filter)"
+        )
 
-        if filtered_sellers:
+        # Step 4: Select only the needed count for each type
+        selected_subscribed = list(filtered_subscribed.values())[:subscribed_needed]
+        selected_unsubscribed = list(filtered_unsubscribed.values())[:unsubscribed_needed]
+
+        all_selected = selected_subscribed + selected_unsubscribed
+
+        logger.info(
+            f"Selected for notification: {len(selected_subscribed)} subscribed, "
+            f"{len(selected_unsubscribed)} unsubscribed"
+        )
+
+        if all_selected:
             # Log detailed seller information
-            sellers_list = list(filtered_sellers.values())
-            _log_selected_sellers_details(rfq_id, sellers_list, categories)
+            _log_selected_sellers_details(rfq_id, all_selected, categories)
 
             # Log selected sellers to gmt_rfq_vendors table
             try:
-                log_selected_sellers_to_remote(rfq_uuid, rfq_id, sellers_list)
-                logger.info(f"Successfully logged {len(filtered_sellers)} sellers to gmt_rfq_vendors for RFQ {rfq_id}")
+                log_selected_sellers_to_remote(rfq_uuid, rfq_id, all_selected)
+                logger.info(f"Successfully logged {len(all_selected)} sellers to gmt_rfq_vendors for RFQ {rfq_id}")
             except Exception as e:
                 logger.warning(f"Could not log to gmt_rfq_vendors: {e}")
                 logger.info(f"Seller selection completed for RFQ {rfq_id} but logging skipped")
@@ -351,37 +480,46 @@ async def process_single_rfq_matching(
             notification_service = SellerNotificationService()
             notification_results = await notification_service.send_rfq_notifications(
                 rfq_data=rfq_data,
-                sellers=sellers_list
+                sellers=all_selected
             )
-            logger.info(f"Notification results for RFQ {rfq_id}: {notification_results['sent']} sent, {notification_results['failed']} failed")
+            logger.info(
+                f"Notification results for RFQ {rfq_id}: "
+                f"{notification_results['sent']} sent, {notification_results['failed']} failed"
+            )
 
             return {
                 "rfq_id": rfq_id,
                 "success": True,
-                "sellers_matched": len(filtered_sellers),
-                "sellers_excluded_24hr": excluded_count,
+                "sellers_matched": len(all_selected),
+                "subscribed_selected": len(selected_subscribed),
+                "unsubscribed_selected": len(selected_unsubscribed),
+                "sellers_excluded": excluded_count,
                 "categories_used": categories,
                 "notifications_sent": notification_results.get("sent", 0),
                 "notifications_failed": notification_results.get("failed", 0),
-                "selected_sellers": [
-                    {
-                        "seller_id": s.get("seller_id"),
-                        "seller_name": s.get("seller_name"),
-                        "phone": s.get("phone_number"),
-                        "categories": s.get("categories", [])
-                    }
-                    for s in sellers_list
-                ]
+                "seller_ids_notified": [s.get('seller_id') for s in all_selected],  # For batch exclusion
+                "progress": {
+                    "subscribed": subscribed_notified + len(selected_subscribed),
+                    "unsubscribed": unsubscribed_notified + len(selected_unsubscribed),
+                    "subscribed_target": TARGET_SUBSCRIBED_SELLERS,
+                    "unsubscribed_target": TARGET_UNSUBSCRIBED_SELLERS
+                }
             }
         else:
-            logger.warning(f"No eligible sellers for RFQ {rfq_id} after 24hr filtering")
+            logger.warning(f"No eligible sellers for RFQ {rfq_id} after filtering")
             return {
                 "rfq_id": rfq_id,
                 "success": True,
                 "sellers_matched": 0,
-                "sellers_excluded_24hr": excluded_count,
-                "message": "No eligible sellers after 24hr filtering",
-                "categories_used": categories
+                "sellers_excluded": excluded_count,
+                "message": "No eligible sellers after filtering",
+                "categories_used": categories,
+                "progress": {
+                    "subscribed": subscribed_notified,
+                    "unsubscribed": unsubscribed_notified,
+                    "subscribed_target": TARGET_SUBSCRIBED_SELLERS,
+                    "unsubscribed_target": TARGET_UNSUBSCRIBED_SELLERS
+                }
             }
 
     except Exception as e:

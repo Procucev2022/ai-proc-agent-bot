@@ -59,7 +59,8 @@ class WhatsAppService:
         self.retry_service.max_retries = settings.retry_max_attempts
         self.retry_service.initial_delay = settings.retry_initial_delay
 
-    async def send_message(self, recipient_id: str, message: str, session=None) -> MessageResponse:
+    async def send_message(self, recipient_id: str, message: str, session_id: str = None) -> MessageResponse:
+
         """
         Send text message to WhatsApp user with retry mechanism.
 
@@ -69,7 +70,8 @@ class WhatsAppService:
         Args:
             recipient_id: WhatsApp number to send to
             message: Message content to send
-            session: Optional ConversationSession for tracking message in conversation history
+            session_id: Optional session ID for tracking message in conversation history
+
         """
 
         async def send_text_message():
@@ -129,36 +131,33 @@ class WhatsAppService:
 
         if retry_result["success"]:
             result = retry_result["result"]
-            # Track message in conversation history if session provided
-            if session and result.success:
-                await self._track_message_in_history(session, message)
+            # Track message in conversation history if session_id provided
+            if session_id and result.success:
+                await self._track_message_in_history(session_id, message)
+
             return result
         else:
             logger.error(f"Failed to send message after {retry_result['attempts']} attempts: {retry_result['error']}")
             return MessageResponse(success=False, error=retry_result["error"])
 
-    async def _track_message_in_history(self, session, message: str, message_type: str = "text") -> None:
+    async def _track_message_in_history(self, session_id: str, message: str, message_type: str = "text") -> None:
         """
-        Track bot message in session conversation history (both in-memory and Redis).
+        Track bot message in session conversation history via Redis.
 
         Args:
-            session: ConversationSession object to track message for
+            session_id: Session ID to track message for
+
             message: Message content that was sent
             message_type: Type of message (default: 'text')
         """
         try:
             from app.redis_db import get_session_redis_service
-            from app.services.helpers.summarization_helpers import SummarizationHelpers
-
-            # Update in-memory session (for database saves)
-            SummarizationHelpers.add_to_conversation_history(session, "assistant", message, message_type)
-
-            # Also update Redis directly (for consistency)
             redis_session = get_session_redis_service()
-            await redis_session.append_message_to_history(session.session_id, "assistant", message, message_type)
+            await redis_session.append_message_to_history(session_id, "assistant", message, message_type)
         except Exception as e:
             # Don't fail the send if tracking fails - just log
-            logger.warning(f"Failed to track message in history for session {session.session_id}: {e}")
+            logger.warning(f"Failed to track message in history for session {session_id}: {e}")
+
 
     async def send_template_message(self, recipient_id: str, template_name: str, parameters: list) -> MessageResponse:
         """
@@ -376,7 +375,8 @@ class WhatsAppService:
                                       buttons_config: List[Dict[str, str]],
                                       header: Optional[str] = None,
                                       footer: str = "(Type 'Exit' anytime to end the chat)",
-                                      session=None) -> MessageResponse:
+                                      session_id: str = None) -> MessageResponse:
+
         """
         Send fully configurable button message that can be used anywhere with any button configuration.
 
@@ -386,7 +386,8 @@ class WhatsAppService:
             body: Message body text
             buttons_config: List of button configurations with 'id', 'title', and optional 'action'
             footer: Footer text (optional)
-            session: Optional ConversationSession for tracking message in conversation history
+            session_id: Optional session ID for tracking message in conversation history
+
         """
         try:
             if not buttons_config:
@@ -447,10 +448,11 @@ class WhatsAppService:
 
             result = await self.send_interactive_message(recipient_id, "button", content)
 
-            # Track message in conversation history if session provided
-            if session and result.success:
+            # Track message in conversation history if session_id provided
+            if session_id and result.success:
                 # For buttons, track the body text as the message content
-                await self._track_message_in_history(session, combined_body, "interactive_button")
+                await self._track_message_in_history(session_id, combined_body, "interactive_button")
+
 
             return result
 
