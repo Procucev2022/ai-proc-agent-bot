@@ -102,14 +102,20 @@ class SellerService:
             # Route workflow based on existing state
             # ------------------------------
 
-            # Step 1: Seller is selecting an RFQ
-            if (
+            if current_state == "awaiting_plan_selection":
+                return await self._handle_plan_selection_response(user, session, message)
+
+            # Step 2: Seller is selecting an RFQ
+            elif (
                     current_state == "awaiting_rfq_selection"
                     or (
                     session.workflow_type
-                    and session.workflow_type.value == "seller_rfq_view"
-                    and intent_result
-                    and intent_result.get("intent") == "rfq_status_check"
+                    and session.workflow_type.value == "seller_rfq_view" ) or
+                    (
+                            session.workflow_type
+                            and session.workflow_type.value == "seller_rfq_view"
+                            and intent_result
+                            and intent_result.get("intent") == "rfq_status_check"
             )
             ):
 
@@ -776,17 +782,25 @@ class SellerService:
             workflow_state = session.workflow_state or {}
             rfq_details = workflow_state.get("rfq_details", [])
 
+            # Fetch available subscription plans only if not already available
+            plans_result = await self.seller_api_service.get_subscription_plans()
+            available_plans = plans_result.get("plans", [])
+
+            if not plans_result.get("success"):
+                return await self._handle_plan_fetch_error(user, session)
+
             # Generate contextual response about no credits with plan options
             context = {
                 "workflow_state": "no_credits_available",
                 "rfq_details": rfq_details,
+                "plans": available_plans,
                 "credits_available": 0
             }
 
             response_message = await self.response_helpers.generate_seller_contextual_response(context)
 
             # Update state to handle general responses (plan upgrade requests)
-            session.workflow_state["seller_workflow_state"] = "awaiting_general_response"
+            session.workflow_state["seller_workflow_state"] = "awaiting_plan_selection"
 
             await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 

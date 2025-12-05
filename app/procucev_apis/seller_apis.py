@@ -205,34 +205,18 @@ class SellerAPIService:
             return {"success": False, "error": str(e)}
 
     async def generate_payment_link(self, plan_id: str, seller_id: str) -> Dict[str, Any]:
-        """Generate Razorpay payment link for subscription plan."""
+        """Generate application portal link for subscription plan."""
         try:
-            endpoint = "/rest/seller/generatePaymentLink"
+            # Return static portal link instead of payment link
+            portal_link = "https://p2pdevuiindia.azurewebsites.net/"
             
-            data = {
-                "planId": plan_id,
-                "sellerId": seller_id
+            return {
+                "success": True,
+                "payment_link": portal_link
             }
-
-            response = await self.api_client.post(
-                endpoint=endpoint,
-                json_data=data,
-                require_auth=True,
-                api_title="generate_payment_link"
-            )
             
-            # Mock successful response for now
-            if response.get('status_code') == 200:
-                return {
-                    "success": True,
-                    "payment_link": response.get("paymentLink"),
-                    "data": response
-                }
-            else:
-                return {"success": False, "error": response.get('message', 'Failed to generate payment link')}
-
         except Exception as e:
-            logger.error(f"Error generating payment link: {e}")
+            logger.error(f"Error generating portal link: {e}")
             return {"success": False, "error": str(e)}
 
     async def fetch_seller_open_rfqs_for_reminder(self, seller_id: str) -> Dict[str, Any]:
