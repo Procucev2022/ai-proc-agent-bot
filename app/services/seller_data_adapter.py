@@ -12,8 +12,10 @@ Key transformations:
 - organization.opt_out → opted_out_notifications
 - org_division_category.category → categories (JSON array aggregation)
 
-IMPORTANT: Only fetches sellers that have categories in org_division_category table.
-Sellers without categories are excluded from the matching system.
+Seller eligibility filters:
+1. Must have categories in org_division_category table
+2. Must have at least one active user (user.is_active = 1)
+3. Must not be opted out (organization.opt_out != 1)
 """
 
 import json
@@ -140,6 +142,11 @@ class SellerDataAdapter:
         WHERE COALESCE(o.opt_out, 0) != 1  -- Exclude opted-out sellers
           AND o.organization_name IS NOT NULL  -- Must have organization name
           AND o.organization_name != ''  -- Not empty
+          AND EXISTS (
+              SELECT 1 FROM user u_active
+              WHERE u_active.org_uuid = o.uuid
+              AND u_active.is_active = 1
+          )  -- Only include organizations with at least one active user
         GROUP BY o.uuid, o.organization_name, o.vendor_class, o.opt_out, o.opt_out_modified_date,
                  o.organization_phonenumber, o.email, o.rfq_credits, u.activity_ts, u.uuid,
                  o.city, o.state, o.zip_code, o.address1, o.address2, o.created_ts, u.last_modified_ts, o.vendorcategory

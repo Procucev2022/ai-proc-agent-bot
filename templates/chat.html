@@ -382,6 +382,36 @@
                         </div>
                     </div>
 
+                    <!-- RFQ Notification Simulator Section -->
+                    <div class="file-upload-section" style="border-color: #ff9800;">
+                        <div class="file-upload-title" style="color: #ff9800;">🧪 Simulate RFQ Notification (Test Auth Flow)</div>
+                        <form class="file-upload-form" id="rfqNotificationForm">
+                            <input
+                                type="text"
+                                class="file-input"
+                                id="testRfqId"
+                                placeholder="RFQ ID (e.g., RFQ_12345)"
+                                value="RFQ_TEST_001"
+                                required
+                            >
+                            <input
+                                type="text"
+                                class="file-input"
+                                id="testSellerId"
+                                placeholder="Seller ID (e.g., 123)"
+                                value="6035d449-c336-41b8-9e1f-5796f1499f94"
+                                required
+                            >
+                            <button type="submit" class="upload-button" style="background: #ff9800;" id="simulateRfqButton">
+                                Simulate RFQ Notification
+                            </button>
+                        </form>
+                        <div style="font-size: 11px; color: #666; margin-top: 8px;">
+                            This simulates a seller receiving an RFQ notification.<br>
+                            Click "I'm Interested" to test the Post-Recommendation Auth flow.
+                        </div>
+                    </div>
+
                     <!-- Custom Button Section -->
                     <!-- <div class="file-upload-section">
                         <div class="file-upload-title">Send Custom Interactive Button</div>
@@ -411,7 +441,7 @@
 
     <script>
         // Configuration
-        const PHONE_NUMBER = '917666834062';
+        const PHONE_NUMBER = '919511876403';
         //7666834062
         // Set welcome message time
         document.getElementById('welcomeTime').textContent = new Date().toLocaleTimeString();
@@ -626,37 +656,69 @@
             }
         });
 
-        // Custom button functionality
-        const customButtonForm = document.getElementById('customButtonForm');
-        const buttonIdInput = document.getElementById('buttonId');
-        const buttonTextInput = document.getElementById('buttonText');
-        const buttonIdInput2 = document.getElementById('buttonId2');
-        const buttonTextInput2 = document.getElementById('buttonText2');
-        const customButtonSubmit = document.getElementById('customButtonSubmit');
+        // Custom button functionality - COMMENTED OUT (HTML form is also commented out)
+        // const customButtonForm = document.getElementById('customButtonForm');
+        // const buttonIdInput = document.getElementById('buttonId');
+        // const buttonTextInput = document.getElementById('buttonText');
+        // const buttonIdInput2 = document.getElementById('buttonId2');
+        // const buttonTextInput2 = document.getElementById('buttonText2');
+        // const customButtonSubmit = document.getElementById('customButtonSubmit');
 
-        customButtonForm.addEventListener('submit', (e) => {
+        // customButtonForm.addEventListener('submit', (e) => {
+        //     e.preventDefault();
+        //     const buttonId = buttonIdInput.value.trim();
+        //     const buttonText = buttonTextInput.value.trim();
+        //     const buttonId2 = buttonIdInput2.value.trim();
+        //     const buttonText2 = buttonTextInput2.value.trim();
+        //
+        //     const customButtons = [];
+        //     if (buttonId && buttonText) {
+        //         customButtons.push({ id: buttonId, title: buttonText });
+        //     }
+        //     if (buttonId2 && buttonText2) {
+        //         customButtons.push({ id: buttonId2, title: buttonText2 });
+        //     }
+        //
+        //     if (customButtons.length > 0) {
+        //         addMessage(`Custom buttons created`, false, false, null, customButtons);
+        //
+        //         // Clear inputs
+        //         buttonIdInput.value = '';
+        //         buttonTextInput.value = '';
+        //         buttonIdInput2.value = '';
+        //         buttonTextInput2.value = '';
+        //     }
+        // });
+
+        // RFQ Notification Simulator
+        const rfqNotificationForm = document.getElementById('rfqNotificationForm');
+        const testRfqIdInput = document.getElementById('testRfqId');
+        const testSellerIdInput = document.getElementById('testSellerId');
+
+        rfqNotificationForm.addEventListener('submit', (e) => {
             e.preventDefault();
-            const buttonId = buttonIdInput.value.trim();
-            const buttonText = buttonTextInput.value.trim();
-            const buttonId2 = buttonIdInput2.value.trim();
-            const buttonText2 = buttonTextInput2.value.trim();
-            
-            const customButtons = [];
-            if (buttonId && buttonText) {
-                customButtons.push({ id: buttonId, title: buttonText });
-            }
-            if (buttonId2 && buttonText2) {
-                customButtons.push({ id: buttonId2, title: buttonText2 });
-            }
-            
-            if (customButtons.length > 0) {
-                addMessage(`Custom buttons created`, false, false, null, customButtons);
-                
-                // Clear inputs
-                buttonIdInput.value = '';
-                buttonTextInput.value = '';
-                buttonIdInput2.value = '';
-                buttonTextInput2.value = '';
+            const rfqId = testRfqIdInput.value.trim();
+            const sellerId = testSellerIdInput.value.trim();
+
+            if (rfqId && sellerId) {
+                // Create mock RFQ notification message
+                const mockNotificationMessage =
+                    `*RFQ ID:* ${rfqId}\n` +
+                    `*Category:* Test Category\n` +
+                    `*Delivery Date:* 15-Dec-2024\n` +
+                    `*Delivery Location:* Mumbai, Maharashtra\n` +
+                    `*Project Description:* Test RFQ for local auth flow testing`;
+
+                // Create buttons with proper IDs (matching the real format)
+                const mockButtons = [
+                    { id: `rfq_check_details_${rfqId}_${sellerId}`, title: 'Check Details' },
+                    { id: `rfq_interested_${rfqId}_${sellerId}`, title: "I'm Interested" }
+                ];
+
+                // Add the notification message to chat
+                addMessage(`📩 [SIMULATED RFQ NOTIFICATION]\n\n${mockNotificationMessage}`, false, false, null, mockButtons);
+
+                console.log('Simulated RFQ notification with buttons:', mockButtons);
             }
         });
 
