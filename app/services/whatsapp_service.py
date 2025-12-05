@@ -451,7 +451,7 @@ class WhatsAppService:
             # Track message in conversation history if session_id provided
             if session_id and result.success:
                 # For buttons, track the body text as the message content
-                await self._track_message_in_history(session_id, combined_body, "interactive_button")
+                await self._track_message_in_history(session_id, content, "interactive_button")
 
 
             return result
