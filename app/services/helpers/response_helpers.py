@@ -9,6 +9,7 @@ import logging
 from typing import Dict, Any, List, Union
 from app.utils.rfq_message_formatter import format_rfq_response_message
 from app.utils.datetime_utils import get_ordinal_suffix
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -391,42 +392,73 @@ class ResponseHelpers:
         else:
             return {"message": "How can I help you with your procurement needs today?", "buttons": None}
 
+    def _format_single_rfq(self, rfq: Dict[str, Any], index: int) -> str:
+        """Common formatter for a single RFQ block."""
+
+        rfq_id = rfq.get("rfq_id", "N/A")
+        categories = (
+            ", ".join(rfq.get("category", []))
+            if isinstance(rfq.get("category"), list)
+            else rfq.get("category", "N/A")
+        )
+
+        delivery_date = rfq.get("submission_date", "N/A")
+        location = rfq.get("location", "N/A")
+        project = rfq.get("project_description", "N/A")
+
+        # Merge Delivery Date + Location
+        delivery_info = f"{delivery_date}, {location}" if delivery_date != "N/A" and location != "N/A" else delivery_date or location
+
+        return (
+            f"{index}. RFQ ID: *{rfq_id}*\n"
+            f"   Category: {categories}\n"
+            f"   Delivery: {delivery_info}\n"
+            f"   Project Description: {project}\n\n"
+        )
+
     def _get_rfq_display_fallback(self, context: Dict[str, Any]) -> str:
-        """Fallback for RFQ display."""
+        """Fallback RFQ display when credits are available."""
         rfqs = context.get("rfqs", [])
         credits = context.get("credits_available", 0)
-        total = context.get("total_count", 0)
+        total_count = context.get("total_count", len(rfqs))
 
-        message = f"📋 You have {total} active RFQs in your category.\n"
-        message += f"💳 Credits available: {credits}\n\n"
-        message += "Latest RFQs:\n"
+        message = (
+            f"Hello! You have {credits} credit available to view RFQs.\n"
+            f"📊 Total RFQs matching your category: {total_count}\n\n"
+            f"Here are some opportunities you might be interested in:\n\n"
+        )
 
-        for i, rfq in enumerate(rfqs[:3], 1):
-            rfq_id = rfq.get("rfq_id", "N/A")
-            location = rfq.get("location", "N/A")
-            date = rfq.get("submission_date", "N/A")
-            message += f"{i}. RFQ {rfq_id}\n    {location}\n    {date}\n\n"
+        max_rfqs = get_settings().rfq_max_allowed
+        for i, rfq in enumerate(rfqs[:max_rfqs], 1):
+            message += self._format_single_rfq(rfq, i)
 
-        message += "Type the RFQ IDs you want to receive via email.\nExample: '23112' or '23112, 23087'"
+        message += (
+            "Please select an RFQ ID to view details and submit your bid.\n"
+            "Looking forward to your response!"
+        )
+
         return message
 
     def _get_no_credits_rfq_fallback(self, context: Dict[str, Any]) -> str:
-        """Fallback for no credits RFQ display."""
+        """Fallback RFQ display when NO credits are available."""
         rfqs = context.get("rfqs", [])
-        total = context.get("total_count", 0)
+        total_count = context.get("total_count", 0)
 
-        message = f"📋 You have {total} active RFQs in your category.\n"
-        message += "💳 Credits available: 0\n\n"
-        message += "Latest RFQs:\n"
+        message = (
+            f"📋 Total Active RFQs for your category: {total_count}\n"
+            f"💳 Credits Available: 0\n\n"
+            f"Latest RFQs:\n\n"
+        )
 
-        for i, rfq in enumerate(rfqs[:3], 1):
-            rfq_id = rfq.get("rfq_id", "N/A")
-            location = rfq.get("location", "N/A")
-            date = rfq.get("submission_date", "N/A")
-            message += f"{i}. RFQ {rfq_id}\n   📍 {location}\n   📅 {date}\n\n"
+        max_rfqs = get_settings().rfq_max_allowed
+        for i, rfq in enumerate(rfqs[:max_rfqs], 1):
+            message += self._format_single_rfq(rfq, i)
 
-        message += "⚠️ You don't have credits to access RFQ details.\n"
-        message += "Would you like to see our subscription plans?"
+        message += (
+            "⚠️ You don't have credits to access full RFQ details.\n"
+            "Would you like to see our subscription plans?"
+        )
+
         return message
 
     def _get_subscription_plans_fallback(self, context: Dict[str, Any]) -> str:

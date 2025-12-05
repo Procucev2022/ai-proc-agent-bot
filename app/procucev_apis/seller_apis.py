@@ -43,27 +43,44 @@ class SellerAPIService:
                 transformed_rfqs = []
 
                 for rfq in rfqs_raw:
+                    # Get delivery locations
                     delivery_locations = rfq.get("clientdeliverylocationrfq", [])
                     location_state = None
-
                     if delivery_locations and len(delivery_locations) > 0:
                         location_state = delivery_locations[0].get("state")
-                    
-                    description = rfq.get("description", "")
-                    short_description = " ".join(description.split()[:20]) if description else ""
+
+                    # Get unique categories from rfqItem list
+                    rfq_items = rfq.get("rfqItem", [])
+                    categories = list(set(item.get("category") for item in rfq_items if item.get("category")))
+                    categories_str = ", ".join(categories) if categories else ""
+
+                    # Get delivery date and format it
+                    delivery_date = rfq.get("deliveryDate", "")
+                    formatted_date = ""
+                    if delivery_date:
+                        try:
+                            from datetime import datetime
+                            date_obj = datetime.fromisoformat(delivery_date.replace('Z', '+00:00'))
+                            formatted_date = date_obj.strftime("%d-%b-%Y")  # e.g., "28-Jan-2025"
+                        except:
+                            formatted_date = delivery_date
+
+                    # Get project description
+                    project_desc = rfq.get("projectDesc", "")
 
                     transformed_rfqs.append({
                         "rfq_id": rfq.get("rfqId"),
-                        "location": location_state,
-                        "submission_date": rfq.get("deliveryDate"),
-                        "description": short_description
+                        "categories": categories_str,
+                        "delivery_date": formatted_date,
+                        "project_description": project_desc,
+                        "location": location_state
                     })
 
                 return {
-                    "success": True,
-                    "rfqs": transformed_rfqs,
-                    "total_count": result.get("count", 0),
-                }
+                        "success": True,
+                        "rfqs": transformed_rfqs,
+                        "total_count": result.get("count", 0),
+                    }
             else:
                 return {"success": False, "error": response.get('message', 'Failed to fetch active RFQs')}
 

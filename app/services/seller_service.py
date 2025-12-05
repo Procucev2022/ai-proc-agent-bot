@@ -106,11 +106,12 @@ class SellerService:
             if (
                     current_state == "awaiting_rfq_selection"
                     or (
-                        str(session.workflow_type) == "seller_rfq_view"
-                        and intent_result
-                        and intent_result.get("intent") == "rfq_status_check"
-                    )
-                ):
+                    session.workflow_type
+                    and session.workflow_type.value == "seller_rfq_view"
+                    and intent_result
+                    and intent_result.get("intent") == "rfq_status_check"
+            )
+            ):
 
                 return await self._handle_rfq_selection_response(user, session, message)
 
