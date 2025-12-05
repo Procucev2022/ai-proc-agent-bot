@@ -2874,24 +2874,25 @@ class ChatService:
 
                 message_to_process = tracked_message
                 intent_result = tracked_intent_result
+
+                # Trigger RFQ creation flow with the tracked message
+                return await self.purchase_intent_handler.handle_purchase_intent(
+                    user, session, message_to_process, intent_result,
+                    self._should_use_summary_aware_extraction
+                )
             else:
                 if has_existing_rfq_data:
                     logger.info(f"Ignoring tracked message - session has existing RFQ data, starting fresh")
                 else:
-                    logger.info(f"No tracked meaningful message found - using default RFQ creation message")
+                    logger.info(f"No tracked meaningful message found - directly activating sectioned RFQ")
 
                 # Clear any stale meaningful message
                 workflow_state.pop("last_meaningful_message", None)
                 workflow_state.pop("last_meaningful_intent_result", None)
 
-                message_to_process = "I want to create a new RFQ"
-                intent_result = {"intent": "buy_something", "confidence": 95}
-
-            # Trigger RFQ creation flow with the appropriate message
-            return await self.purchase_intent_handler.handle_purchase_intent(
-                user, session, message_to_process, intent_result,
-                self._should_use_summary_aware_extraction
-            )
+                # Directly activate sectioned RFQ workflow without entity extraction
+                # This avoids wasting an API call on a synthetic message
+                return await self._activate_sectioned_rfq(user, session)
         
         elif button_id == "search_bfs":
             # Handle BFS search coming soon with profile selection message

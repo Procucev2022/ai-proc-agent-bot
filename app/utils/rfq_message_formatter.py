@@ -9,6 +9,21 @@ from typing import List, Dict, Any
 from datetime import datetime
 from app.utils.datetime_utils import get_ordinal_suffix
 
+
+def _format_quantity(qty) -> str:
+    """Format quantity as integer if it's a whole number, otherwise as-is."""
+    if qty is None or qty == '':
+        return ''
+    try:
+        qty_float = float(qty)
+        # If it's a whole number, display as integer (e.g., 10.0 -> "10")
+        if qty_float == int(qty_float):
+            return str(int(qty_float))
+        return str(qty)
+    except (ValueError, TypeError):
+        return str(qty)
+
+
 def format_rfq_response_message(
     extracted_entities: List[Dict[str, Any]],
     global_fields: Dict[str, Any],
@@ -36,7 +51,7 @@ def format_rfq_response_message(
     # --- Collect entities ---
     for entity in extracted_entities:
         desc = str(entity.get('description') or '').strip()
-        qty = str(entity.get('quantity') or '').strip()
+        qty = _format_quantity(entity.get('quantity'))
         unit = str(entity.get('unitofMeasures') or '').strip()
         brand = str(entity.get('brand') or '').strip()
         remarks = str(entity.get('remarks') or '').strip()
