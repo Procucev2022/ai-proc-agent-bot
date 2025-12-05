@@ -230,7 +230,7 @@ class SellerService:
             valid_selections = [rfq_id for rfq_id in selected_rfq_ids if rfq_id in available_rfqs]
 
             if not valid_selections:
-                return await self._handle_invalid_rfq_selection(user, session, message)
+                return await self._handle_invalid_rfq_selection(user, session, message, rfq_result)
 
             # Process RFQ selections
             return await self._process_rfq_email_requests(user, session, valid_selections)
@@ -990,14 +990,11 @@ class SellerService:
             "message_already_sent": False
         }
 
-    async def _handle_invalid_rfq_selection(self, user: User, session: ConversationSession, message: str) -> Dict[str, Any]:
+    async def _handle_invalid_rfq_selection(self, user: User, session: ConversationSession, message: str, rfq_result: Dict[str, Any]) -> Dict[str, Any]:
         """Handle invalid RFQ selection."""
-        # Step 1: Fetch active RFQs for seller's category
-        rfq_result = await self._fetch_seller_rfqs(user.org_id)
-
+        # Use passed rfq_result instead of making another API call
         if not rfq_result.get("success"):
             return await self._handle_rfq_fetch_error(user, session)
-
 
         rfqs = rfq_result.get("rfqs")
         available_rfqs = [rfq.get("rfq_id") for rfq in rfqs]
