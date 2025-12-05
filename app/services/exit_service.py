@@ -44,17 +44,6 @@ class ExitService:
         try:
             logger.info(f"Handling exit intent for user: {user_phone}")
 
-            # Check if user is in a workflow
-            if not session.workflow_type or session.workflow_type == WorkflowType.user_exit:
-                message = (
-                    "There is no active workflow to exit. What can I assist you with?"
-                )
-                await self.whatsapp_service.send_message(
-                    user_phone,message)
-                return {
-                    "status": "no_workflow_to_exit",
-                    "message": "No active workflow to exit"
-                }
 
             # If show_message is False, directly proceed with exit without confirmation
             if not show_message:
