@@ -1223,7 +1223,7 @@ class ChatService:
                 # Detect confirmation from the message using confirmation service
                 confirmation_result = await self.cancel_service.confirmation_service.parse_confirmation(message)
                 is_confirmed = confirmation_result == "yes"
-                cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed)
+                cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed,user)
 
                 if cancel_result.get("status") == "cancelled":
                     # Workflow was cancelled, save session and return
@@ -2853,7 +2853,7 @@ class ChatService:
         
         # Handle cancel workflow confirmation buttons
         elif button_id in ["confirm_cancel", "decline_cancel"]:
-            return await self._handle_cancel_confirmation_button(user, session, button_id)
+            return await self._handle_cancel_confirmation_button(user, session, button_id,user)
         
         # Handle exit confirmation buttons
         elif button_id in ["confirm_exit", "decline_exit"]:
@@ -2986,7 +2986,7 @@ class ChatService:
             # confirm_cancel -> Yes, decline_cancel -> No
             is_confirmed = button_id == "confirm_cancel"
 
-            cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed)
+            cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed,user)
 
             if cancel_result.get("status") == "cancelled":
                 # Workflow was cancelled, save session and return

@@ -38,7 +38,7 @@ class CancelService:
             confirmation_tool = ConfirmationTool(openai_service)
             self.confirmation_service = ConfirmationService(confirmation_tool)
 
-    async def handle_cancel_intent(self, user_phone: str, session: ConversationSession, message: str = None) -> Dict[str, Any]:
+    async def handle_cancel_intent(self, user_phone: str, session: ConversationSession, message: str = None,user: Optional[Any] = None) -> Dict[str, Any]:
         """
         Handle cancel intent - ask for confirmation before clearing workflow state.
 
@@ -90,7 +90,7 @@ class CancelService:
                         word in user_text for word in ["yes", "confirm", "cancel", "sure", "ok"])
 
                 logger.info(f"Detected cancel confirmation: {is_confirmed} from message: '{message}'")
-                return await self.handle_cancel_confirmation(user_phone, session, is_confirmed)
+                return await self.handle_cancel_confirmation(user_phone, session, is_confirmed,user)
 
             # Set cancel pending state and save last bot message
             if not session.workflow_state:
@@ -126,7 +126,7 @@ class CancelService:
             }
 
     async def handle_cancel_confirmation(self, user_phone: str, session: ConversationSession,
-                                        confirmed: bool) -> Dict[str, Any]:
+                                        confirmed: bool,user: Optional[Any] = None) -> Dict[str, Any]:
         """
         Handle user's response to cancel confirmation.
 
@@ -151,9 +151,10 @@ class CancelService:
                 user_cache_service = get_user_cache_service()
                 user_data_list = await user_cache_service.get_user_data(user_phone)
                 user_type = None
-                if user_data_list and len(user_data_list) > 0:
+                if user:
                     # selfClient: True = buyer, False = seller
-                    is_self_client = user_data_list[0].get('selfClient', False)
+                    is_self_client = user.role
+                    logger.info(f"user role is:{is_self_client}")
                     user_type = "buyer" if is_self_client else "seller"
                 logger.info(f"Retrieved user_type from cache (selfClient): {user_type}")
 
@@ -311,6 +312,7 @@ class CancelService:
 
             # Check if user is a buyer (user_type from cache is a string)
             is_buyer = user_type and user_type.lower() == "buyer"
+            is_seller = user_type and user_type.lower() == "seller"
 
             logger.info(f"Is buyer: {is_buyer}, user_type: {user_type}")
 
@@ -321,6 +323,17 @@ class CancelService:
                     {"id": "search_bfs", "title": "Search Stocks"}
                 ]
                 logger.info(f"Sending cancellation with buyer buttons to {user_phone}")
+                await self.whatsapp_service.send_configurable_buttons(
+                    recipient_id=user_phone,
+                    body=cancellation_message,
+                    buttons_config=buttons_config
+                )
+            elif is_seller:
+                buttons_config = [
+                    {"id": "rfq_status", "title": "Check RFQs Status"},
+                    {"id": "contact_support", "title": "Contact Support"}
+                ]
+                logger.info(f"Sending cancellation with seller buttons to {user_phone}")
                 await self.whatsapp_service.send_configurable_buttons(
                     recipient_id=user_phone,
                     body=cancellation_message,
