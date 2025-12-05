@@ -368,7 +368,6 @@ class OpenAIService:
                         elif isinstance(entities, dict) and entities:
                             context_info += f"\n- Existing Products: 1 product"
                 
-                logger.info(f"context info used is :{context_info}")
                 # Add context as developer message
                 if context_info.strip():
                     input_messages.insert(0, {
@@ -405,7 +404,7 @@ class OpenAIService:
                 output_tokens = getattr(usage, 'output_tokens', 0)
 
                 cache_percentage = (cached_tokens / total_input_tokens * 100) if total_input_tokens > 0 else 0
-                logger.info(f"OpenAI API call time: {api_call_time:.2f}s | Input tokens: {total_input_tokens} | Cached: {cached_tokens} ({cache_percentage:.1f}%) | Output: {output_tokens}")
+                logger.info(f"OpenAI API call time: {api_call_time:.2f}s | Input tokens: {total_input_tokens}W | Cached: {cached_tokens} ({cache_percentage:.1f}%) | Output: {output_tokens}")
             else:
                 logger.info(f"OpenAI API call time: {api_call_time:.2f}s (no usage data available)")
 
@@ -1967,20 +1966,16 @@ Analyze their response to determine their true choice.
             if response.output and len(response.output) > 0:
                 function_call = response.output[0]
                 if function_call.type == "function_call":
-                    logger.info(f"DEBUG: Raw function call arguments: {function_call.arguments}")
                     args = json.loads(function_call.arguments)
-                    logger.info(f"DEBUG: Parsed args: {args}")
                     
                     # Extract column mapping from mapping_details if column_mapping is empty
                     column_mapping = args.get("column_mapping", {})
                     if not column_mapping and args.get("mapping_details"):
-                        logger.info("DEBUG: Extracting column mapping from mapping_details")
                         for detail in args["mapping_details"]:
                             excel_header = detail.get("excel_header")
                             target_column = detail.get("target_column")
                             if excel_header and target_column:
                                 column_mapping[excel_header] = target_column
-                        logger.info(f"DEBUG: Extracted column mapping: {column_mapping}")
                     
                     result = {
                         "column_mapping": column_mapping,
@@ -1990,8 +1985,7 @@ Analyze their response to determine their true choice.
                         "success": True
                     }
                     
-                    logger.info(f"Column mapping: {len(result['column_mapping'])} mappings found")
-                    logger.info(f"DEBUG: Final result: {result}")
+
                     return result
             
             return {"column_mapping": {}, "confidence": 30, "unmapped_headers": headers, "reasoning": "No mapping found", "success": False}

@@ -200,7 +200,7 @@ async def lifespan(app: FastAPI):
             logger.info("Inactivity timeout monitoring stopped")
         except Exception as e:
             logger.error(f"Error stopping timeout monitoring: {e}")
-    
+
     # Cleanup any remaining aiohttp sessions
     import aiohttp
     for obj in gc.get_objects():
