@@ -79,7 +79,7 @@ class RegistrationService:
             if self.session_manager:
                 await self.session_manager.send_and_track_message(user_phone, intro_message, session)
             else:
-                await self.whatsapp_service.send_message(user_phone, intro_message,session=session)
+                await self.whatsapp_service.send_message(user_phone, intro_message, session_id=session)
 
             result = {
                 "status": "registration_initiated",
@@ -176,7 +176,7 @@ class RegistrationService:
                 if self.session_manager:
                     await self.session_manager.send_and_track_message(user_phone, questions, session)
                 else:
-                    await self.whatsapp_service.send_message(user_phone, questions,session=session)
+                    await self.whatsapp_service.send_message(user_phone, questions, session_id=session)
 
                 # Update session
                 WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="registration_service")
@@ -256,7 +256,7 @@ class RegistrationService:
             if self.session_manager:
                 await self.session_manager.send_and_track_message(user_phone, fallback_message, session)
             else:
-                await self.whatsapp_service.send_message(user_phone, fallback_message,session=session)
+                await self.whatsapp_service.send_message(user_phone, fallback_message, session_id=session)
     
     async def handle_registration_confirmation(self, user_phone: str, message_content: str,
                                              session: ConversationSession) -> Dict[str, Any]:
@@ -313,7 +313,7 @@ class RegistrationService:
                 if self.session_manager:
                     await self.session_manager.send_and_track_message(user_phone, restart_message, session)
                 else:
-                    await self.whatsapp_service.send_message(user_phone, restart_message,session=session)
+                    await self.whatsapp_service.send_message(user_phone, restart_message, session_id=session)
                 
                 return {
                     "status": "registration_restarted",
@@ -376,7 +376,7 @@ class RegistrationService:
             if self.session_manager:
                 await self.session_manager.send_and_track_message(user_phone, fallback_message, session)
             else:
-                await self.whatsapp_service.send_message(user_phone, fallback_message,session=session)
+                await self.whatsapp_service.send_message(user_phone, fallback_message, session_id=session)
     
     async def _generate_contextual_registration_questions(self, missing_fields: List[str], 
                                                         user_type: str, existing_entities: Dict,
@@ -520,7 +520,7 @@ class RegistrationService:
                         await self.session_manager.send_and_track_message(user_phone, combined_message, session)
                         await self.session_manager.save_session(session, WorkflowType.registration)
                     else:
-                        await self.whatsapp_service.send_message(user_phone, combined_message,session=session)
+                        await self.whatsapp_service.send_message(user_phone, combined_message, session_id=session)
 
                     return {
                         "status": "user_already_exists",
@@ -703,7 +703,7 @@ class RegistrationService:
                             if self.session_manager:
                                 await self.session_manager.send_and_track_message(user_phone, pending_message, session)
                             else:
-                                await self.whatsapp_service.send_message(user_phone, pending_message,session=session)
+                                await self.whatsapp_service.send_message(user_phone, pending_message, session_id=session)
 
                             # Call exit without showing exit message
                             from app.services.exit_service import ExitService
@@ -740,7 +740,7 @@ class RegistrationService:
                         if self.session_manager:
                             await self.session_manager.send_and_track_message(user_phone, pending_message, session)
                         else:
-                            await self.whatsapp_service.send_message(user_phone, pending_message,session=session)
+                            await self.whatsapp_service.send_message(user_phone, pending_message, session_id=session)
                         
                         # Call exit without showing exit message
                         from app.services.exit_service import ExitService
@@ -871,7 +871,7 @@ class RegistrationService:
             if self.session_manager and session:
                 await self.session_manager.send_and_track_message(user_phone, support_message, session)
             else:
-                await self.whatsapp_service.send_message(user_phone, support_message,session=session)
+                await self.whatsapp_service.send_message(user_phone, support_message, session_id=session)
 
             logger.error(f"Support redirect for {user_phone}: {issue_type} - {error_details}")
 
@@ -1093,7 +1093,7 @@ class RegistrationService:
             
             # Send profile selection message
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
+            await self.whatsapp_service.send_message(user_phone, full_message, session_id=session)
             
             return {
                 "status": "profile_selection_sent",

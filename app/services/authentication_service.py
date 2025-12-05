@@ -439,7 +439,7 @@ class AuthenticationService:
             # Generate email confirmation response using OpenAI with user type labels
             message = await self._generate_email_confirmation_response(username, emails, filtered_users)
             
-            await self.whatsapp_service.send_message(user_phone, message, session=session)
+            await self.whatsapp_service.send_message(user_phone, message, session_id=session)
             # Note: Message is now tracked automatically via send_message when session is passed
             
             return {
@@ -620,7 +620,7 @@ Return only the selected email address or "none" if no clear selection.
                         
                         # Send support message
                         support_message = redirect_info.get("message", "Please contact our support team for assistance.")
-                        await self.whatsapp_service.send_message(user_phone, support_message, session=session)
+                        await self.whatsapp_service.send_message(user_phone, support_message, session_id=session)
 
                         # Clear session without sending goodbye message to avoid duplicate
                         await self._clear_session_only(session)
@@ -666,7 +666,7 @@ Return only the selected email address or "none" if no clear selection.
 
                 # Send welcome message to user
                 welcome_message = f"Hi {username}! Email verified successfully! You can now proceed."
-                await self.whatsapp_service.send_message(user_phone, welcome_message, session=session)
+                await self.whatsapp_service.send_message(user_phone, welcome_message, session_id=session)
                 # Note: Message is now tracked automatically via send_message when session is passed
 
                 # Preserve original message from workflow state for processing after authentication
@@ -698,7 +698,7 @@ Return only the selected email address or "none" if no clear selection.
                         
                         redirect_info = verification_check.get("redirect_info", {})
                         support_message = redirect_info.get("message", "Please contact our support team for assistance.")
-                        await self.whatsapp_service.send_message(user_phone, support_message, session=session)
+                        await self.whatsapp_service.send_message(user_phone, support_message, session_id=session)
 
                         # Clear session without sending goodbye message to avoid duplicate
                         await self._clear_session_only(session)
@@ -875,7 +875,7 @@ Return only the selected email address or "none" if no clear selection.
                                     "you'll be able to access your account and start raising RFQs.\n\n"
                                     "Thank you for choosing Procucev!"
                                 )
-                                await self.whatsapp_service.send_message(user_phone, message, session=session)
+                                await self.whatsapp_service.send_message(user_phone, message, session_id=session)
                                 # Note: Message is now tracked automatically via send_message when session is passed
 
                                 # Send buyer registration not approved notification

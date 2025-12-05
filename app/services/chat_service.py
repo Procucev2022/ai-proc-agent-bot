@@ -403,7 +403,7 @@ class ChatService:
                       "Note: If you are expecting the delivery at different locations or on different dates, "
                       "we request you create separate RFQs.")
 
-        await self.whatsapp_service.send_message(user.phone_number, initial_msg, session=session)
+        await self.whatsapp_service.send_message(user.phone_number, initial_msg, session_id=session)
 
         return {"status": "sectioned_rfq_activated"}
 
@@ -851,7 +851,7 @@ class ChatService:
 
                     verification_message = redirect_info.get("message", pending_message)
 
-                    await self.whatsapp_service.send_message(user_phone, verification_message, session=session)
+                    await self.whatsapp_service.send_message(user_phone, verification_message, session_id=session)
 
                     await self.session_manager.save_session(session, WorkflowType.authentication)
                     return auth_result
