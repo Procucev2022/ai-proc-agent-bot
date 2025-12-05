@@ -337,8 +337,8 @@ async def process_single_rfq_matching(
                 "unsubscribed_notified": unsubscribed_notified
             }
 
-        # Get sellers already notified for this RFQ (to avoid duplicates)
-        already_notified_for_rfq = get_sellers_already_notified_for_rfq(rfq_uuid)
+        # NOTE: Per-RFQ exclusion removed - sellers can be re-notified for same RFQ
+        # already_notified_for_rfq = get_sellers_already_notified_for_rfq(rfq_uuid)
 
         # Step 1: Get all unique categories from rfq_items for this RFQ
         categories = get_rfq_item_categories(rfq_uuid)
@@ -430,25 +430,23 @@ async def process_single_rfq_matching(
             f"{len(unsubscribed_sellers)} unsubscribed"
         )
 
-        # Step 3: Apply filters - 24hr exclusion AND already notified for this RFQ
-        combined_exclusion = excluded_seller_ids | already_notified_for_rfq
-
+        # Step 3: Apply filters - time-based exclusion only (per-RFQ exclusion removed)
         filtered_subscribed = {
             sid: sdata for sid, sdata in subscribed_sellers.items()
-            if sid not in combined_exclusion
+            if sid not in excluded_seller_ids
         }
         filtered_unsubscribed = {
             sid: sdata for sid, sdata in unsubscribed_sellers.items()
-            if sid not in combined_exclusion
+            if sid not in excluded_seller_ids
         }
 
-        excluded_24hr = len(subscribed_sellers) + len(unsubscribed_sellers) - \
+        excluded_count = len(subscribed_sellers) + len(unsubscribed_sellers) - \
                         len(filtered_subscribed) - len(filtered_unsubscribed)
 
         logger.info(
             f"After filtering: {len(filtered_subscribed)} subscribed, "
             f"{len(filtered_unsubscribed)} unsubscribed available. "
-            f"Excluded {excluded_24hr} (24hr filter + already notified)"
+            f"Excluded {excluded_count} (time-based filter)"
         )
 
         # Step 4: Select only the needed count for each type
@@ -491,7 +489,7 @@ async def process_single_rfq_matching(
                 "sellers_matched": len(all_selected),
                 "subscribed_selected": len(selected_subscribed),
                 "unsubscribed_selected": len(selected_unsubscribed),
-                "sellers_excluded": excluded_24hr,
+                "sellers_excluded": excluded_count,
                 "categories_used": categories,
                 "notifications_sent": notification_results.get("sent", 0),
                 "notifications_failed": notification_results.get("failed", 0),
@@ -508,7 +506,7 @@ async def process_single_rfq_matching(
                 "rfq_id": rfq_id,
                 "success": True,
                 "sellers_matched": 0,
-                "sellers_excluded": excluded_24hr,
+                "sellers_excluded": excluded_count,
                 "message": "No eligible sellers after filtering",
                 "categories_used": categories,
                 "progress": {
