@@ -271,7 +271,7 @@ class ProfileSelectionService:
             session.workflow_state['profiles'] = profiles
             
             # Send message and add to conversation history
-            await self.whatsapp_service.send_message(user_phone, message,session=session)
+            await self.whatsapp_service.send_message(user_phone, message, session_id=session)
 
             return {
                 "status": "profile_selection_sent",
@@ -309,7 +309,7 @@ class ProfileSelectionService:
                 session.workflow_state['profile_selection_stage'] = 'buyer_intent_no_accounts'
                 session.workflow_state['profile_options'] = profile_options
                 
-                await self.whatsapp_service.send_message(user_phone, message_text,session=session)
+                await self.whatsapp_service.send_message(user_phone, message_text, session_id=session)
                 
                 return {
                     "status": "buyer_no_accounts_message_sent",
@@ -357,7 +357,7 @@ class ProfileSelectionService:
             session.workflow_state['original_intent'] = intent_result
 
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
+            await self.whatsapp_service.send_message(user_phone, full_message, session_id=session)
 
             return {
                 "status": "buyer_profile_selection_presented",
@@ -416,7 +416,7 @@ class ProfileSelectionService:
             session.workflow_state['original_intent'] = intent_result
 
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
+            await self.whatsapp_service.send_message(user_phone, full_message, session_id=session)
 
             return {
                 "status": "seller_profile_selection_presented",
@@ -471,7 +471,7 @@ class ProfileSelectionService:
             session.workflow_state['profile_options'] = profile_options
 
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
+            await self.whatsapp_service.send_message(user_phone, full_message, session_id=session)
             return {
                 "status": "rfq_status_profile_selection_presented",
                 "options_count": len(profile_options)
@@ -512,7 +512,7 @@ class ProfileSelectionService:
             session.workflow_state['profile_options'] = profile_options
 
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
+            await self.whatsapp_service.send_message(user_phone, full_message, session_id=session)
 
             return {
                 "status": "ambiguous_profile_selection_presented",
@@ -550,7 +550,7 @@ class ProfileSelectionService:
             session.workflow_state['profile_selection_stage'] = 'new_user_registration'
             session.workflow_state['profile_options'] = profile_options
 
-            await self.whatsapp_service.send_message(user_phone, message,session=session)
+            await self.whatsapp_service.send_message(user_phone, message, session_id=session)
 
             return {
                 "status": "new_user_registration_presented",
@@ -910,7 +910,7 @@ class ProfileSelectionService:
                 if verification_check.get("redirect_to_support"):
                     # Redirect to support
                     support_message = redirect_info.get("message", "Please contact our support team for assistance.")
-                    await self.whatsapp_service.send_message(user_phone, support_message,session=session)
+                    await self.whatsapp_service.send_message(user_phone, support_message, session_id=session)
 
                     return {
                         "status": "verification_failed",
@@ -1049,7 +1049,7 @@ class ProfileSelectionService:
                 "Please reply with the number (1, 2) or type Buyer, Seller, or Exit to continue."
             )
 
-            await self.whatsapp_service.send_message(user_phone, message,session=session)
+            await self.whatsapp_service.send_message(user_phone, message, session_id=session)
 
             # Set session state to handle registration type selection
             session.workflow_state = session.workflow_state or {}
@@ -1177,7 +1177,7 @@ class ProfileSelectionService:
             message_parts.append("Reply with the number corresponding to your choice.")
 
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
+            await self.whatsapp_service.send_message(user_phone, full_message, session_id=session)
 
             return {
                 "status": "profile_selection_retry_presented",
@@ -1237,7 +1237,7 @@ class ProfileSelectionService:
                         "• Type 'buyer' or '1' for Buyer registration\n"
                         "• Type 'seller' or '2' for Seller registration"
                     )
-                    await self.whatsapp_service.send_message(user_phone, clarification_message,session=session)
+                    await self.whatsapp_service.send_message(user_phone, clarification_message, session_id=session)
 
                     return {
                         "status": "registration_type_clarification_sent"
@@ -1385,7 +1385,7 @@ class ProfileSelectionService:
             session.workflow_state['existing_profiles'] = existing_profiles
 
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
+            await self.whatsapp_service.send_message(user_phone, full_message, session_id=session)
 
             return {
                 "status": "intent_mismatch_handled",
@@ -1446,7 +1446,7 @@ class ProfileSelectionService:
             ]
 
             retry_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, retry_message,session=session)
+            await self.whatsapp_service.send_message(user_phone, retry_message, session_id=session)
 
             return {
                 "status": "intent_mismatch_retry_sent",
@@ -1498,7 +1498,7 @@ class ProfileSelectionService:
                 "3. Exit\n\n"
                 "Reply with the number corresponding to your choice."
             )
-            await self.whatsapp_service.send_message(user_phone, retry_message,session=session)
+            await self.whatsapp_service.send_message(user_phone, retry_message, session_id=session)
 
             return {
                 "status": "new_user_registration_retry_sent"
@@ -1585,7 +1585,7 @@ class ProfileSelectionService:
                 session.workflow_state['profile_selection_stage'] = f'no_{role_filter}_profiles'
 
                 full_message = "\n".join(message_parts)
-                await self.whatsapp_service.send_message(user_phone, full_message,session=session)
+                await self.whatsapp_service.send_message(user_phone, full_message, session_id=session)
 
                 return {
                     "status": f"no_{role_filter}_profiles_message_sent",
@@ -1623,7 +1623,7 @@ class ProfileSelectionService:
             session.workflow_state['role_filter'] = role_filter
 
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
+            await self.whatsapp_service.send_message(user_phone, full_message, session_id=session)
 
             return {
                 "status": f"filtered_{role_filter}_profiles_shown",
@@ -1690,7 +1690,7 @@ class ProfileSelectionService:
                     "2 - Sell (view or respond to RFQs)\n\n"
                     "Reply with 1 or 2, or type Buy or Sell to continue."
                 )
-                await self.whatsapp_service.send_message(user_phone, clarification_message,session=session)
+                await self.whatsapp_service.send_message(user_phone, clarification_message, session_id=session)
                 return {
                     "status": "dual_intent_clarification_sent"
                 }
@@ -1739,7 +1739,7 @@ class ProfileSelectionService:
                         "2 - Sell (view or respond to RFQs)\n\n"
                         "Reply with 1 or 2, or type Buy or Sell to continue."
                     )
-                    await self.whatsapp_service.send_message(user_phone, retry_message,session=session)
+                    await self.whatsapp_service.send_message(user_phone, retry_message, session_id=session)
 
                 return {
                     "status": "neutral_greeting_retry_sent"
@@ -1778,7 +1778,7 @@ class ProfileSelectionService:
                 "2 - Exit\n\n"
                 "Reply with the number corresponding to your choice."
             )
-            await self.whatsapp_service.send_message(user_phone, retry_message,session=session)
+            await self.whatsapp_service.send_message(user_phone, retry_message, session_id=session)
 
             return {
                 "status": "buyer_no_accounts_retry_sent"
@@ -1817,7 +1817,7 @@ class ProfileSelectionService:
                 "2 - Exit\n\n"
                 "Reply with the number corresponding to your choice."
             )
-            await self.whatsapp_service.send_message(user_phone, retry_message,session=session)
+            await self.whatsapp_service.send_message(user_phone, retry_message, session_id=session)
 
             return {
                 "status": "seller_no_accounts_retry_sent"

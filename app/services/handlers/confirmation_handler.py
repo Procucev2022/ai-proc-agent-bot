@@ -325,7 +325,7 @@ class ConfirmationHandler:
             "clarification_request"
         )
         
-        await self.whatsapp_service.send_message(user.phone_number, response, session=session)
+        await self.whatsapp_service.send_message(user.phone_number, response, session_id=session)
         return {"status": "confirmation_clarification_requested"}
 
     async def _proceed_to_confirmation_from_optional(self, user: User, session: ConversationSession,
@@ -529,7 +529,7 @@ class ConfirmationHandler:
                 f"We encountered an issue while creating your RFQ:\n{error_details}\n\n"
                 "Please try again or contact support if the issue persists."
             )
-            await self.whatsapp_service.send_message(user.phone_number, response, session=session)
+            await self.whatsapp_service.send_message(user.phone_number, response, session_id=session)
             return
 
         rfq_ids = []
