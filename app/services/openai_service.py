@@ -2778,7 +2778,7 @@ Determine the best category for the input item based on the similar items and th
     def _clean_for_json_serialization(self, obj):
         """Recursively clean object for JSON serialization."""
         from datetime import datetime, date
-        
+
         if obj is None:
             return None
         elif hasattr(obj, 'value'):  # Enum object
@@ -2789,7 +2789,12 @@ Determine the best category for the input item based on the similar items and th
             return {key: self._clean_for_json_serialization(value) for key, value in obj.items()}
         elif isinstance(obj, (list, tuple)):
             return [self._clean_for_json_serialization(item) for item in obj]
-        elif isinstance(obj, (str, int, float, bool)):
+        elif isinstance(obj, float):
+            # Convert float to int if it's a whole number (e.g., 10.0 -> 10)
+            if obj == int(obj):
+                return int(obj)
+            return obj
+        elif isinstance(obj, (str, int, bool)):
             return obj
         else:
             # Try to serialize to test, if it fails, convert to string

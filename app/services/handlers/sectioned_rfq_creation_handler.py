@@ -237,9 +237,8 @@ class SectionedRFQCreationHandler:
                     logger.warning(f"[SECTIONED_RFQ] Invalid delivery date during extraction: {date_validation_error}")
                     delivery_data["deliveryDate"] = ""
 
-            # Auto-fill city/state from pincode if pincode is available
-            if delivery_data.get("pincode") and (not delivery_data.get("city") or not delivery_data.get("state")):
-                logger.info(f"[SECTIONED_RFQ] Auto-filling city/state from pincode: {delivery_data['pincode']}")
+            # Auto-fill city/state from pincode - pincode is authoritative source
+            if delivery_data.get("pincode"):
                 delivery_data = await self._autofill_location_from_pincode(delivery_data)
 
             # Store extracted delivery data
@@ -256,12 +255,10 @@ class SectionedRFQCreationHandler:
         # Reload delivery_data from session to ensure we have the latest stored data
         delivery_data = WorkflowManager.get_section_data(session, "date_location")
 
-        # Auto-fill city/state if we have pincode but missing location
-        if delivery_data and delivery_data.get("pincode") and (not delivery_data.get("city") or not delivery_data.get("state")):
-            logger.info(f"[SECTIONED_RFQ] Auto-filling missing city/state from pincode")
+        # Auto-fill city/state from pincode - pincode is authoritative source
+        if delivery_data and delivery_data.get("pincode"):
             delivery_data = await self._autofill_location_from_pincode(delivery_data)
             WorkflowManager.update_section_data(session, "date_location", delivery_data)
-            # Save session after auto-fill to persist the location data
             await self.session_manager.save_session(session, persist_to_db=False)
 
         # Check if we have basics (date + pincode) - city/state will be auto-filled
@@ -290,6 +287,9 @@ class SectionedRFQCreationHandler:
                     footer="",
                     session_id=session
                 )
+                # Set awaiting modification so next message goes through _process_delivery_modification_direct
+                # This ensures that if user provides items instead, they get the detailed format prompt
+                WorkflowManager.set_awaiting_section_modification(session, "date_location", True)
                 await self.session_manager.save_session(session, persist_to_db=False)
                 return {"status": "awaiting_delivery_details"}
 
@@ -331,7 +331,81 @@ class SectionedRFQCreationHandler:
 
         # Step 2: Check if format valid
         if parsed_result.get("error"):
-            # Format invalid - increment retry
+            # Check if message looks like a delivery format attempt (contains delivery-related keywords)
+            message_lower = message.lower()
+            is_format_attempt = any(keyword in message_lower for keyword in [
+                "delivery date:", "delivery pincode:", "date:", "pincode:"
+            ])
+
+            if not is_format_attempt:
+                # User didn't attempt the format - they may have provided items or other info
+                # Try entity extraction to see if there's any date/pincode in the message
+                logger.info(f"[SECTIONED_RFQ] Message doesn't look like format attempt, trying entity extraction")
+
+                entity_context = self._build_entity_context(session)
+                entity_result = await self.entity_service.extract_entities(
+                    message, context=entity_context, workflow_type="buy_something"
+                )
+
+                # Check if any delivery data was extracted
+                extracted_date = entity_result.get("deliveryDate", "")
+                extracted_pincode = entity_result.get("pincode", "")
+
+                if extracted_date or extracted_pincode:
+                    # Found some delivery data - process it
+                    delivery_data = {
+                        "deliveryDate": extracted_date,
+                        "pincode": extracted_pincode,
+                        "city": entity_result.get("city", ""),
+                        "state": entity_result.get("state", "")
+                    }
+
+                    # Validate date if provided
+                    date_validation_error = None
+                    if delivery_data.get("deliveryDate"):
+                        date_validation = await self._validate_delivery_date(delivery_data["deliveryDate"])
+                        if date_validation.get("is_valid"):
+                            delivery_data["deliveryDate"] = date_validation.get("normalized_date", delivery_data["deliveryDate"])
+                        else:
+                            date_validation_error = date_validation.get("error", "Invalid delivery date")
+                            delivery_data["deliveryDate"] = ""
+
+                    # Auto-fill city/state from pincode - pincode is authoritative source
+                    if delivery_data.get("pincode"):
+                        delivery_data = await self._autofill_location_from_pincode(delivery_data)
+
+                    WorkflowManager.update_section_data(session, "date_location", delivery_data)
+
+                    # Store items if provided
+                    if entity_result.get("products"):
+                        logger.info(f"[SECTIONED_RFQ] User provided items, storing for later")
+                        WorkflowManager.update_section_data(session, "items", entity_result["products"])
+
+                    await self.session_manager.save_session(session, persist_to_db=False)
+
+                    # Check if we have complete delivery data now
+                    if self._has_delivery_basics(delivery_data) and self._is_delivery_complete(delivery_data):
+                        return await self._display_delivery_confirmation(user, session, delivery_data)
+                    else:
+                        return await self._display_delivery_missing_fields(user, session, delivery_data, date_validation_error)
+                else:
+                    # No delivery data found - store any items and re-show the format prompt
+                    # Don't increment retry since this wasn't a format attempt
+                    if entity_result.get("products"):
+                        logger.info(f"[SECTIONED_RFQ] User provided items instead of delivery data, storing for later")
+                        WorkflowManager.update_section_data(session, "items", entity_result["products"])
+                        await self.session_manager.save_session(session, persist_to_db=False)
+
+                    # Re-show the format prompt
+                    delivery_data = WorkflowManager.get_section_data(session, "date_location") or {
+                        "deliveryDate": "",
+                        "pincode": "",
+                        "city": "",
+                        "state": ""
+                    }
+                    return await self._display_delivery_missing_fields(user, session, delivery_data, None)
+
+            # User attempted the format but it's invalid - increment retry
             retry_count = WorkflowManager.increment_section_retry(session, "date_location")
             logger.warning(f"[SECTIONED_RFQ] Delivery format invalid, retry count: {retry_count}")
 
@@ -1183,7 +1257,13 @@ class SectionedRFQCreationHandler:
         return True
 
     async def _autofill_location_from_pincode(self, delivery_data: Dict) -> Dict:
-        """Auto-fill city and state from pincode using existing pincode lookup."""
+        """
+        Auto-fill city and state from pincode using existing pincode lookup.
+
+        IMPORTANT: Pincode is the authoritative source for city/state.
+        User-provided city/state values are OVERRIDDEN by pincode lookup results
+        to ensure data accuracy (e.g., user says "Mumbai 411005" but 411005 is Pune).
+        """
         pincode = delivery_data.get("pincode")
         if not pincode:
             return delivery_data
@@ -1198,13 +1278,12 @@ class SectionedRFQCreationHandler:
             # Lookup location
             location_data = await get_location_from_pincode_async(clean_pincode)
             if location_data:
-                if not delivery_data.get("city") and location_data.get("city"):
+                # Always override city/state with pincode lookup results (pincode is authoritative)
+                if location_data.get("city"):
                     delivery_data["city"] = location_data["city"]
-                    logger.info(f"[SECTIONED_RFQ] Auto-filled city: {location_data['city']}")
 
-                if not delivery_data.get("state") and location_data.get("state"):
+                if location_data.get("state"):
                     delivery_data["state"] = location_data["state"]
-                    logger.info(f"[SECTIONED_RFQ] Auto-filled state: {location_data['state']}")
             else:
                 logger.warning(f"[SECTIONED_RFQ] No location data found for pincode: {pincode}")
 
@@ -1407,12 +1486,16 @@ class SectionedRFQCreationHandler:
         # Use existing cancel_service to clear workflow
         await self.cancel_service._clear_workflow_state(session)
 
-        # Send informative cancellation message
-        msg = f"Maximum retry attempts reached for {section_name} section.\n"
+        # Determine user type for appropriate menu buttons
+        user_type = "buyer" if user.role else "seller"
+
+        # Send cancellation message with appropriate menu buttons
+        msg = f"Maximum retry attempts reached for {section_name.replace('_', ' ')} section.\n"
         msg += f"The workflow has been cancelled.\n\n"
         msg += f"What would you like to do next?"
 
-        await self.whatsapp_service.send_message(user.phone_number, msg, session_id=session)
+        # Use cancel_service's method to send message with appropriate buttons
+        await self.cancel_service._send_cancellation_message(user.phone_number, user_type)
 
         return {"status": "max_retries_cancelled"}
 
