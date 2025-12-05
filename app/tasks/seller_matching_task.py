@@ -141,6 +141,7 @@ def process_seller_matching(self):
                     if notified_ids:
                         excluded_seller_ids.update(notified_ids)
                         logger.info(f"Added {len(notified_ids)} sellers to batch exclusion set (total excluded: {len(excluded_seller_ids)})")
+
                 else:
                     failed_count += 1
 
@@ -190,6 +191,7 @@ def get_rfqs_needing_seller_matching(limit: int = 50) -> List[Dict[str, Any]]:
 
     # Get RFQs that need more sellers
     # Uses subquery to count current subscribed/unsubscribed notifications
+
     query = """
         SELECT DISTINCT
             h.uuid as rfq_uuid,
@@ -215,6 +217,7 @@ def get_rfqs_needing_seller_matching(limit: int = 50) -> List[Dict[str, Any]]:
             JOIN organization o ON grv.vendor_uuid = o.uuid
             GROUP BY grv.rfq_uuid
         ) progress ON h.uuid = progress.rfq_uuid
+
         WHERE i.category IS NOT NULL
         AND LOWER(TRIM(i.category)) != 'other'
         AND h.source_type = 'W'
@@ -531,32 +534,23 @@ async def process_single_rfq_matching(
 def extract_delivery_location(rfq: Dict[str, Any]) -> Dict[str, Any]:
     """
     Extract delivery location information from RFQ data.
-    
+
     Args:
         rfq: RFQ data dictionary
-        
+
     Returns:
         Location dictionary with available information
     """
     location = {}
-    
-    # Try to extract location from special instructions or description
-    description = (rfq.get('description') or '').lower()
-    special_instruction = (rfq.get('special_instruction') or '').lower()
-    combined_text = f"{description} {special_instruction}"
-    
-    # Simple location extraction (can be enhanced with NLP)
-    common_cities = [
-        'mumbai', 'delhi', 'bangalore', 'hyderabad', 'chennai', 'kolkata',
-        'pune', 'ahmedabad', 'surat', 'jaipur', 'lucknow', 'kanpur',
-        'nagpur', 'patna', 'indore', 'thane', 'bhopal', 'visakhapatnam'
-    ]
-    
-    for city in common_cities:
-        if city in combined_text:
-            location['city'] = city.title()
-            break
-    
+
+    # Get delivery location from the database fields
+    if rfq.get('delivery_city'):
+        location['city'] = rfq['delivery_city']
+    if rfq.get('delivery_state'):
+        location['state'] = rfq['delivery_state']
+    if rfq.get('delivery_pincode'):
+        location['pincode'] = rfq['delivery_pincode']
+
     return location
 
 

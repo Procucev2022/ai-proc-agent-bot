@@ -214,7 +214,7 @@ class ConfirmationHandler:
             successful_count = 0
         
         # Generate completion response with RFQ IDs
-        await self._send_completion_response(user, rfq_results, successful_count)
+        await self._send_completion_response(user, session, rfq_results, successful_count)
         
         # Run auto-categorization for each successful RFQ (offline process)
         # auto_cat = await run_auto_categorization_for_rfqs(
@@ -325,7 +325,7 @@ class ConfirmationHandler:
             "clarification_request"
         )
         
-        await self.whatsapp_service.send_message(user.phone_number, response)
+        await self.whatsapp_service.send_message(user.phone_number, response, session=session)
         return {"status": "confirmation_clarification_requested"}
 
     async def _proceed_to_confirmation_from_optional(self, user: User, session: ConversationSession,
@@ -513,7 +513,7 @@ class ConfirmationHandler:
                 "error": f"Failed to submit RFQ: {str(e)}"
             }
 
-    async def _send_completion_response(self, user: User, rfq_results: List[Dict], successful_count: int):
+    async def _send_completion_response(self, user: User, session: ConversationSession, rfq_results: List[Dict], successful_count: int):
         """Send completion response to user."""
         if successful_count == 0:
             # Send error message to user when RFQ creation fails
@@ -529,7 +529,7 @@ class ConfirmationHandler:
                 f"We encountered an issue while creating your RFQ:\n{error_details}\n\n"
                 "Please try again or contact support if the issue persists."
             )
-            await self.whatsapp_service.send_message(user.phone_number, response)
+            await self.whatsapp_service.send_message(user.phone_number, response, session=session)
             return
 
         rfq_ids = []

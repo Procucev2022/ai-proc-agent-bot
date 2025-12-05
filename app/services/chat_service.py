@@ -403,7 +403,7 @@ class ChatService:
                       "Note: If you are expecting the delivery at different locations or on different dates, "
                       "we request you create separate RFQs.")
 
-        await self.whatsapp_service.send_message(user.phone_number, initial_msg)
+        await self.whatsapp_service.send_message(user.phone_number, initial_msg, session=session)
 
         return {"status": "sectioned_rfq_activated"}
 
@@ -855,9 +855,9 @@ class ChatService:
                     )
 
                     verification_message = redirect_info.get("message", pending_message)
-                    
-                    await self.whatsapp_service.send_message(user_phone, verification_message)
-                    
+
+                    await self.whatsapp_service.send_message(user_phone, verification_message, session=session)
+
                     await self.session_manager.save_session(session, WorkflowType.authentication)
                     return auth_result
                 else:
@@ -1537,7 +1537,8 @@ class ChatService:
                     # Unclear registration type - ask for clarification
                     await self.whatsapp_service.send_message(
                         user.phone_number,
-                        "Would you like to register as a buyer or seller?"
+                        "Would you like to register as a buyer or seller?",
+                        session=session
                     )
                     return {"status": "registration_clarification_requested"}
 

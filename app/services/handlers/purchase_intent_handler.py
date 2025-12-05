@@ -268,7 +268,7 @@ class PurchaseIntentHandler:
         if workflow_type == "modification_request" and not has_pending_products:
             logger.warning(f"[BUG#2_FIX] Modification request detected but no data to modify for session {session.session_id}")
             helpful_message = "I couldn't find any product details to modify. Could you please tell me what product you'd like to purchase? For example, 'I need 5 laptops'."
-            await self.whatsapp_service.send_message(user.phone_number, helpful_message)
+            await self.whatsapp_service.send_message(user.phone_number, helpful_message, session=session)
             await self.session_manager.save_session(session, WorkflowType.general_inquiry)
             return {
                 "status": "modification_request_no_data",
@@ -281,7 +281,7 @@ class PurchaseIntentHandler:
             "📝 Example:\n"
             "Laptop Dell Inspiron - 5, Printer HP LaserJet - 2, Desktop HP 17\" - 10"
         )
-        await self.whatsapp_service.send_message(user.phone_number, clarification_message)
+        await self.whatsapp_service.send_message(user.phone_number, clarification_message, session=session)
         await self.session_manager.save_session(session, WorkflowType.rfq_creation)
 
         return {
@@ -324,7 +324,7 @@ class PurchaseIntentHandler:
                 f"Please limit quantities to 100,000 pieces/units per product. "
                 f"You can adjust the quantities and try again."
             )
-            await self.whatsapp_service.send_message(user.phone_number, info_message)
+            await self.whatsapp_service.send_message(user.phone_number, info_message, session=session)
 
             logger.info(f"Quantity limit violation message sent to user {user.phone_number}")
 
@@ -370,7 +370,7 @@ class PurchaseIntentHandler:
                 f"I'm sorry, but {items_text} cannot be procured through our standard RFQ system.\n\n"
                 f"Our system handles tangible physical products like equipment, materials, supplies, and goods that can be purchased through standard procurement channels."
             )
-            await self.whatsapp_service.send_message(user.phone_number, info_message)
+            await self.whatsapp_service.send_message(user.phone_number, info_message, session=session)
 
             # Clear the workflow state and send action buttons using cancel service
             from app.services.cancel_service import CancelService

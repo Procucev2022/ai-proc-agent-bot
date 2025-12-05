@@ -62,6 +62,7 @@ class SellerNotificationService:
 
         # Build message with the 5 required fields
         # Note: Header "New RFQ Opportunity" is set separately in send_configurable_buttons
+
         lines = []
 
         # 1. RFQ ID
