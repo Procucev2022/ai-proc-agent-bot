@@ -271,10 +271,7 @@ class ProfileSelectionService:
             session.workflow_state['profiles'] = profiles
             
             # Send message and add to conversation history
-            await self.whatsapp_service.send_message(user_phone, message)
-            # Add bot message to conversation history
-            from app.services.helpers.summarization_helpers import SummarizationHelpers
-            SummarizationHelpers.add_to_conversation_history(session, "assistant", message)
+            await self.whatsapp_service.send_message(user_phone, message,session=session)
 
             return {
                 "status": "profile_selection_sent",
@@ -312,7 +309,7 @@ class ProfileSelectionService:
                 session.workflow_state['profile_selection_stage'] = 'buyer_intent_no_accounts'
                 session.workflow_state['profile_options'] = profile_options
                 
-                await self.whatsapp_service.send_message(user_phone, message_text)
+                await self.whatsapp_service.send_message(user_phone, message_text,session=session)
                 
                 return {
                     "status": "buyer_no_accounts_message_sent",
@@ -360,10 +357,7 @@ class ProfileSelectionService:
             session.workflow_state['original_intent'] = intent_result
 
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message)
-            # Add to conversation history
-            from app.services.helpers.summarization_helpers import SummarizationHelpers
-            SummarizationHelpers.add_to_conversation_history(session, "assistant", full_message)
+            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
 
             return {
                 "status": "buyer_profile_selection_presented",
@@ -422,10 +416,7 @@ class ProfileSelectionService:
             session.workflow_state['original_intent'] = intent_result
 
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message)
-            # Add to conversation history
-            from app.services.helpers.summarization_helpers import SummarizationHelpers
-            SummarizationHelpers.add_to_conversation_history(session, "assistant", full_message)
+            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
 
             return {
                 "status": "seller_profile_selection_presented",
@@ -480,11 +471,7 @@ class ProfileSelectionService:
             session.workflow_state['profile_options'] = profile_options
 
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message)
-            # Add to conversation history
-            from app.services.helpers.summarization_helpers import SummarizationHelpers
-            SummarizationHelpers.add_to_conversation_history(session, "assistant", full_message)
-
+            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
             return {
                 "status": "rfq_status_profile_selection_presented",
                 "options_count": len(profile_options)
@@ -525,7 +512,7 @@ class ProfileSelectionService:
             session.workflow_state['profile_options'] = profile_options
 
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message)
+            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
 
             return {
                 "status": "ambiguous_profile_selection_presented",
@@ -563,10 +550,7 @@ class ProfileSelectionService:
             session.workflow_state['profile_selection_stage'] = 'new_user_registration'
             session.workflow_state['profile_options'] = profile_options
 
-            await self.whatsapp_service.send_message(user_phone, message)
-            # Add to conversation history
-            from app.services.helpers.summarization_helpers import SummarizationHelpers
-            SummarizationHelpers.add_to_conversation_history(session, "assistant", message)
+            await self.whatsapp_service.send_message(user_phone, message,session=session)
 
             return {
                 "status": "new_user_registration_presented",
@@ -838,7 +822,8 @@ class ProfileSelectionService:
                         await self.whatsapp_service.send_configurable_buttons(
                             user_phone,
                             buying_message,
-                            buttons_config
+                            buttons_config,
+                            session=session
                         )
 
                         return {
@@ -925,7 +910,7 @@ class ProfileSelectionService:
                 if verification_check.get("redirect_to_support"):
                     # Redirect to support
                     support_message = redirect_info.get("message", "Please contact our support team for assistance.")
-                    await self.whatsapp_service.send_message(user_phone, support_message)
+                    await self.whatsapp_service.send_message(user_phone, support_message,session=session)
 
                     return {
                         "status": "verification_failed",
@@ -1039,7 +1024,8 @@ class ProfileSelectionService:
                 user_phone,
                 menu_message,
                 buttons_config,
-                header
+                header,
+                session=session
             )
 
             return {
@@ -1063,7 +1049,7 @@ class ProfileSelectionService:
                 "Please reply with the number (1, 2) or type Buyer, Seller, or Exit to continue."
             )
 
-            await self.whatsapp_service.send_message(user_phone, message)
+            await self.whatsapp_service.send_message(user_phone, message,session=session)
 
             # Set session state to handle registration type selection
             session.workflow_state = session.workflow_state or {}
@@ -1191,7 +1177,7 @@ class ProfileSelectionService:
             message_parts.append("Reply with the number corresponding to your choice.")
 
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message)
+            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
 
             return {
                 "status": "profile_selection_retry_presented",
@@ -1206,6 +1192,12 @@ class ProfileSelectionService:
                                                  session: ConversationSession) -> Dict[str, Any]:
         """Handle user response to registration type choice (buyer/seller)."""
         try:
+            # Handle case where message might be a dict (button reply)
+            if isinstance(message, dict):
+                if 'button_reply' in message:
+                    message = message['button_reply'].get('title', str(message))
+                else:
+                    message = str(message)
             message_lower = message.strip().lower()
 
             # First try to detect registration intent using the user selection tool
@@ -1245,7 +1237,7 @@ class ProfileSelectionService:
                         "• Type 'buyer' or '1' for Buyer registration\n"
                         "• Type 'seller' or '2' for Seller registration"
                     )
-                    await self.whatsapp_service.send_message(user_phone, clarification_message)
+                    await self.whatsapp_service.send_message(user_phone, clarification_message,session=session)
 
                     return {
                         "status": "registration_type_clarification_sent"
@@ -1393,7 +1385,7 @@ class ProfileSelectionService:
             session.workflow_state['existing_profiles'] = existing_profiles
 
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message)
+            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
 
             return {
                 "status": "intent_mismatch_handled",
@@ -1454,7 +1446,7 @@ class ProfileSelectionService:
             ]
 
             retry_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, retry_message)
+            await self.whatsapp_service.send_message(user_phone, retry_message,session=session)
 
             return {
                 "status": "intent_mismatch_retry_sent",
@@ -1506,7 +1498,7 @@ class ProfileSelectionService:
                 "3. Exit\n\n"
                 "Reply with the number corresponding to your choice."
             )
-            await self.whatsapp_service.send_message(user_phone, retry_message)
+            await self.whatsapp_service.send_message(user_phone, retry_message,session=session)
 
             return {
                 "status": "new_user_registration_retry_sent"
@@ -1533,35 +1525,6 @@ class ProfileSelectionService:
             logger.error(f"Error handling exit action for {user_phone}: {e}")
             return {"status": "error", "error": str(e)}
 
-    async def handle_bfs_coming_soon_response(self, user_phone: str, profile: Dict) -> Dict[str, Any]:
-        """Handle BFS search coming soon response with follow-up buttons."""
-        try:
-            # Send coming soon message
-            coming_soon_message = "BFS search is coming soon!"
-            await self.whatsapp_service.send_message(user_phone, coming_soon_message)
-
-            # Show the three buttons as requested
-            buttons_config = [
-                {"id": "create_rfq", "title": "Create new RFQ"},
-                {"id": "rfq_status", "title": "Check RFQ Status"},
-                {"id": "contact_support", "title": "Get Support Info"}
-            ]
-
-            await self.whatsapp_service.send_configurable_buttons(
-                user_phone,
-                "What would you like to do?",
-                buttons_config
-            )
-
-            return {
-                "status": "bfs_coming_soon_handled",
-                "user_type": profile['role'],
-                "email": profile['email']
-            }
-
-        except Exception as e:
-            logger.error(f"Error handling BFS coming soon response for {user_phone}: {e}")
-            return {"status": "error", "error": str(e)}
 
     async def _check_role_filter_request(self, user_phone: str, message: str,
                                          session: ConversationSession) -> Optional[Dict[str, Any]]:
@@ -1622,7 +1585,7 @@ class ProfileSelectionService:
                 session.workflow_state['profile_selection_stage'] = f'no_{role_filter}_profiles'
 
                 full_message = "\n".join(message_parts)
-                await self.whatsapp_service.send_message(user_phone, full_message)
+                await self.whatsapp_service.send_message(user_phone, full_message,session=session)
 
                 return {
                     "status": f"no_{role_filter}_profiles_message_sent",
@@ -1660,7 +1623,7 @@ class ProfileSelectionService:
             session.workflow_state['role_filter'] = role_filter
 
             full_message = "\n".join(message_parts)
-            await self.whatsapp_service.send_message(user_phone, full_message)
+            await self.whatsapp_service.send_message(user_phone, full_message,session=session)
 
             return {
                 "status": f"filtered_{role_filter}_profiles_shown",
@@ -1727,7 +1690,7 @@ class ProfileSelectionService:
                     "2 - Sell (view or respond to RFQs)\n\n"
                     "Reply with 1 or 2, or type Buy or Sell to continue."
                 )
-                await self.whatsapp_service.send_message(user_phone, clarification_message)
+                await self.whatsapp_service.send_message(user_phone, clarification_message,session=session)
                 return {
                     "status": "dual_intent_clarification_sent"
                 }
@@ -1776,7 +1739,7 @@ class ProfileSelectionService:
                         "2 - Sell (view or respond to RFQs)\n\n"
                         "Reply with 1 or 2, or type Buy or Sell to continue."
                     )
-                    await self.whatsapp_service.send_message(user_phone, retry_message)
+                    await self.whatsapp_service.send_message(user_phone, retry_message,session=session)
 
                 return {
                     "status": "neutral_greeting_retry_sent"
@@ -1815,7 +1778,7 @@ class ProfileSelectionService:
                 "2 - Exit\n\n"
                 "Reply with the number corresponding to your choice."
             )
-            await self.whatsapp_service.send_message(user_phone, retry_message)
+            await self.whatsapp_service.send_message(user_phone, retry_message,session=session)
 
             return {
                 "status": "buyer_no_accounts_retry_sent"
@@ -1854,7 +1817,7 @@ class ProfileSelectionService:
                 "2 - Exit\n\n"
                 "Reply with the number corresponding to your choice."
             )
-            await self.whatsapp_service.send_message(user_phone, retry_message)
+            await self.whatsapp_service.send_message(user_phone, retry_message,session=session)
 
             return {
                 "status": "seller_no_accounts_retry_sent"

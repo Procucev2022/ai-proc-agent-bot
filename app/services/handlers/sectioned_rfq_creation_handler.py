@@ -871,13 +871,13 @@ class SectionedRFQCreationHandler:
         logger.info(f"[SECTIONED_RFQ] Button clicked: {button_id}")
 
         # Parse button ID
-        if button_id.startswith("confirm_"):
+        if button_id.startswith("confirm_") and button_id != "confirm_cancel":
             section = button_id.replace("confirm_", "")
             return await self._handle_section_confirm(user, session, section)
         elif button_id.startswith("modify_"):
             section = button_id.replace("modify_", "")
             return await self._handle_section_modify(user, session, section)
-        elif button_id == "restart_rfq":
+        elif button_id == "restart_rfq" or button_id == "confirm_cancel" or button_id == "decline_cancel":
             return await self._handle_restart_rfq(user, session)
         elif button_id == "final_confirm_rfq":
             return await self._handle_final_rfq_submission(user, session)
@@ -978,7 +978,8 @@ class SectionedRFQCreationHandler:
         cancel_result = await self.cancel_service.handle_cancel_intent(
             user.phone_number,
             session,
-            message="restart"
+            message="restart",
+            user=user
         )
 
         logger.info(f"[SECTIONED_RFQ] Cancel service result: {cancel_result}")

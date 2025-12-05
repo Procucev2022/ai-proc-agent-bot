@@ -568,18 +568,12 @@ class ChatService:
 
             if intent == "exit_system" and confidence > 50 and is_in_auth_workflow:
                 logger.info(f"Exit intent detected in auth workflow with {confidence}% confidence - handling immediately to prevent loop")
-                exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                exit_result = await self.exit_service.handle_exit_intent(user_phone, session, message=message_content)
                 return exit_result
 
             if intent == "cancel_workflow" and confidence > 50 and is_in_auth_workflow:
                 logger.info(f"Cancel workflow intent detected in auth workflow with {confidence}% confidence - handling immediately to prevent loop")
-                from app.schemas.conversation import MessageSchema
-                message = MessageSchema(
-                    content=message_content,
-                    external_user_id=user_phone,
-                    message_type=message_type
-                )
-                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message)
+                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message_content)
                 await self.session_manager.save_session(session, session.workflow_type)
                 return cancel_result
 
@@ -612,7 +606,8 @@ class ChatService:
                     "redirected_to_buyer_registration", "redirected_to_seller_registration",
                     "intent_mismatch_handled", "intent_mismatch_retry_sent", "new_user_registration_presented",
                     "buyer_options_presented", "seller_options_presented", "single_buyer_profile_selection_presented", "profile_selection_sent",
-                    "registration_type_clarification_sent", "verification_failed","filtered_buyer_profiles_shown","max_otp_exceeded", "buyer_no_accounts_message_sent","user_already_exists"
+                    "registration_type_clarification_sent", "verification_failed","filtered_buyer_profiles_shown","max_otp_exceeded", "buyer_no_accounts_message_sent","user_already_exists",
+                    "exit_confirmation_pending","no_workflow_to_exit"
                 ]
                 
                 if auth_status in auth_in_progress_statuses:
@@ -1186,7 +1181,7 @@ class ChatService:
                     return await self._handle_excel_confirmation_response(user, session, "cancel", intent_result)
 
                 # Trigger cancel confirmation flow (will send buttons or handle confirmation)
-                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message)
+                cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message, user)
                 await self.session_manager.save_session(session, session.workflow_type)
                 return cancel_result
 
@@ -1212,12 +1207,13 @@ class ChatService:
                     await self.session_manager.save_session(session, WorkflowType.rfq_creation)
                     return result
                 else:
-                    # No pending optional fields - treat as genuine exit
-                    logger.info(f"Exit intent detected with {confidence}% confidence - handling system exit")
+                    # No pending optional fields - treat as genuine exit with confirmation
+                    logger.info(f"Exit intent detected with {confidence}% confidence - requesting exit confirmation")
                     # Use the same phone format as used in authentication flow
                     user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
-                    # Exit service handles all session persistence (DB + Redis cleanup)
+                    # Exit service now shows confirmation before exiting
                     exit_result = await self.exit_service.handle_exit_intent(user_phone, session)
+                    await self.session_manager.save_session(session, session.workflow_type)
                     return exit_result
 
             if intent == "support" and confidence > 0.7:
@@ -1271,7 +1267,7 @@ class ChatService:
                         logger.info("calling from process text message inside new intent")
                         await self.handle_irrelevant_message_flow(user.phone_number, message_intent_result, session)
                     elif new_intent == "greeting":
-                        return await self._handle_greeting_inquiry(user, new_message, intent_result)
+                        return await self._handle_greeting_inquiry(user, new_message,session ,intent_result)
                     else:
                         return await self._handle_fallback(user, new_message)
                 elif result.get("status") == "error":
@@ -1327,7 +1323,7 @@ class ChatService:
                 # Detect confirmation from the message using confirmation service
                 confirmation_result = await self.cancel_service.confirmation_service.parse_confirmation(message)
                 is_confirmed = confirmation_result == "yes"
-                cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed)
+                cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed,user)
 
                 if cancel_result.get("status") == "cancelled":
                     # Workflow was cancelled, save session and return
@@ -1340,6 +1336,18 @@ class ChatService:
                 else:
                     # Any other status, return the result
                     return cancel_result
+
+            # Handle exit confirmation response (when exit_pending is true)
+            exit_pending = session.workflow_state and session.workflow_state.get("exit_pending", False)
+            if exit_pending:
+                user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+
+                # Detect confirmation from the message using confirmation service
+                confirmation_result = await self.cancel_service.confirmation_service.parse_confirmation(message)
+                is_confirmed = confirmation_result == "yes"
+                exit_result = await self.exit_service.handle_exit_confirmation(user_phone, session, is_confirmed, user)
+
+                return exit_result
 
 
             # Handle support requests immediately - even during active workflows
@@ -1715,7 +1723,7 @@ class ChatService:
                 logger.info(f"general inquiry intent detected with {confidence}% confidence in main routing")
                 await self.handle_irrelevant_message_flow(user.phone_number, message_intent_result, session)
             elif intent == "greeting":
-                return await self._handle_greeting_inquiry(user, message, intent_result)
+                return await self._handle_greeting_inquiry(user, message,session, intent_result)
 
             elif confidence < 0.5:
                 return await self._handle_clarification_request(user, message)
@@ -2398,7 +2406,7 @@ class ChatService:
                                                      "Please tell me your name to get started")
 
     async def _handle_greeting_inquiry(
-            self, user: User, message: str, intent_result: Dict[str, Any] = None
+            self, user: User, message: str, session: ConversationSession,intent_result: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """Handle general inquiries using OpenAI."""
         try:
@@ -2476,7 +2484,8 @@ class ChatService:
                 user.phone_number,
                 profile_message,
                 buttons_config,
-                header
+                header,
+                session=session
             )
 
 
@@ -2945,6 +2954,10 @@ class ChatService:
         # Handle cancel workflow confirmation buttons
         elif button_id in ["confirm_cancel", "decline_cancel"]:
             return await self._handle_cancel_confirmation_button(user, session, button_id)
+        
+        # Handle exit confirmation buttons
+        elif button_id in ["confirm_exit", "decline_exit"]:
+            return await self._handle_exit_confirmation_button(user, session, button_id)
 
         # Handle modify button by simulating "modify" message
         elif button_id == "no_rfq":
@@ -3073,7 +3086,7 @@ class ChatService:
             # confirm_cancel -> Yes, decline_cancel -> No
             is_confirmed = button_id == "confirm_cancel"
 
-            cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed)
+            cancel_result = await self.cancel_service.handle_cancel_confirmation(user_phone, session, is_confirmed,user)
 
             if cancel_result.get("status") == "cancelled":
                 # Workflow was cancelled, save session and return
@@ -3090,6 +3103,25 @@ class ChatService:
 
         except Exception as e:
             logger.error(f"Error handling cancel confirmation button: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def _handle_exit_confirmation_button(self, user: User, session: ConversationSession, button_id: str) -> Dict[str, Any]:
+        """Handle exit confirmation button responses."""
+        logger.info(f"Exit confirmation button response from {user.phone_number}: {button_id}")
+
+        try:
+            user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
+
+            # Map button ID to confirmation result
+            # confirm_exit -> Yes, decline_exit -> No
+            is_confirmed = button_id == "confirm_exit"
+
+            exit_result = await self.exit_service.handle_exit_confirmation(user_phone, session, is_confirmed, user)
+
+            return exit_result
+
+        except Exception as e:
+            logger.error(f"Error handling exit confirmation button: {e}")
             return {"status": "error", "error": str(e)}
 
     async def _handle_list_response(self, user: User, session: ConversationSession, list_id: str) -> Dict[

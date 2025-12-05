@@ -366,11 +366,18 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
                 # Track message in session if provided
                 if session:
                     try:
+                        # Create a record to save in history
+                        message_record = {
+                            "header": header,
+                            "body": body,
+                            "footer": footer,
+                            "buttons": button_data,  # original button config
+                        }
                         from app.services.helpers.summarization_helpers import SummarizationHelpers
                         from app.redis_db import get_session_redis_service
-                        SummarizationHelpers.add_to_conversation_history(session, "assistant", body, "interactive_button")
+                        SummarizationHelpers.add_to_conversation_history(session, "assistant", message_record, "interactive_button")
                         redis_session = get_session_redis_service()
-                        await redis_session.append_message_to_history(session.session_id, "assistant", body, "interactive_button")
+                        await redis_session.append_message_to_history(session.session_id, "assistant", message_record, "interactive_button")
                     except Exception as e:
                         logger.warning(f"Failed to track button message in mock: {e}")
                 return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()

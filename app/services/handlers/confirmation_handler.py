@@ -755,7 +755,8 @@ class ConfirmationHandler:
         cancel_result = await self.cancel_service.handle_cancel_intent(
             user.phone_number,
             session,
-            message="restart"
+            message="restart",
+            user=user
         )
 
         logger.info(f"[CONFIRMATION] Cancel service result: {cancel_result}")

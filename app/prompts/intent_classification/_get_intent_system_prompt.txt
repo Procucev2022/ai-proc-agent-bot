@@ -218,7 +218,8 @@ IMPORTANT: Do NOT classify user message as irrelevant if the user message contai
     - if button title is check rfq status then intent should be rfq_status_check and relevant message should be check rfq status and irrelevant message should be null
     - if button title is search stocks then intent should be bfs_search and relevant message should be search stocks and irrelevant message should be null
     - if button title is get support info then intent should be support and relevant message should be get support info and irrelevant message should be null
-
+    - if button title is No, Continue with id: decline_exit then its intent should be exit_system and relevant message should be No, Continue and irrelevant message should be null
+    - if button title is No, Continue with id: decline_cancel then its intent should be cancel_workflow and relevant message should be No,Continue and irrelevant message should be null
 IMPORTANT: Sectioned RFQ Context Handling
 When processing user messages, check if "Sectioned RFQ Active" is true.
 

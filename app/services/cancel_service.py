@@ -14,7 +14,7 @@ from app.services.confirmation_service import ConfirmationService
 from app.tools.confirmation_tool import ConfirmationTool
 from app.services.openai_service import OpenAIService
 from app.database import DatabaseManager
-
+from app.utils.message_restore_utils import restore_last_bot_message
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class CancelService:
             confirmation_tool = ConfirmationTool(openai_service)
             self.confirmation_service = ConfirmationService(confirmation_tool)
 
-    async def handle_cancel_intent(self, user_phone: str, session: ConversationSession, message: str = None) -> Dict[str, Any]:
+    async def handle_cancel_intent(self, user_phone: str, session: ConversationSession, message: str = None, user: Optional[Any] = None) -> Dict[str, Any]:
         """
         Handle cancel intent - ask for confirmation before clearing workflow state.
 
@@ -67,15 +67,39 @@ class CancelService:
             # Check if cancel is already pending - if so, this is a confirmation response
             if session.workflow_state and session.workflow_state.get("cancel_pending"):
                 logger.info(f"Cancel already pending for {user_phone}, treating message '{message}' as confirmation response")
-                # Simple yes/no detection - if message contains "yes" or similar, confirm; otherwise decline
-                message_lower = (message or "").lower()
-                is_confirmed = any(word in message_lower for word in ["yes", "confirm", "cancel", "sure", "ok"])
-                logger.info(f"Detected confirmation: {is_confirmed} from message: '{message}'")
-                return await self.handle_cancel_confirmation(user_phone, session, is_confirmed)
 
-            # Set cancel pending state
+                # Extract user response
+                user_text = ""
+                button_id = None
+
+                if isinstance(message, dict) and message.get("type") == "button_reply":
+                    button_id = message["button_reply"].get("id", "")
+                    user_text = message["button_reply"].get("title", "").lower()
+                else:
+                    user_text = (message or "").lower()
+
+                # Detect confirmation
+                is_confirmed = False
+
+                # If button press such as confirm_cancel → treat as YES
+                if button_id in ["confirm_cancel", "confirm_yes"]:
+                    is_confirmed = True
+                else:
+                    # Normal text keywords
+                    is_confirmed = any(
+                        word in user_text for word in ["yes", "confirm", "cancel", "sure", "ok","restart"])
+
+                logger.info(f"Detected cancel confirmation: {is_confirmed} from message: '{message}'")
+                return await self.handle_cancel_confirmation(user_phone, session, is_confirmed,user)
+
+            # Set cancel pending state and save last bot message
             if not session.workflow_state:
                 session.workflow_state = {}
+
+            # Save the last bot message before cancel confirmation
+            last_bot_message = self._get_last_bot_message(session)
+            if last_bot_message:
+                session.workflow_state["last_bot_message_before_cancel"] = last_bot_message
 
             session.workflow_state["cancel_pending"] = True
 
@@ -102,7 +126,7 @@ class CancelService:
             }
 
     async def handle_cancel_confirmation(self, user_phone: str, session: ConversationSession,
-                                        confirmed: bool) -> Dict[str, Any]:
+                                        confirmed: bool, user: Optional[Any] = None) -> Dict[str, Any]:
         """
         Handle user's response to cancel confirmation.
 
@@ -127,9 +151,10 @@ class CancelService:
                 user_cache_service = get_user_cache_service()
                 user_data_list = await user_cache_service.get_user_data(user_phone)
                 user_type = None
-                if user_data_list and len(user_data_list) > 0:
+                if user:
                     # selfClient: True = buyer, False = seller
-                    is_self_client = user_data_list[0].get('selfClient', False)
+                    is_self_client = user.role
+                    logger.info(f"user role is:{is_self_client}")
                     user_type = "buyer" if is_self_client else "seller"
                 logger.info(f"Retrieved user_type from cache (selfClient): {user_type}")
 
@@ -155,10 +180,12 @@ class CancelService:
                 # User declined - resume workflow
                 # Send a brief acknowledgment
                 logger.info(f"User declined cancellation - resuming workflow")
-
-                await self.whatsapp_service.send_message(
+                await restore_last_bot_message(
+                    session,
+                    self.whatsapp_service,
                     user_phone,
-                    "Continuing with your request..."
+                    "The cancellation request has been declined. You may continue with your request.",
+                    "last_bot_message_before_cancel"
                 )
 
                 # Save session
@@ -281,6 +308,7 @@ class CancelService:
 
             # Check if user is a buyer (user_type from cache is a string)
             is_buyer = user_type and user_type.lower() == "buyer"
+            is_seller = user_type and user_type.lower() == "seller"
 
             logger.info(f"Is buyer: {is_buyer}, user_type: {user_type}")
 
@@ -291,6 +319,17 @@ class CancelService:
                     {"id": "search_bfs", "title": "Search Stocks"}
                 ]
                 logger.info(f"Sending cancellation with buyer buttons to {user_phone}")
+                await self.whatsapp_service.send_configurable_buttons(
+                    recipient_id=user_phone,
+                    body=cancellation_message,
+                    buttons_config=buttons_config
+                )
+            elif is_seller:
+                buttons_config = [
+                    {"id": "rfq_status", "title": "Check RFQs Status"},
+                    {"id": "contact_support", "title": "Contact Support"}
+                ]
+                logger.info(f"Sending cancellation with seller buttons to {user_phone}")
                 await self.whatsapp_service.send_configurable_buttons(
                     recipient_id=user_phone,
                     body=cancellation_message,
@@ -307,3 +346,28 @@ class CancelService:
         except Exception as e:
             logger.error(f"Error sending cancellation message to {user_phone}: {e}")
             return False
+
+    def _get_last_bot_message(self, session: ConversationSession) -> str:
+        """
+        Extract the last bot message from conversation history.
+
+        Args:
+            session: Current conversation session
+
+        Returns:
+            Last bot message or None if not found
+        """
+        try:
+            conversation_history = session.conversation_history or {}
+            messages = conversation_history.get("messages", [])
+
+            # Find the last assistant message
+            for message in reversed(messages):
+                if message.get("role") == "assistant":
+                    return message.get("content", "")
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error getting last bot message: {e}")
+            return None
