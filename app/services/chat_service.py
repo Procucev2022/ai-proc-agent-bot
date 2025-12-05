@@ -3196,7 +3196,7 @@ class ChatService:
             is_existing = workflow_type == "seller_rfq_view"
 
             # --- Helper: send message once only ---
-            async def send_response(result):
+            async def send_response(result , session):
                 msg = result.get("message")
                 if msg and not result.get("message_already_sent"):
                     await self.whatsapp_service.send_message(user.phone_number, msg , session = session)
