@@ -41,7 +41,7 @@ class OTPService:
                 await self.whatsapp_service.send_message(
                     user_phone,
                     f"OTP sent to {email}.\nPlease provide the OTP sent on your email to complete your registration\n(Type 'Exit' anytime to end the chat)",
-                    session=session
+                    session_id=session
                 )
 
                 logger.info(f"OTP_SERVICE: OTP sent successfully to {email}")
@@ -154,7 +154,7 @@ class OTPService:
                     "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
 
                 ),
-                session=session
+                session_id=session
             )
             return {"status": "max_otp_exceeded", "reason": "max_otp_retries_exceeded"}
         
@@ -162,7 +162,7 @@ class OTPService:
         await self.whatsapp_service.send_message(
             user_phone,
             f"Invalid OTP. You have {remaining} attempts remaining.\nPlease enter the correct OTP or reply 'RESEND' to get a new OTP.",
-            session=session
+            session_id=session
         )
         return {"status": "otp_invalid", "retry_count": retry_count, "remaining_attempts": remaining}
     
@@ -183,7 +183,7 @@ class OTPService:
                     "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
 
                 ),
-                session=session
+                session_id=session
             )
             return {"status": "max_otp_exceeded", "reason": "max_otp_retries_exceeded"}
         
@@ -191,6 +191,6 @@ class OTPService:
         await self.whatsapp_service.send_message(
             user_phone,
             f"Please enter a valid OTP. You have {remaining} attempts remaining, or reply 'RESEND' to get a new OTP.",
-            session=session
+            session_id=session
         )
         return {"status": "otp_format_invalid", "retry_count": retry_count}
