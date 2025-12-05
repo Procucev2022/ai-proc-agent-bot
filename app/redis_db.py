@@ -360,8 +360,6 @@ class SessionRedisService(BaseRedisService):
 _redis_service: Optional[BaseRedisService] = None
 _auth_service: Optional[AuthRedisService] = None
 _session_service: Optional[SessionRedisService] = None
-_deferred_notification_service: Optional[DeferredNotificationRedisService] = None
-
 def get_redis_service() -> BaseRedisService:
     """Get base Redis service singleton."""
     global _redis_service
@@ -382,11 +380,3 @@ def get_session_redis_service() -> SessionRedisService:
     if _session_service is None:
         _session_service = SessionRedisService()
     return _session_service
-
-
-def get_deferred_notification_redis_service() -> DeferredNotificationRedisService:
-    """Get deferred notification Redis service singleton."""
-    global _deferred_notification_service
-    if _deferred_notification_service is None:
-        _deferred_notification_service = DeferredNotificationRedisService()
-    return _deferred_notification_service
