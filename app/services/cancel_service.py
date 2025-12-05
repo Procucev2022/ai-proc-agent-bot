@@ -38,7 +38,7 @@ class CancelService:
             confirmation_tool = ConfirmationTool(openai_service)
             self.confirmation_service = ConfirmationService(confirmation_tool)
 
-    async def handle_cancel_intent(self, user_phone: str, session: ConversationSession, message: str = None,user: Optional[Any] = None) -> Dict[str, Any]:
+    async def handle_cancel_intent(self, user_phone: str, session: ConversationSession, message: str = None, user: Optional[Any] = None) -> Dict[str, Any]:
         """
         Handle cancel intent - ask for confirmation before clearing workflow state.
 
@@ -67,7 +67,7 @@ class CancelService:
             # Check if cancel is already pending - if so, this is a confirmation response
             if session.workflow_state and session.workflow_state.get("cancel_pending"):
                 logger.info(f"Cancel already pending for {user_phone}, treating message '{message}' as confirmation response")
-                
+
                 # Extract user response
                 user_text = ""
                 button_id = None
@@ -126,7 +126,7 @@ class CancelService:
             }
 
     async def handle_cancel_confirmation(self, user_phone: str, session: ConversationSession,
-                                        confirmed: bool,user: Optional[Any] = None) -> Dict[str, Any]:
+                                        confirmed: bool, user: Optional[Any] = None) -> Dict[str, Any]:
         """
         Handle user's response to cancel confirmation.
 
@@ -151,7 +151,7 @@ class CancelService:
                 user_cache_service = get_user_cache_service()
                 user_data_list = await user_cache_service.get_user_data(user_phone)
                 user_type = None
-                if user:
+                if user_data_list and len(user_data_list) > 0:
                     # selfClient: True = buyer, False = seller
                     is_self_client = user.role
                     logger.info(f"user role is:{is_self_client}")
@@ -178,6 +178,7 @@ class CancelService:
                 }
             else:
                 # User declined - resume workflow
+                # Send a brief acknowledgment
                 logger.info(f"User declined cancellation - resuming workflow")
 
                 # Restore the last bot message if available
@@ -354,24 +355,24 @@ class CancelService:
     def _get_last_bot_message(self, session: ConversationSession) -> str:
         """
         Extract the last bot message from conversation history.
-        
+
         Args:
             session: Current conversation session
-            
+
         Returns:
             Last bot message or None if not found
         """
         try:
             conversation_history = session.conversation_history or {}
             messages = conversation_history.get("messages", [])
-            
+
             # Find the last assistant message
             for message in reversed(messages):
                 if message.get("role") == "assistant":
                     return message.get("content", "")
-            
+
             return None
-            
+
         except Exception as e:
             logger.error(f"Error getting last bot message: {e}")
             return None

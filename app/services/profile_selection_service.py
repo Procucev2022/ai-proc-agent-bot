@@ -1208,6 +1208,12 @@ class ProfileSelectionService:
                                                  session: ConversationSession) -> Dict[str, Any]:
         """Handle user response to registration type choice (buyer/seller)."""
         try:
+            # Handle case where message might be a dict (button reply)
+            if isinstance(message, dict):
+                if 'button_reply' in message:
+                    message = message['button_reply'].get('title', str(message))
+                else:
+                    message = str(message)
             message_lower = message.strip().lower()
 
             # First try to detect registration intent using the user selection tool

@@ -436,8 +436,8 @@ class IntentService:
         message_lower = message.lower().strip()
 
         exit_keywords = [
-            "exit", "quit", "cancel", "stop", "abort",
-            "start over", "restart", "reset"
+            "exit", "quit", "stop", "abort",
+            "start over", "reset"
         ]
 
         return any(keyword in message_lower for keyword in exit_keywords)

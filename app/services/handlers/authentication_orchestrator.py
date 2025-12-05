@@ -63,7 +63,7 @@ class AuthenticationOrchestrator:
                 exit_service = ExitService(self.whatsapp_service, self.authentication_service,
                                          self.chat_service.session_manager if self.chat_service else None,
                                          self.chat_service.db_manager if self.chat_service else None)
-                return await exit_service.handle_exit_intent(user_phone, session)
+                return await exit_service.handle_exit_intent(user_phone, session,message=message_content)
 
             # Check if this is a role switch scenario
             role_switch_in_progress = session.workflow_state.get("role_switch_in_progress", False)
