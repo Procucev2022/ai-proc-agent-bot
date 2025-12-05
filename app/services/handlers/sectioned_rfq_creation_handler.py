@@ -60,7 +60,7 @@ def _format_date_for_display(date_str: str) -> str:
             if "%Y" not in fmt and "%y" not in fmt:
                 parsed_date = parsed_date.replace(year=datetime.now().year)
             # Format as "d Month" (no leading zero for day)
-            return f"{parsed_date.day} {parsed_date.strftime('%B')}"
+            return f"{parsed_date.day} {parsed_date.strftime('%B %Y')}"
         except ValueError:
             continue
 

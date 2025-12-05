@@ -1,49 +1,41 @@
 {
     "type": "function",
     "name": "validate_delivery_date",
-    "description": "Validate and normalize delivery dates with business rules. Handles relative dates (today, tomorrow) and prevents past dates.",
+    "description": "Validate and normalize delivery dates with intelligent parsing. Handles ordinal numbers (30th sept), relative dates (tomorrow), and applies intelligent year assumptions.",
     "parameters": {
         "type": "object",
         "properties": {
-            "raw_date_input": {
-                "type": "string",
-                "description": "The raw date input from user (e.g., '12 sept', 'tomorrow', 'next week')"
-            },
-            "extracted_date": {
-                "type": ["string", "null"],
-                "description": "The initially extracted/parsed date in YYYY-MM-DD format"
-            },
-            "current_date": {
-                "type": "string",
-                "description": "Current date in YYYY-MM-DD format for reference"
-            },
             "is_valid": {
                 "type": "boolean",
-                "description": "Whether the date is valid for delivery"
+                "description": "Whether the date is valid for delivery (must be today or a future date). If you can parse a valid future date, this should be true."
             },
             "normalized_date": {
                 "type": ["string", "null"],
-                "description": "The final normalized date in YYYY-MM-DD format, null if invalid"
+                "description": "The final normalized date in YYYY-MM-DD format. Should be provided if is_valid is true, null only if the date cannot be parsed or is invalid."
             },
             "validation_issues": {
                 "type": "array",
                 "items": {
                     "type": "string"
                 },
-                "description": "List of validation issues found"
+                "description": "List of validation issues found (empty if valid)"
             },
             "user_friendly_message": {
-                "type": ["string", "null"],
-                "description": "User-friendly message explaining the validation result or asking for clarification"
+                "type": "string",
+                "description": "User-friendly message explaining the validation result or the parsed date"
             },
             "confidence": {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
-                "description": "Confidence in the date interpretation and validation"
+                "description": "Confidence in the date interpretation and validation (0-100)"
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation of how the date was parsed and validated"
             }
         },
-        "required": ["raw_date_input", "extracted_date", "current_date", "is_valid", "normalized_date", "validation_issues", "user_friendly_message", "confidence"],
+        "required": ["is_valid", "normalized_date", "validation_issues", "user_friendly_message", "confidence", "reasoning"],
         "additionalProperties": false
     },
     "strict": true
