@@ -40,5 +40,7 @@ FULL_FAQ_CONTEXT =\
     For Sellers:If you see “no RFQs available,” it means there are currently no active RFQs matching the categories you have selected. RFQs relevant to your business will appear as buyers create them. Consider expanding your category selection or checking back regularly for new opportunities.
 - Excel Data Format for RFQs:
     When submitting procurement requests, attach an Excel file with columns for: Item, Quantity, Brand, Specification, Delivery Date, and Pincode.
-
+- RFQ Item Visibility Clarification:
+    If a user asks: “Why are you not showing the items in RFQ <RFQ_ID>?”  
+    Respond: “I can only show the status of your RFQ, not the internal item details. For complete information, please check your RFQ on the portal (https://p2pdevuiindia.azurewebsites.net/login)”
 """
