@@ -31,6 +31,7 @@ from app.config import get_settings
 from app.tools.interaction_logger import get_interaction_logger
 from app.utils.logging_utils import log_service_method
 from app.utils.datetime_utils import format_date_display, format_date_for_validation_error, add_business_days, calculate_working_days_from_now
+
 # from app.services.global_error_handler import handle_api_error  # Removed to avoid circular import
 
 logger = logging.getLogger(__name__)
@@ -2843,11 +2844,11 @@ Determine the best category for the input item based on the similar items and th
     
     @log_service_method("openai_service")
     async def validate_delivery_date(self, raw_date_input: str, extracted_date: str = None) -> Dict[str, Any]:
-        """Validate delivery date with business rules using OpenAI.
+        """Validate delivery date using AI-based parsing and validation.
         
         Args:
             raw_date_input: Raw date input from user
-            extracted_date: Initially extracted date in YYYY-MM-DD format
+            extracted_date: Initially extracted date in YYYY-MM-DD format (optional)
             
         Returns:
             Dict with validation results and normalized date
@@ -2855,29 +2856,32 @@ Determine the best category for the input item based on the similar items and th
         start_time = time.time()
         
         try:
-            from datetime import datetime, timedelta
-            current_date = datetime.now()
-            current_date_str = current_date.strftime("%Y-%m-%d")
-            
-            # Use AI for all date parsing to handle spelling mistakes and variations
-            
-            # Load date validation tool for complex cases
+            # Load date validation tool
             with open(self.tools_dir / "date_validation.json", 'r') as f:
                 date_tool = json.load(f)
             
-            prompt = f"""
-            Validate this delivery date input:
-            Raw input: "{raw_date_input}"
-            Extracted date: {extracted_date or "None"}
-            Current date: {current_date_str}
+            # Get current date for context
+            from datetime import datetime
+            current_date = datetime.now().date()
+            current_year = current_date.year
             
-            Apply validation rules and provide normalized result.
-            """
-
+            # Build context for AI date validation
+            context_text = f"Date input to validate: '{raw_date_input}'\n\n"
+            context_text += f"Current date: {current_date.strftime('%Y-%m-%d')} ({current_date.strftime('%d %B %Y')})\n"
+            context_text += f"Current year: {current_year}\n\n"
+            
+            if extracted_date:
+                context_text += f"Previously extracted date: {extracted_date}\n\n"
+            
+            context_text += "Parse and validate this date input. Handle ordinal numbers (30th sept), relative dates (tomorrow), and apply intelligent year assumptions."
+            
+            # Track this OpenAI call
+            self._track_openai_call("ai_date_validation")
+            
             response = await self.client.responses.create(
                 model=self.default_model,
-                input=[{"role": "user", "content": prompt}],
-                instructions=self._load_prompt("date_validation", "_get_date_validation_prompt", current_year=current_date.year, current_date=current_date_str, current_month=current_date.month),
+                input=[{"role": "user", "content": context_text}],
+                instructions=self._load_prompt("date_validation", "_get_date_validation_prompt", current_date=current_date.isoformat(), current_year=current_year, current_month=current_date.month),
                 tools=[date_tool],
                 tool_choice={"type": "function", "name": "validate_delivery_date"}
             )
@@ -2890,99 +2894,60 @@ Determine the best category for the input item based on the similar items and th
                 if function_call.type == "function_call":
                     args = json.loads(function_call.arguments)
                     
-                    # Format user-friendly message with proper date format
-                    user_friendly_message = args.get("user_friendly_message", "")
-                    if not args.get("is_valid", False) and args.get("normalized_date"):
-                        # If there's a date in the message, format it nicely
-
-                        formatted_date = format_date_for_validation_error(args.get("normalized_date"))
-                        # Replace any date references in the message with formatted version
-                        if formatted_date != "N/A":
-                            user_friendly_message = user_friendly_message.replace(
-                                args.get("normalized_date", ""), formatted_date
-                            )
-                    
-                    # Handle case where AI says valid but doesn't provide normalized_date
-                    is_valid = args.get("is_valid", False)
-                    normalized_date = args.get("normalized_date")
-                    
-                    if is_valid and not normalized_date:
-                        # AI said valid but didn't provide date - calculate it locally
-                        try:
-                            current_date_obj = datetime.strptime(current_date_str, "%Y-%m-%d")
-                            
-                            # Handle working days
-                            working_days_match = re.search(r'(\d+)\s*(?:working|business)\s*days?\s*from\s*now', raw_date_input.lower())
-                            if working_days_match:
-                                working_days = int(working_days_match.group(1))
-                                normalized_date = calculate_working_days_from_now(working_days)
-                                logger.info(f"Calculated {working_days} working days from now: {normalized_date}")
-                            elif "this weekend" in raw_date_input.lower():
-                                # Find this Saturday
-                                days_until_saturday = (5 - current_date_obj.weekday()) % 7
-                                if days_until_saturday == 0 and current_date_obj.weekday() == 5:
-                                    # Already Saturday
-                                    normalized_date = current_date_obj.strftime("%Y-%m-%d")
-                                else:
-                                    saturday = current_date_obj + timedelta(days=days_until_saturday)
-                                    normalized_date = saturday.strftime("%Y-%m-%d")
-                            elif "next weekend" in raw_date_input.lower():
-                                # Find next Saturday
-                                days_until_next_saturday = ((5 - current_date_obj.weekday()) % 7) + 7
-                                next_saturday = current_date_obj + timedelta(days=days_until_next_saturday)
-                                normalized_date = next_saturday.strftime("%Y-%m-%d")
-                        except Exception as e:
-                            logger.warning(f"Failed to calculate date locally: {e}")
-                            is_valid = False
-                            normalized_date = None
-                    
                     result = {
-                        "is_valid": is_valid,
-                        "normalized_date": normalized_date,
+                        "is_valid": args.get("is_valid", False),
+                        "normalized_date": args.get("normalized_date"),
                         "validation_issues": args.get("validation_issues", []),
-                        "user_friendly_message": user_friendly_message,
+                        "user_friendly_message": args.get("user_friendly_message", ""),
                         "confidence": args.get("confidence", 0),
-                        "success": True
+                        "success": True,
+                        "parsing_method": "ai_validation",
+                        "reasoning": args.get("reasoning", "")
                     }
                     
-                    # Log successful date validation interaction
+                    if result["is_valid"]:
+                        logger.info(f"AI date validation: {raw_date_input} -> {result['normalized_date']} ({result['reasoning']})")
+                    else:
+                        logger.info(f"AI date validation failed: {raw_date_input} -> {result['reasoning']}")
+                    
+                    # Log successful date validation
                     self.interaction_logger.log_entity_extraction(
                         user_input=raw_date_input,
                         entities={"date_validation": result},
                         completeness=100 if result["is_valid"] else 0,
-                        workflow_type="date_validation",
+                        workflow_type="ai_date_validation",
                         model_used=self.default_model,
-                        processing_time=processing_time
+                        processing_time=processing_time,
+                        missing_fields=[]
                     )
                     
-                    logger.info(f"Date validation: {raw_date_input} -> {result['normalized_date']} (valid: {result['is_valid']})")
                     return result
-            
-            result = {
-                "is_valid": False,
-                "normalized_date": None,
-                "validation_issues": ["Validation failed"],
-                "user_friendly_message": "Kindly share a valid delivery date from today onward.",
-                "confidence": 30,
-                "success": False
-            }
             
             # Log failed date validation
             self.interaction_logger.log_error(
-                interaction_type="date_validation",
+                interaction_type="ai_date_validation",
                 user_input=raw_date_input,
                 error_message="No function call in response",
                 model_used=self.default_model
             )
             
-            return result
+            return {
+                "is_valid": False,
+                "normalized_date": None,
+                "validation_issues": ["No function call in response"],
+                "user_friendly_message": "Kindly share a valid delivery date from today onward",
+                "confidence": 20,
+                "success": False,
+                "parsing_method": "ai_validation"
+            }
             
         except Exception as e:
-            logger.error(f"Date validation failed: {str(e)}")
+            logger.error(f"AI date validation failed: {str(e)}")
             
             # Log exception in date validation
+            processing_time = time.time() - start_time
             self.interaction_logger.log_error(
-                interaction_type="date_validation",
+                interaction_type="ai_date_validation",
                 user_input=raw_date_input,
                 error_message=str(e),
                 model_used=self.default_model
@@ -2992,9 +2957,10 @@ Determine the best category for the input item based on the similar items and th
                 "is_valid": False,
                 "normalized_date": None,
                 "validation_issues": [f"Error: {str(e)}"],
-                "user_friendly_message": "Please provide a valid future date (e.g., 12 Sept 2025)",
+                "user_friendly_message": "Kindly share a valid delivery date from today onward",
                 "confidence": 20,
-                "success": False
+                "success": False,
+                "parsing_method": "error"
             }
     
 
