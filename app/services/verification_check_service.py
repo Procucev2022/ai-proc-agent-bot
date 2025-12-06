@@ -126,7 +126,7 @@ class VerificationCheckService:
                 else:
                     # Sellers with EMAIL_VERIFIED status - still require OTP for authentication
                     logger.info(f"Seller with EMAIL_VERIFIED status - sending OTP for authentication")
-                    otp_result = await self._send_verification_otp(user_phone, email)
+                    otp_result = await self._send_verification_otp(user_phone, email,is_daily_verification= True)
                     return {
                         "verification_required": True,
                         "otp_sent": otp_result.get("status") == "otp_sent",
@@ -220,7 +220,7 @@ class VerificationCheckService:
             logger.error(f"Error refreshing user data: {e}")
             return {"success": False, "message": str(e)}
     
-    async def _send_verification_otp(self, user_phone: str, email: str) -> Dict[str, Any]:
+    async def _send_verification_otp(self, user_phone: str, email: str,is_daily_verification: bool = False) -> Dict[str, Any]:
         """Send OTP for email verification."""
         try:
             if not email or email == 'your email':
@@ -233,7 +233,7 @@ class VerificationCheckService:
             temp_session = ConversationSession()
             temp_session.workflow_state = {}
             
-            otp_result = await self.otp_service.send_otp(user_phone, email, temp_session)
+            otp_result = await self.otp_service.send_otp(user_phone, email, temp_session,is_daily_verification)
             logger.info(f"OTP send result: {otp_result}")
             return otp_result
             

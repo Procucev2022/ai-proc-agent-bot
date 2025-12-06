@@ -2904,7 +2904,25 @@ Determine the best category for the input item based on the similar items and th
                         "parsing_method": "ai_validation",
                         "reasoning": args.get("reasoning", "")
                     }
-                    
+                    # Additional validation: Check if normalized date is in the past
+                    if result["normalized_date"]:
+                        try:
+                            normalized_date_obj = datetime.strptime(result["normalized_date"], "%Y-%m-%d").date()
+
+                            if normalized_date_obj < current_date:
+                                result["is_valid"] = False
+                                result["validation_issues"].append("Date is in the past")
+                                result[
+                                    "user_friendly_message"] = "The delivery date cannot be in the past. Kindly share a valid delivery date from today onward"
+                                result["confidence"] = 10
+                                logger.warning(
+                                    f"Date validation failed: {raw_date_input} -> {result['normalized_date']} is earlier than current date {current_date}")
+                        except ValueError as ve:
+                            logger.error(f"Failed to parse normalized date {result['normalized_date']}: {str(ve)}")
+                            result["is_valid"] = False
+                            result["validation_issues"].append("Invalid date format")
+                            result["user_friendly_message"] = "Kindly share a valid delivery date from today onward"
+
                     if result["is_valid"]:
                         logger.info(f"AI date validation: {raw_date_input} -> {result['normalized_date']} ({result['reasoning']})")
                     else:
