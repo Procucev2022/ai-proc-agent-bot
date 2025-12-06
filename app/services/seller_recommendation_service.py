@@ -66,8 +66,8 @@ class SellerRecommendationService:
         self.default_config = {
             "MAX_SUBSCRIBED_SELLERS_PER_RFQ": 10,
             "MAX_UNSUBSCRIBED_SELLERS_PER_RFQ": 15,
-            "MAX_TIME_SINCE_LAST_MESSAGE_HOURS": 0.25,  # 15 minutes (for testing)
-            "MAX_TIME_SINCE_LAST_ACTIVE_HOURS": 0.25   # 15 minutes (for testing)
+            "MAX_TIME_SINCE_LAST_MESSAGE_HOURS": 24,  # 24 hours
+            "MAX_TIME_SINCE_LAST_ACTIVE_HOURS": 24    # 24 hours
         }
     
     @log_service_method("seller_recommendation")

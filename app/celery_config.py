@@ -42,8 +42,10 @@ result_expires = 3600  # 1 hour
 result_persistent = True
 
 # Periodic task schedule (Beat scheduler)
+# Pipeline order: auto-categorization -> vector_store_sync -> seller_matching
 beat_schedule = {
     # Auto-categorization task - runs every 15 minutes
+    # This runs first to categorize new RFQs
     'auto-categorization-task': {
         'task': 'app.tasks.auto_categorization_task.process_uncategorized_rfqs',
         'schedule': crontab(minute='*/15'),
@@ -52,37 +54,29 @@ beat_schedule = {
             'queue': 'categorization'
         }
     },
-    
-    # Seller matching task - runs every 30 minutes (DISABLED)
-    # 'seller-matching-task': {
-    #     'task': 'app.tasks.seller_matching_task.process_seller_matching',
-    #     'schedule': crontab(minute='*/30'),
-    #     'options': {
-    #         'expires': 900,  # Task expires after 15 minutes if not picked up
-    #         'queue': 'seller_matching'
-    #     }
-    # },
-    
-    # Daily aggregation task - runs at 2:00 AM IST daily (DISABLED)
-    # 'daily-aggregation-task': {
-    #     'task': 'app.tasks.daily_aggregation_task.run_daily_aggregation',
-    #     'schedule': crontab(hour=2, minute=0),
-    #     'options': {
-    #         'expires': 3600,  # Task expires after 1 hour if not picked up
-    #         'queue': 'aggregation'
-    #     }
-    # },
-    
-    # Rolling windows update - runs at 3:00 AM IST daily (DISABLED)
-    # 'rolling-windows-update': {
-    #     'task': 'app.tasks.daily_aggregation_task.update_rolling_windows',
-    #     'schedule': crontab(hour=3, minute=0),
-    #     'options': {
-    #         'expires': 1800,  # Task expires after 30 minutes if not picked up
-    #         'queue': 'aggregation'
-    #     }
-    # },
-    
+
+    # Vector store sync task - runs every hour at minute 5
+    # Runs after auto-categorization to update seller embeddings
+    'vector-store-sync-task': {
+        'task': 'app.tasks.vector_store_sync_task.sync_vector_store',
+        'schedule': crontab(minute=5),  # Runs at :05 every hour
+        'options': {
+            'expires': 1800,  # Task expires after 30 minutes if not picked up
+            'queue': 'vector_store'
+        }
+    },
+
+    # Seller matching task - runs every hour at minute 10
+    # Runs after vector store sync to match sellers to categorized RFQs
+    'seller-matching-task': {
+        'task': 'app.tasks.seller_matching_task.process_seller_matching',
+        'schedule': crontab(minute=10),  # Runs at :10 every hour
+        'options': {
+            'expires': 1800,  # Task expires after 30 minutes if not picked up
+            'queue': 'seller_matching'
+        }
+    },
+
     # Test cron job - runs every 5 minutes
     'test-cron-job': {
         'task': 'app.tasks.test_cron_task.test_cron_job',
@@ -97,8 +91,8 @@ beat_schedule = {
 # Task routing - distribute tasks across different queues
 task_routes = {
     'app.tasks.auto_categorization_task.*': {'queue': 'categorization'},
-    # 'app.tasks.seller_matching_task.*': {'queue': 'seller_matching'},  # Uncomment to enable
-    # 'app.tasks.daily_aggregation_task.*': {'queue': 'aggregation'},  # Uncomment to enable
+    'app.tasks.vector_store_sync_task.*': {'queue': 'vector_store'},
+    'app.tasks.seller_matching_task.*': {'queue': 'seller_matching'},
     'app.tasks.test_cron_task.*': {'queue': 'default'},
 }
 
