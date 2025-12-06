@@ -245,7 +245,8 @@ class ProductsArrayHandler:
         await self.whatsapp_service.send_configurable_buttons(
             recipient_id=user.phone_number,
             body=formatted_message,
-            buttons_config=[{"id": "confirm_cancel", "title": "Restart"}]
+            buttons_config=[{"id": "confirm_cancel", "title": "Restart"}],
+            session_id=session
         )
 
         return {
@@ -464,7 +465,8 @@ class ProductsArrayHandler:
                 user.phone_number,
                 optional_message,
                 buttons_config,
-                "Optional Information"
+                "Optional Information",
+                session_id=session
             )
             
             # Mark that we've asked about optional fields
@@ -509,7 +511,8 @@ class ProductsArrayHandler:
             user.phone_number,
             summary_response,
             buttons_config,
-            "Confirmation Required"
+            "Confirmation Required",
+            session_id=session
         )
         
         # Store for confirmation (serialize schema to dict)
@@ -573,7 +576,8 @@ class ProductsArrayHandler:
                 user.phone_number,
                 optional_message,
                 buttons_config,
-                "Optional Information"
+                "Optional Information",
+                session_id=session
             )
 
             # Mark that we've asked about optional fields
@@ -618,7 +622,8 @@ class ProductsArrayHandler:
             user.phone_number,
             summary_response,
             buttons_config,
-            "Confirmation Required"
+            "Confirmation Required",
+            session_id=session
         )
         
         # Store for confirmation (single combined RFQ)

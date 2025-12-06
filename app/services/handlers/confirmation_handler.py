@@ -305,7 +305,8 @@ class ConfirmationHandler:
             user.phone_number,
             full_message,
             buttons_config,
-            "Confirmation Required"
+            "Confirmation Required",
+            session_id=session
         )
 
         # Don't delete pending confirmations - let the modification flow handle it
@@ -363,7 +364,8 @@ class ConfirmationHandler:
                 user.phone_number,
                 summary_response,
                 buttons_config,
-                "Confirmation Required"
+                "Confirmation Required",
+                session_id=session
             )
 
             # Move to confirmation state
@@ -413,7 +415,8 @@ class ConfirmationHandler:
                 user.phone_number,
                 summary_response,
                 buttons_config,
-                "Confirmation Required"
+                "Confirmation Required",
+                session_id=session
             )
 
             # Move to confirmation state
@@ -566,6 +569,7 @@ class ConfirmationHandler:
             user.phone_number,
             response,
             buttons_config,
+            session_id=session
         )
 
     async def _merge_optional_fields_and_confirm(self, user: User, session: ConversationSession,
@@ -607,7 +611,8 @@ class ConfirmationHandler:
                     user.phone_number,
                     summary_response,
                     buttons_config,
-                    "Confirmation Required"
+                    "Confirmation Required",
+                    session_id=session
                 )
 
                 # Move to confirmation state
@@ -645,7 +650,8 @@ class ConfirmationHandler:
                     user.phone_number,
                     summary_response,
                     buttons_config,
-                    "Confirmation Required"
+                    "Confirmation Required",
+                    session_id=session
                 )
 
                 # Move to confirmation state
