@@ -293,7 +293,8 @@ class ImageMessageProcessor:
                 user.phone_number,
                 summary_response,
                 buttons_config,
-                "Confirmation Required"
+                "Confirmation Required",
+                session_id=session
             )
 
             return {"status": "handled", "response": "confirmation_regenerated"}
@@ -338,7 +339,8 @@ class ImageMessageProcessor:
                 user.phone_number,
                 summary_response,
                 buttons_config,
-                "Confirmation Required"
+                "Confirmation Required",
+                session_id=session
             )
 
             return {"status": "handled", "response": "confirmation_regenerated"}
