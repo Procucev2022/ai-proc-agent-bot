@@ -48,6 +48,7 @@ redis
 
 # Geographic calculations for seller location matching
 geopy
+pgeocode
 
 
 # Development tools
