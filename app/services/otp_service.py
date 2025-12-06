@@ -27,7 +27,7 @@ class OTPService:
         self.whatsapp_service = whatsapp_service
         self.support_notification_service = support_notification_service
     
-    async def send_otp(self, user_phone: str, email: str, session: ConversationSession) -> Dict[str, Any]:
+    async def send_otp(self, user_phone: str, email: str, session: ConversationSession,is_daily_verification: bool = False) -> Dict[str, Any]:
         """Send OTP to email and initialize session state."""
         try:
             logger.info(f"OTP_SERVICE: Sending OTP to email: {email} for phone: {user_phone}")
@@ -38,11 +38,12 @@ class OTPService:
                 session.workflow_state["otp_email"] = email
                 session.workflow_state["otp_retry_count"] = 0
 
-                await self.whatsapp_service.send_message(
-                    user_phone,
-                    f"OTP sent to {email}.\nPlease provide the OTP sent on your email to complete your registration\n(Type 'Exit' anytime to end the chat)",
-                    session_id=session
-                )
+                if is_daily_verification:
+                    message = f"OTP sent to {email}.\nPlease provide the OTP sent to your email to complete your Email Verification.\n(Type 'Exit' anytime to end the chat)"
+                else:
+                    message = f"OTP sent to {email}.\nPlease provide the OTP sent on your email to complete your registration\n(Type 'Exit' anytime to end the chat)"
+
+                await self.whatsapp_service.send_message(user_phone, message,session_id=session)
 
                 logger.info(f"OTP_SERVICE: OTP sent successfully to {email}")
                 return {"status": "otp_sent", "email": email}
