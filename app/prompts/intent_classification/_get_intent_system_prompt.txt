@@ -211,6 +211,24 @@ When the context shows "Sectioned RFQ Active: True", the user is in a step-by-st
 - If "Sectioned RFQ Active: True" AND "Current Section: final_confirmation":
   - User says "Yes"/"Confirm"/"No"/"Cancel" → confirmation_response (90%+ confidence)
 
+
+ATTACHMENT HANDLING RULES:
+1. If the user message contains ONLY an attachment payload (e.g., mime_type, file_id, document object, binary metadata)
+   and the current Conversation Stage OR Section is "collecting_attachments" or "attachments" and the context shows "Sectioned RFQ Active: True" :
+      - Do NOT classify the message as irrelevant.
+      - Do NOT treat it as general_inquiry,support,greeting intents.
+      - its intent should be buy_something and irrelevant_message should be null
+      - The message is ALWAYS considered relevant in this stage.
+
+2. The classifier MUST use the conversation state:
+      current_stage == "collecting_attachments" OR current_section == "attachments"
+   as a strong signal that ANY attachment-like message is relevant.
+
+3. Only classify an attachment as irrelevant IF:
+      - The stage is NOT an attachment-related stage, AND
+      - The user explicitly states the attachment is unrelated (rare).
+
+
 IMPORTANT: When sectioned RFQ is active, prioritize buy_something for any data that could be delivery details or product information. Do NOT classify as general_inquiry or ambiguous just because the message is short or contains only numbers/dates.
 IMPORTANT: Do NOT classify user message as irrelevant if the user message contains numeric values, or structured data that appears to be part of an ongoing workflow (e.g., registration, RFQ creation, updating profile, verification, or any data-collection flow).
 ** Buttons REPLY **
