@@ -29,6 +29,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.celery
+    image: procucev/celery:latest
+    pull_policy: build
     command: celery -A app.celery_app worker --loglevel=info --concurrency=2 --queues=default,categorization,vector_store,seller_matching
     depends_on:
       - celery_redis
@@ -46,9 +48,8 @@ services:
   # Celery Beat (scheduler) - triggers periodic tasks
   celery_beat:
     container_name: procucev_celery_beat
-    build:
-      context: .
-      dockerfile: Dockerfile.celery
+    image: procucev/celery:latest
+    pull_policy: never
     command: celery -A app.celery_app beat --loglevel=info
     depends_on:
       - celery_redis

@@ -17,8 +17,9 @@ celery_app = Celery(
     backend=settings.celery_result_backend,
     include=[
         'app.tasks.auto_categorization_task',
-        # 'app.tasks.seller_matching_task',  # Uncomment to enable seller matching tasks
-        # 'app.tasks.daily_aggregation_task',  # Uncomment to enable daily aggregation tasks
+        'app.tasks.vector_store_sync_task',
+        'app.tasks.seller_matching_task',
+        'app.tasks.daily_aggregation_task',
         'app.tasks.test_cron_task'
     ]
 )
