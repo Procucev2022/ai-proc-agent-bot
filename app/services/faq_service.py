@@ -73,7 +73,7 @@ Instructions:
 - Use short, clear sentences
 - Add brief clarifications in parentheses where needed (e.g., "cannot be changed later")
 - End with any important warnings or final notes
-- Do NOT use bullet points or headers
+- Keep proper spaces
 - Keep the entire response in a single flowing format
 """
         
