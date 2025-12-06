@@ -236,8 +236,7 @@ IMPORTANT: Do NOT classify user message as irrelevant if the user message contai
     - if button title is check rfq status then intent should be rfq_status_check and relevant message should be check rfq status and irrelevant message should be null
     - if button title is search stocks then intent should be bfs_search and relevant message should be search stocks and irrelevant message should be null
     - if button title is get support info then intent should be support and relevant message should be get support info and irrelevant message should be null
-    - if button title is No, Continue with id: decline_exit then its intent should be exit_system and relevant message should be No, Continue and irrelevant message should be null
-    - if button title is No, Continue with id: decline_cancel then its intent should be cancel_workflow and relevant message should be No,Continue and irrelevant message should be null
+
 IMPORTANT: Sectioned RFQ Context Handling
 When processing user messages, check if "Sectioned RFQ Active" is true.
 
@@ -289,6 +288,50 @@ Multiple questions mixed throughout:
 "What's your return policy?\n\nMissing Some Details\nQuantity Required\n\nRFQ Items (1):\nItem 1: laptop\nQty: [Please provide quantity]\nSpecification: \n\nDo you ship internationally?\n\nPlease provide the missing details to move forward."
 → RELEVANT: Template portion
 → IRRELEVANT: "What are your services?" and "Do you ship internationally?"
+
+
+COPY PASTE INSTRUCTIONS RULE:
+
+If the user message contains ANY of the following text fragments, then:
+
+Do NOT classify the message as general_inquiry, support, or greeting.
+
+The message is NOT irrelevant.
+
+The message must be treated as RFQ-flow content.
+
+MATCH THE FOLLOWING TEXT FRAGMENTS (CASE-INSENSITIVE):
+
+1. "I'm sorry I do not have all the details to proceed. Can you provide some of the missing details.
+In order to do please copy and paste the text provided below this line and then update your information in the correct format.
+
+————————————————————————"
+
+2. The same missing-details block used as validation error:
+"I'm sorry I do not have all the details to proceed. Can you provide some of the missing details.
+In order to do please copy and paste the text provided below this line and then update your information in the correct format.
+
+————————————————————————"
+
+3. "To modify, please copy and follow the same format. You can update any details:"
+
+4. "To modify, please copy and follow the same format. You can modify any details, add new items, or delete items:"
+
+5. "Please share the items for your RFQ with name, brand/specs (if any), and quantity — you can add multiple items together in one message.
+
+    📝 Example:
+    Laptop Dell Inspiron - 5, Printer HP LaserJet - 2, Desktop HP 17" - 10"
+6.  something like these:
+    Delivery Date: [Please provide delivery date]
+    Delivery Pincode: [Please provide 6-digit pincode]
+    Qty: [Please provide quantity]
+
+7. Any of the following exact phrases:
+"Confirmation Required"
+"Missing optional Information"
+"Missing Some Details"
+"RFQ Items"
+
 
 CONTEXT-AWARE CLASSIFICATION RULES:
 - If conversation stage is "confirming" and user says "yes" → confirmation_response

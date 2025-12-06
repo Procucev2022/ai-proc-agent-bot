@@ -462,6 +462,16 @@ class ChatService:
                         )
                         return await handler.handle_rfq_interest_click(user_phone, rfq_id, seller_id, session)
 
+                if button_id.startswith("confirm_exit") or button_id.startswith("decline_exit"):
+                    logger.info(f"Exit buttons clicked in auth workflow  - handling immediately to prevent loop")
+                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session,message=message_content)
+                    return exit_result
+                if button_id.startswith("confirm_cancel") or button_id.startswith("'decline_cancel"):
+                    logger.info(f"Cancel buttons clicked in auth workflow  - handling immediately to prevent loop")
+                    cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message_content)
+                    await self.session_manager.save_session(session, session.workflow_type)
+                    return cancel_result
+
             # CRITICAL: Handle seller_rfq_intimation workflow BEFORE intent classification
             # This workflow has stages: switch_prompt, otp - both need dedicated handling
             workflow_type_value = session.workflow_type.value if hasattr(session.workflow_type, 'value') else str(session.workflow_type) if session.workflow_type else None
