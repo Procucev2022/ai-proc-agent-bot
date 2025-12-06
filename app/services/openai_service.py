@@ -1259,7 +1259,7 @@ Analyze their response to determine their true choice.
             enforcing limits like `max_allowed`, and providing next steps or links.
 
             Args:
-                context: Dictionary containing keys like 'rfq_statuses', 'rfq_ids', 'max_allowed', etc.
+                context: Dictionary containing keys like 'rfq_statuses', 'rfq_ids', 'max_allowed', 'user_role', etc.
 
             Returns:
                 A string response suitable for user-facing interfaces.
@@ -1269,10 +1269,14 @@ Analyze their response to determine their true choice.
             prompt = f"User context: {json.dumps(context)}\n\n"
             prompt += "Generate an appropriate response for the user based on their context and any available results."
 
+            # Select prompt based on user role
+            from app.schemas.user import UserRole
+            prompt_name = "_get_buyer_rfq_status_response_prompt" if context.get('user_role') == UserRole.BUYER else "_get_seller_rfq_status_response_prompt"
+
             response = await self.client.responses.create(
                 model=self.default_model,
                 input=self._build_messages_with_history(context, prompt),
-                instructions=self._load_prompt("response_generation", "_get_rfq_status_response_prompt")
+                instructions=self._load_prompt("response_generation", prompt_name)
             )
 
             return response.output_text or "I apologize, but I'm having trouble generating a response right now."
@@ -1308,11 +1312,24 @@ Analyze their response to determine their true choice.
             with open(self.tools_dir / tool_file, 'r') as f:
                 merge_tool = json.load(f)
 
+            # Extract required parameters for prompt template
+            workflow_state = context.get('workflow_state', {}).get('seller_workflow_state', 'awaiting_general_response')
+            message_type = context.get('message_type', 'general_assistance')
+            credits_available = context.get('seller_credits', 0)
+            context_data = json.dumps(context)
+
             response = await self.client.responses.create(
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
                 tools=[merge_tool],
-                instructions=self._load_prompt("response_generation", "_get_seller_intent_response_prompt")
+                instructions=self._load_prompt(
+                    "response_generation", 
+                    "_get_seller_intent_response_prompt",
+                    workflow_state=workflow_state,
+                    message_type=message_type,
+                    credits_available=credits_available,
+                    context_data=context_data
+                )
             )
 
 
@@ -1322,12 +1339,21 @@ Analyze their response to determine their true choice.
                 function_call = response.output[0]
                 if function_call.type == "function_call":
                     args = json.loads(function_call.arguments)
-                    return args or "I apologize, but I'm having trouble generating a seller intent response right now."
+                    # Return the full intent classification dictionary
+                    logger.info(f"Seller intent classified: {args.get('intent')} (confidence: {args.get('confidence')}%)")
+                    return args
             
-            return "I apologize, but I'm having trouble generating a seller intent response right now."
+            logger.warning("No valid function call response for seller intent")
+            return {
+                "intent": "general_question",
+                "confidence": 30,
+                "reasoning": "No function call in response",
+                "context_clues": [],
+                "suggested_response": "I apologize, but I'm having trouble generating a seller intent response right now."
+            }
 
         except Exception as e:
-            logger.error(f"Response generation failed: {str(e)}")
+            logger.error(f"Seller intent generation failed: {str(e)}")
             return self._get_fallback_response(context, [])
 
     async def generate_seller_rfq_overview_response(self, context: dict) -> str:

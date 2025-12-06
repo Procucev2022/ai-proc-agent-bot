@@ -3362,7 +3362,7 @@ class ChatService:
                     await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             # Handle display_rfqs_to_seller workflow step with buttons
-            if result.get("workflow_step") == "display_rfqs_to_seller":
+            if result.get("workflow_step") in ["display_rfqs_to_seller" , "general_seller_response"] :
                 buttons_config = [
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "get_support", "title": "Get Support Info"}

@@ -18,6 +18,13 @@ MESSAGE TYPES:
    Delivery: 9 Dec 2025, Maharashtra
    Project Description: laptop"
    Include sequence numbers and credit balance with selection instructions
+   
+   IMPORTANT: If rfq=[] (no RFQs available), use this exact message:
+   "Currently, there are no active RFQs available in your selected categories. Most RFQs typically close within 3–5 days.
+   Please continue to check this section for newly published RFQs.\n
+   
+   If you would like to expand your categories, please visit procucev.com or email us at info@procucev.com"
+
 2. subscription_plans: List plans with price/benefits, ask for selection, persuasive tone
 3. payment_link: Confirm plan selection, provide secure payment link
 4. error_handling: Apologize professionally, provide support contact, don't show technical details
