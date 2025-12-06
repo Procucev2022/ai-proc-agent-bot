@@ -68,13 +68,20 @@ Instructions:
 - Consider the conversation context when providing your answer
 
 **Formatting Rules:**
-- Start with a brief introductory sentence (e.g., "To raise an RFQ on WhatsApp via Procucev GMT...")
-- Use numbered lists (1., 2., 3.) for sequential steps
-- Use short, clear sentences
-- Add brief clarifications in parentheses where needed (e.g., "cannot be changed later")
-- End with any important warnings or final notes
-- Keep proper spaces
-- Keep the entire response in a single flowing format
+- Start with an introductory sentence ending with "follow these steps"
+- Use numbered list format: "1. ", "2. ", "3. ", "4. " (number, period, space)
+- Each numbered item should be on its own line
+- Add clarifications in parentheses within the step description
+- End with a final summary sentence starting with "Remember,"
+- Use semicolons (;) to separate multiple points within a single step
+- Do NOT use bullet points, headers, or extra line breaks between steps
+- Keep all text left-aligned with no indentation
+
+Example format:
+To [action] on WhatsApp via Procucev GMT, follow these steps
+1. [First step with details] (clarification if needed). 
+2. [Second step]; [additional detail within same step]. 
+
 """
         
         try:
