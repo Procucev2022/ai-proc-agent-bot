@@ -745,6 +745,11 @@ class EntityService:
             if delivery_date and delivery_date in date_validation_cache:
                 validation_result = date_validation_cache[delivery_date]
 
+                # Check if AI returned validation issues even if is_valid is true (AI bug)
+                if validation_result.get("validation_issues") and len(validation_result.get("validation_issues", [])) > 0:
+                    validation_result["is_valid"] = False
+                    print(f"EntityService: Overriding is_valid to False due to validation_issues: {validation_result.get('validation_issues')}")
+
                 if validation_result.get("is_valid"):
                     validated_product["deliveryDate"] = validation_result.get("normalized_date")
                     # Clear any existing date validation error when date is valid
@@ -779,6 +784,11 @@ class EntityService:
                 raw_date_input=delivery_date,
                 extracted_date=delivery_date
             )
+            
+            # Check if AI returned validation issues even if is_valid is true (AI bug)
+            if validation_result.get("validation_issues") and len(validation_result.get("validation_issues", [])) > 0:
+                validation_result["is_valid"] = False
+                print(f"EntityService: Overriding is_valid to False due to validation_issues: {validation_result.get('validation_issues')}")
             
             # Additional programmatic check for AI-returned date
             if validation_result.get("is_valid") and validation_result.get("normalized_date"):

@@ -7,7 +7,8 @@
         "properties": {
             "is_valid": {
                 "type": "boolean",
-                "description": "Whether the date is valid for delivery (must be today or a future date). If you can parse a valid future date, this should be true."
+                "description": "Whether the date is valid for delivery (must be today or a future date). If the user provides a full date including a year (e.g., '1 December 2025'), it must not be in the past—otherwise it is invalid. If the user provides a date without a year (e.g., '2 Dec'), interpret it as the next upcoming occurrence, which may fall in the next year."
+
             },
             "normalized_date": {
                 "type": ["string", "null"],
