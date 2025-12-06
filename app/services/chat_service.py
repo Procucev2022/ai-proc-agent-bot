@@ -3342,7 +3342,7 @@ class ChatService:
             async def send_response(result , session):
                 msg = result.get("message")
                 if msg and not result.get("message_already_sent"):
-                    await self.whatsapp_service.send_message(user.phone_number, msg , session = session)
+                    await self.whatsapp_service.send_message(user.phone_number, msg , session_id = session)
                     self.session_manager.add_message_to_history(session, "assistant", msg)
 
             # --- Single call to seller workflow handler ---
