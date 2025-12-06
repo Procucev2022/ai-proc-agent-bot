@@ -58,12 +58,12 @@ def main():
     
     # Check both stores
     check_chroma_store(
-        "C:\\Workspace\\Mohap-AI\\procucev_proc_agent\\chroma_db\\chroma.sqlite3",
+        "~\\projects\\procucev_proc_agent\\chroma_db\\chroma.sqlite3",
         "Original Chroma DB"
     )
     
     check_chroma_store(
-        "C:\\Workspace\\Mohap-AI\\procucev_proc_agent\\unified_chroma_db\\chroma.sqlite3",
+        "~\\projects\\procucev_proc_agent\\unified_chroma_db\\chroma.sqlite3",
         "Unified Chroma DB"
     )
 
