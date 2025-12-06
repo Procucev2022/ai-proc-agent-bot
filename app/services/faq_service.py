@@ -66,6 +66,15 @@ Instructions:
 - Do not add phrases like "Hello!", "What can I assist you with next?", or similar conversational fillers
 - Keep the response focused and action-oriented
 - Consider the conversation context when providing your answer
+
+**Formatting Rules:**
+- Start with a brief introductory sentence (e.g., "To raise an RFQ on WhatsApp via Procucev GMT...")
+- Use numbered lists (1., 2., 3.) for sequential steps
+- Use short, clear sentences
+- Add brief clarifications in parentheses where needed (e.g., "cannot be changed later")
+- End with any important warnings or final notes
+- Do NOT use bullet points or headers
+- Keep the entire response in a single flowing format
 """
         
         try:

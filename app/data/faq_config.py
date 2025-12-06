@@ -52,7 +52,7 @@ FULL_FAQ_CONTEXT =\
     If you want to check delivery in any other region, first share the Delivery Pincode so the system can verify availability.
     For further help, contact info@procucev.com.
 - RFQ Creation Flow (Step-by-Step Sections):
-    When creating an RFQ in WhatsApp, the bot follows a strict section-based flow. The user must complete each section and cannot go back once confirmed:
+    When creating an RFQ, the bot follows a strict section-based flow. The user must complete each section and cannot go back once confirmed:
 
     1. **date_location section**  
        The bot collects:  
