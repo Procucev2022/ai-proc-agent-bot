@@ -1472,7 +1472,7 @@ class ChatService:
                                                                                  self._should_use_summary_aware_extraction)
 
             # Redirect to Seller Flow and its Orchestrator
-            if (user.role.value if hasattr(user.role, "value") else user.role) == "seller":
+            if (user.role.value if hasattr(user.role, "value") else user.role) == "seller" and intent != 'account_switch':
 
                 # If workflow already in RFQ view → continue that flow first (highest priority)
                 if session.workflow_type and hasattr(session.workflow_type, "value") and session.workflow_type.value == "seller_rfq_view" :
