@@ -40,7 +40,42 @@ FULL_FAQ_CONTEXT =\
     For Sellers:If you see “no RFQs available,” it means there are currently no active RFQs matching the categories you have selected. RFQs relevant to your business will appear as buyers create them. Consider expanding your category selection or checking back regularly for new opportunities.
 - Excel Data Format for RFQs:
     When submitting procurement requests, attach an Excel file with columns for: Item, Quantity, Brand, Specification, Delivery Date, and Pincode.
+- Additional RFQ Details:
+    For full RFQ details—items, attachments, additional specifications, vendor responses—please check your RFQ on the portal.  
+    Visit: www.procucev.com
 - RFQ Item Visibility Clarification:
     If a user asks: “Why are you not showing the items in RFQ <RFQ_ID>?”  
     Respond: “I can only show the status of your RFQ, not the internal item details. For complete information, please check your RFQ on the portal (https://p2pdevuiindia.azurewebsites.net/login)”
+- Delivery Pincode Rule:
+    Procucev’s GMT platform supports delivery based on the Delivery Pincode you provide in your RFQ.
+    Please share your exact Delivery Pincode (6-digit) to check delivery availability.
+    If you want to check delivery in any other region, first share the Delivery Pincode so the system can verify availability.
+    For further help, contact info@procucev.com.
+- RFQ Creation Flow (Step-by-Step Sections):
+    When creating an RFQ in WhatsApp, the bot follows a strict section-based flow. The user must complete each section and cannot go back once confirmed:
+
+    1. **date_location section**  
+       The bot collects:  
+       - Delivery Date  
+       - Delivery Pincode  
+       Once confirmed, these cannot be changed.
+
+    2. **items section**  
+       After delivery details are locked, the bot collects the list of items:  
+       - Item Name  
+       - Quantity  
+       - Specifications (optional)  
+       Once items are confirmed, this section is locked.
+
+    3. **attachments section**  
+       The bot asks if the user wants to attach any optional files such as:  
+       - Specification sheets  
+       - Drawings  
+       - Excel files with item details  
+       Only if the user sends an attachment payload (file_id, mime_type, document object, etc.) **during this section**, 
+
+    4. **final_confirmation section**  
+       The bot summarises all collected details and asks the user for final confirmation before submitting the RFQ.
+
+
 """

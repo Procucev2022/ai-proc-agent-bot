@@ -2863,6 +2863,7 @@ Determine the best category for the input item based on the similar items and th
             # Get current date for context
             from datetime import datetime
             current_date = datetime.now().date()
+            print(f"current date",current_date, type(current_date))
             current_year = current_date.year
             
             # Build context for AI date validation
