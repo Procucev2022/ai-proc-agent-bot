@@ -477,7 +477,7 @@ class ChatService:
             workflow_type_value = session.workflow_type.value if hasattr(session.workflow_type, 'value') else str(session.workflow_type) if session.workflow_type else None
             if workflow_type_value == "seller_rfq_intimation":
                 auth_stage = session.workflow_state.get("auth_stage") if session.workflow_state else None
-                logger.info(f"seller_rfq_intimation workflow detected, auth_stage={auth_stage}")
+                logger.debug(f"seller_rfq_intimation workflow detected, auth_stage={auth_stage}")
 
                 from app.services.handlers.seller_rfq_interest_handler import SellerRFQInterestHandler
 
@@ -515,7 +515,7 @@ class ChatService:
                                 auth_result = await self.authentication_service.store_user_session_with_email(
                                     user_phone, [target_seller_user], target_seller_email
                                 )
-                                logger.info(f"Seller authentication result: {auth_result}")
+                                logger.debug(f"Seller authentication result: {auth_result}")
 
                             # Send portal link after successful auth
                             return await handler.handle_otp_validated(user_phone, session)
@@ -535,12 +535,9 @@ class ChatService:
 
             # Classify intent once for all message routing and tracking
             try:
-                logger.info(f"Message Type: {message_type}\nMessage Content: {message_content}")
                 conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
-                logger.info(f"conversation context is:{conversation_context}")
                 # Now using async OpenAI service
                 message_intent_result = await self.intent_service.classify_intent(message_content, conversation_context)
-                logger.info(f"intent classifed arssssssssss:{message_intent_result}")
                 intent = message_intent_result.get('intent')
                 confidence = message_intent_result.get('confidence', 0)
 
@@ -635,7 +632,7 @@ class ChatService:
                                 "last_meaningful_message": last_meaningful,
                                 "last_meaningful_intent_result": last_meaningful_intent
                             }
-                            logger.info(f"Preserved meaningful message for post-auth interaction: '{str(last_meaningful)[:50]}...'")
+                            logger.debug(f"Preserved meaningful message for post-auth interaction: '{str(last_meaningful)[:50]}...'")
                             await self.session_manager.save_session(session, None)
                         else:
                             # No meaningful message to preserve, save as normal
@@ -847,7 +844,7 @@ class ChatService:
                     return auth_result
                 elif auth_status == "verification_failed":
                     # Handle verification failed status
-                    logger.info(f"Verification failed for {user_phone}")
+                    logger.debug(f"Verification failed for {user_phone}")
                     
                     # Send verification failed message to user
                     redirect_info = auth_result.get("redirect_info", {})
@@ -922,7 +919,7 @@ class ChatService:
                 query_message = irrelevant_msg or relevant_msg
 
                 if query_message:
-                    logger.info(f"Processing greeting: {query_message}")
+                    logger.debug(f"Processing greeting: {query_message}")
 
                     context_data = {
                         'intent': intent,
@@ -947,9 +944,9 @@ class ChatService:
                 query_message = irrelevant_msg if irrelevant_msg else relevant_msg
 
                 if query_message:
-                    logger.info(f"Processing general inquiry: {query_message}")
+                    logger.debug(f"Processing general inquiry: {query_message}")
                     if relevant_msg and irrelevant_msg:
-                        logger.info(f"Both messages present - using irrelevant message for general inquiry")
+                        logger.debug(f"Both messages present - using irrelevant message for general inquiry")
 
                     # Search FAQ first, then fallback to LLM
                     context_data = {
@@ -973,7 +970,7 @@ class ChatService:
 
             # Handle other irrelevant messages (non-general inquiry)
             elif irrelevant_msg:
-                logger.info(f"Processing irrelevant message: {irrelevant_msg}")
+                logger.debug(f"Processing irrelevant message: {irrelevant_msg}")
                 context_data = {
                     'intent':intent,
                     'relevant_message': relevant_msg or '',
@@ -985,7 +982,7 @@ class ChatService:
                 }
 
                 response = await self._handle_irrelevant_message(user_phone, irrelevant_msg, context_data)
-                logger.info(f"Generated irrelevant response: {response}")
+                logger.debug(f"Generated irrelevant response: {response}")
 
 
                 # Cache response
@@ -1003,15 +1000,15 @@ class ChatService:
         """Handle irrelevant messages by searching FAQ first, then generating LLM response."""
         try:
             # First search in FAQ with conversation history
-            logger.info(f"Searching FAQ for: {message}")
+            logger.debug(f"Searching FAQ for: {message}")
             conversation_history = context.get('conversation_history')
             faq_answer = await self.faq_service.get_faq_answer(message, conversation_history)
 
             if faq_answer and not faq_answer.startswith("I don't have specific information"):
-                logger.info(f"FAQ answer found: {faq_answer}")
+                logger.debug(f"FAQ answer found: {faq_answer}")
                 return faq_answer
 
-            logger.info("No FAQ match found - generating LLM response")
+            logger.debug("No FAQ match found - generating LLM response")
             return await self._generate_llm_response(user_phone, message, context)
 
         except Exception as e:
@@ -1070,7 +1067,7 @@ class ChatService:
                 "timestamp": utc_now().isoformat()
             }
             await redis_service.set(cache_key, cache_data, ex=43200)
-            logger.info(f"Cached response for {user_phone}")
+            logger.debug(f"Cached response for {user_phone}")
         except Exception as e:
             logger.error(f"Error caching irrelevant response: {e}")
 
@@ -1119,11 +1116,6 @@ class ChatService:
             # Now check registration status
             if hasattr(user, 'is_registered') and not user.is_registered:
                 return await self._handle_registration_workflow(user, message)
-
-            logger.info(f"user  phone number {user.phone_number}")
-
-            logger.info(f"use details:{user.email}")
-
 
 
             
@@ -1274,7 +1266,7 @@ class ChatService:
                     elif new_intent == "sell_something":
                         return await self._handle_seller_flow(user, session, message, intent_result)
                     elif new_intent == "general_inquiry":
-                        logger.info("calling from process text message inside new intent")
+                        logger.debug("calling from process text message inside new intent")
                         await self.handle_irrelevant_message_flow(user.phone_number, message_intent_result, session)
                     elif new_intent == "greeting":
                         return await self._handle_greeting_inquiry(user, new_message,session ,intent_result)
@@ -1368,12 +1360,12 @@ class ChatService:
             # Handle contextual intents with direct response capability
             if intent in ['contextual_reference', 'session_inquiry', 'alternative_request'] and confidence > 60:
                 if intent_result.get('should_handle_directly'):
-                    logger.info(f"Contextual intent detected: {intent} with {confidence}% confidence - handling directly")
+                    logger.debug(f"Contextual intent detected: {intent} with {confidence}% confidence - handling directly")
                     return await self._handle_contextual_interaction(user, session, message, intent_result)
             
             # Handle modification requests immediately if detected with sufficient confidence
             if intent == "modification_request" and confidence > 0.7:
-                logger.info(f"Modification intent detected with {confidence}% confidence - handling immediately")
+                logger.debug(f"Modification intent detected with {confidence}% confidence - handling immediately")
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result,
                                                                                  self._should_use_summary_aware_extraction)
 
@@ -1435,7 +1427,7 @@ class ChatService:
                             'last_activity_at': session.last_activity_at,
                             'completed_at': session.completed_at
                         })
-                        logger.info(f"Appended completed RFQ session {session.session_id} to database")
+                        logger.debug(f"Appended completed RFQ session {session.session_id} to database")
                     finally:
                         db_manager.close()
 
@@ -1446,7 +1438,7 @@ class ChatService:
                     if settings.redis_session_storage_enabled:
                         redis_session = get_session_redis_service()
                         await redis_session.delete_session(session.session_id)
-                        logger.info(f"Deleted completed session {session.session_id} from Redis")
+                        logger.debug(f"Deleted completed session {session.session_id} from Redis")
                 elif result.get("continue_with_purchase_intent"):
                     # Continue with purchase intent flow for modifications
                     return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None,
@@ -1621,7 +1613,7 @@ class ChatService:
 
                     # Use meaningful message if it exists AND current message is post-auth (no active auth workflow)
                     if tracked_message and tracked_intent and session.workflow_type not in [WorkflowType.authentication, WorkflowType.registration]:
-                        logger.info(f"Using preserved meaningful message '{str(tracked_message)[:50]}...' instead of current message '{str(message)[:50]}...'")
+                        logger.debug(f"Using preserved meaningful message '{str(tracked_message)[:50]}...' instead of current message '{str(message)[:50]}...'")
                         message_to_process = tracked_message
 
                         # DEFENSIVE: Sanitize tracked_intent to prevent recursion from old stored data
@@ -1653,7 +1645,7 @@ class ChatService:
                                     "suggested_clarification": str(tracked_intent.get("suggested_clarification")) if tracked_intent.get("suggested_clarification") else None,
                                     "success": bool(tracked_intent.get("success", True))
                                 }
-                                logger.info(f"[SANITIZE] Successfully sanitized tracked_intent")
+                                logger.debug(f"[SANITIZE] Successfully sanitized tracked_intent")
                             else:
                                 # If not a dict, use current intent_result as fallback
                                 logger.warning(f"[SANITIZE] tracked_intent is not a dict, using current intent_result")
@@ -1670,7 +1662,7 @@ class ChatService:
                         session.workflow_state["meaningful_message_used"] = True
 
                 # Normal buy_something flow - user wants to buy with current account
-                logger.info(f"[DEBUG] About to call handle_purchase_intent with message_to_process type: {type(message_to_process)}, intent_to_process type: {type(intent_to_process)}")
+                logger.debug(f"[DEBUG] About to call handle_purchase_intent with message_to_process type: {type(message_to_process)}, intent_to_process type: {type(intent_to_process)}")
                 try:
                     return await self.purchase_intent_handler.handle_purchase_intent(user, session, message_to_process, intent_to_process,
                                                                                      self._should_use_summary_aware_extraction)
@@ -1680,18 +1672,18 @@ class ChatService:
                     raise
             elif intent == "format_modification":
                 # Handle format modification (Track 2)
-                logger.info(f"Format modification intent detected - routing to handler")
+                logger.debug(f"Format modification intent detected - routing to handler")
                 return await self._handle_format_modification(user, session, message)
             elif intent == "confirmation_response" and confidence > 0.7:
                 # Handle confirmation responses - these should already be handled by pending confirmations check above
                 # But if we reach here, treat as continuation of existing workflow
-                logger.info(f"Handling confirmation response with context: {intent_result.get('context_analysis', {})}")
+                logger.debug(f"Handling confirmation response with context: {intent_result.get('context_analysis', {})}")
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result,
                                                                                  self._should_use_summary_aware_extraction)
             elif intent == "reference_request" and confidence > 0.7:
                 # Handle reference requests by routing to purchase intent flow
                 # The EntityService will detect and handle the reference extraction
-                logger.info(f"Handling reference request with context: {intent_result.get('context_analysis', {})}")
+                logger.debug(f"Handling reference request with context: {intent_result.get('context_analysis', {})}")
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result,
                                                                                  self._should_use_summary_aware_extraction)
             elif intent == "bfs_search" and confidence > 0.7:
@@ -1730,7 +1722,7 @@ class ChatService:
                 return await self._handle_account_switch_intent(user, session, message, intent_result)
             elif intent == "general_inquiry":
                 # Handle FAQ requests
-                logger.info(f"general inquiry intent detected with {confidence}% confidence in main routing")
+                logger.debug(f"general inquiry intent detected with {confidence}% confidence in main routing")
                 await self.handle_irrelevant_message_flow(user.phone_number, message_intent_result, session)
             elif intent == "greeting":
                 return await self._handle_greeting_inquiry(user, message,session, intent_result)
@@ -1997,10 +1989,10 @@ class ChatService:
             
             if ai_confirmation_result == "yes":
                 is_confirmed = True
-                logger.info(f"[EXCEL-CONFIRMATION] AI detected confirmation: '{message}'")
+                logger.debug(f"[EXCEL-CONFIRMATION] AI detected confirmation: '{message}'")
             elif ai_confirmation_result == "no":
                 is_cancelled = True
-                logger.info(f"[EXCEL-CONFIRMATION] AI detected cancellation: '{message}'")
+                logger.debug(f"[EXCEL-CONFIRMATION] AI detected cancellation: '{message}'")
             else:
                 # Fallback to keyword matching
                 message_lower = message.lower().strip()
@@ -2009,14 +2001,14 @@ class ChatService:
                 
                 if any(response in message_lower for response in confirm_responses):
                     is_confirmed = True
-                    logger.info(f"[EXCEL-CONFIRMATION] Keyword detected confirmation: '{message}'")
+                    logger.debug(f"[EXCEL-CONFIRMATION] Keyword detected confirmation: '{message}'")
                 elif any(response in message_lower for response in cancel_responses):
                     is_cancelled = True
-                    logger.info(f"[EXCEL-CONFIRMATION] Keyword detected cancellation: '{message}'")
+                    logger.debug(f"[EXCEL-CONFIRMATION] Keyword detected cancellation: '{message}'")
             
             if is_confirmed:
                 # User confirmed - proceed to multiple RFQ creation
-                logger.info(f"[EXCEL-CONFIRMED] User confirmed Excel processing - proceeding to RFQ creation")
+                logger.debug(f"[EXCEL-CONFIRMED] User confirmed Excel processing - proceeding to RFQ creation")
                 
                 # Retrieve saved data
                 excel_data = session.workflow_state.get('excel_confirmation_data', {})
@@ -2060,9 +2052,9 @@ class ChatService:
                     )
                 
             elif is_cancelled:
-                logger.info(f"[EXCEL-CANCELLED] User cancelled Excel processing - clearing session")
+                logger.debug(f"[EXCEL-CANCELLED] User cancelled Excel processing - clearing session")
                 # User cancelled - clear session and redirect to initial greeting stage
-                logger.info(f"[EXCEL-CANCELLED] User cancelled Excel processing - clearing session and redirecting to greeting")
+                logger.debug(f"[EXCEL-CANCELLED] User cancelled Excel processing - clearing session and redirecting to greeting")
                 
                 # Clear all Excel-related data and reset session completely
                 session.workflow_state = {}
@@ -2139,7 +2131,7 @@ class ChatService:
             
             # Initialize sectioned RFQ workflow
             if not WorkflowManager.is_sectioned_rfq_active(session):
-                logger.info(f"[EXCEL-SECTIONED] Initializing sectioned RFQ workflow")
+                logger.debug(f"[EXCEL-SECTIONED] Initializing sectioned RFQ workflow")
                 WorkflowManager.initialize_sectioned_rfq(session)
                 WorkflowManager.set_sectioned_rfq_section(session, "date_location")
                 if "sectioned_rfq" in session.workflow_state:
@@ -2149,12 +2141,12 @@ class ChatService:
             
             # Store Excel products in items section
             WorkflowManager.update_section_data(session, "items", products)
-            logger.info(f"[EXCEL-SECTIONED] Stored {len(products)} products in items section")
+            logger.debug(f"[EXCEL-SECTIONED] Stored {len(products)} products in items section")
             
             # Store delivery details in date_location section using proper field names
             if delivery_details:
                 WorkflowManager.update_section_data(session, "date_location", delivery_details)
-                logger.info(f"[EXCEL-SECTIONED] Stored delivery details: {delivery_details}")
+                logger.debug(f"[EXCEL-SECTIONED] Stored delivery details: {delivery_details}")
 
             # Clear existing excel session data
             fields_to_clear = [
@@ -2213,14 +2205,14 @@ class ChatService:
                 date_validation = await sectioned_handler._validate_delivery_date(delivery_details['deliveryDate'])
                 if date_validation.get('is_valid'):
                     delivery_details['deliveryDate'] = date_validation.get('normalized_date', delivery_details['deliveryDate'])
-                    logger.info(f"[TRANSFORM-RFQ] Delivery date validated: {delivery_details['deliveryDate']}")
+                    logger.debug(f"[TRANSFORM-RFQ] Delivery date validated: {delivery_details['deliveryDate']}")
                 else:
                     logger.warning(f"[TRANSFORM-RFQ] Invalid delivery date: {date_validation.get('error')}")
                     delivery_details['deliveryDate'] = ''
             
             # Auto-fill city/state from pincode if available using sectioned RFQ handler
             if delivery_details.get('pincode') and (not delivery_details.get('city') or not delivery_details.get('state')):
-                logger.info(f"[TRANSFORM-RFQ] Auto-filling location from pincode: {delivery_details['pincode']}")
+                logger.debug(f"[TRANSFORM-RFQ] Auto-filling location from pincode: {delivery_details['pincode']}")
                 from app.services.handlers.sectioned_rfq_creation_handler import SectionedRFQCreationHandler
                 sectioned_handler = SectionedRFQCreationHandler(
                     entity_service=self.entity_service,
@@ -2311,8 +2303,8 @@ class ChatService:
             
             products.append(cleaned_entity)
             
-        logger.info(f"[EXCEL-CONVERSION-SUCCESS] Successfully converted {len(excel_items)} Excel items to products array")
-        logger.info(f"[EXCEL-CONVERSION-RESULT] Final products: {products}")
+        logger.debug(f"[EXCEL-CONVERSION-SUCCESS] Successfully converted {len(excel_items)} Excel items to products array")
+        logger.debug(f"[EXCEL-CONVERSION-RESULT] Final products: {products}")
         return products
 
     async def _handle_incomplete_excel(self, user: User, session: ConversationSession, excel_context: Dict) -> Dict[
@@ -2421,12 +2413,12 @@ class ChatService:
         """Handle general inquiries using OpenAI."""
         try:
             context = ChatServiceHelpers.build_context("greeting", message)
-            logger.info(f"intent result in handle general inquiry :{intent_result}")
+            logger.debug(f"intent result in handle general inquiry :{intent_result}")
 
             # Determine user role
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
 
-            logger.info(f"continue with user profile:{user.email}, name:{user.name}, user role:{user_role}")
+            logger.debug(f"continue with user profile:{user.email}, name:{user.name}, user role:{user_role}")
 
             # Role-based button configuration
             if user_role == "buyer":
@@ -2515,7 +2507,7 @@ class ChatService:
         - Error handling with retry limits
         """
         try:
-            logger.info(f"Processing format modification for user {user.phone_number}")
+            logger.debug(f"Processing format modification for user {user.phone_number}")
 
             # Delegate to format modification handler
             result = await self.format_modification_handler.handle_format_modification(
@@ -2537,7 +2529,7 @@ class ChatService:
     async def _handle_faq_request(self, user: User, message: str) -> Dict[str, Any]:
         """Handle FAQ requests by providing answers from FAQ service."""
         try:
-            logger.info(f"Processing FAQ request for user {user.phone_number}: '{message[:50]}...'")
+            logger.debug(f"Processing FAQ request for user {user.phone_number}: '{message[:50]}...'")
 
             # Get FAQ answer from FAQ service
             faq_answer = await self.faq_service.get_faq_answer(message)
@@ -2789,7 +2781,7 @@ class ChatService:
             target_role = "buyer" if target_intent == "buy_something" else "seller"
             current_email = getattr(user, 'email', None) or getattr(user, 'username', None)
 
-            logger.info(f"Enhanced account selection check: current_role={current_role}, target_role={target_role}, target_intent={target_intent}")
+            logger.debug(f"Enhanced account selection check: current_role={current_role}, target_role={target_role}, target_intent={target_intent}")
 
             # Only apply enhanced selection for same-role switches
             if current_role != target_role:
@@ -2875,7 +2867,7 @@ class ChatService:
             )
 
             if tracked_message and tracked_intent_result and not has_existing_rfq_data:
-                logger.info(f"Using tracked meaningful message instead of button synthetic message: '{str(tracked_message)[:50]}...'")
+                logger.debug(f"Using tracked meaningful message instead of button synthetic message: '{str(tracked_message)[:50]}...'")
                 # Clear the tracked message since we're using it
                 workflow_state.pop("last_meaningful_message", None)
                 workflow_state.pop("last_meaningful_intent_result", None)
@@ -2892,9 +2884,9 @@ class ChatService:
                 )
             else:
                 if has_existing_rfq_data:
-                    logger.info(f"Ignoring tracked message - session has existing RFQ data, starting fresh")
+                    logger.debug(f"Ignoring tracked message - session has existing RFQ data, starting fresh")
                 else:
-                    logger.info(f"No tracked meaningful message found - directly activating sectioned RFQ")
+                    logger.debug(f"No tracked meaningful message found - directly activating sectioned RFQ")
 
                 # Clear any stale meaningful message
                 workflow_state.pop("last_meaningful_message", None)
@@ -2982,7 +2974,7 @@ class ChatService:
             # The confirmation handler moves from pending_optional_* to pending_* but doesn't save
             # Without this save, the next "Confirm" click will fail because pending_rfq won't exist
             await self.session_manager.save_session(session)
-            logger.info(f"Session saved after continue button handling for {user.phone_number}")
+            logger.debug(f"Session saved after continue button handling for {user.phone_number}")
 
         # Handle continue button from modification clarification (confirms no changes needed)
         elif button_id == "confirm_no_changes":
@@ -2990,7 +2982,7 @@ class ChatService:
             # Session will be cleared by confirmation handler after RFQ creation
             # CRITICAL: Save session to persist the cleared workflow_state to Redis
             await self.session_manager.save_session(session)
-            logger.info(f"Handled confirm_no_changes button for {user.phone_number}")
+            logger.debug(f"Handled confirm_no_changes button for {user.phone_number}")
 
             return result
 
@@ -3019,7 +3011,7 @@ class ChatService:
                         'last_activity_at': session.last_activity_at,
                         'completed_at': session.completed_at
                     })
-                    logger.info(f"Appended completed RFQ session {session.session_id} to database (button handler)")
+                    logger.debug(f"Appended completed RFQ session {session.session_id} to database (button handler)")
                 finally:
                     db_manager.close()
 
@@ -3030,11 +3022,11 @@ class ChatService:
                 if settings.redis_session_storage_enabled:
                     redis_session = get_session_redis_service()
                     await redis_session.delete_session(session.session_id)
-                    logger.info(f"Deleted completed session {session.session_id} from Redis (button handler)")
+                    logger.debug(f"Deleted completed session {session.session_id} from Redis (button handler)")
             else:
                 # Save session if RFQ was not created (e.g., error occurred)
                 await self.session_manager.save_session(session)
-                logger.info(f"Session saved after confirmation button handling for {user.phone_number}")
+                logger.debug(f"Session saved after confirmation button handling for {user.phone_number}")
 
             return result
 
@@ -3048,7 +3040,7 @@ class ChatService:
 
     async def _handle_authentication_email_button(self, user: User, session: ConversationSession, button_id: str) -> Dict[str, Any]:
         """Handle email confirmation button responses during authentication."""
-        logger.info(f"Authentication email button response from {user.phone_number}: {button_id}")
+        logger.debug(f"Authentication email button response from {user.phone_number}: {button_id}")
         
         try:
             if button_id == "confirm_email":
@@ -3070,7 +3062,7 @@ class ChatService:
 
     async def _handle_excel_confirmation_button(self, user: User, session: ConversationSession, button_id: str) -> Dict[str, Any]:
         """Handle Excel confirmation button responses."""
-        logger.info(f"Excel confirmation button response from {user.phone_number}: {button_id}")
+        logger.debug(f"Excel confirmation button response from {user.phone_number}: {button_id}")
         
         try:
             if button_id == "confirm_excel":
@@ -3088,7 +3080,7 @@ class ChatService:
     
     async def _handle_cancel_confirmation_button(self, user: User, session: ConversationSession, button_id: str) -> Dict[str, Any]:
         """Handle cancel workflow confirmation button responses."""
-        logger.info(f"Cancel confirmation button response from {user.phone_number}: {button_id}")
+        logger.debug(f"Cancel confirmation button response from {user.phone_number}: {button_id}")
 
         try:
             user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
@@ -3107,7 +3099,7 @@ class ChatService:
                 # User declined, save session and continue with normal flow
                 await self.session_manager.save_session(session, session.workflow_type)
                 # Don't return - let the message processing continue
-                logger.info("User declined cancel via button - would need to re-process as normal message")
+                logger.debug("User declined cancel via button - would need to re-process as normal message")
                 # Since this is a button response, we can't continue the flow here
                 # We need to return a special status to trigger the workflow to continue
                 return cancel_result
@@ -3118,7 +3110,7 @@ class ChatService:
     
     async def _handle_exit_confirmation_button(self, user: User, session: ConversationSession, button_id: str) -> Dict[str, Any]:
         """Handle exit confirmation button responses."""
-        logger.info(f"Exit confirmation button response from {user.phone_number}: {button_id}")
+        logger.debug(f"Exit confirmation button response from {user.phone_number}: {button_id}")
 
         try:
             user_phone = session.external_user_id if session.external_user_id else user.phone_number.lstrip('+')
@@ -3139,7 +3131,7 @@ class ChatService:
         str, Any]:  # noqa: ARG002
         """Handle list selection responses."""
         # Implementation for list responses
-        logger.info(f"List response from {user.phone_number}: {list_id}")
+        logger.debug(f"List response from {user.phone_number}: {list_id}")
         return {"status": "list_handled", "list_id": list_id}
 
     async def _generate_contextual_response(self, context: dict, base_questions: list = None,
@@ -3256,7 +3248,7 @@ class ChatService:
                 )
             )
 
-            logger.info(f"Started background summarization for session {session.session_id}")
+            logger.debug(f"Started background summarization for session {session.session_id}")
 
         except Exception as e:
             logger.error(f"Error starting enhanced session completion for {session.session_id}: {e}")
@@ -3268,7 +3260,7 @@ class ChatService:
         try:
             await self.chat_summary_service.generate_session_summary(session)
             await self.daily_summary_service.generate_daily_summary(session.external_user_id)
-            logger.info(f"Generated summaries for completed session {session.session_id}")
+            logger.debug(f"Generated summaries for completed session {session.session_id}")
         except Exception as e:
             logger.error(f"Error generating summaries for session {session.session_id}: {e}")
 
@@ -3277,7 +3269,7 @@ class ChatService:
         try:
             message = "Registration system is in progress, continuing with your request..."
             await self.whatsapp_service.send_message(user_phone, message)
-            logger.info(f"Sent authentication placeholder to {user_phone}")
+            logger.debug(f"Sent authentication placeholder to {user_phone}")
         except Exception as e:
             logger.error(f"Error sending authentication placeholder: {e}")
 
@@ -3286,7 +3278,7 @@ class ChatService:
         try:
             message = "Seller flow is in progress. Our team will contact you shortly with RFQ opportunities."
             await self.whatsapp_service.send_message(user_phone, message)
-            logger.info(f"Sent seller flow placeholder to {user_phone}")
+            logger.debug(f"Sent seller flow placeholder to {user_phone}")
         except Exception as e:
             logger.error(f"Error sending seller flow placeholder: {e}")
 
@@ -3301,7 +3293,7 @@ class ChatService:
             placeholder_message = "BFS inventory check feature is in progress."
             await self.whatsapp_service.send_message(user_phone, placeholder_message)
 
-            logger.info(f"Sent BFS availability placeholder to {user_phone}")
+            logger.debug(f"Sent BFS availability placeholder to {user_phone}")
         except Exception as e:
             logger.error(f"Error sending BFS availability placeholder: {e}")
 
@@ -3325,7 +3317,7 @@ class ChatService:
             workflow_state = session.workflow_state or {}
             current_seller_state = workflow_state.get("seller_workflow_state")
 
-            logger.info(f"ChatService: Handling seller flow - Current state: {current_seller_state}")
+            logger.debug(f"ChatService: Handling seller flow - Current state: {current_seller_state}")
 
             # Normalize workflow type
             workflow_type = (
@@ -3676,7 +3668,7 @@ class ChatService:
             from app.services.handlers.seller_rfq_interest_handler import SellerRFQInterestHandler
 
             auth_stage = session.workflow_state.get("auth_stage")
-            logger.info(f"Handling seller RFQ intimation flow for {user.phone_number}, stage={auth_stage}")
+            logger.debug(f"Handling seller RFQ intimation flow for {user.phone_number}, stage={auth_stage}")
 
             if auth_stage == "switch_prompt":
                 # User is responding to account switch prompt
@@ -3752,7 +3744,7 @@ class ChatService:
             contextual_actions = intent_result.get('contextual_actions', [])
             context_understanding = intent_result.get('context_understanding', {})
 
-            logger.info(f"[CONTEXTUAL_INTERACTION] Intent: {context_understanding.get('user_intent', 'unknown')}, "
+            logger.debug(f"[CONTEXTUAL_INTERACTION] Intent: {context_understanding.get('user_intent', 'unknown')}, "
                        f"Actions: {len(contextual_actions)}, "
                        f"Current workflow: {WorkflowManager.get_workflow_type(session)}")
 
@@ -3772,7 +3764,7 @@ class ChatService:
                 action_type = action.get('type')
                 action_description = action.get('description', '')
 
-                logger.info(f"[CONTEXTUAL_ACTION] Type: {action_type} - {action_description}")
+                logger.debug(f"[CONTEXTUAL_ACTION] Type: {action_type} - {action_description}")
 
                 # SAFE ACTIONS (No data loss risk)
                 if action_type == 'show_session_summary':
@@ -3814,7 +3806,7 @@ class ChatService:
                             WorkflowManager.set_stage(session, WorkflowStage.COLLECTING, caller='contextual_interaction')
                             WorkflowManager.clear_pending(session, PendingFlag.COMBINED_RFQ, PendingFlag.RFQ,
                                                          caller='contextual_interaction')
-                            logger.info(f"[SAFE_STATE_CHANGE] Changed workflow state to: collecting")
+                            logger.debug(f"[SAFE_STATE_CHANGE] Changed workflow state to: collecting")
 
                         elif action_type == 'change_workflow_type':
                             # Use WorkflowManager with validation
@@ -3824,7 +3816,7 @@ class ChatService:
                                 validate=True,
                                 caller='contextual_interaction'
                             )
-                            logger.info(f"[SAFE_TRANSITION] Changed workflow type to: general_inquiry")
+                            logger.debug(f"[SAFE_TRANSITION] Changed workflow type to: general_inquiry")
 
                         elif action_type == 'rollback_to_previous':
                             await self._rollback_to_stage(session, 'collecting')
@@ -3842,7 +3834,7 @@ class ChatService:
                             )
 
                 else:
-                    logger.info(f"[UNKNOWN_ACTION] Processed contextual action: {action_type}")
+                    logger.debug(f"[UNKNOWN_ACTION] Processed contextual action: {action_type}")
 
             # Log if destructive action was blocked
             if destructive_action_blocked:
@@ -3856,7 +3848,7 @@ class ChatService:
             if session_updated:
                 current_workflow = WorkflowManager.get_workflow_type(session)
                 await self.session_manager.save_session(session, current_workflow)
-                logger.info("[CONTEXTUAL_INTERACTION] Session updated and saved")
+                logger.debug("[CONTEXTUAL_INTERACTION] Session updated and saved")
 
             return {
                 "status": "contextual_interaction_handled",
@@ -3900,7 +3892,7 @@ class ChatService:
                     new_entity = {k: v for k, v in new_entity.items() if v}
                     if new_entity:
                         extracted_entities.append(new_entity)
-                        logger.info(f"Added new entity: {new_entity.get('product_name', 'Unknown')}")
+                        logger.debug(f"Added new entity: {new_entity.get('product_name', 'Unknown')}")
                         
                 elif action == 'update':
                     # Update existing entities that match product name
@@ -3911,14 +3903,14 @@ class ChatService:
                             for field in ['quantity', 'specifications', 'preferred_brand', 'delivery_date']:
                                 if entity_update.get(field):
                                     entity[field] = entity_update[field]
-                            logger.info(f"Updated entity: {product_name}")
+                            logger.debug(f"Updated entity: {product_name}")
                             break
                             
                 elif action == 'remove':
                     # Remove entities that match product name
                     product_name = entity_update.get('product_name', '')
                     extracted_entities = [e for e in extracted_entities if e.get('product_name', '').lower() != product_name.lower()]
-                    logger.info(f"Removed entity: {product_name}")
+                    logger.debug(f"Removed entity: {product_name}")
             
             # Update session with modified entities
             workflow_state['extracted_entities'] = extracted_entities
@@ -3946,7 +3938,7 @@ class ChatService:
                 workflow_state['stage'] = 'collecting'
                 
             session.workflow_state = workflow_state
-            logger.info(f"Rolled back session to stage: {target_stage}")
+            logger.debug(f"Rolled back session to stage: {target_stage}")
             
         except Exception as e:
             logger.error(f"Error rolling back to stage {target_stage}: {e}")
@@ -3959,7 +3951,7 @@ class ChatService:
             for field in fields_to_clear:
                 if field in workflow_state:
                     del workflow_state[field]
-                    logger.info(f"Cleared session field: {field}")
+                    logger.debug(f"Cleared session field: {field}")
                     
             session.workflow_state = workflow_state
             
@@ -3976,7 +3968,7 @@ class ChatService:
                 'last_activity_at': utc_now().isoformat()
             }
             WorkflowManager.set_workflow_type(session, WorkflowType.general_inquiry, caller='restart_workflow')
-            logger.info("Restarted workflow - cleared session data")
+            logger.debug("Restarted workflow - cleared session data")
             
         except Exception as e:
             logger.error(f"Error restarting workflow: {e}")
@@ -3997,7 +3989,7 @@ class ChatService:
                 if message.get("sender") == "user":
                     message["intent"] = intent
                     message["confidence"] = confidence
-                    logger.info(f"Updated user message with intent: {intent} (confidence: {confidence})")
+                    logger.debug(f"Updated user message with intent: {intent} (confidence: {confidence})")
                     break
 
         except Exception as e:
@@ -4020,23 +4012,23 @@ class ChatService:
 
             # Skip OTP-like messages and auth/registration flow responses
             if self._is_auth_flow_response(message_content, intent, session):
-                logger.info(f"Skipping auth/registration flow response: '{str(message_content)[:50]}...' with intent: {intent}")
+                logger.debug(f"Skipping auth/registration flow response: '{str(message_content)[:50]}...' with intent: {intent}")
                 return
 
             # Skip account selection responses during role switch
             if session.workflow_state and session.workflow_state.get("pending_role_switch"):
-                logger.info(f"Skipping account selection response during role switch: '{str(message_content)[:50]}...'")
+                logger.debug(f"Skipping account selection response during role switch: '{str(message_content)[:50]}...'")
                 return
 
             # Skip profile selection responses (e.g., "1", "2") during authentication
             if session.workflow_state and session.workflow_state.get("profile_selection_stage"):
-                logger.info(f"Skipping profile selection response during auth: '{str(message_content)[:50]}...'")
+                logger.debug(f"Skipping profile selection response during auth: '{str(message_content)[:50]}...'")
                 return
 
             # CRITICAL: Check if this message was already used/consumed to prevent recursion
             # If meaningful_message_used flag is set, don't re-track the same message
             if session.workflow_state and session.workflow_state.get("meaningful_message_used"):
-                logger.info(f"Skipping re-tracking of already used meaningful message: '{str(message_content)[:50]}...'")
+                logger.debug(f"Skipping re-tracking of already used meaningful message: '{str(message_content)[:50]}...'")
                 # Clear the flag for next time
                 session.workflow_state.pop("meaningful_message_used", None)
                 return
@@ -4068,7 +4060,7 @@ class ChatService:
                 }
 
                 session.workflow_state["last_meaningful_intent_result"] = safe_intent_result
-                logger.info(f"Tracked meaningful message: '{str(message_content)[:50]}...' with intent: {intent} (confidence: {confidence}%)")
+                logger.debug(f"Tracked meaningful message: '{str(message_content)[:50]}...' with intent: {intent} (confidence: {confidence}%)")
 
         except Exception as e:
             logger.error(f"Error tracking meaningful message: {e}")
@@ -4103,7 +4095,7 @@ class ChatService:
 
                     # If there are pending optional fields or confirmations, this is NOT an auth flow response
                     if has_pending_optional or has_pending_confirmations:
-                        logger.info(f"Message '{message_lower}' detected with pending optional/confirmation - NOT treating as auth flow response")
+                        logger.debug(f"Message '{message_lower}' detected with pending optional/confirmation - NOT treating as auth flow response")
                         return False
 
                 # Otherwise, treat as auth flow response
@@ -4136,7 +4128,7 @@ class ChatService:
             tracked_intent_result = workflow_state.get("last_meaningful_intent_result")
 
             if tracked_message and tracked_intent_result:
-                logger.info(f"Using tracked meaningful message: '{str(tracked_message)[:50]}...' with intent: {tracked_intent_result.get('intent')}")
+                logger.debug(f"Using tracked meaningful message: '{str(tracked_message)[:50]}...' with intent: {tracked_intent_result.get('intent')}")
 
                 # Clean up the tracked message since we're using it now
                 workflow_state.pop("last_meaningful_message", None)
@@ -4147,7 +4139,7 @@ class ChatService:
                 # No tracked message - check if current message is an auth flow response
                 current_intent = current_intent_result.get('intent', '')
                 if self._is_auth_flow_response(current_message, current_intent, session):
-                    logger.info(f"No meaningful message tracked and current message is auth flow response. Creating default general inquiry.")
+                    logger.debug(f"No meaningful message tracked and current message is auth flow response. Creating default general inquiry.")
                     # Return a default general inquiry since user completed auth/registration without meaningful business request
                     default_message = "What can I assist you with today?"
                     default_intent_result = {
@@ -4158,7 +4150,7 @@ class ChatService:
                     return default_message, default_intent_result
                 else:
                     # Current message is meaningful, use it
-                    logger.info(f"No tracked meaningful message found, using current message: '{str(current_message)[:50]}...'")
+                    logger.debug(f"No tracked meaningful message found, using current message: '{str(current_message)[:50]}...'")
                     return current_message, current_intent_result
 
         except Exception as e:

@@ -113,7 +113,7 @@ class OpenAIService:
         extra = {}
         if request_key != "global":
             extra['phone_number'] = request_key
-        logger.info(f"OpenAI call: {call_type} for {request_key} (total: {self.call_counts[request_key][call_type]})", extra=extra)
+        logger.debug(f"OpenAI call: {call_type} for {request_key} (total: {self.call_counts[request_key][call_type]})", extra=extra)
 
     def get_call_summary(self, user_phone: str = None) -> dict:
         """Get summary of OpenAI calls for a request."""
@@ -196,9 +196,9 @@ class OpenAIService:
             if isinstance(openai_messages, list):
                 history_messages = openai_messages[-10:]  # Last 10 messages for context
                 input_messages.extend(history_messages)
-                logger.info(f"Added {len(history_messages)} history messages to OpenAI context")
+                logger.debug(f"Added {len(history_messages)} history messages to OpenAI context")
         else:
-            logger.info("No conversation history available - using only current message")
+            logger.debug("No conversation history available - using only current message")
 
         # Add current message if provided - but handle image content properly
         if current_message:
@@ -206,15 +206,15 @@ class OpenAIService:
             if self._is_image_content(current_message, context):
                 # For image content, use a text description instead of raw content
                 input_messages.append({"role": "user", "content": "User sent an image attachment"})
-                logger.info("Converted image content to text description for OpenAI")
+                logger.debug("Converted image content to text description for OpenAI")
             else:
                 input_messages.append({"role": "user", "content": current_message})
 
         # Log the complete input being sent to OpenAI
-        logger.info(f"OpenAI Input ({len(input_messages)} messages):")
+        logger.debug(f"OpenAI Input ({len(input_messages)} messages):")
         for i, msg in enumerate(input_messages):
             content_preview = str(msg.get('content', ''))[:100] + ('...' if len(str(msg.get('content', ''))) > 100 else '')
-            logger.info(f"  {i+1}. {msg.get('role')}: {content_preview}")
+            logger.debug(f"  {i+1}. {msg.get('role')}: {content_preview}")
 
         return input_messages
 
@@ -306,7 +306,7 @@ class OpenAIService:
             # Handle image content properly for intent classification
             if self._is_image_content(message, context):
                 input_messages = [{"role": "user", "content": "User sent an image attachment"}]
-                logger.info("Converted image content to text description for intent classification")
+                logger.debug("Converted image content to text description for intent classification")
             else:
                 # Ensure message is a string, not an object
                 if isinstance(message, dict):
@@ -808,7 +808,7 @@ class OpenAIService:
 
             # Log timing breakdown
             prep_time = time.time() - start_time
-            logger.info(f"Summary-aware entity extraction prep time: {prep_time:.2f}s")
+            logger.debug(f"Summary-aware entity extraction prep time: {prep_time:.2f}s")
 
             api_call_start = time.time()
             response = await self.client.responses.create(
@@ -831,10 +831,10 @@ class OpenAIService:
                 cache_percentage = (cached_tokens / total_input_tokens * 100) if total_input_tokens > 0 else 0
                 logger.info(f"OpenAI API call time: {api_call_time:.2f}s | Input tokens: {total_input_tokens} | Cached: {cached_tokens} ({cache_percentage:.1f}%) | Output: {output_tokens}")
             else:
-                logger.info(f"OpenAI API call time: {api_call_time:.2f}s (no usage data available)")
+                logger.debug(f"OpenAI API call time: {api_call_time:.2f}s (no usage data available)")
 
             processing_time = time.time() - start_time
-            logger.info(f"Total summary-aware entity extraction time: {processing_time:.2f}s")
+            logger.debug(f"Total summary-aware entity extraction time: {processing_time:.2f}s")
             
             # Parse function call response
             if response.output and len(response.output) > 0:
@@ -1046,8 +1046,8 @@ Analyze their response to determine their true choice.
                         "success": True
                     }
                     
-                    logger.info(f"Intent switch analysis: {result['chosen_action']} (confidence: {result['confidence']}%)")
-                    logger.info(f"Reasoning: {result['reasoning']}")
+                    logger.debug(f"Intent switch analysis: {result['chosen_action']} (confidence: {result['confidence']}%)")
+                    logger.debug(f"Reasoning: {result['reasoning']}")
                     
                     return result
             
@@ -1340,7 +1340,7 @@ Analyze their response to determine their true choice.
                 if function_call.type == "function_call":
                     args = json.loads(function_call.arguments)
                     # Return the full intent classification dictionary
-                    logger.info(f"Seller intent classified: {args.get('intent')} (confidence: {args.get('confidence')}%)")
+                    logger.debug(f"Seller intent classified: {args.get('intent')} (confidence: {args.get('confidence')}%)")
                     return args
             
             logger.warning("No valid function call response for seller intent")
@@ -1863,7 +1863,7 @@ Analyze their response to determine their true choice.
                         "success": True
                     }
                     
-                    logger.info(f"Division selected: {result['selected_division']} (confidence: {result['confidence']}%)")
+                    logger.debug(f"Division selected: {result['selected_division']} (confidence: {result['confidence']}%)")
                     return result
             
             # Log failed division selection
@@ -2250,7 +2250,7 @@ Determine the best category for the input item based on the similar items and th
                         missing_fields=[]
                     )
                     
-                    logger.info(f"Auto-categorized item: {result['category']} (confidence: {result['confidence']})")
+                    logger.debug(f"Auto-categorized item: {result['category']} (confidence: {result['confidence']})")
                     return result
             
             # Log failed categorization
@@ -2375,7 +2375,7 @@ Determine the best category for the input item based on the similar items and th
                         "processing_time_ms": int(processing_time * 1000)
                     }
                     
-                    logger.info(f"Generated 3-level categorization: {result['categorization']}")
+                    logger.debug(f"Generated 3-level categorization: {result['categorization']}")
                     return result
             
             # Close client synchronously to prevent event loop errors
@@ -2551,7 +2551,7 @@ Determine the best category for the input item based on the similar items and th
                         }
                         
                         category_path = f"{selected_category['level_1_category']} > {selected_category['level_2_category']} > {selected_category['level_3_category']}"
-                        logger.info(f"Mapped seller category '{seller_category}' to existing: {category_path}")
+                        logger.debug(f"Mapped seller category '{seller_category}' to existing: {category_path}")
                         return result
                     else:
                         return {
@@ -2672,7 +2672,7 @@ Determine the best category for the input item based on the similar items and th
                         missing_fields=[]
                     )
                     
-                    logger.info(f"Selected {len(selected_sellers)} sellers with confidence {confidence:.3f}")
+                    logger.debug(f"Selected {len(selected_sellers)} sellers with confidence {confidence:.3f}")
                     return result
             
             # Log failed seller selection
@@ -2950,9 +2950,9 @@ Determine the best category for the input item based on the similar items and th
                             result["user_friendly_message"] = "Kindly share a valid delivery date from today onward"
 
                     if result["is_valid"]:
-                        logger.info(f"AI date validation: {raw_date_input} -> {result['normalized_date']} ({result['reasoning']})")
+                        logger.debug(f"AI date validation: {raw_date_input} -> {result['normalized_date']} ({result['reasoning']})")
                     else:
-                        logger.info(f"AI date validation failed: {raw_date_input} -> {result['reasoning']}")
+                        logger.debug(f"AI date validation failed: {raw_date_input} -> {result['reasoning']}")
                     
                     # Log successful date validation
                     self.interaction_logger.log_entity_extraction(
@@ -3042,7 +3042,7 @@ Determine the best category for the input item based on the similar items and th
                         "success": True
                     }
                     
-                    logger.info(f"Opt-out intent detected: {result['intent']} (confidence: {result['confidence']}%)")
+                    logger.debug(f"Opt-out intent detected: {result['intent']} (confidence: {result['confidence']}%)")
                     return result
             
             return {"intent": "none", "confidence": 30, "reasoning": "No function call in response", "detected_phrases": [], "success": False}
@@ -3283,7 +3283,7 @@ If multiple emails and user selected a number, include selection."""
                     user_intent = result["context_understanding"].get("user_intent", "unknown")
                     confidence = result["context_understanding"].get("confidence", 0)
                     
-                    logger.info(f"Contextual interaction handled - Intent: {user_intent}, Confidence: {confidence}%, Actions: {len(result['actions'])}")
+                    logger.debug(f"Contextual interaction handled - Intent: {user_intent}, Confidence: {confidence}%, Actions: {len(result['actions'])}")
                     
                     # Log detailed interaction for debugging
                     self.interaction_logger.log_entity_extraction(
@@ -3436,7 +3436,7 @@ If multiple emails and user selected a number, include selection."""
                 function_call = response.output[0]
                 if function_call.type == "function_call":
                     result = json.loads(function_call.arguments)
-                    logger.info(f"Registration type detection result: {result}")
+                    logger.debug(f"Registration type detection result: {result}")
                     return result
             
             logger.warning("Registration type detection: No function call in response")
