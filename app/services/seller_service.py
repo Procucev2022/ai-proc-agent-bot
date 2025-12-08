@@ -11,6 +11,8 @@ This implementation provides the complete seller workflow including:
 
 import logging
 import asyncio
+import json
+import re
 from app.utils.datetime_utils import utc_now
 from typing import Dict, Any, List
 from app.models import WorkflowType, ConversationSession, User
@@ -226,7 +228,7 @@ class SellerService:
                 return await self._handle_no_credits_response(user, session)
 
             # Extract RFQ IDs from message
-            selected_rfq_ids = await self._extract_rfq_ids_from_message(message, session)
+            selected_rfq_ids = await self._extract_rfq_ids_from_message(message, session , rfqs)
 
             if not selected_rfq_ids:
                 # Check if user is asking for plan upgrade or other query
@@ -919,24 +921,61 @@ class SellerService:
             "session_completed": True
         }
 
-    async def _extract_rfq_ids_from_message(self, message: str, session: ConversationSession) -> List[str]:
-        """Extract RFQ IDs from seller's message."""
+    async def _extract_rfq_ids_from_message(self, message: str, session: ConversationSession, rfqs: List[Dict]) -> List[str]:
+        """Extract RFQ IDs from seller's message. Supports direct RFQ IDs and sequence numbers."""
         try:
-            # Use AI entity extraction
+            conversation_messages = session.conversation_history.get("messages", [])
+            last_bot_message = next(
+                (m for m in reversed(conversation_messages) if m["role"] == "assistant"),
+                None
+            )
+
+            # 1️⃣ Detect if user used sequence numbers
+            seq_numbers = self._extract_sequence_numbers(message)
+
+            if seq_numbers and last_bot_message:
+                mapped_ids = self._map_sequence_to_rfq_ids(seq_numbers, last_bot_message)
+                if mapped_ids:
+                    return mapped_ids[:self.settings.rfq_max_allowed]
+
+            # 2️⃣ Default AI extraction (RFQ ID pattern or entity extraction)
+            msg = {
+                "conversationHistory": conversation_messages,
+                "current_bot_message": message
+            }
+
             extraction = await self.openai_service.extract_entities(
-                message=message,
+                message=json.dumps(msg),
                 workflow_type="rfq_status_check"
             )
 
             extracted_ids = extraction.get("rfq_id") or []
-
-            # Limit to maximum allowed
-            max_allowed = self.settings.rfq_max_allowed
-            return extracted_ids[:max_allowed]
+            return extracted_ids[:self.settings.rfq_max_allowed]
 
         except Exception as e:
             logger.error(f"Error extracting RFQ IDs: {e}")
             return []
+
+    def _extract_sequence_numbers(self, message: str) -> List[int]:
+        """Extract sequence numbers like '1', '2 3', '1,3'."""
+        nums = re.findall(r"\b\d+\b", message)
+        return [int(n) for n in nums if n.isdigit()]
+
+    def _map_sequence_to_rfq_ids(self, seq_numbers: List[int], bot_message: Dict) -> List[str]:
+        """Map numbers like 1,2,3 to RFQ IDs extracted from last assistant message."""
+        content = bot_message.get("content", "")
+
+        # Find lines containing: "1. RFQ250812508755"
+        matches = re.findall(r"\b(\d+)\. RFQ(\d{12})", content)
+
+        seq_map = {int(idx): f"RFQ{rfq_id}" for idx, rfq_id in matches}
+
+        result = []
+        for n in seq_numbers:
+            if n in seq_map:
+                result.append(seq_map[n])
+
+        return result
 
     async def _extract_plan_selection(self, message: str, available_plans: List[Dict]) -> Dict[str, Any]:
         """Extract plan selection from seller's message using AI."""
