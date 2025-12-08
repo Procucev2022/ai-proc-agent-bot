@@ -77,10 +77,8 @@ class RegistrationService:
                 intro_message = self.authentication_helpers.generate_registration_message(SellerRegistrationSchema, "Seller", False)
 
             if self.session_manager:
-                logger.info("send and track message")
                 await self.session_manager.send_and_track_message(user_phone, intro_message, session)
             else:
-                logger.info(f"send message:{session}")
                 await self.whatsapp_service.send_message(user_phone, intro_message, session_id=session)
 
             result = {

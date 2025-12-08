@@ -131,8 +131,6 @@ class WhatsAppService:
 
         if retry_result["success"]:
             result = retry_result["result"]
-            logger.info(f"session in send mesage:{session_id}")
-            logger.info(f"result of send message:{result}")
             # Track message in conversation history if session_id provided
             if session_id and result.success:
                 await self._track_message_in_history(session_id, message)
