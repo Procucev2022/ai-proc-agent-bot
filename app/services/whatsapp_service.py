@@ -129,13 +129,13 @@ class WhatsAppService:
         # Use retry service for reliable delivery
         retry_result = await self.retry_service.retry_with_backoff(send_text_message)
 
-        if retry_result["success"]:
-            result = retry_result["result"]
-            # Track message in conversation history if session_id provided
-            if session_id and result.success:
-                await self._track_message_in_history(session_id, message)
+        # Track message in conversation history if session_id provided
+        # Track regardless of send success - we want conversation history even if delivery failed
+        if session_id:
+            await self._track_message_in_history(session_id, message)
 
-            return result
+        if retry_result["success"]:
+            return retry_result["result"]
         else:
             logger.error(f"Failed to send message after {retry_result['attempts']} attempts: {retry_result['error']}")
             return MessageResponse(success=False, error=retry_result["error"])
@@ -457,7 +457,8 @@ class WhatsAppService:
             result = await self.send_interactive_message(recipient_id, "button", content)
 
             # Track message in conversation history if session_id provided
-            if session_id and result.success:
+            # Track regardless of send success - we want conversation history even if delivery failed
+            if session_id:
                 # For buttons, track the body text as the message content
                 await self._track_message_in_history(session_id, content, "interactive_button")
 
