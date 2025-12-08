@@ -137,7 +137,7 @@ class WebhookHealthMonitorService:
         # HTTP session for health checks
         self._session: Optional[aiohttp.ClientSession] = None
         
-        health_logger.info(
+        health_logger.debug(
             f"WebhookHealthMonitorService initialized: "
             f"worker_id={self.worker_id}, "
             f"check_interval={self.check_interval}s, "
@@ -176,17 +176,17 @@ class WebhookHealthMonitorService:
             return
         
         if not self.settings.webhook_health_monitoring_enabled:
-            health_logger.info(f"{self.worker_id}: Health monitoring disabled by configuration")
+            health_logger.debug(f"{self.worker_id}: Health monitoring disabled by configuration")
             return
         
         self._running = True
-        health_logger.info(f"{self.worker_id}: Attempting to become monitoring leader")
+        health_logger.debug(f"{self.worker_id}: Attempting to become monitoring leader")
         
         try:
             while self._running:
                 if await self._try_acquire_leader_lock():
                     if not self.is_leader:
-                        health_logger.info(f"{self.worker_id}: Acquired leader lock, starting monitoring")
+                        health_logger.debug(f"{self.worker_id}: Acquired leader lock, starting monitoring")
                         self.is_leader = True
                     
                     await self._run_as_leader()
@@ -200,16 +200,16 @@ class WebhookHealthMonitorService:
         finally:
             await self._release_leader_lock()
             await self._close_session()
-            health_logger.info(f"{self.worker_id}: Health monitoring stopped")
+            health_logger.debug(f"{self.worker_id}: Health monitoring stopped")
     
     async def stop_monitoring(self):
         """Stop the health monitoring loop and cleanup resources."""
-        health_logger.info(f"{self.worker_id}: Stopping health monitoring")
+        health_logger.debug(f"{self.worker_id}: Stopping health monitoring")
         self._running = False
 
         # Close aiohttp session
         await self._close_session()
-        health_logger.info(f"{self.worker_id}: Cleaned up HTTP session")
+        health_logger.debug(f"{self.worker_id}: Cleaned up HTTP session")
     
     async def _try_acquire_leader_lock(self) -> bool:
         """
@@ -292,7 +292,7 @@ class WebhookHealthMonitorService:
             current_leader = await self.redis.get(self.LEADER_LOCK_KEY)
             if current_leader == self.worker_id:
                 await self.redis.delete(self.LEADER_LOCK_KEY)
-                health_logger.info(f"{self.worker_id}: Released leader lock")
+                health_logger.debug(f"{self.worker_id}: Released leader lock")
         
         except Exception as e:
             health_logger.error(f"{self.worker_id}: Error releasing leader lock: {e}")
@@ -331,7 +331,7 @@ class WebhookHealthMonitorService:
         
         # Log check result
         if status == HealthStatus.OK:
-            health_logger.info(f"API health check: status=OK, latency={latency_ms}ms")
+            health_logger.debug(f"API health check: status=OK, latency={latency_ms}ms")
         elif status == HealthStatus.WARNING:
             health_logger.warning(f"API health check: status=WARNING, latency={latency_ms}ms")
         else:
@@ -496,20 +496,20 @@ class WebhookHealthMonitorService:
         
         elif current_state == MonitorState.FAILING:
             # Recovered before alert threshold
-            health_logger.info("State transition: FAILING → HEALTHY (recovered within grace period)")
+            health_logger.debug("State transition: FAILING → HEALTHY (recovered within grace period)")
             state["current_state"] = MonitorState.HEALTHY.value
             state["failure_start_time"] = None
         
         elif current_state == MonitorState.ALERTING:
             # Start recovery confirmation
-            health_logger.info("State transition: ALERTING → RECOVERED (recovery detected)")
+            health_logger.debug("State transition: ALERTING → RECOVERED (recovery detected)")
             state["current_state"] = MonitorState.RECOVERED.value
             state["consecutive_successes"] = 1  # Reset counter
         
         elif current_state == MonitorState.RECOVERED:
             # Check if recovery confirmed (need N consecutive successes)
             if state["consecutive_successes"] >= self.recovery_confirmations:
-                health_logger.info(
+                health_logger.debug(
                     f"State transition: RECOVERED → HEALTHY "
                     f"(recovery confirmed with {self.recovery_confirmations} checks)"
                 )
@@ -625,7 +625,7 @@ class WebhookHealthMonitorService:
             
             if result.get("status") == "Success":
                 state["last_alert_time"] = datetime.utcnow().isoformat()
-                health_logger.info("Critical alert email sent successfully")
+                health_logger.debug("Critical alert email sent successfully")
             else:
                 health_logger.error(f"Failed to send critical alert: {result}")
         
@@ -661,7 +661,7 @@ class WebhookHealthMonitorService:
             
             if result.get("status") == "Success":
                 state["last_alert_time"] = datetime.utcnow().isoformat()
-                health_logger.info("Warning alert email sent successfully")
+                health_logger.debug("Warning alert email sent successfully")
             else:
                 health_logger.error(f"Failed to send warning alert: {result}")
         
@@ -672,7 +672,7 @@ class WebhookHealthMonitorService:
         """Send recovery notification email."""
         # Skip if no alert recipients configured
         if not self.alert_recipients:
-            health_logger.info(
+            health_logger.debug(
                 "RECOVERY NOTIFICATION (email skipped - no recipients configured): "
                 f"API recovered, response time now {state.get('last_latency_ms', 0)}ms"
             )
@@ -693,7 +693,7 @@ class WebhookHealthMonitorService:
                 "current_response_time": f"{state['last_latency_ms']}ms"
             }
             
-            health_logger.info(f"Sending recovery notification email to {self.alert_recipients}")
+            health_logger.debug(f"Sending recovery notification email to {self.alert_recipients}")
             
             result = await self.email_service.send_email_by_template(
                 "webhook_api_recovery",
@@ -701,7 +701,7 @@ class WebhookHealthMonitorService:
             )
             
             if result.get("status") == "Success":
-                health_logger.info("Recovery notification email sent successfully")
+                health_logger.debug("Recovery notification email sent successfully")
             else:
                 health_logger.error(f"Failed to send recovery notification: {result}")
         
@@ -736,7 +736,7 @@ class WebhookHealthMonitorService:
             
             if result.get("status") == "Success":
                 state["last_alert_time"] = datetime.utcnow().isoformat()
-                health_logger.info("Relapse alert email sent successfully")
+                health_logger.debug("Relapse alert email sent successfully")
             else:
                 health_logger.error(f"Failed to send relapse alert: {result}")
         
