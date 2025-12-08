@@ -24,7 +24,6 @@ class ExcelProcessingService:
     
     async def process_excel_file(self, content: bytes, filename: str) -> Dict[str, Any]:
         """Process Excel file directly to multiple RFQ format using streamlined OpenAI processing."""
-        logger.info(f"[EXCEL-PROCESS] Starting streamlined processing for {filename}, size: {len(content)} bytes")
         try:
             # Validate file size (3MB limit)
             max_size = 3 * 1024 * 1024  # 3MB in bytes
@@ -84,7 +83,7 @@ class ExcelProcessingService:
                     'error': '❌ File rejected: The uploaded Excel file contains no data. Please provide a valid Excel file containing the required data for the RFQ.'
                 }
             
-            logger.info(f"DEBUG: Excel file shape: {df.shape}")
+
             
             # Use new streamlined OpenAI processing
             processing_result = await self._process_excel_with_openai(df, filename)
@@ -237,7 +236,7 @@ class ExcelProcessingService:
         for header in headers:
             if header in self.target_columns:
                 mapping[header] = header
-        logger.info(f"[EXCEL-PROCESS] Created fallback mapping: {mapping}")
+
         return mapping
     
     def _is_valid_excel_file(self, content: bytes, filename: str) -> bool:
@@ -277,9 +276,7 @@ class ExcelProcessingService:
     
     def _extract_items_with_mapping(self, df: pd.DataFrame, headers: List[str], column_mapping: Dict[str, str]) -> Dict[str, Any]:
         """Extract items using the column mapping."""
-        logger.info(f"[EXCEL-EXTRACT] Starting item extraction with {len(headers)} headers and {len(column_mapping)} mappings")
-        logger.info(f"[EXCEL-EXTRACT] Headers: {headers}")
-        logger.info(f"[EXCEL-EXTRACT] Mappings: {column_mapping}")
+
         items = []
         removed_rows = 0
         
@@ -303,15 +300,12 @@ class ExcelProcessingService:
                         
                         if col_index < len(row):
                             value = row.iloc[col_index]
-                            logger.debug(f"[EXCEL-EXTRACT] Extracting header '{header}' -> '{target_col}', value: '{value}'")
+    
                             if pd.notna(value) and str(value).strip():
                                 value_str = str(value).strip()
                                 item[target_col] = value_str
                                 has_data = True
-                            else:
-                                logger.debug(f"[EXCEL-EXTRACT] Empty/NaN value for '{header}' -> '{target_col}': '{value}'")
-                    else:
-                        logger.debug(f"[EXCEL-EXTRACT] Header '{header}' not in column mapping")
+
                 
                 # Check if row has mandatory fields before adding
                 if has_data:
@@ -324,7 +318,6 @@ class ExcelProcessingService:
                     # Skip row if missing mandatory fields
                     if missing_mandatory:
                         removed_rows += 1
-                        logger.info(f"[EXCEL-EXTRACT] Removed row {index + 1} - missing mandatory fields: {missing_mandatory}")
                         continue
                     
                     # Add serial number if missing
@@ -336,8 +329,7 @@ class ExcelProcessingService:
                         item['Uom'] = 'pcs'
                     
                     items.append(item)
-                else:
-                    logger.debug(f"[EXCEL-EXTRACT] Skipped row {index} - no data found")
+
             
             return {
                 'success': True,
@@ -414,8 +406,7 @@ class ExcelProcessingService:
         
         if validation_result['empty_required_fields']:
             validation_result['warnings'].extend(validation_result['empty_required_fields'])
-        
-        logger.info(f"DEBUG: Validation result: {validation_result}")
+
         return validation_result
     
     def _validate_business_rules(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -594,7 +585,7 @@ class ExcelProcessingService:
     def create_standard_template(self, items: List[Dict[str, Any]]) -> bytes:
         """Create standardized Excel template for GMT API."""
         try:
-            logger.info(f"DEBUG: Creating template for {len(items)} items")
+
             template_data = []
             
             for i, item in enumerate(items, 1):
@@ -628,16 +619,9 @@ class ExcelProcessingService:
             required_columns = ['S.No', 'ItemDescription', 'Specification', 'Uom', 'Quantity', 'Remarks']
             df = df[required_columns]
             
-            logger.info(f"DEBUG: Template DataFrame shape: {df.shape}")
-            logger.info(f"DEBUG: Template DataFrame columns: {df.columns.tolist()}")
-            logger.info(f"DEBUG: Template DataFrame first row: {df.iloc[0].to_dict() if not df.empty else 'Empty'}")
+
             
-            # Check for empty required fields
-            for col in required_columns:
-                empty_count = df[col].astype(str).str.strip().eq('').sum()
-                if empty_count > 0:
-                    logger.warning(f"DEBUG: Column '{col}' has {empty_count} empty values")
-            
+
             # Create the GMT API expected format:
             # Row 0: Empty (NaN values)
             # Row 1: Headers as data
@@ -654,13 +638,7 @@ class ExcelProcessingService:
             # Combine: empty row + header row + data rows
             final_df = pd.concat([empty_row, header_row, df], ignore_index=True)
             
-            logger.info(f"DEBUG: Final DataFrame shape: {final_df.shape}")
-            logger.info(f"DEBUG: Final DataFrame structure:")
-            logger.info(f"  Row 0: {final_df.iloc[0].tolist()}")
-            logger.info(f"  Row 1: {final_df.iloc[1].tolist()}")
-            if len(final_df) > 2:
-                logger.info(f"  Row 2: {final_df.iloc[2].tolist()}")
-            
+
             output = io.BytesIO()
             final_df.to_excel(output, index=False, header=False, engine='openpyxl')
             output.seek(0)
@@ -691,21 +669,17 @@ class ExcelProcessingService:
                     if any(cell.value is not None and str(cell.value).strip() != '' for cell in row):
                         filled_rows += 1
                 
-                logger.info(f"[EXCEL-STRUCTURE] Excel has {filled_rows} filled rows (out of {worksheet.max_row} total), max allowed: {MAX_ROWS}")
                 if filled_rows > MAX_ROWS:
                     workbook.close()
-                    logger.error(f"[EXCEL-STRUCTURE] Too many filled rows: {filled_rows} > {MAX_ROWS}")
                     return {
                         'valid': False,
-                        'error': f"❌ File rejected: Your Excel file contains {filled_rows} rows, but only 50 rows are allowed per upload. Could you please reduce the file to 50 rows and reupload it for processing?"
+                        'error': f"File rejected: Your Excel file contains {filled_rows} rows, but only 50 rows are allowed per upload. Could you please reduce the file to 50 rows and reupload it for processing?"
                     }
                 
                 # Check 2: Merged cells validation
                 merged_ranges = list(worksheet.merged_cells.ranges)
-                logger.info(f"[EXCEL-STRUCTURE] Found {len(merged_ranges)} merged cell ranges")
                 if merged_ranges:
                     workbook.close()
-                    logger.error(f"[EXCEL-STRUCTURE] Merged cells found: {merged_ranges}")
                     return {
                         'valid': False,
                         'error': "Your Excel file contains merged cells. Please unmerge all cells and reupload the file to proceed with your RFQ submission."
@@ -722,9 +696,7 @@ class ExcelProcessingService:
                     # Remove completely empty rows
                     df_cleaned = df.dropna(how='all')
                     filled_rows = len(df_cleaned)
-                    logger.info(f"[EXCEL-STRUCTURE-FALLBACK] Pandas found {filled_rows} filled rows, max allowed: {MAX_ROWS}")
                     if filled_rows > MAX_ROWS:
-                        logger.error(f"[EXCEL-STRUCTURE-FALLBACK] Too many filled rows: {filled_rows} > {MAX_ROWS}")
                         return {
                             'valid': False,
                             'error': f"❌ File rejected: Your Excel file contains {filled_rows} rows, but only 50 rows are allowed per upload. Could you please reduce the file to 50 rows and reupload it for processing?"

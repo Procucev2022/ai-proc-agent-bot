@@ -452,8 +452,7 @@ class ExcelValidationService:
                             'error_type': 'invalid_header_characters'
                         }
                     
-                    # Headers look good, continue validation
-                    logger.info(f"Found valid headers in row {header_row_index + 1}: {potential_headers}")
+
                 else:
                     # No meaningful headers found anywhere
                     has_data = any(len(df.iloc[i].dropna()) >= 2 for i in range(min(3, len(df))))
@@ -532,7 +531,6 @@ class ExcelValidationService:
             
         except Exception as e:
             logger.error(f"Error validating data quality: {e}")
-            logger.error(f"DataFrame info: shape={getattr(df, 'shape', 'unknown')}, columns={getattr(df, 'columns', 'unknown')}")
             return {
                 'valid': False,
                 'error': "Failed to validate Excel data quality. Please ensure your file is a valid Excel format.",
@@ -543,12 +541,8 @@ class ExcelValidationService:
         """Validate data types and detect common issues."""
         issues = []
         
-        # Skip data type validation for files with Unnamed columns (headers likely in data)
         unnamed_cols = [col for col in df.columns if 'Unnamed:' in str(col)]
         if len(unnamed_cols) == len(df.columns):
-            # All columns are unnamed - this is likely a file with headers in first row
-            # Skip mixed data type validation as it's expected
-            logger.info("Skipping data type validation for file with headers in data rows")
             return issues
         
         for col_idx, column in enumerate(df.columns):
