@@ -233,19 +233,27 @@ class RegistrationService:
 
             # Include last few messages from both user and assistant
             for msg in messages[-history_limit:]:
-                content = msg.get("content", "").strip()
-                if content:
-                    context_messages.append(content)
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    content = content.strip()
+                    if content:
+                        context_messages.append(content)
 
             # Add current message if not empty
-            current_message = current_message.strip()
-            if current_message:
-                context_messages.append(current_message)
+            if isinstance(current_message, str):
+                current_message = current_message.strip()
+                if current_message:
+                    context_messages.append(current_message)
+            elif isinstance(current_message, dict):
+                # Handle button replies or interactive messages
+                button_id = current_message.get("button_reply", {}).get("id", "")
+                if button_id:
+                    context_messages.append(button_id)
 
             return " ".join(context_messages)
         except Exception as e:
             logger.error(f"Error building registration context: {e}")
-            return current_message
+            return str(current_message) if isinstance(current_message, str) else ""
 
     async def _generate_confirmation_message(self, entities: Dict, user_type: str) -> str:
         """Generate confirmation message showing all collected details dynamically."""
