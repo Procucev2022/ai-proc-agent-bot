@@ -41,6 +41,7 @@ class FAQService:
                         conversation_context += f"{role_label}: {content}\n"
 
             logger.info(f"conversation history for faq is :{conversation_context}")
+            logger.info(f"user question for faq is :{user_question}")
 
         # If not found, use LLM with full FAQ context and conversation history
         prompt = f"""
