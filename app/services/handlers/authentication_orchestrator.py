@@ -349,9 +349,14 @@ class AuthenticationOrchestrator:
             # Check for profile selection response - HIGHEST PRIORITY after OTP
             if session.workflow_state.get("profile_selection_stage"):
                 logger.info(f"Handling profile selection response for stage: {session.workflow_state.get('profile_selection_stage')}")
-                return await self.profile_selection_service.handle_profile_selection_response(
+                result = await self.profile_selection_service.handle_profile_selection_response(
                     user_phone, message_content, session
                 )
+                # If exit was completed, return immediately without further processing
+                if result.get("status") == "exit_completed":
+                    logger.info(f"Exit completed during profile selection - stopping further processing")
+                    return result
+                return result
             
             # Check for switch response
             switch_result = await self._check_switch_response(user_phone, session, message_content, intent_result)
