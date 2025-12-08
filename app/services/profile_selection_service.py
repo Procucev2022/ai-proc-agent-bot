@@ -529,7 +529,6 @@ class ProfileSelectionService:
         try:
             # Case 6: New User Registration Flow
             message = (
-                "👋 *Hi there!*\n"
                 "It looks like there’s no registered account linked to this number or email.\n\n"
                 "Let’s get you started by creating a new profile so you can easily raise or respond to RFQs.\n\n"
                 "Please select one of the options below 👇\n"
@@ -1511,14 +1510,15 @@ class ProfileSelectionService:
     async def _handle_exit_action(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
         """Handle user selecting exit option."""
         try:
-            # Call exit without showing exit message
+            # Call exit with goodbye message
             from app.services.exit_service import ExitService
             exit_service = ExitService(self.whatsapp_service, None, None, None)
-            await exit_service.handle_exit_intent(user_phone, session, show_message=False)
+            result = await exit_service.handle_exit_intent(user_phone, session, show_message=True)
 
             return {
-                "status": "user_exited",
-                "session_cleared": True
+                "status": "exit_completed",
+                "session_cleared": True,
+                "exit_result": result
             }
 
         except Exception as e:
