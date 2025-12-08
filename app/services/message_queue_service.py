@@ -131,7 +131,7 @@ class MessageQueueService:
         # Background task handles (for lifecycle management)
         self._background_tasks: List[asyncio.Task] = []
         
-        logger.info(
+        logger.debug(
             f"[INIT] MessageQueueService initialized: "
             f"batch_window={self.batch_window}s, "
             f"please_wait_threshold={self.please_wait_threshold}s"
@@ -235,7 +235,7 @@ class MessageQueueService:
                 {json.dumps(message.to_dict()): timestamp}
             )
             
-            logger.info(
+            logger.debug(
                 f"[ENQUEUE] message_id='{message_id}', user={user_phone}, "
                 f"type={message_type}"
             )
@@ -291,13 +291,13 @@ class MessageQueueService:
         if not any(t.get_name() == "batch_poller" for t in self._background_tasks):
             task = asyncio.create_task(self.run_batch_poller(), name="batch_poller")
             self._background_tasks.append(task)
-            logger.info("[BACKGROUND] Started batch poller task")
+            logger.debug("[BACKGROUND] Started batch poller task")
         
         # Start monitoring loop
         if not any(t.get_name() == "monitoring_loop" for t in self._background_tasks):
             task = asyncio.create_task(self.run_monitoring_loop(), name="monitoring_loop")
             self._background_tasks.append(task)
-            logger.info("[BACKGROUND] Started monitoring loop task")
+            logger.debug("[BACKGROUND] Started monitoring loop task")
 
     async def run_batch_poller(self) -> None:
         """
@@ -307,7 +307,7 @@ class MessageQueueService:
         Runs every 1 second. Uses distributed lock to ensure only ONE worker
         polls at a time across all Gunicorn workers (prevents duplicate polling).
         """
-        logger.info("[POLLER] Batch poller started")
+        logger.debug("[POLLER] Batch poller started")
         
         try:
             while True:
@@ -367,7 +367,7 @@ class MessageQueueService:
                     logger.error(f"[POLLER] Error in poll cycle: {e}", exc_info=True)
         
         except asyncio.CancelledError:
-            logger.info("[POLLER] Batch poller cancelled")
+            logger.debug("[POLLER] Batch poller cancelled")
             raise
         except Exception as e:
             logger.error(f"[POLLER] Batch poller failed: {e}", exc_info=True)
@@ -381,7 +381,7 @@ class MessageQueueService:
         Runs every 5 seconds. Idempotent across workers.
         Workers coordinate via Redis SET NX EX to prevent duplicates.
         """
-        logger.info("[MONITOR] Monitoring loop started")
+        logger.debug("[MONITOR] Monitoring loop started")
         
         try:
             while True:
@@ -422,7 +422,7 @@ class MessageQueueService:
                                 response_ready = await self.redis.get(response_ready_key)
                                 
                                 if response_ready:
-                                    logger.info(
+                                    logger.debug(
                                         f"[MONITOR] Response ready for {user_phone} "
                                         f"(batch {session.batch_id}, duration {duration:.1f}s), "
                                         f"skipping please-wait to avoid race condition"
@@ -453,7 +453,7 @@ class MessageQueueService:
                                             )
                                             continue
                                         
-                                        logger.info(
+                                        logger.debug(
                                             f"[MONITOR] Sending please-wait to {user_phone} "
                                             f"after {duration:.1f}s"
                                         )
@@ -497,7 +497,7 @@ class MessageQueueService:
                                                 f"(approaching TTL limit!)"
                                             )
                                         else:  # 30-50 seconds
-                                            logger.info(
+                                            logger.debug(
                                                 f"[MONITOR-INFO] Batch {session.batch_id} "
                                                 f"for {user_phone} processing for {duration:.1f}s"
                                             )
@@ -512,7 +512,7 @@ class MessageQueueService:
                     logger.error(f"[MONITOR] Error in monitor cycle: {e}", exc_info=True)
         
         except asyncio.CancelledError:
-            logger.info("[MONITOR] Monitoring loop cancelled")
+            logger.debug("[MONITOR] Monitoring loop cancelled")
             raise
         except Exception as e:
             logger.error(f"[MONITOR] Monitoring loop failed: {e}", exc_info=True)
@@ -595,7 +595,7 @@ class MessageQueueService:
                 outgoing_key = self._key_outgoing(user_phone)
                 await self.redis.rpush(outgoing_key, json.dumps(batch.to_dict()))
                 
-                logger.info(
+                logger.debug(
                     f"[BATCH_CREATE] Created batch {batch_id} for {user_phone}: "
                     f"{len(messages)} messages, "
                     f"content='{concatenated_content[:100]}...'"
@@ -661,7 +661,7 @@ class MessageQueueService:
                 session_key = self._key_session(user_phone)
                 await self.redis.setex(session_key, 60, session.to_json())
                 
-                logger.info(
+                logger.debug(
                     f"[START] Starting processing for batch {batch.batch_id}, "
                     f"user={user_phone}"
                 )
@@ -681,7 +681,7 @@ class MessageQueueService:
         Note: Cleanup happens in wrapper methods when ChatService sends response.
         """
         try:
-            logger.info(
+            logger.debug(
                 f"[PROCESS] Batch {batch.batch_id} for {batch.user_phone}: "
                 f"{batch.message_count} messages"
             )
@@ -782,7 +782,7 @@ class MessageQueueService:
                 should_suppress = await self._should_suppress_response(user_phone)
                 
                 if should_suppress:
-                    logger.info(
+                    logger.debug(
                         f"[SEND] Suppressing {name} for {recipient_id} "
                         f"in batch {session.batch_id} - newer messages exist"
                     )
@@ -805,12 +805,12 @@ class MessageQueueService:
                     
                     # Calculate processing time for logging
                     processing_time = time.time() - session.started_at
-                    logger.info(
+                    logger.debug(
                         f"[SEND] Response ready for {recipient_id} after {processing_time:.1f}s "
                         f"(batch {session.batch_id}) - marked to prevent late please-wait"
                     )
                     
-                    logger.info(
+                    logger.debug(
                         f"[SEND] Calling {name} for {recipient_id} "
                         f"in batch {session.batch_id}"
                     )
@@ -819,7 +819,7 @@ class MessageQueueService:
                     # Log result
                     success = getattr(result, 'success', True)
                     if success:
-                        logger.info(
+                        logger.debug(
                             f"[SEND] {name} succeeded for {recipient_id}, "
                             f"message_id={getattr(result, 'message_id', 'N/A')}"
                         )
@@ -858,7 +858,7 @@ class MessageQueueService:
         should_suppress = incoming_count > 0 or outgoing_count > 0
         
         if should_suppress:
-            logger.info(
+            logger.debug(
                 f"[SUPPRESS] {user_phone} has newer messages: "
                 f"incoming={incoming_count}, outgoing={outgoing_count}"
             )
@@ -891,7 +891,7 @@ class MessageQueueService:
             success: Whether processing succeeded
         """
         try:
-            logger.info(
+            logger.debug(
                 f"[CLEANUP] Batch {batch_id} for {user_phone}, "
                 f"success={success}"
             )
@@ -918,7 +918,7 @@ class MessageQueueService:
                 # Session complete - clear ack flag so user can start fresh next time
                 ack_sent_key = self._key_ack_sent(user_phone)
                 await self.redis.delete(ack_sent_key)
-                logger.info(
+                logger.debug(
                     f"[CLEANUP] All queues empty for {user_phone}, "
                     f"conversation session complete, cleared ack flag"
                 )
@@ -1025,7 +1025,7 @@ class MessageQueueService:
                     message="Got it. Please wait while we process your request, we will be back shortly."
                 )
                 
-                logger.info(f"[ACK] Sent acknowledgment to {user_phone} (flag expires in 300s)")
+                logger.debug(f"[ACK] Sent acknowledgment to {user_phone} (flag expires in 300s)")
         
         except Exception as e:
             logger.warning(
@@ -1046,7 +1046,7 @@ class MessageQueueService:
                 message="Your request is taking longer than expected. Please wait while we process..."
             )
             
-            logger.info(f"[PLEASE_WAIT] Sent to {user_phone}")
+            logger.debug(f"[PLEASE_WAIT] Sent to {user_phone}")
         
         except Exception as e:
             logger.warning(
@@ -1115,7 +1115,7 @@ class MessageQueueService:
         for key in keys_to_delete:
             await self.redis.delete(key)
         
-        logger.info(f"[CLEANUP] Cleaned up all state for {user_phone}")
+        logger.debug(f"[CLEANUP] Cleaned up all state for {user_phone}")
 
     async def get_health_metrics(self) -> Dict[str, Any]:
         """
@@ -1218,7 +1218,7 @@ class MessageQueueService:
         Graceful shutdown - cancel background tasks.
         Call this when shutting down the application.
         """
-        logger.info("[SHUTDOWN] Cancelling background tasks...")
+        logger.debug("[SHUTDOWN] Cancelling background tasks...")
         
         for task in self._background_tasks:
             if not task.done():
@@ -1231,4 +1231,4 @@ class MessageQueueService:
         # Close Redis connection
         await self.redis.close()
         
-        logger.info("[SHUTDOWN] MessageQueueService shutdown complete")
+        logger.debug("[SHUTDOWN] MessageQueueService shutdown complete")
