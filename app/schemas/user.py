@@ -25,7 +25,8 @@ EMAIL_REGEX = re.compile(
 # Sanitized phone number (removes spaces, dashes, plus signs)
 PHONE_REGEX = re.compile(r"^[6-9]\d{9}$")
 PINCODE_REGEX = re.compile(r"^\d{6}$")
-GSTIN_REGEX = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$")
+# GSTIN Format: 2-digit state code + 5 letters (PAN) + 4 digits (PAN) + 1 letter (PAN) + entity code (1-9/A-Z) + Z + checksum
+GSTIN_REGEX = re.compile(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$")
 
 
 def normalize_phone_number(phone: str, default_country_code: str = "91") -> str:
@@ -80,7 +81,7 @@ class BuyerRegistrationSchema(BaseModel):
     def validate_name(cls, v: str) -> str:
         v = v.strip().title()
         if not re.match(r"^[A-Za-z\s.]+$", v):
-            raise ValueError("Name must contain only letters and spaces")
+            raise ValueError("Please use only letters and spaces (no numbers or special characters)")
         return v
 
     @field_validator("companyName")
@@ -94,7 +95,7 @@ class BuyerRegistrationSchema(BaseModel):
             raise ValueError("Email cannot be empty")
         v = v.strip().lower()
         if not EMAIL_REGEX.match(v):
-            raise ValueError("Invalid email format")
+            raise ValueError("Please enter a valid email address (e.g., name@company.com)")
         return v
 
     @field_validator("organizationPhonenumber")
@@ -103,13 +104,13 @@ class BuyerRegistrationSchema(BaseModel):
             return v
         sanitized = normalize_phone_number(v)
         if not PHONE_REGEX.match(sanitized):
-            raise ValueError("Invalid phone number format")
+            raise ValueError("Please enter a valid 10-digit Indian mobile number")
         return sanitized
 
     @field_validator("zipCode")
     def validate_zipcode(cls, v: str) -> str:
         if not PINCODE_REGEX.match(v):
-            raise ValueError("Pincode must be 6 digits")
+            raise ValueError("Please enter a valid 6-digit Indian pincode")
         return v
 
 
@@ -129,7 +130,7 @@ class SellerRegistrationSchema(BaseModel):
     def validate_name(cls, v: str) -> str:
         v = v.strip().title()
         if not re.match(r"^[A-Za-z\s.]+$", v):
-            raise ValueError("Name must contain only letters and spaces")
+            raise ValueError("Please use only letters and spaces (no numbers or special characters)")
         return v
 
     @field_validator("companyName")
@@ -153,7 +154,7 @@ class SellerRegistrationSchema(BaseModel):
             raise ValueError("Email cannot be empty")
         v = v.strip().lower()
         if not EMAIL_REGEX.match(v):
-            raise ValueError("Invalid email format")
+            raise ValueError("Please enter a valid email address (e.g., name@company.com)")
         return v
 
     @field_validator("organizationPhonenumber")
@@ -162,20 +163,22 @@ class SellerRegistrationSchema(BaseModel):
             return v
         sanitized = normalize_phone_number(v)
         if not PHONE_REGEX.match(sanitized):
-            raise ValueError("Invalid phone number format")
+            raise ValueError("Please enter a valid 10-digit Indian mobile number")
         return sanitized
 
     @field_validator("zipCode")
     def validate_zipcode(cls, v: str) -> str:
         if not PINCODE_REGEX.match(v):
-            raise ValueError("Pincode must be 6 digits")
+            raise ValueError("Please enter a valid 6-digit Indian pincode")
         return v
 
     @field_validator("gstin")
     def validate_gstin(cls, v: str) -> str:
         v = v.strip().upper()
         if not GSTIN_REGEX.match(v):
-            raise ValueError("Invalid GSTIN format")
+            raise ValueError(
+                "Invalid format. GSTIN should be 15 characters like: 27ABCDE1234F1Z5"
+            )
         return v
 
 class APIUserSchema(BaseModel):

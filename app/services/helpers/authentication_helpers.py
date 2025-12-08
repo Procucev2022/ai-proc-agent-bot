@@ -165,6 +165,11 @@ class AuthenticationHelpers:
     def generate_registration_questions_dynamic(schema: Type[BaseModel], collected_entities: Dict, missing_fields: List[str], validation_error_message: Optional[str] = None) -> str:
         """Generate registration questions dynamically based on schema descriptions."""
         try:
+            # Start with validation error if present
+            error_section = ""
+            if validation_error_message:
+                error_section = f"⚠️ *Validation Error:*\n{validation_error_message}\n\n"
+            
             # Build greeting with user name if available
             greeting = "Great"
             user_name = collected_entities.get("name") or collected_entities.get("full_name")
@@ -173,7 +178,7 @@ class AuthenticationHelpers:
             else:
                 greeting += "!"
             
-            # Acknowledge collected fields
+            # Acknowledge collected fields (only valid ones)
             acknowledgment = ""
             if collected_entities:
                 collected = []
@@ -187,19 +192,12 @@ class AuthenticationHelpers:
                 if collected:
                     acknowledgment = f"\n I've got:\n\n{chr(10).join(collected)}\n\n"
             
-            # Check if validation error is pincode-related
-            is_pincode_error = validation_error_message and ("pincode" in validation_error_message.lower() or "zipcode" in validation_error_message.lower())
-            
             # Ask for missing fields using their description
             questions = []
             for field in missing_fields:
                 if field in schema.model_fields:
                     field_info = schema.model_fields[field]
                     field_desc = field_info.description or field.replace("_", " ").title()
-                    
-                    # Skip pincode question if there's a pincode validation error
-                    if is_pincode_error and field == "zipCode":
-                        continue
                     
                     # Skip location/address field from questions
                     if field == "address1":
@@ -210,14 +208,10 @@ class AuthenticationHelpers:
                     else:
                         questions.append(f"• What's your {field_desc.lower()}?")
             
-            # Add validation error as a question if present
-            # if validation_error_message:
-            #     questions.append(f"• {validation_error_message}")
-            
             if questions:
-                return greeting + acknowledgment + "I still need:\n\n" + "\n".join(questions)
+                return error_section + greeting + acknowledgment + "I still need:\n\n" + "\n".join(questions)
             else:
-                return greeting + acknowledgment + "Please provide the remaining registration details."
+                return error_section + greeting + acknowledgment + "Please provide the remaining registration details."
                 
         except Exception as e:
             logger.error(f"Registration questions generation error: {e}")
@@ -282,7 +276,7 @@ class AuthenticationHelpers:
             (validated_entities, validation_error_message)
         """
         validated_entities = entities.copy()
-        validation_error_message = None
+        validation_errors = []  # Collect ALL errors
 
         # --- 1. Auto-format fields before validation ---
         if "name" in validated_entities and validated_entities["name"]:
@@ -306,35 +300,40 @@ class AuthenticationHelpers:
         if "gstin" in validated_entities and validated_entities["gstin"]:
             validated_entities["gstin"] = validated_entities["gstin"].strip().upper()
 
-        # --- 2. Schema-based validation (Pydantic) ---
-        try:
-            from pydantic import ValidationError
-            validated_model = SchemaModel(**validated_entities)
-            validated_entities = validated_model.model_dump()
-        except ValidationError as e:
-            # Collect first validation error message
-            first_error = e.errors()[0]
-            field_name = first_error.get('loc', [''])[0]
-            error_msg = first_error.get('msg', '')
-            validation_error_message = f"{field_name}: {error_msg}"
-            logger.warning(f"Schema validation failed: {validation_error_message}")
-            return validated_entities, validation_error_message
-
-        # --- 3. External validation: pincode existence check ---
+        # --- 2. Individual field validation - COLLECT ALL ERRORS ---
+        
+        # Email validation
+        email = validated_entities.get("email")
+        if email:
+            from ...schemas.user import EMAIL_REGEX
+            if not EMAIL_REGEX.match(email):
+                validation_errors.append(f"• Organization email: Please enter a valid email address (e.g., name@company.com)")
+                logger.warning(f"Email validation failed: {email}")
+        
+        # GSTIN validation (for sellers)
+        gstin = validated_entities.get("gstin")
+        if gstin:
+            gstin_clean = gstin.strip().upper()
+            if len(gstin_clean) != 15:
+                validation_errors.append(f"• GSTIN number: Must be exactly 15 characters. You entered {len(gstin_clean)} characters")
+            elif not re.match(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$", gstin_clean):
+                validation_errors.append(f"• GSTIN number: Invalid format. GSTIN should be 15 characters like: 27ABCDE1234F1Z5")
+        
+        # Pincode validation
         pincode = validated_entities.get("zipCode")
         if pincode:
-            try:
-                if not pincode.isdigit() or len(pincode) != 6:
-                    validation_error_message = "Pincode must be a 6-digit number."
-                    validated_entities["zipCode"] = None
-                else:
+            if not pincode.isdigit() or len(pincode) != 6:
+                validation_errors.append(f"• Pincode: Please enter a valid 6-digit Indian pincode")
+            else:
+                try:
                     location_data = await get_location_from_pincode_async(pincode)
                     if not location_data:
-                        validation_error_message = "Pincode does not exist. Please provide a valid Indian pincode."
-                        validated_entities["zipCode"] = None
-            except Exception as e:
-                logger.error(f"Error validating pincode {pincode}: {e}")
-                validation_error_message = "Error verifying pincode. Please recheck and try again."
-                validated_entities["zipCode"] = None
+                        validation_errors.append(f"• Pincode: {pincode} is not a valid Indian pincode. Please check and try again")
+                except Exception as e:
+                    logger.error(f"Error validating pincode {pincode}: {e}")
+                    validation_errors.append(f"• Pincode: We couldn't verify {pincode}. Please try again")
 
+        # Combine all errors
+        validation_error_message = "\n".join(validation_errors) if validation_errors else None
+        
         return validated_entities, validation_error_message
