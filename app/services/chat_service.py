@@ -3353,11 +3353,16 @@ class ChatService:
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
                 
+                msg = result.get("message")
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
-                    result.get("message"),
+                    msg,
                     buttons_config
                 )
+                # Save assistant response in history
+                if msg:
+                    self.session_manager.add_message_to_history(session, "assistant", msg)
+                    await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
             else:
                 # Send message normally
                 await send_response(result , session)
