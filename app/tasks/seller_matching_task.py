@@ -104,7 +104,6 @@ def process_seller_matching(self):
             logger.info("Remote categorization is disabled, skipping seller matching task")
             return {"status": "skipped", "reason": "remote_categorization_disabled"}
 
-        logger.info("Starting seller matching task")
         
         # Get RFQs needing seller matching
         rfqs_for_matching = get_rfqs_needing_seller_matching()

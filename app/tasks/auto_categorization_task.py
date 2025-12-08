@@ -34,7 +34,6 @@ def process_uncategorized_rfqs(self):
             logger.info("Remote categorization is disabled, skipping task")
             return {"status": "skipped", "reason": "remote_categorization_disabled"}
 
-        logger.info("Starting auto-categorization task")
         
         # Get uncategorized items
         uncategorized_items = get_uncategorized_items()
