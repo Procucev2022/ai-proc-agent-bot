@@ -80,7 +80,7 @@ class RegistrationService:
                 logger.info("send and track message")
                 await self.session_manager.send_and_track_message(user_phone, intro_message, session)
             else:
-                logger.info("send message")
+                logger.info(f"send message:{session}")
                 await self.whatsapp_service.send_message(user_phone, intro_message, session_id=session)
 
             result = {
