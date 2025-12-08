@@ -123,6 +123,7 @@ class MessageQueueService:
         # Configuration
         self.batch_window = settings.batch_window_seconds  # Default: 3s
         self.please_wait_threshold = settings.please_wait_threshold_seconds  # Default: 15s
+        self.monitoring_poll_interval = settings.monitoring_poll_interval_seconds  # Default: 5s
         
         # WhatsApp service for direct sending (ack, please-wait)
         from app.services.whatsapp_service import WhatsAppService
@@ -134,7 +135,8 @@ class MessageQueueService:
         logger.debug(
             f"[INIT] MessageQueueService initialized: "
             f"batch_window={self.batch_window}s, "
-            f"please_wait_threshold={self.please_wait_threshold}s"
+            f"please_wait_threshold={self.please_wait_threshold}s, "
+            f"monitoring_poll_interval={self.monitoring_poll_interval}s"
         )
 
     # ========================================================================
@@ -378,14 +380,14 @@ class MessageQueueService:
         - Send please-wait messages when threshold exceeded
         - Log warnings for slow batches
         
-        Runs every 5 seconds. Idempotent across workers.
-        Workers coordinate via Redis SET NX EX to prevent duplicates.
+        Poll interval is configurable via MONITORING_POLL_INTERVAL_SECONDS.
+        Idempotent across workers - workers coordinate via Redis SET NX EX to prevent duplicates.
         """
         logger.debug("[MONITOR] Monitoring loop started")
         
         try:
             while True:
-                await asyncio.sleep(5)  # Check every 5 seconds
+                await asyncio.sleep(self.monitoring_poll_interval)  # Configurable poll interval
                 
                 try:
                     # Find all active sessions
