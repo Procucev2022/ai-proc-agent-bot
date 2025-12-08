@@ -1983,7 +1983,6 @@ class ChatService:
             ai_confirmation_result = None
             try:
                 ai_confirmation_result = await self.openai_service.parse_confirmation_response(message)
-                logger.info(f"[EXCEL-CONFIRMATION-AI] AI parsed response: '{message}' -> '{ai_confirmation_result}'")
             except Exception as e:
                 logger.warning(f"[EXCEL-CONFIRMATION-AI] AI parsing failed: {e}, falling back to keywords")
             
@@ -1993,10 +1992,8 @@ class ChatService:
             
             if ai_confirmation_result == "yes":
                 is_confirmed = True
-                logger.info(f"[EXCEL-CONFIRMATION] AI detected confirmation: '{message}'")
             elif ai_confirmation_result == "no":
                 is_cancelled = True
-                logger.info(f"[EXCEL-CONFIRMATION] AI detected cancellation: '{message}'")
             else:
                 # Fallback to keyword matching
                 message_lower = message.lower().strip()
@@ -2013,7 +2010,7 @@ class ChatService:
             if is_confirmed:
                 # User confirmed - proceed to multiple RFQ creation
                 logger.info(f"[EXCEL-CONFIRMED] User confirmed Excel processing - proceeding to RFQ creation")
-                
+
                 # Retrieve saved data
                 excel_data = session.workflow_state.get('excel_confirmation_data', {})
                 products = excel_data.get('products', [])
@@ -3066,8 +3063,6 @@ class ChatService:
 
     async def _handle_excel_confirmation_button(self, user: User, session: ConversationSession, button_id: str) -> Dict[str, Any]:
         """Handle Excel confirmation button responses."""
-        logger.info(f"Excel confirmation button response from {user.phone_number}: {button_id}")
-        
         try:
             if button_id == "confirm_excel":
                 # User confirmed - simulate "confirm" response

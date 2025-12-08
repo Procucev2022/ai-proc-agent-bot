@@ -99,7 +99,6 @@ class SectionedRFQCreationHandler:
         Returns:
             Dict with response data
         """
-        logger.info(f"[SECTIONED_RFQ] Handling sectioned RFQ for user {user.phone_number}")
 
         # Check if pending restart confirmation
         if WorkflowManager.is_sectioned_rfq_pending_restart(session):
@@ -107,7 +106,6 @@ class SectionedRFQCreationHandler:
 
         # Get current section
         current_section = WorkflowManager.get_sectioned_rfq_section(session)
-        logger.info(f"[SECTIONED_RFQ] Current section: {current_section}")
 
         # Check if data/message is from Excel upload
         is_excel_source = session.workflow_state.get('excel_source', False) if session.workflow_state else False
@@ -137,17 +135,14 @@ class SectionedRFQCreationHandler:
             if current_section == "date_location":
                 delivery_data = WorkflowManager.get_section_data(session, "date_location")
                 if delivery_data and self._is_delivery_complete(delivery_data):
-                    logger.info(f"[SECTIONED_RFQ] User requested to modify {current_section}")
                     return await self._handle_section_modify(user, session, current_section)
             elif current_section == "items":
                 items_data = WorkflowManager.get_section_data(session, "items")
                 if items_data and len(items_data) > 0:
-                    logger.info(f"[SECTIONED_RFQ] User requested to modify {current_section}")
                     return await self._handle_section_modify(user, session, current_section)
 
         # Clear excel_source flag after Excel confirmation is processed to allow normal flow
         if is_excel_source and current_section == "date_location":
-            logger.info(f"[SECTIONED_RFQ] Clearing excel_source flag after Excel confirmation")
             session.workflow_state['excel_source'] = False
             await self.session_manager.save_session(session, persist_to_db=False)
 
@@ -187,8 +182,6 @@ class SectionedRFQCreationHandler:
 
         # Check if we have delivery data from initial extraction
         delivery_data = WorkflowManager.get_section_data(session, "date_location")
-        logger.info(f"[SECTIONED_RFQ] Current delivery_data: {delivery_data}")
-        logger.info(f"[SECTIONED_RFQ] Is complete: {self._is_delivery_complete(delivery_data) if delivery_data else False}")
 
         # If we already have complete delivery data, check if user sent data in structured format
         # This handles the case where user directly copies and modifies the confirmation format
@@ -196,12 +189,10 @@ class SectionedRFQCreationHandler:
             # Check if message looks like it's attempting the structured format
             # Look for format keywords to detect modification attempts (only date and pincode shown to user)
             if any(keyword in message.lower() for keyword in ["delivery date:", "delivery pincode:"]):
-                logger.info(f"[SECTIONED_RFQ] User sent message in structured format - routing to modification handler")
                 return await self._process_delivery_modification_direct(user, session, message)
         elif delivery_data:
             # We have delivery data but it's not complete - check if user sent data in format
             if any(keyword in message.lower() for keyword in ["delivery date:", "delivery pincode:"]):
-                logger.info(f"[SECTIONED_RFQ] User sent message in structured format - routing to modification handler")
                 return await self._process_delivery_modification_direct(user, session, message)
 
         # Track date validation error to show to user if needed
@@ -209,8 +200,6 @@ class SectionedRFQCreationHandler:
 
         if not delivery_data or not self._has_delivery_basics(delivery_data):
             # Need to extract delivery details - ONE TIME entity extraction
-            logger.info(f"[SECTIONED_RFQ] Extracting delivery details from message")
-
             entity_context = self._build_entity_context(session)
             entity_result = await self.entity_service.extract_entities(
                 message, context=entity_context, workflow_type="buy_something"
@@ -230,7 +219,6 @@ class SectionedRFQCreationHandler:
                 if date_validation.get("is_valid"):
                     # Use normalized date format
                     delivery_data["deliveryDate"] = date_validation.get("normalized_date", delivery_data["deliveryDate"])
-                    logger.info(f"[SECTIONED_RFQ] Delivery date validated and normalized: {delivery_data['deliveryDate']}")
                 else:
                     # Invalid date - clear it and store error to show user
                     date_validation_error = date_validation.get("error", "Invalid delivery date")
@@ -246,7 +234,6 @@ class SectionedRFQCreationHandler:
 
             # Also check if items were provided in initial message
             if entity_result.get("products"):
-                logger.info(f"[SECTIONED_RFQ] User provided items in initial message, storing for later")
                 WorkflowManager.update_section_data(session, "items", entity_result["products"])
 
             # Save session after extraction to persist the delivery data
@@ -318,8 +305,6 @@ class SectionedRFQCreationHandler:
         5. If retry >= 3 → cancel workflow
         6. If valid → update data directly, display confirmation
         """
-        logger.info(f"[SECTIONED_RFQ] Processing delivery modification (direct format parsing)")
-
         # Step 1: Parse format (pure parsing, no AI)
         parsed_result = sectioned_rfq_format_parser.parse_delivery_format(message)
 
@@ -340,8 +325,6 @@ class SectionedRFQCreationHandler:
             if not is_format_attempt:
                 # User didn't attempt the format - they may have provided items or other info
                 # Try entity extraction to see if there's any date/pincode in the message
-                logger.info(f"[SECTIONED_RFQ] Message doesn't look like format attempt, trying entity extraction")
-
                 entity_context = self._build_entity_context(session)
                 entity_result = await self.entity_service.extract_entities(
                     message, context=entity_context, workflow_type="buy_something"
@@ -378,7 +361,6 @@ class SectionedRFQCreationHandler:
 
                     # Store items if provided
                     if entity_result.get("products"):
-                        logger.info(f"[SECTIONED_RFQ] User provided items, storing for later")
                         WorkflowManager.update_section_data(session, "items", entity_result["products"])
 
                     await self.session_manager.save_session(session, persist_to_db=False)
@@ -392,7 +374,6 @@ class SectionedRFQCreationHandler:
                     # No delivery data found - store any items and re-show the format prompt
                     # Don't increment retry since this wasn't a format attempt
                     if entity_result.get("products"):
-                        logger.info(f"[SECTIONED_RFQ] User provided items instead of delivery data, storing for later")
                         WorkflowManager.update_section_data(session, "items", entity_result["products"])
                         await self.session_manager.save_session(session, persist_to_db=False)
 
@@ -407,7 +388,6 @@ class SectionedRFQCreationHandler:
 
             # User attempted the format but it's invalid - increment retry
             retry_count = WorkflowManager.increment_section_retry(session, "date_location")
-            logger.warning(f"[SECTIONED_RFQ] Delivery format invalid, retry count: {retry_count}")
 
             if retry_count >= MAX_RETRY_ATTEMPTS:
                 # Max retries - cancel workflow
@@ -443,8 +423,6 @@ class SectionedRFQCreationHandler:
         date_validation = await self._validate_delivery_date(delivery_date)
         if not date_validation["is_valid"]:
             retry_count = WorkflowManager.increment_section_retry(session, "date_location")
-            logger.warning(f"[SECTIONED_RFQ] Delivery date invalid: {date_validation['error']}, retry count: {retry_count}")
-
             if retry_count >= MAX_RETRY_ATTEMPTS:
                 return await self._cancel_after_max_retries(user, session, "date_location")
 
@@ -474,7 +452,6 @@ class SectionedRFQCreationHandler:
         pincode_validation = await self._validate_pincode_and_get_location(pincode)
         if not pincode_validation["is_valid"]:
             retry_count = WorkflowManager.increment_section_retry(session, "date_location")
-            logger.warning(f"[SECTIONED_RFQ] Pincode invalid: {pincode_validation['error']}, retry count: {retry_count}")
 
             if retry_count >= MAX_RETRY_ATTEMPTS:
                 return await self._cancel_after_max_retries(user, session, "date_location")
@@ -506,15 +483,13 @@ class SectionedRFQCreationHandler:
             "state": pincode_validation.get("state", parsed_result["state"])
         }
 
-        logger.info(f"[SECTIONED_RFQ] Updating delivery data: {delivery_data}")
+
         WorkflowManager.update_section_data(session, "date_location", delivery_data)
         WorkflowManager.reset_section_retry(session, "date_location")
         WorkflowManager.set_awaiting_section_modification(session, "date_location", False)
 
         # Save session immediately after update to persist changes
         await self.session_manager.save_session(session, persist_to_db=False)
-
-        logger.info(f"[SECTIONED_RFQ] Delivery data updated successfully via direct modification")
 
         # Step 5: Re-display for confirmation
         return await self._display_delivery_confirmation(user, session, delivery_data)
@@ -617,12 +592,10 @@ class SectionedRFQCreationHandler:
             # Look for format keywords to detect modification attempts
             message_lower = message.lower()
             if "item " in message_lower and ("qty:" in message_lower or "quantity:" in message_lower):
-                logger.info(f"[SECTIONED_RFQ] User sent message in items format - routing to modification handler")
                 return await self._process_items_modification_direct(user, session, message)
 
         if not items_data or len(items_data) == 0:
             # Need to extract items - ONE TIME entity extraction
-            logger.info(f"[SECTIONED_RFQ] Extracting items from message")
 
             entity_context = self._build_entity_context(session)
             entity_result = await self.entity_service.extract_entities(
@@ -634,7 +607,6 @@ class SectionedRFQCreationHandler:
         elif message and message.strip():
             # We have existing items AND user provided a message - user might be providing missing fields
             # Re-extract and merge with existing items
-            logger.info(f"[SECTIONED_RFQ] Re-extracting to merge with existing {len(items_data)} items")
 
             # Build context with existing items
             entity_context = self._build_entity_context_with_items(session, items_data)
@@ -647,7 +619,6 @@ class SectionedRFQCreationHandler:
             if new_items:
                 items_data = new_items  # Use the merged result from entity service
                 WorkflowManager.update_section_data(session, "items", items_data)
-                logger.info(f"[SECTIONED_RFQ] Updated items after re-extraction: {len(items_data)} items")
         else:
             # We have existing items and message is empty - just use existing items
             logger.info(f"[SECTIONED_RFQ] Using existing {len(items_data)} items from initial message")
@@ -675,7 +646,6 @@ class SectionedRFQCreationHandler:
         incomplete_items = self._get_incomplete_items(items_data)
         if incomplete_items:
             # Some items are missing mandatory fields - show format with missing field indicators
-            logger.info(f"[SECTIONED_RFQ] {len(incomplete_items)} items are incomplete, showing format with missing fields")
             return await self._display_items_missing_fields(user, session, items_data, incomplete_items)
 
         # All items complete - display items with Confirm/Modify buttons
@@ -709,7 +679,6 @@ class SectionedRFQCreationHandler:
         if parsed_result.get("error"):
             # Format invalid - increment retry
             retry_count = WorkflowManager.increment_section_retry(session, "items")
-            logger.warning(f"[SECTIONED_RFQ] Items format invalid, retry count: {retry_count}")
 
             if retry_count >= MAX_RETRY_ATTEMPTS:
                 # Max retries - cancel workflow
@@ -740,7 +709,6 @@ class SectionedRFQCreationHandler:
         # Step 3: Format valid - DIRECTLY replace entire items array (no AI processing)
         items_data = parsed_result["items"]
 
-        logger.info(f"[SECTIONED_RFQ] Updating items data: {len(items_data)} items")
         WorkflowManager.update_section_data(session, "items", items_data)
         WorkflowManager.reset_section_retry(session, "items")
         WorkflowManager.set_awaiting_section_modification(session, "items", False)
@@ -748,7 +716,6 @@ class SectionedRFQCreationHandler:
         # Save session immediately after update to persist changes
         await self.session_manager.save_session(session, persist_to_db=False)
 
-        logger.info(f"[SECTIONED_RFQ] Items data updated successfully via direct modification ({len(items_data)} items)")
 
         # Step 4: Re-display for confirmation
         return await self._display_items_confirmation(user, session, items_data)
@@ -873,7 +840,6 @@ class SectionedRFQCreationHandler:
                 session_id=session
             )
 
-            logger.info(f"[SECTIONED_RFQ] Asked about attachments with Continue button")
             return {"status": "awaiting_attachments_decision"}
 
         # User responded - delegate to existing handler
@@ -882,7 +848,6 @@ class SectionedRFQCreationHandler:
         # Check if we moved to confirmation phase (pending_combined_rfq was set)
         if session.workflow_state.get("pending_combined_rfq"):
             # Optional fields phase complete - move to final confirmation section
-            logger.info(f"[SECTIONED_RFQ] Optional fields complete - moving to final confirmation section")
             WorkflowManager.confirm_sectioned_section(session, "attachments")
             WorkflowManager.set_sectioned_rfq_section(session, "final_confirmation")
             await self.session_manager.save_session(session, persist_to_db=False)
@@ -910,7 +875,6 @@ class SectionedRFQCreationHandler:
         # The pending_combined_rfq should already be set by the attachments section
         # If not, we need to set it now
         if not session.workflow_state.get("pending_combined_rfq"):
-            logger.info(f"[SECTIONED_RFQ] pending_combined_rfq not set, building it now")
             delivery_data = WorkflowManager.get_section_data(session, "date_location")
             items_data = WorkflowManager.get_section_data(session, "items")
 
@@ -1056,12 +1020,9 @@ class SectionedRFQCreationHandler:
             user=user
         )
 
-        logger.info(f"[SECTIONED_RFQ] Cancel service result: {cancel_result}")
 
         # If user declined cancellation, re-display the confirmation screen
         if cancel_result.get("status") == "cancelled_aborted":
-            logger.info(f"[SECTIONED_RFQ] User declined restart, re-displaying {current_section} confirmation")
-
             # Get section data and re-display confirmation
             if current_section == "date_location":
                 delivery_data = WorkflowManager.get_section_data(session, "date_location")
@@ -1142,7 +1103,6 @@ class SectionedRFQCreationHandler:
 
         if confirmed:
             # Reset all sectioned RFQ state
-            logger.info(f"[SECTIONED_RFQ] User confirmed restart, resetting workflow")
             WorkflowManager.reset_sectioned_rfq(session)
             WorkflowManager.set_sectioned_rfq_section(session, "date_location")
             await self.session_manager.save_session(session, persist_to_db=False)
@@ -1156,7 +1116,6 @@ class SectionedRFQCreationHandler:
             return {"status": "workflow_restarted"}
         else:
             # Continue where they left off
-            logger.info(f"[SECTIONED_RFQ] User declined restart, continuing")
             WorkflowManager.set_sectioned_rfq_pending_restart(session, False)
             await self.session_manager.save_session(session, persist_to_db=False)
 
