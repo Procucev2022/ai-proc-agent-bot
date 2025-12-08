@@ -64,6 +64,16 @@ Instructions:
 - Keep the response focused and action-oriented
 - Consider the conversation context when providing your answer
 - Use numbered steps **only if necessary** to explain a process; otherwise keep the answer short and plain
+- When using numbered steps or bullet points, every point must appear on a new line in this format:
+1. First point  
+2. Second point  
+3. Third point  
+When giving a  answer having bullet or steps , the output must look exactly like this example (each point on its own new line):
+    To create an RFQ on Procucev GMT, follow the bot’s step-by-step flow:  
+    1. Provide Delivery Date and 6-digit Delivery Pincode (these cannot be changed once confirmed).  
+    2. Enter the list of items with their Quantity and optional Specifications (this section locks after confirmation).  
+    3. Optionally attach files like specification sheets, drawings, or Excel files during the attachments step.  
+    4. Finally, confirm all details in the summary to submit your RFQ. You can raise RFQs via WhatsApp AI Agent or on www.procucev.com portal.  
 
 """
         
