@@ -38,7 +38,6 @@ from unittest.mock import patch
 import gc
 import time
 
-
 # Get settings and configure logging with custom formatter
 settings = get_settings()
 setup_basic_logging(level="DEBUG" if settings.DEBUG else "INFO")
@@ -97,26 +96,26 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize ProcucevAPIClient: {e}")
         # Continue without failing startup - API calls will fail gracefully
         raise
-    
+
     # Start message queue background tasks
     message_queue_tasks = []
     try:
         from app.api.webhook import message_queue_service
-        
+
         # Start batch poller (creates batches from incoming messages)
         poller_task = asyncio.create_task(message_queue_service.run_batch_poller())
         message_queue_tasks.append(poller_task)
         logger.info("Message queue batch poller started")
-        
+
         # Start monitoring loop (acknowledgments and please-wait messages)
         monitor_task = asyncio.create_task(message_queue_service.run_monitoring_loop())
         message_queue_tasks.append(monitor_task)
         logger.info("Message queue monitoring loop started")
-        
+
     except Exception as e:
         logger.error(f"Failed to start message queue background tasks: {e}")
         raise
-    
+
     # Start webhook health monitoring
     webhook_monitor_task = None
     webhook_monitor = None
@@ -129,13 +128,13 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to start webhook health monitoring: {e}")
             # Continue without monitoring rather than failing startup
-    
+
     # Start inactivity timeout monitoring (optimized for multi-worker)
     timeout_service = None
     try:
         from app.services.inactivity_timeout_service import get_timeout_service
         timeout_service = get_timeout_service()  # Use singleton
-        
+
         # Optimized: Only start monitor if not already running on another worker
         if await timeout_service.try_start_monitoring_if_available():
             logger.info("Inactivity timeout monitoring started on this worker")
@@ -151,7 +150,7 @@ async def lifespan(app: FastAPI):
     logger.info("AutoCategorizationService will lazy-load on first use")
 
     yield
-    
+
     logger.info("Shutting down AI Procurement Agent application")
 
     # Shutdown ProcucevAPIClient gracefully
@@ -169,7 +168,7 @@ async def lifespan(app: FastAPI):
         logger.info("Message queue service shut down successfully")
     except Exception as e:
         logger.error(f"Error shutting down message queue service: {e}")
-    
+
     # Stop webhook health monitoring gracefully
     if webhook_monitor_task and webhook_monitor:
         try:
@@ -192,7 +191,7 @@ async def lifespan(app: FastAPI):
                 await webhook_monitor._close_session()
             except Exception:
                 pass
-    
+
     # Stop timeout monitoring gracefully
     if timeout_service:
         try:
@@ -225,12 +224,13 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
 # Add global exception handler for unhandled server errors
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Handle unhandled exceptions globally."""
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    
+
     # Extract user info from request if available
     user_phone = None
     try:
@@ -239,7 +239,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             user_phone = body.get('phone') or body.get('from')
     except:
         pass
-    
+
     # Notify support team about server error
     try:
         await handle_server_error(
@@ -249,7 +249,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         )
     except Exception as notify_error:
         logger.error(f"Failed to notify support team about server error: {notify_error}")
-    
+
     return JSONResponse(
         status_code=500,
         content={
@@ -257,6 +257,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             "error_id": str(id(exc))
         }
     )
+
 
 # Add context middleware (must be first)
 app.add_middleware(ContextMiddleware)
@@ -273,6 +274,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 import os
+
 # Mount static files and templates
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
@@ -289,6 +291,8 @@ app.include_router(webhook_router, prefix="/webhook", tags=["webhook"])
 
 # Pydantic models for chat API
 from typing import Union
+
+
 class ChatMessage(BaseModel):
     message: Union[str, Dict[str, Any]]
     phone: str = "919876543229"
@@ -337,34 +341,38 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
     async with UserPhoneContext(chat_message.phone):
         try:
             t1 = time.time()
-            logger.info(f"[PERF] Request parsing completed: {(t1-request_start)*1000:.0f}ms")
+            logger.info(f"[PERF] Request parsing completed: {(t1 - request_start) * 1000:.0f}ms")
 
             # Store captured WhatsApp messages and interactive buttons
             whatsapp_messages = []
             interactive_buttons = []
 
             # Mock the WhatsApp service to capture messages and buttons
-            async def mock_send_message(recipient_id, message, session=None):
+            async def mock_send_message(recipient_id, message, session=None, session_id=None):
                 whatsapp_messages.append(message)
-                # Track message in session if provided
-                if session:
+                # Track message in session if provided (session_id takes precedence)
+                actual_session = session_id if session_id is not None else session
+                if actual_session:
                     try:
                         from app.services.helpers.summarization_helpers import SummarizationHelpers
                         from app.redis_db import get_session_redis_service
-                        SummarizationHelpers.add_to_conversation_history(session, "assistant", message, "text")
+                        SummarizationHelpers.add_to_conversation_history(actual_session, "assistant", message, "text")
                         redis_session = get_session_redis_service()
-                        await redis_session.append_message_to_history(session.session_id, "assistant", message, "text")
+                        await redis_session.append_message_to_history(actual_session.session_id, "assistant", message,
+                                                                      "text")
                     except Exception as e:
                         logger.warning(f"Failed to track message in mock: {e}")
                 return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
 
-            async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None, session=None):
+            async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None,
+                                                     session=None, session_id=None):
                 whatsapp_messages.append(body)
                 # Extract button info for UI
                 button_data = [{'id': btn.get('id'), 'title': btn.get('title')} for btn in buttons_config]
                 interactive_buttons.append(button_data)
-                # Track message in session if provided
-                if session:
+                # Track message in session if provided (session_id takes precedence)
+                actual_session = session_id if session_id is not None else session
+                if actual_session:
                     try:
                         # Create a record to save in history
                         message_record = {
@@ -375,9 +383,11 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
                         }
                         from app.services.helpers.summarization_helpers import SummarizationHelpers
                         from app.redis_db import get_session_redis_service
-                        SummarizationHelpers.add_to_conversation_history(session, "assistant", message_record, "interactive_button")
+                        SummarizationHelpers.add_to_conversation_history(actual_session, "assistant", message_record,
+                                                                         "interactive_button")
                         redis_session = get_session_redis_service()
-                        await redis_session.append_message_to_history(session.session_id, "assistant", message_record, "interactive_button")
+                        await redis_session.append_message_to_history(actual_session.session_id, "assistant",
+                                                                      message_record, "interactive_button")
                     except Exception as e:
                         logger.warning(f"Failed to track button message in mock: {e}")
                 return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
@@ -394,37 +404,38 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
                 message_type = "interactive"
 
             t2 = time.time()
-            logger.info(f"[PERF] Message validation completed: {(t2-t1)*1000:.0f}ms")
+            logger.info(f"[PERF] Message validation completed: {(t2 - t1) * 1000:.0f}ms")
 
             # Create ChatService per-request with proper session management
             t3 = time.time()
-            logger.info(f"[PERF] Setup completed: {(t3-t2)*1000:.0f}ms")
+            logger.info(f"[PERF] Setup completed: {(t3 - t2) * 1000:.0f}ms")
 
             with get_db_session_context() as db:
                 t4 = time.time()
-                logger.info(f"[PERF] DB session acquired: {(t4-t3)*1000:.0f}ms")
+                logger.info(f"[PERF] DB session acquired: {(t4 - t3) * 1000:.0f}ms")
 
                 chat_service = ChatService(db_session=db)
                 t5 = time.time()
-                logger.info(f"[PERF] ChatService initialized: {(t5-t4)*1000:.0f}ms")
+                logger.info(f"[PERF] ChatService initialized: {(t5 - t4) * 1000:.0f}ms")
 
                 try:
                     # Process message through ChatService with mocked WhatsApp services
                     with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message), \
-                         patch.object(chat_service.whatsapp_service, 'send_configurable_buttons', side_effect=mock_send_configurable_buttons):
+                            patch.object(chat_service.whatsapp_service, 'send_configurable_buttons',
+                                         side_effect=mock_send_configurable_buttons):
                         t6 = time.time()
-                        logger.info(f"[PERF] Mock patching completed: {(t6-t5)*1000:.0f}ms")
+                        logger.info(f"[PERF] Mock patching completed: {(t6 - t5) * 1000:.0f}ms")
 
                         chat_result = await chat_service.process_message(chat_message.phone, content, message_type)
                         t7 = time.time()
-                        logger.info(f"[PERF] process_message completed: {(t7-t6)*1000:.0f}ms")
+                        logger.info(f"[PERF] process_message completed: {(t7 - t6) * 1000:.0f}ms")
                 finally:
                     # Always cleanup resources
                     await chat_service.cleanup()
                     logger.debug("ChatService resources cleaned up")
 
             t_total = time.time()
-            logger.info(f"[PERF] Total request time: {(t_total-request_start)*1000:.0f}ms")
+            logger.info(f"[PERF] Total request time: {(t_total - request_start) * 1000:.0f}ms")
 
             return {
                 "success": True,
@@ -457,15 +468,15 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
 @app.post("/api/upload-excel")
 @limiter.limit(settings.rate_limit_upload)
 async def upload_excel_file(
-    request: Request,
-    phone: str = Form(...),
-    file: UploadFile = File(...)
+        request: Request,
+        phone: str = Form(...),
+        file: UploadFile = File(...)
 ):
     """Process Excel file upload for testing."""
     try:
         # Read file content
         file_content = await file.read()
-        
+
         # Create mock document message structure (same as WhatsApp webhook)
         document_content = {
             "document": {
@@ -473,38 +484,44 @@ async def upload_excel_file(
                 "link": "mock://uploaded-file"
             }
         }
-        
+
         # Store captured WhatsApp messages and interactive buttons
         whatsapp_messages = []
         interactive_buttons = []
-        
-        async def mock_send_message(recipient_id, message, session=None):
+
+        async def mock_send_message(recipient_id, message, session=None, session_id=None):
             whatsapp_messages.append(message)
-            # Track message in session if provided
-            if session:
+            # Track message in session if provided (session_id takes precedence)
+            actual_session = session_id if session_id is not None else session
+            if actual_session:
                 try:
                     from app.services.helpers.summarization_helpers import SummarizationHelpers
                     from app.redis_db import get_session_redis_service
-                    SummarizationHelpers.add_to_conversation_history(session, "assistant", message, "text")
+                    SummarizationHelpers.add_to_conversation_history(actual_session, "assistant", message, "text")
                     redis_session = get_session_redis_service()
-                    await redis_session.append_message_to_history(session.session_id, "assistant", message, "text")
+                    await redis_session.append_message_to_history(actual_session.session_id, "assistant", message,
+                                                                  "text")
                 except Exception as e:
                     logger.warning(f"Failed to track message in mock: {e}")
             return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
 
-        async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None, session=None):
+        async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None,
+                                                 session=None, session_id=None):
             whatsapp_messages.append(body)
             # Extract button info for UI
             button_data = [{'id': btn.get('id'), 'title': btn.get('title')} for btn in buttons_config]
             interactive_buttons.append(button_data)
-            # Track message in session if provided
-            if session:
+            # Track message in session if provided (session_id takes precedence)
+            actual_session = session_id if session_id is not None else session
+            if actual_session:
                 try:
                     from app.services.helpers.summarization_helpers import SummarizationHelpers
                     from app.redis_db import get_session_redis_service
-                    SummarizationHelpers.add_to_conversation_history(session, "assistant", body, "interactive_button")
+                    SummarizationHelpers.add_to_conversation_history(actual_session, "assistant", body,
+                                                                     "interactive_button")
                     redis_session = get_session_redis_service()
-                    await redis_session.append_message_to_history(session.session_id, "assistant", body, "interactive_button")
+                    await redis_session.append_message_to_history(actual_session.session_id, "assistant", body,
+                                                                  "interactive_button")
                 except Exception as e:
                     logger.warning(f"Failed to track button message in mock: {e}")
             return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
@@ -530,11 +547,11 @@ async def upload_excel_file(
 
             # Process through ChatService with mocked services
             with patch.object(chat_service.whatsapp_service, 'send_message', side_effect=mock_send_message), \
-                 patch.object(chat_service.whatsapp_service, 'send_configurable_buttons', side_effect=mock_send_configurable_buttons), \
-                 patch.object(ExcelValidationService, 'validate_excel_file_from_url', mock_validate):
-
+                    patch.object(chat_service.whatsapp_service, 'send_configurable_buttons',
+                                 side_effect=mock_send_configurable_buttons), \
+                    patch.object(ExcelValidationService, 'validate_excel_file_from_url', mock_validate):
                 chat_result = await chat_service.process_message(phone, document_content, "excel_upload")
-        
+
         return {
             "success": True,
             "responses": whatsapp_messages,
@@ -544,10 +561,10 @@ async def upload_excel_file(
             "size": len(file_content),
             "debug_info": chat_result
         }
-        
+
     except Exception as e:
         logger.error(f"Error processing Excel upload: {e}")
-        
+
         # Notify support team about Excel processing error
         try:
             await handle_server_error(
@@ -557,7 +574,7 @@ async def upload_excel_file(
             )
         except Exception as notify_error:
             logger.error(f"Failed to notify support team: {notify_error}")
-        
+
         return {
             "success": False,
             "error": str(e),
@@ -567,6 +584,7 @@ async def upload_excel_file(
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
