@@ -2552,7 +2552,7 @@ class ChatService:
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
             
             # Create support message with contact info
-            support_message = f"For support assistance, please contact us at: {support_contact}"
+            support_message = ""
             
             # Role-based button configuration
             if user_role == "buyer":
