@@ -75,7 +75,6 @@ class SellerCategorizationService:
             Dictionary with processing results and statistics
         """
         try:
-            logger.info("Starting bulk seller categorization processing")
             
             processing_start = datetime.utcnow()
             

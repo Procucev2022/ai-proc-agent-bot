@@ -303,8 +303,6 @@ class SellerService:
             # Build conversation context for AI analysis
             conversation_context = self._build_seller_conversation_context(session, message)
 
-            print("conversation context", conversation_context)
-
             # Use AI to classify seller's intent with context awareness
             seller_intent = await self._classify_seller_intent(message, conversation_context, session)
 
@@ -322,7 +320,6 @@ class SellerService:
                 return await self._handle_plan_upgrade_request(user, session, message)
 
             elif intent_type == "rfq_access_request" and confidence > 0.7:
-                print("credits avaiable", credits_available)
                 # Check if they have credits for RFQ access
 
                 if credits_available <= 0:
@@ -843,7 +840,6 @@ class SellerService:
         try:
             # Fetch open RFQs where seller has not submitted bids
             reminder_result = await self._fetch_seller_open_rfqs_for_reminder(user.org_id)
-            logger.info(f"Reminder result: {reminder_result}")
 
             if not reminder_result.get("success"):
                 # If API fails, send generic closing message
@@ -950,8 +946,6 @@ class SellerService:
                 message=message,
                 workflow_type="plan_selection"
             )
-
-            print("etxraction result of plans", extraction)
             
             # Get the selected plan from AI extraction
             selected_plan_info = extraction.get("selected_plan")

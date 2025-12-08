@@ -25,7 +25,6 @@ class ResponseHelpers:
         """Common method for generating seller responses using optimized prompt."""
         try:
             # Ensure context is a dictionary
-            print("context", context)
             if isinstance(context, str):
                 context = {"workflow_state": context}
             
@@ -45,7 +44,6 @@ class ResponseHelpers:
                 input=[{"role": "user", "content": prompt}],
                 instructions=instructions
             )
-            print("lln repsonse", response.output_text)
 
             return response.output_text.strip() if response.output_text else fallback
         except Exception as e:
@@ -89,8 +87,6 @@ class ResponseHelpers:
         """Generate contextual response for seller based on workflow state."""
         try:
             workflow_state = context.get("workflow_state")
-
-            print("workflow state", workflow_state, type(workflow_state))
 
             if workflow_state == "display_rfqs_to_seller":
                 return await self._generate_rfq_display_response(context)

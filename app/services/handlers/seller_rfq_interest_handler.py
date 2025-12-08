@@ -322,7 +322,6 @@ class SellerRFQInterestHandler:
         # Send OTP using existing OTP service
         if self.otp_service:
             otp_result = await self.otp_service.send_otp(user_phone, seller_email, session)
-            logger.info(f"OTP send result: {otp_result}")
 
             if otp_result.get("status") == "otp_sent":
                 if self.session_manager:
@@ -430,7 +429,6 @@ class SellerRFQInterestHandler:
             rfq_id: RFQ ID to include in portal link
             session: Current conversation session
         """
-        logger.info(f"Sending portal link for RFQ {rfq_id} to {user_phone}")
 
         success_message = (
             f"View full details and submit your quote:\n{RFQ_PORTAL_BASE_URL}"

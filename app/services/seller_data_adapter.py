@@ -68,7 +68,6 @@ class SellerDataAdapter:
             List of Seller objects transformed from remote data
         """
         try:
-            logger.info("Fetching sellers from remote database...")
 
             query = self._build_seller_query()
             params = {}
