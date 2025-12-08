@@ -65,7 +65,6 @@ class ExcelHelpers:
                             value = item.get(field)
                             if value is not None and str(value).strip():
                                 passed_checks += 1
-                            else:
                         except Exception as field_error:
                             logger.error(f"Error checking field '{field}' in item {i}: {field_error}")
                 except Exception as item_error:

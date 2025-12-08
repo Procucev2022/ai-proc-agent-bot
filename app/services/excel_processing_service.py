@@ -212,10 +212,7 @@ class ExcelProcessingService:
             result = await self.openai_service.process_excel_to_rfqs(excel_text, filename)
             
             if result.get('success'):
-                if result.get('rfqs'):
-                    logger.info(f"Extracted rfq's {len(result['rfqs'][0].get('products', []))} products")
-                logger.info(f"OpenAI extracted items from Excel: {result}")
-                return result
+               return result
             else:
                 logger.error(f"[EXCEL-PROCESS] OpenAI processing failed: {result.get('error')}")
                 return {
