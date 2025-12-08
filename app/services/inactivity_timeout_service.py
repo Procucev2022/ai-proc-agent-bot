@@ -96,9 +96,6 @@ class InactivityTimeoutService:
         Returns:
             Appropriate timeout message based on user type
         """
-        logger.debug(f"[TIMEOUT_MESSAGE] Starting timeout message generation")
-        logger.debug(f"[TIMEOUT_MESSAGE] User details available: {bool(user_details)} , {user_details}")
-        logger.debug(f"[TIMEOUT_MESSAGE] Session data available: {bool(session_data)}, {session_data}")
         
         try:
             # Extract user_type from user_details selfClient (false = seller, true = buyer)
@@ -117,7 +114,6 @@ class InactivityTimeoutService:
                 logger.debug(f"[TIMEOUT_MESSAGE] User details invalid or missing")
             
             if user_type == "buyer":
-                logger.debug(f"[TIMEOUT_MESSAGE] Generating buyer timeout message")
                 return (
                     "Looks like you're away for a bit. "
                     "Thank you for using QUA AI! "
@@ -129,7 +125,6 @@ class InactivityTimeoutService:
                 # For sellers, try to get remainder message from seller service
                 if user_details and session_data:
                     try:
-                        logger.debug(f"[TIMEOUT_MESSAGE] Calling seller service for flow completion")
                         from app.services.seller_service import SellerService
                         seller_service = SellerService()
                         # Create temporary objects from raw data for seller service
@@ -152,7 +147,6 @@ class InactivityTimeoutService:
                         )
                         
                         if remainder_result.get("success") and remainder_result.get("message"):
-                            logger.debug(f"[TIMEOUT_MESSAGE] Using seller remainder message")
                             return f"{remainder_result['message']}\n\n{base_msg}"
                         else:
                             logger.debug(f"[TIMEOUT_MESSAGE] Using base seller message")
