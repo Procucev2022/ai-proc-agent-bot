@@ -140,31 +140,38 @@ class WhatsAppService:
             logger.error(f"Failed to send message after {retry_result['attempts']} attempts: {retry_result['error']}")
             return MessageResponse(success=False, error=retry_result["error"])
 
-    async def _track_message_in_history(self, session_id, message: str, message_type: str = "text") -> None:
+    async def _track_message_in_history(self, session, message: str, message_type: str = "text") -> None:
         """
         Track bot message in session conversation history via Redis.
 
         Args:
-            session_id: Session ID string or ConversationSession object
+            session: ConversationSession object or session_id string
 
             message: Message content that was sent
             message_type: Type of message (default: 'text')
         """
         try:
-            # Handle case where session object is passed instead of session_id string
-            if session_id and hasattr(session_id, 'session_id'):
-                session_id = session_id.session_id
-
-            if not session_id:
-                logger.warning("No session_id provided for message tracking")
+            if not session:
+                logger.warning("No session provided for message tracking")
                 return
 
+            # Extract session_id string
+            if hasattr(session, 'session_id'):
+                session_id = session.session_id
+                # Also add to session object's conversation history (like mock mode does)
+                from app.services.helpers.summarization_helpers import SummarizationHelpers
+                SummarizationHelpers.add_to_conversation_history(session, "assistant", message, message_type)
+            else:
+                # session is already a string (session_id)
+                session_id = session
+
+            # Write directly to Redis
             from app.redis_db import get_session_redis_service
             redis_session = get_session_redis_service()
             await redis_session.append_message_to_history(session_id, "assistant", message, message_type)
         except Exception as e:
             # Don't fail the send if tracking fails - just log
-            logger.warning(f"Failed to track message in history for session {session_id}: {e}")
+            logger.warning(f"Failed to track message in history for session {session}: {e}")
 
 
     async def send_template_message(self, recipient_id: str, template_name: str, parameters: list) -> MessageResponse:
