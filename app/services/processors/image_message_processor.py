@@ -134,14 +134,10 @@ class ImageMessageProcessor:
                     session.workflow_state["attachment_caption"] = caption
                     logger.info(f"Stored attachment caption as pending remark: {caption}")
 
-            # Acknowledge the attachment with count
+            # Get attachment count for reference
             count = add_result.get("count", 1)
             max_count = add_result.get("max", 4)
-            await self.whatsapp_service.send_message(
-                user.phone_number,
-                f"Thanks! I've added your image '{filename}' to your RFQ. ({count}/{max_count} attachments)"
-            )
-            
+
             # Return appropriate status based on current workflow state
             return await self._determine_next_step(user, session, filename)
             
