@@ -41,7 +41,7 @@ class OTPService:
                 if is_daily_verification:
                     message = f"OTP sent to {email}.\nPlease provide the OTP sent to your email to complete your Email Verification.\n(Type 'Exit' anytime to end the chat)"
                 else:
-                    message = f"OTP sent to {email}.\nPlease provide the OTP sent on your email to complete your registration\n(Type 'Exit' anytime to end the chat)"
+                    message = f"OTP sent to {email}. Please provide the OTP to verify your account.\n(Type 'Exit' anytime to end the chat)"
 
                 await self.whatsapp_service.send_message(user_phone, message,session_id=session)
 
