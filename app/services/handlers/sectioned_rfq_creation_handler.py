@@ -23,6 +23,7 @@ from app.services.entity_service import EntityService
 from app.services.whatsapp_service import WhatsAppService
 from app.services.cancel_service import CancelService
 from app.utils import sectioned_rfq_format_parser
+from app.utils.sectioned_rfq_format_parser import generate_delivery_display_with_invalid_pincode
 from app.utils.datetime_utils import utc_now
 from app.utils.pincode_lookup import get_location_from_pincode_async
 
@@ -282,12 +283,9 @@ class SectionedRFQCreationHandler:
 
         # Check full completeness (including city/state after auto-fill)
         if not self._is_delivery_complete(delivery_data):
-            # We have date+pincode but city/state lookup failed
-            error_msg = f"Unable to find location for pincode {delivery_data.get('pincode')}. Please provide a valid pincode."
-            await self.whatsapp_service.send_message(user.phone_number, error_msg, session_id=session)
-            # Save session before returning
-            await self.session_manager.save_session(session, persist_to_db=False)
-            return {"status": "invalid_pincode"}
+            # We have date+pincode but city/state lookup failed - pincode is invalid
+            pincode = delivery_data.get('pincode', '')
+            return await self._display_invalid_pincode_message(user, session, delivery_data, pincode)
 
         # Display delivery details with Confirm/Modify buttons
         return await self._display_delivery_confirmation(user, session, delivery_data)
@@ -368,6 +366,10 @@ class SectionedRFQCreationHandler:
                     # Check if we have complete delivery data now
                     if self._has_delivery_basics(delivery_data) and self._is_delivery_complete(delivery_data):
                         return await self._display_delivery_confirmation(user, session, delivery_data)
+                    elif self._has_delivery_basics(delivery_data):
+                        # We have date+pincode but city/state lookup failed - pincode is invalid
+                        pincode = delivery_data.get('pincode', '')
+                        return await self._display_invalid_pincode_message(user, session, delivery_data, pincode)
                     else:
                         return await self._display_delivery_missing_fields(user, session, delivery_data, date_validation_error)
                 else:
@@ -561,6 +563,39 @@ class SectionedRFQCreationHandler:
         await self.session_manager.save_session(session, persist_to_db=False)
 
         return {"status": "awaiting_delivery_details"}
+
+    async def _display_invalid_pincode_message(self, user: User, session: ConversationSession,
+                                                delivery_data: Dict, pincode: str) -> Dict[str, Any]:
+        """Display message when pincode lookup fails (pincode doesn't exist)."""
+        display_text = generate_delivery_display_with_invalid_pincode(delivery_data)
+
+        copy_paste_instruction = (
+            "In order to update, please copy and paste the text provided below this line and correct the pincode.\n\n"
+            "————————————————————————"
+        )
+        message = f"Could not find location for pincode {pincode}. Please provide a valid Indian pincode.\n\n{copy_paste_instruction}\n{display_text}"
+
+        # Send message with Modify/Restart buttons
+        buttons_config = [
+            {"id": "modify_date_location", "title": "Modify"},
+            {"id": "restart_rfq", "title": "Restart"}
+        ]
+        await self.whatsapp_service.send_configurable_buttons(
+            user.phone_number,
+            message,
+            buttons_config,
+            "Invalid Pincode",
+            footer="",
+            session_id=session
+        )
+
+        # Set awaiting modification so user can correct the pincode
+        WorkflowManager.set_awaiting_section_modification(session, "date_location", True)
+
+        # Save session
+        await self.session_manager.save_session(session, persist_to_db=False)
+
+        return {"status": "invalid_pincode"}
 
     # ========================================================================
     # ITEMS SECTION

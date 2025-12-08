@@ -848,11 +848,11 @@ Analyze their response and return only:
                 return "unclear"
 
     async def _handle_switch_to_existing_account(self, user, session, target_role: str, original_message: str, authentication_service) -> Dict[str, Any]:
-        """Handle switching to existing account by completely exiting and triggering profile selection."""
+        """Handle switching to existing account by completely exiting and asking user to restart."""
         try:
             from app.services.exit_service import ExitService
 
-            logger.info(f"Switching to different {target_role} account - initiating complete exit and profile selection")
+            logger.info(f"Switching to different {target_role} account - initiating complete exit")
 
             # Use ExitService to completely exit the user (without goodbye message)
             exit_service = ExitService(
@@ -870,15 +870,17 @@ Analyze their response and return only:
 
             logger.info(f"Exit result for account switch: {exit_result}")
 
-            # Send account switch message
-            switch_message = f"Switching to a different {target_role} account. Please select your profile to continue."
+            # Send message asking user to restart and select their profile
+            switch_message = (
+                f"Your current session has been ended.\n\n"
+                f"To log in as a {target_role.capitalize()}, please say *Hi* and select the {target_role} profile you want to use."
+            )
             await self.whatsapp_service.send_message(user.phone_number, switch_message)
 
-            # Return status to trigger profile selection in chat service
+            # Return simple exit completed status
             return {
-                "status": "exit_and_trigger_profile_selection",
-                "target_role": target_role,
-                "original_message": original_message,
+                "status": "exit_completed",
+                "message": f"User exited to switch to {target_role} account",
                 "exit_result": exit_result
             }
 

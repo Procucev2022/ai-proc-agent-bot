@@ -140,17 +140,25 @@ class WhatsAppService:
             logger.error(f"Failed to send message after {retry_result['attempts']} attempts: {retry_result['error']}")
             return MessageResponse(success=False, error=retry_result["error"])
 
-    async def _track_message_in_history(self, session_id: str, message: str, message_type: str = "text") -> None:
+    async def _track_message_in_history(self, session_id, message: str, message_type: str = "text") -> None:
         """
         Track bot message in session conversation history via Redis.
 
         Args:
-            session_id: Session ID to track message for
+            session_id: Session ID string or ConversationSession object
 
             message: Message content that was sent
             message_type: Type of message (default: 'text')
         """
         try:
+            # Handle case where session object is passed instead of session_id string
+            if session_id and hasattr(session_id, 'session_id'):
+                session_id = session_id.session_id
+
+            if not session_id:
+                logger.warning("No session_id provided for message tracking")
+                return
+
             from app.redis_db import get_session_redis_service
             redis_session = get_session_redis_service()
             await redis_session.append_message_to_history(session_id, "assistant", message, message_type)
