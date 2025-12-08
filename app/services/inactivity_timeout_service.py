@@ -76,7 +76,7 @@ class InactivityTimeoutService:
         # Task handle for lifecycle management
         self._monitor_task = None
         
-        logger.info(
+        logger.debug(
             f"[TIMEOUT_SERVICE] Initialized: timeout={self.timeout_seconds}s, "
             f"poll_interval={self.poll_interval}s, enabled={self.enabled}"
         )
@@ -96,9 +96,6 @@ class InactivityTimeoutService:
         Returns:
             Appropriate timeout message based on user type
         """
-        logger.info(f"[TIMEOUT_MESSAGE] Starting timeout message generation")
-        logger.info(f"[TIMEOUT_MESSAGE] User details available: {bool(user_details)} , {user_details}")
-        logger.info(f"[TIMEOUT_MESSAGE] Session data available: {bool(session_data)}, {session_data}")
         
         try:
             # Extract user_type from user_details selfClient (false = seller, true = buyer)
@@ -107,29 +104,27 @@ class InactivityTimeoutService:
                 # user_details is a list, get first user
                 first_user = user_details[0]
                 self_client = first_user.get('selfClient')
-                logger.info(f"[TIMEOUT_MESSAGE] selfClient value: {self_client}")
+                logger.debug(f"[TIMEOUT_MESSAGE] selfClient value: {self_client}")
                 if self_client is True:
                     user_type = "buyer"
                 elif self_client is False:
                     user_type = "seller"
-                logger.info(f"[TIMEOUT_MESSAGE] Extracted user_type: {user_type}")
+                logger.debug(f"[TIMEOUT_MESSAGE] Extracted user_type: {user_type}")
             else:
-                logger.info(f"[TIMEOUT_MESSAGE] User details invalid or missing")
+                logger.debug(f"[TIMEOUT_MESSAGE] User details invalid or missing")
             
             if user_type == "buyer":
-                logger.info(f"[TIMEOUT_MESSAGE] Generating buyer timeout message")
                 return (
                     "Looks like you're away for a bit. "
                     "Thank you for using QUA AI! "
                     "You can resume creating RFQs or checking status anytime by saying 'Hi.'"
                 )
             elif user_type == "seller":
-                logger.info(f"[TIMEOUT_MESSAGE] Generating seller timeout message")
+                logger.debug(f"[TIMEOUT_MESSAGE] Generating seller timeout message")
                 
                 # For sellers, try to get remainder message from seller service
                 if user_details and session_data:
                     try:
-                        logger.info(f"[TIMEOUT_MESSAGE] Calling seller service for flow completion")
                         from app.services.seller_service import SellerService
                         seller_service = SellerService()
                         # Create temporary objects from raw data for seller service
@@ -144,7 +139,7 @@ class InactivityTimeoutService:
                         user = UserObj(user_obj['orgId'], user_obj['phone'])
                         session_obj = ConversationSession(**session_data)
                         remainder_result = await seller_service.handle_seller_flow_completion(user, session_obj)
-                        logger.info(f"[TIMEOUT_MESSAGE] Seller remainder result: {remainder_result}")
+                        logger.debug(f"[TIMEOUT_MESSAGE] Seller remainder result: {remainder_result}")
                         
                         base_msg = (
                             "Thank you for using QUA AI! "
@@ -152,10 +147,9 @@ class InactivityTimeoutService:
                         )
                         
                         if remainder_result.get("success") and remainder_result.get("message"):
-                            logger.info(f"[TIMEOUT_MESSAGE] Using seller remainder message")
                             return f"{remainder_result['message']}\n\n{base_msg}"
                         else:
-                            logger.info(f"[TIMEOUT_MESSAGE] Using base seller message")
+                            logger.debug(f"[TIMEOUT_MESSAGE] Using base seller message")
                             return base_msg
                     except Exception as seller_error:
                         logger.warning(f"[TIMEOUT_MESSAGE] Seller service error: {seller_error}")
@@ -165,7 +159,7 @@ class InactivityTimeoutService:
                             "You can resume viewing RFQs or managing bids anytime by saying 'Hi.'"
                         )
                 else:
-                    logger.info(f"[TIMEOUT_MESSAGE] Using fallback seller message (no user/session data)")
+                    logger.debug(f"[TIMEOUT_MESSAGE] Using fallback seller message (no user/session data)")
                     return (
                         "Looks like you're away for a bit. "
                         "Thank you for using QUA AI! "
@@ -174,7 +168,7 @@ class InactivityTimeoutService:
           
             else:
                 # Default/generic message for unspecified or other user types
-                logger.info(f"[TIMEOUT_MESSAGE] Using default timeout message for user_type: {user_type}")
+                logger.debug(f"[TIMEOUT_MESSAGE] Using default timeout message for user_type: {user_type}")
                 return (
                     "Looks like you're away for a bit. "
                     "Thank you for using QUA AI! "
@@ -185,7 +179,7 @@ class InactivityTimeoutService:
             logger.error(f"[TIMEOUT_MESSAGE] Error type: {type(e)}")
             import traceback
             logger.error(f"[TIMEOUT_MESSAGE] Full traceback: {traceback.format_exc()}")
-            logger.info(f"[TIMEOUT_MESSAGE] Using fallback timeout message")
+            logger.debug(f"[TIMEOUT_MESSAGE] Using fallback timeout message")
             return (
                 "Looks like you're away for a bit. "
                 "Thank you for using QUA AI! "
@@ -253,7 +247,7 @@ class InactivityTimeoutService:
     async def start_monitoring(self) -> None:
         """Start the background monitoring task."""
         if not self.enabled:
-            logger.info("[TIMEOUT_SERVICE] Timeout monitoring disabled in config")
+            logger.debug("[TIMEOUT_SERVICE] Timeout monitoring disabled in config")
             return
         
         if self._monitor_task and not self._monitor_task.done():
@@ -261,7 +255,7 @@ class InactivityTimeoutService:
             return
         
         self._monitor_task = asyncio.create_task(self._run_monitor_loop())
-        logger.info("[TIMEOUT_SERVICE] Monitoring started")
+        logger.debug("[TIMEOUT_SERVICE] Monitoring started")
     
     async def try_start_monitoring_if_available(self) -> bool:
         """
@@ -278,7 +272,7 @@ class InactivityTimeoutService:
         lock in _run_monitor_loop() will still prevent duplicate execution.
         """
         if not self.enabled:
-            logger.info("[TIMEOUT_SERVICE] Timeout monitoring disabled in config")
+            logger.debug("[TIMEOUT_SERVICE] Timeout monitoring disabled in config")
             return False
         
         if self._monitor_task and not self._monitor_task.done():
@@ -293,7 +287,7 @@ class InactivityTimeoutService:
             acquired = await lock.acquire()
             if not acquired:
                 # Another worker already running monitor
-                logger.info("[TIMEOUT_SERVICE] Monitor already running on another worker, skipping startup")
+                logger.debug("[TIMEOUT_SERVICE] Monitor already running on another worker, skipping startup")
                 return False
             
             # We got the lock - we should run the monitor
@@ -301,7 +295,7 @@ class InactivityTimeoutService:
             
             # Start monitoring on this worker
             self._monitor_task = asyncio.create_task(self._run_monitor_loop())
-            logger.info("[TIMEOUT_SERVICE] Monitoring started on this worker")
+            logger.debug("[TIMEOUT_SERVICE] Monitoring started on this worker")
             return True
             
         except Exception as e:
@@ -321,14 +315,14 @@ class InactivityTimeoutService:
                 await self._monitor_task
             except asyncio.CancelledError:
                 pass
-            logger.info("[TIMEOUT_SERVICE] Monitoring stopped")
+            logger.debug("[TIMEOUT_SERVICE] Monitoring stopped")
 
     async def _run_monitor_loop(self) -> None:
         """
         Main monitoring loop - polls Redis for inactive users.
         Runs with distributed lock to ensure single worker execution.
         """
-        logger.info("[TIMEOUT_SERVICE] Monitor loop started")
+        logger.debug("[TIMEOUT_SERVICE] Monitor loop started")
         
         try:
             while True:
@@ -357,7 +351,7 @@ class InactivityTimeoutService:
                     logger.error(f"[TIMEOUT_SERVICE] Error in monitor cycle: {e}", exc_info=True)
         
         except asyncio.CancelledError:
-            logger.info("[TIMEOUT_SERVICE] Monitor loop cancelled")
+            logger.debug("[TIMEOUT_SERVICE] Monitor loop cancelled")
             raise
         except Exception as e:
             logger.error(f"[TIMEOUT_SERVICE] Monitor loop failed: {e}", exc_info=True)
@@ -433,7 +427,7 @@ class InactivityTimeoutService:
                             )
                             continue
                         
-                        logger.info(
+                        logger.debug(
                             f"[TIMEOUT_SERVICE] Timeout detected for {user_phone}: "
                             f"{inactive_duration:.0f}s inactive (workflow: {workflow_type})"
                         )
@@ -449,7 +443,7 @@ class InactivityTimeoutService:
                     )
             
             if timeout_count > 0:
-                logger.info(f"[TIMEOUT_SERVICE] Processed {timeout_count} timeouts in this cycle")
+                logger.debug(f"[TIMEOUT_SERVICE] Processed {timeout_count} timeouts in this cycle")
         
         except Exception as e:
             logger.error(f"[TIMEOUT_SERVICE] Error in _check_inactive_users: {e}", exc_info=True)
@@ -474,14 +468,14 @@ class InactivityTimeoutService:
         8. Send timeout notification LAST (after cleanup complete)
         """
         try:
-            logger.info(f"[TIMEOUT_SERVICE] Handling timeout for {user_phone}")
+            logger.debug(f"[TIMEOUT_SERVICE] Handling timeout for {user_phone}")
             
             # 1. Get session from Redis (need conversation history for audit trail)
             session_data = None
             try:
                 session_data = await self.redis_session.get_session(session_id)
                 if session_data:
-                    logger.info(f"[TIMEOUT_SERVICE] Retrieved session from Redis for {user_phone}")
+                    logger.debug(f"[TIMEOUT_SERVICE] Retrieved session from Redis for {user_phone}")
                 else:
                     logger.warning(f"[TIMEOUT_SERVICE] No session found in Redis for {session_id}")
             except Exception as redis_error:
@@ -494,7 +488,7 @@ class InactivityTimeoutService:
                 try:
                     inactive_duration = time.time() - float(latest_activity)
                     if inactive_duration < self.timeout_seconds:
-                        logger.info(
+                        logger.debug(
                             f"[TIMEOUT_SERVICE] User {user_phone} became active "
                             f"(inactive only {inactive_duration:.0f}s), aborting timeout"
                         )
@@ -535,7 +529,7 @@ class InactivityTimeoutService:
                     db_manager = DatabaseManager()
                     try:
                         db_manager.append_session_data(timeout_session_data)
-                        logger.info(f"[TIMEOUT_SERVICE] Persisted timeout session to DB for {user_phone}")
+                        logger.debug(f"[TIMEOUT_SERVICE] Persisted timeout session to DB for {user_phone}")
                     except Exception as db_error:
                         logger.error(f"[TIMEOUT_SERVICE] Failed to persist to DB for {user_phone}: {db_error}")
                     finally:
@@ -557,7 +551,7 @@ class InactivityTimeoutService:
             ]
             
             deleted_count = await self.redis.delete(*queue_keys)
-            logger.info(f"[TIMEOUT_SERVICE] Cleared {deleted_count} queue keys for {user_phone}")
+            logger.debug(f"[TIMEOUT_SERVICE] Cleared {deleted_count} queue keys for {user_phone}")
             
             # 6. Reset session in Redis instead of deleting (preserves auth, like CancelService)
             
@@ -603,13 +597,13 @@ class InactivityTimeoutService:
                     
                     # Save reset session back to Redis (preserves auth state)
                     await self.redis_session.store_session(session_id, clean_session_data)
-                    logger.info(f"[TIMEOUT_SERVICE] Reset session in Redis for {user_phone} (preserved auth)")
+                    logger.debug(f"[TIMEOUT_SERVICE] Reset session in Redis for {user_phone} (preserved auth)")
                     
                     # Clear meaningful message cache (user is starting fresh)
                     from app.services.user_cache_service import get_user_cache_service
                     user_cache_service = get_user_cache_service()
                     meaningful_cleared = await user_cache_service.clear_meaningful_message(user_phone)
-                    logger.info(f"[TIMEOUT_SERVICE] Meaningful message cleared: {meaningful_cleared}")
+                    logger.debug(f"[TIMEOUT_SERVICE] Meaningful message cleared: {meaningful_cleared}")
                     
                 except Exception as reset_error:
                     logger.error(f"[TIMEOUT_SERVICE] Failed to reset Redis session for {user_phone}: {reset_error}")
@@ -619,29 +613,29 @@ class InactivityTimeoutService:
             # 7. Clean up activity tracking key
             try:
                 await self.redis.delete(activity_key)
-                logger.info(f"[TIMEOUT_SERVICE] Cleaned up activity key for {user_phone}")
+                logger.debug(f"[TIMEOUT_SERVICE] Cleaned up activity key for {user_phone}")
             except Exception as cleanup_error:
                 logger.error(f"[TIMEOUT_SERVICE] Failed to clean activity key for {user_phone}: {cleanup_error}")
             
             # 8. Send timeout notification LAST (after all cleanup complete)
             # Generate user-type-specific timeout message
-            logger.info(f"[TIMEOUT_SERVICE] Generating timeout message for {user_phone}")
+            logger.debug(f"[TIMEOUT_SERVICE] Generating timeout message for {user_phone}")
             from app.services.user_cache_service import get_user_cache_service
             user_cache_service = get_user_cache_service()
             user_details = await user_cache_service.get_user_data(user_phone)
-            logger.info(f"[TIMEOUT_SERVICE] Retrieved user details: {bool(user_details)}")
+            logger.debug(f"[TIMEOUT_SERVICE] Retrieved user details: {bool(user_details)}")
 
             # Always prefer original session snapshot for constructing reminder
             session_snapshot = remainder_session or session_data
-            logger.info(f"[TIMEOUT_SERVICE] Using session snapshot: {bool(timeout_session_data)}")
+            logger.debug(f"[TIMEOUT_SERVICE] Using session snapshot: {bool(timeout_session_data)}")
             
             timeout_message = await self._generate_timeout_message(user_details,timeout_session_data)
-            logger.info(f"[TIMEOUT_SERVICE] Generated timeout message: {timeout_message[:100]}...")
+            logger.debug(f"[TIMEOUT_SERVICE] Generated timeout message: {timeout_message[:100]}...")
             
             try:
-                logger.info(f"[TIMEOUT_SERVICE] Sending timeout notification to {user_phone}")
+                logger.debug(f"[TIMEOUT_SERVICE] Sending timeout notification to {user_phone}")
                 await self.whatsapp_service.send_message(user_phone, timeout_message)
-                logger.info(
+                logger.debug(
                     f"[TIMEOUT_SERVICE] Successfully sent timeout notification to {user_phone} "
                     f"(user_type={user_type})"
                 )
@@ -652,7 +646,7 @@ class InactivityTimeoutService:
                 logger.error(f"[TIMEOUT_SERVICE] Full traceback: {traceback.format_exc()}")
                 # Continue - cleanup is complete, notification failure is non-critical
             
-            logger.info(f"[TIMEOUT_SERVICE] Timeout handling completed for {user_phone}")
+            logger.debug(f"[TIMEOUT_SERVICE] Timeout handling completed for {user_phone}")
         
         except Exception as e:
             logger.error(
