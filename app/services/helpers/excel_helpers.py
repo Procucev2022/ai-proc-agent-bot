@@ -20,7 +20,6 @@ class ExcelHelpers:
         """Convert Excel items to entity format for chat workflow."""
         entities = []
         try:
-            logger.info(f"Converting {len(items)} Excel items to entities")
             for i, item in enumerate(items, 1):
                 try:
                     # Helper function to safely clean fields
@@ -40,14 +39,11 @@ class ExcelHelpers:
                     entities.append(entity)
                 except Exception as item_error:
                     logger.error(f"Error processing item {i}: {item_error}")
-                    logger.error(f"Item data: {item}")
                     continue
-            
-            logger.info(f"Successfully converted {len(entities)} entities")
+
             return entities
         except Exception as e:
             logger.error(f"Error in convert_excel_to_entities: {e}")
-            logger.error(f"Input items: {items}")
             return []
     
     @staticmethod
@@ -69,8 +65,6 @@ class ExcelHelpers:
                             value = item.get(field)
                             if value is not None and str(value).strip():
                                 passed_checks += 1
-                            else:
-                                logger.info(f"Item {i} field '{field}' failed: '{value}'")
                         except Exception as field_error:
                             logger.error(f"Error checking field '{field}' in item {i}: {field_error}")
                 except Exception as item_error:
@@ -78,12 +72,10 @@ class ExcelHelpers:
                     continue
             
             completeness = int((passed_checks / total_checks) * 100) if total_checks > 0 else 0
-            logger.info(f"Completeness calculation: {passed_checks}/{total_checks} = {completeness}%")
             return completeness
             
         except Exception as e:
             logger.error(f"Error in calculate_excel_completeness: {e}")
-            logger.error(f"Items: {items}")
             return 0
     
     @staticmethod
@@ -122,15 +114,12 @@ class ExcelHelpers:
             missing_fields = []
             
             if not items:
-                logger.info("No items provided for missing fields identification")
                 return ["No items found"]
-            
-            logger.info(f"Identifying missing fields for {len(items)} items")
+
             
             # Check for missing descriptions
             try:
                 missing_descriptions = sum(1 for item in items if not str(item.get('ItemDescription', '')).strip())
-                logger.info(f"Missing descriptions: {missing_descriptions}/{len(items)}")
                 if missing_descriptions > len(items) * 0.3:  # More than 30% missing
                     missing_fields.append("Item descriptions")
             except Exception as e:
@@ -139,7 +128,6 @@ class ExcelHelpers:
             # Check for missing quantities
             try:
                 missing_quantities = sum(1 for item in items if not str(item.get('Quantity', '')).strip())
-                logger.info(f"Missing quantities: {missing_quantities}/{len(items)}")
                 if missing_quantities > len(items) * 0.3:
                     missing_fields.append("Quantities")
             except Exception as e:
@@ -148,7 +136,6 @@ class ExcelHelpers:
             # Check for missing UOM
             try:
                 missing_uom = sum(1 for item in items if not str(item.get('Uom', '')).strip())
-                logger.info(f"Missing UOM: {missing_uom}/{len(items)}")
                 if missing_uom > len(items) * 0.5:  # More than 50% missing
                     missing_fields.append("Units of measure")
             except Exception as e:
@@ -157,18 +144,15 @@ class ExcelHelpers:
             # Check for missing specifications
             try:
                 missing_specs = sum(1 for item in items if not str(item.get('Specification', '')).strip())
-                logger.info(f"Missing specifications: {missing_specs}/{len(items)}")
                 if missing_specs > len(items) * 0.7:  # More than 70% missing
                     missing_fields.append("Specifications")
             except Exception as e:
                 logger.error(f"Error checking missing specifications: {e}")
-            
-            logger.info(f"Identified missing fields: {missing_fields}")
+
             return missing_fields
             
         except Exception as e:
             logger.error(f"Error in identify_missing_fields: {e}")
-            logger.error(f"Items: {items}")
             return ["Error analyzing fields"]
     
     @staticmethod
@@ -181,12 +165,10 @@ class ExcelHelpers:
                 items = []
             else:
                 items = processing_result.get('items', [])
-            logger.info(f"Extracted {len(items)} items from processing result")
-            
+
             # Convert entities with error handling
             try:
                 extracted_entities = ExcelHelpers.convert_excel_to_entities(items)
-                logger.info(f"Successfully converted {len(extracted_entities)} entities")
             except Exception as entity_error:
                 logger.error(f"Error converting entities: {entity_error}")
                 extracted_entities = []
@@ -194,7 +176,6 @@ class ExcelHelpers:
             # Calculate completeness with error handling
             try:
                 completeness = ExcelHelpers.calculate_excel_completeness(items)
-                logger.info(f"Calculated completeness: {completeness}%")
             except Exception as completeness_error:
                 logger.error(f"Error calculating completeness: {completeness_error}")
                 completeness = 0
@@ -202,7 +183,6 @@ class ExcelHelpers:
             # Identify missing fields with error handling
             try:
                 missing_fields = ExcelHelpers.identify_missing_fields(items)
-                logger.info(f"Identified missing fields: {missing_fields}")
             except Exception as missing_error:
                 logger.error(f"Error identifying missing fields: {missing_error}")
                 missing_fields = []
@@ -220,7 +200,6 @@ class ExcelHelpers:
                 pincode = first_rfq.get('pincode')
                 state = first_rfq.get('state')
                 city = first_rfq.get('city')
-                logger.info(f"Extracted from RFQ: date={delivery_date}, pincode={pincode}, state={state}, city={city}")
             
             context = {
                 'workflow_type': 'excel_rfq_upload',
@@ -239,14 +218,11 @@ class ExcelHelpers:
                 'state': state,
                 'city': city
             }
-            
-            logger.info(f"Successfully prepared Excel context with {len(extracted_entities)} entities")
+
             return context
             
         except Exception as e:
             logger.error(f"Error in prepare_excel_context: {e}")
-            logger.error(f"Processing result at error: {processing_result}")
-            logger.error(f"User phone: {user_phone}")
             import traceback
             logger.error(f"Full traceback: {traceback.format_exc()}")
             

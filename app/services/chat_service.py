@@ -1825,12 +1825,9 @@ class ChatService:
             # Validate Excel file
             validation_service = ExcelValidationService()
             validation_result = await validation_service.validate_excel_file_from_url(file_url, filename)
-            
-            logger.info(f"[EXCEL-VALIDATION] Validation result: {validation_result}")
 
             if not validation_result.get('valid'):
                 validation_error = validation_result.get('error', 'Invalid Excel file')
-                logger.error(f"[EXCEL-VALIDATION] Validation failed: {validation_error}")
                 error_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'validation_failed',
                                  'error': validation_error}
                 error_response = await self.response_helpers.generate_contextual_response(
@@ -1864,7 +1861,6 @@ class ChatService:
 
             # Check if processing was successful
             if processing_result.get('success') and items and len(items) > 0:
-                logger.info(f"[EXCEL-REDIRECT] Redirecting {len(items)} Excel items to multiple RFQ creation flow")
                 # Set workflow type for RFQ creation
                 WorkflowManager.set_workflow_type(session, WorkflowType.rfq_creation, caller='excel_upload_complete')
                 return await self._handle_complete_excel(user, session, processing_result)
@@ -1979,7 +1975,6 @@ class ChatService:
             ai_confirmation_result = None
             try:
                 ai_confirmation_result = await self.openai_service.parse_confirmation_response(message)
-                logger.info(f"[EXCEL-CONFIRMATION-AI] AI parsed response: '{message}' -> '{ai_confirmation_result}'")
             except Exception as e:
                 logger.warning(f"[EXCEL-CONFIRMATION-AI] AI parsing failed: {e}, falling back to keywords")
             
@@ -1989,10 +1984,8 @@ class ChatService:
             
             if ai_confirmation_result == "yes":
                 is_confirmed = True
-                logger.debug(f"[EXCEL-CONFIRMATION] AI detected confirmation: '{message}'")
             elif ai_confirmation_result == "no":
                 is_cancelled = True
-                logger.debug(f"[EXCEL-CONFIRMATION] AI detected cancellation: '{message}'")
             else:
                 # Fallback to keyword matching
                 message_lower = message.lower().strip()
