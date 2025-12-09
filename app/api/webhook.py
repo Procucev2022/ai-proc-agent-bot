@@ -513,7 +513,7 @@ async def process_message_async(webhook_data: Dict[str, Any]):
                 recipient_id = f"+{from_number}" if not from_number.startswith('+') else from_number
                 await whatsapp_service.send_message(
                     recipient_id,
-                    "We're still processing your previous request. Please wait a moment before sending new messages."
+                    "We're still processing your previous button request. Please wait a moment before sending a new one."
                 )
                 return  # Exit without processing to prevent concurrent execution
             
