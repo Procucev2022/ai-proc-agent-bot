@@ -271,7 +271,7 @@ class RegistrationService:
         
         # Try to send with buttons first
         button_response = await self.whatsapp_service.send_configurable_buttons(
-            user_phone, message, buttons
+            user_phone, message, buttons,session_id=session
         )
         
         if not button_response.success:
@@ -391,7 +391,7 @@ class RegistrationService:
         
         # Try to send with buttons first
         button_response = await self.whatsapp_service.send_configurable_buttons(
-            user_phone, message, buttons
+            user_phone, message, buttons,session_id=session
         )
         
         if not button_response.success:
@@ -696,7 +696,8 @@ class RegistrationService:
                                 user_phone,
                                 buying_message,
                                 buttons_config,
-                                header
+                                header,
+                                session_id=session
                             )
 
                             return {
