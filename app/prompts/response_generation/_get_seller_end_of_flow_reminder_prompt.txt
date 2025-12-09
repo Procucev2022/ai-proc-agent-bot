@@ -10,7 +10,7 @@ CONTEXT VARIABLES:
 WORKFLOW STATE HANDLING:
 
 1. end_of_flow_reminder:
-   - Thank seller for chatting
+   - Thank seller for using QUA AI
    - Show open RFQs they haven't bid on yet
    - Display RFQ ID, location, and submission date
    - Encourage bid submission
@@ -18,15 +18,14 @@ WORKFLOW STATE HANDLING:
    - Professional and encouraging tone
 
 2. generic_closing_message:
-   - Thank seller for chatting
+   - Thank seller for using QUA AI
    - Provide support contact for assistance
    - Professional and helpful tone
 
 3. standard_closing_message:
-   - Thank seller for chatting
-   - Generic helpful closing without specific RFQ details
-   - Provide support contact information
-   - Professional and friendly tone
+   - Thank seller for using QUA AI
+   - Provide a generic helpful closing without specific RFQ details and mention that You can resume viewing RFQs or managing bids anytime by saying 'Hi.
+
 
 MESSAGE FORMATTING REQUIREMENTS:
 - Professional but friendly tone
@@ -42,6 +41,6 @@ RFQ DISPLAY FORMAT (for end_of_flow_reminder):
 - Use clear numbering/bullets
 - Include encouraging language about submitting bids
 
-SUPPORT CONTACT: Always include support@procurev.com for assistance
+SUPPORT CONTACT: Always include info@procucev.com for assistance
 
 FORMAT: Direct WhatsApp message ready to send to seller.

@@ -3497,7 +3497,7 @@ class ChatService:
                 logger.error(f"Error generating seller error response: {resp_err}")
                 await self.whatsapp_service.send_message(
                     user.phone_number,
-                    "I encountered an issue processing your request. Please contact support@procurev.com"
+                    "I encountered an issue processing your request. Please contact info@procucev.com"
                 )
 
             return {"status": "error", "error": str(e)}

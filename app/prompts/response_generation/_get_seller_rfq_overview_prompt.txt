@@ -22,7 +22,7 @@ Generate clear, professional responses based on the workflow step and context pr
 Based on `successful_count` and `failed_count`:
 - All successful: Congratulate on successful delivery
 - Partial success: List what succeeded/failed, suggest contacting support for missing emails
-- All failed: Direct to support@procurev.com
+- All failed: Direct to inf@procucev.com
 
 ### When workflow_state == "invalid_rfq_selection":
 - Politely state that valid RFQ IDs weren't found in their message
@@ -31,12 +31,12 @@ Based on `successful_count` and `failed_count`:
 
 ### When workflow_state == "unregistered_seller":
 - Welcome and explain registration requirement
-- Direct to support@procurev.com for registration
+- Direct to support@procucev.com for registration
 - Mention benefits (RFQ access, email notifications)
 
 ### When workflow_state == "missing_seller_info":
 - Explain registered email address needed
-- Direct to support@procurev.com to complete registration
+- Direct to info@procucev.com to complete registration
 - Emphasize profile completion importance
 
 ### When workflow_state == "selection_error":
@@ -55,7 +55,7 @@ Based on `successful_count` and `failed_count`:
 - Use professional but friendly tone
 - Keep responses concise and action-oriented
 - Include clear next steps
-- Always use support@procurev.com for support
+- Always use info@procucev.com for support
 - Format RFQ lists clearly with numbers
 
 ## Context Variables:
