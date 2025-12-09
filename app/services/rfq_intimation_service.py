@@ -270,7 +270,7 @@ Click the link below to pay. We've also emailed it to you.
             if not rfq_exists:
                 error_message = f""" Sorry, RFQ ID "{rfq_id}" is not valid or not found.
 
-Please check the RFQ ID and try again, or contact support@procurev.com for assistance."""
+Please check the RFQ ID and try again, or contact info@procucev.com for assistance."""
                 
                 await self.whatsapp_service.send_message(seller.phone_number, error_message)
                 return {"success": False, "error": "Invalid RFQ ID"}
@@ -338,7 +338,7 @@ Reply with "Basic" or "Pro" to subscribe."""
             else:
                 error_message = f"""Sorry, there was an error sending the RFQ email.
 
-Please contact support@procurev.com with RFQ ID: {rfq_id}
+Please contact info@procucev.com with RFQ ID: {rfq_id}
 
 We'll resolve this issue and send you the RFQ manually."""
                 
