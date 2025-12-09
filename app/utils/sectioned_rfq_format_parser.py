@@ -611,6 +611,25 @@ def generate_items_display_with_missing(products: List[Dict[str, Any]], incomple
     return "\n".join(result), all_missing_labels
 
 
+def generate_delivery_display_with_invalid_pincode(data: Dict[str, str]) -> str:
+    """
+    Generate display format for delivery details when pincode is invalid (lookup failed).
+    Shows the date as-is but replaces pincode with placeholder.
+
+    Args:
+        data: Dictionary with deliveryDate, pincode, city, state
+
+    Returns:
+        Formatted string for display with pincode placeholder
+    """
+    date_value = data.get('deliveryDate', '').strip() if data.get('deliveryDate') else ''
+
+    display = f"""Delivery Date: {date_value}
+Delivery Pincode: [Valid 6-digit pin-code]"""
+
+    return display
+
+
 def validate_delivery_completeness(data: Dict[str, str]) -> bool:
     """
     Check if delivery data has all required fields.

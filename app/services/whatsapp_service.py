@@ -129,34 +129,49 @@ class WhatsAppService:
         # Use retry service for reliable delivery
         retry_result = await self.retry_service.retry_with_backoff(send_text_message)
 
-        if retry_result["success"]:
-            result = retry_result["result"]
-            # Track message in conversation history if session_id provided
-            if session_id and result.success:
-                await self._track_message_in_history(session_id, message)
+        # Track message in conversation history if session_id provided
+        # Track regardless of send success - we want conversation history even if delivery failed
+        if session_id:
+            await self._track_message_in_history(session_id, message)
 
-            return result
+        if retry_result["success"]:
+            return retry_result["result"]
         else:
             logger.error(f"Failed to send message after {retry_result['attempts']} attempts: {retry_result['error']}")
             return MessageResponse(success=False, error=retry_result["error"])
 
-    async def _track_message_in_history(self, session_id: str, message: str, message_type: str = "text") -> None:
+    async def _track_message_in_history(self, session, message: str, message_type: str = "text") -> None:
         """
         Track bot message in session conversation history via Redis.
 
         Args:
-            session_id: Session ID to track message for
+            session: ConversationSession object or session_id string
 
             message: Message content that was sent
             message_type: Type of message (default: 'text')
         """
         try:
+            if not session:
+                logger.warning("No session provided for message tracking")
+                return
+
+            # Extract session_id string
+            if hasattr(session, 'session_id'):
+                session_id = session.session_id
+                # Also add to session object's conversation history (like mock mode does)
+                from app.services.helpers.summarization_helpers import SummarizationHelpers
+                SummarizationHelpers.add_to_conversation_history(session, "assistant", message, message_type)
+            else:
+                # session is already a string (session_id)
+                session_id = session
+
+            # Write directly to Redis
             from app.redis_db import get_session_redis_service
             redis_session = get_session_redis_service()
             await redis_session.append_message_to_history(session_id, "assistant", message, message_type)
         except Exception as e:
             # Don't fail the send if tracking fails - just log
-            logger.warning(f"Failed to track message in history for session {session_id}: {e}")
+            logger.warning(f"Failed to track message in history for session {session}: {e}")
 
 
     async def send_template_message(self, recipient_id: str, template_name: str, parameters: list) -> MessageResponse:
@@ -449,7 +464,8 @@ class WhatsAppService:
             result = await self.send_interactive_message(recipient_id, "button", content)
 
             # Track message in conversation history if session_id provided
-            if session_id and result.success:
+            # Track regardless of send success - we want conversation history even if delivery failed
+            if session_id:
                 # For buttons, track the body text as the message content
                 await self._track_message_in_history(session_id, content, "interactive_button")
 
