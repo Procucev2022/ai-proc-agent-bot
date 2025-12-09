@@ -158,9 +158,25 @@ class RegistrationService:
             
             existing_entities, validation_error_message = await self.authentication_helpers.validate_entities(existing_entities, entity_schema)
             
-            # Use pincode error as validation error
-            if pincode_error:
-                validation_error_message = pincode_error
+            # Append pincode error only if not already in validation errors
+            if pincode_error and (not validation_error_message or "pincode" not in validation_error_message.lower()):
+                pincode_num = pincode_error.replace("Pincode ", "").split(" does not exist")[0]
+                formatted_pincode_error = f"• Pincode: {pincode_num} does not exist"
+                
+                if validation_error_message:
+                    validation_error_message = validation_error_message + "\n" + formatted_pincode_error
+                else:
+                    validation_error_message = formatted_pincode_error
+            
+            # Remove invalid fields from collected entities
+            if validation_error_message:
+                # Remove ALL fields that failed validation
+                if "organization email" in validation_error_message.lower() or "email" in validation_error_message.lower():
+                    existing_entities.pop("email", None)
+                if "gstin number" in validation_error_message.lower() or "gstin" in validation_error_message.lower():
+                    existing_entities.pop("gstin", None)
+                if "pincode" in validation_error_message.lower() or "zipcode" in validation_error_message.lower():
+                    existing_entities.pop("zipCode", None)
             
             session.workflow_state["registration_entities"] = existing_entities
 
@@ -217,19 +233,27 @@ class RegistrationService:
 
             # Include last few messages from both user and assistant
             for msg in messages[-history_limit:]:
-                content = msg.get("content", "").strip()
-                if content:
-                    context_messages.append(content)
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    content = content.strip()
+                    if content:
+                        context_messages.append(content)
 
             # Add current message if not empty
-            current_message = current_message.strip()
-            if current_message:
-                context_messages.append(current_message)
+            if isinstance(current_message, str):
+                current_message = current_message.strip()
+                if current_message:
+                    context_messages.append(current_message)
+            elif isinstance(current_message, dict):
+                # Handle button replies or interactive messages
+                button_id = current_message.get("button_reply", {}).get("id", "")
+                if button_id:
+                    context_messages.append(button_id)
 
             return " ".join(context_messages)
         except Exception as e:
             logger.error(f"Error building registration context: {e}")
-            return current_message
+            return str(current_message) if isinstance(current_message, str) else ""
 
     async def _generate_confirmation_message(self, entities: Dict, user_type: str) -> str:
         """Generate confirmation message showing all collected details dynamically."""
@@ -508,10 +532,10 @@ class RegistrationService:
 
                     field_list = ", ".join(required_field_labels)
 
-                    # Combine error message with registration prompt into ONE message (exact match to screenshot)
+                    # Combine error message with registration prompt into ONE message
                     combined_message = (
-                        "*Registration Unsuccessful*\n\n"
-                        "It looks like this email is already registered. Let's try again with a different email address.\n\n"
+                        "*User Registration Rejected - User Already Exists*\n\n"
+                        "The details you provided are already registered in our system. Please try again with different details.\n\n"
                         f"Please share your {field_list} to continue with the registration\n\n"
                         "Make sure your email address is correct, as you'll receive an OTP there for verification."
                     )
@@ -524,7 +548,7 @@ class RegistrationService:
 
                     return {
                         "status": "user_already_exists",
-                        "message": error_msg,
+                        "message": "User registration rejected - user already exists",
                         "registration_restarted": True
                     }
                 else:
@@ -931,9 +955,8 @@ class RegistrationService:
                 else:
                     logger.warning(f"Incomplete location data for pincode {pincode}: {location_data}")
             else:
-                # Clear invalid pincode and store error message for later display
-                entities["zipCode"] = None
-                entities["_pincode_error"] = f"The pincode {pincode} is invalid or not found. Kindly share a valid Indian pincode."
+                # Keep invalid pincode and store error message for later display
+                entities["_pincode_error"] = f"Pincode {pincode} does not exist. Please provide a valid Indian pincode."
                 logger.warning(f"Invalid pincode {pincode} provided by {user_phone}")
                 
         except Exception as e:
