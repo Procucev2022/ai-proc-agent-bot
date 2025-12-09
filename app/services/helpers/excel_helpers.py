@@ -293,6 +293,11 @@ class ExcelHelpers:
         
         instructions = []
         
+        # Check if there's a specific error message (e.g., date/location validation)
+        error_message = excel_data.get('error', '')
+        if error_message and '❌' in error_message:
+            return [error_message]
+        
         # Check if no items were found
         if not items:
             instructions.append(f"I couldn't find any data rows in your Excel file '{filename}'.")
