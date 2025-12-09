@@ -21,7 +21,7 @@
                         },
                         "unitofMeasures": {
                             "type": "string",
-                            "description": "ONLY the BASE unit of measurement for QUANTITY (how many items): m, ml, l, kg, g, pcs, units etc. CRITICAL: DO NOT put specifications like '500m', '100kg', '1000ml' in this field - those MUST go in remarks field. This field should ONLY contain the unit for counting items. Examples: '500m cable' -> 'm' (500m goes to remarks), '100kg rice' -> 'pcs' (100kg goes to remarks), '10 cables of 500m' -> 'm', '5 bags of 50kg rice' -> 'kg', '100 laptops' -> 'pcs', '1000ml bottles' -> 'ml'. Use empty string if no unit is mentioned."
+                            "description": "ONLY the BASE unit of measurement for QUANTITY (how many items): m, ml, l, kg, g, unit(s) etc. CRITICAL: DO NOT put specifications like '500m', '100kg', '1000ml' in this field - those MUST go in remarks field. This field should ONLY contain the unit for counting items. Examples: '500m cable' -> 'm' (500m goes to remarks), '100kg rice' -> 'unit(s)' (100kg goes to remarks), '10 cables of 500m' -> 'm', '5 bags of 50kg rice' -> 'kg', '100 laptops' -> 'unit(s)', '1000ml bottles' -> 'ml'. Use 'unit(s)' for countable items. Use empty string if no unit is mentioned."
                         },
                         "brand": {
                             "type": "string",

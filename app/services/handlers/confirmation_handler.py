@@ -465,7 +465,7 @@ class ConfirmationHandler:
                 "attachments": attachments,
                 "product_name": schema_dict.get("project_desc", "Unknown Product"),
                 "quantity": schema_dict.get("items", [{}])[0].get("quantity", 1) if schema_dict.get("items") else 1,
-                "unit_of_measure": schema_dict.get("items", [{}])[0].get("unit_of_measures", "pcs") if schema_dict.get("items") else "pcs",
+                "unit_of_measure": schema_dict.get("items", [{}])[0].get("unit_of_measures", "unit(s)") if schema_dict.get("items") else "unit(s)",
                 "specifications": schema_dict.get("items", [{}])[0].get("description", "") if schema_dict.get("items") else ""
             }
             
@@ -488,7 +488,7 @@ class ConfirmationHandler:
                             "description": item.get("description", ""),
                             "product_name": item.get("description", ""),
                             "quantity": item.get("quantity", 1),
-                            "unit_of_measure": item.get("unit_of_measures", "pcs"),
+                            "unit_of_measure": item.get("unit_of_measures", "unit(s)"),
                             "division": schema_dict.get("division", ""),
                             "preferred_brand": item.get("brand", "")
                         })
@@ -498,7 +498,7 @@ class ConfirmationHandler:
                         "description": rfq_data.get("specifications", ""),
                         "product_name": rfq_data.get("product_name", ""),
                         "quantity": rfq_data.get("quantity", 1),
-                        "unit_of_measure": rfq_data.get("unit_of_measure", "pcs"),
+                        "unit_of_measure": rfq_data.get("unit_of_measure", "unit(s)"),
                         "division": rfq_data.get("division", ""),
                         "preferred_brand": rfq_data.get("preferred_brand", "")
                     })

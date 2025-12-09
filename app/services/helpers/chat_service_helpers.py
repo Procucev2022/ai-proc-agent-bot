@@ -70,9 +70,9 @@ class ChatServiceHelpers:
                 item["description"] = entities["description"]
             if entities.get("quantity"):
                 item["quantity"] = entities["quantity"]
-            if entities.get("unitofMeasures"):
-                item["unit_of_measures"] = entities["unitofMeasures"]
-            
+            # Always set unit_of_measures with consistent default "unit(s)"
+            item["unit_of_measures"] = entities.get("unitofMeasures") or "unit(s)"
+
             if item:
                 schema_data["items"] = [item]
         
@@ -147,13 +147,13 @@ class ChatServiceHelpers:
                     item["description"] = entities["description"]
                 if entities.get("quantity"):
                     item["quantity"] = entities["quantity"]
-                if entities.get("unitofMeasures"):
-                    item["unit_of_measures"] = entities["unitofMeasures"]
+                # Always set unit_of_measures with consistent default "unit(s)"
+                item["unit_of_measures"] = entities.get("unitofMeasures") or "unit(s)"
                 if entities.get("brand"):
                     item["brand"] = entities["brand"]
                 if entities.get("remarks"):
                     item["remarks"] = entities["remarks"]
-                
+
                 if item:
                     combined_items.append(item)
         
