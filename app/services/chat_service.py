@@ -2082,7 +2082,7 @@ class ChatService:
                 filename = excel_data.get('filename', 'Excel file')
                 
                 if not products:
-                    error_message = "❌ Sorry, I couldn't find the Excel data. Please upload your file again."
+                    error_message = "Sorry, I couldn't find the Excel data. Please upload your file again."
                     await self.session_manager.send_and_track_message(user.phone_number, error_message, session)
                     return {"status": "excel_data_missing"}
 
@@ -2219,7 +2219,8 @@ class ChatService:
             return {"status": "validation_failed", "error": error_msg}
         except Exception as e:
             logger.error(f"[EXCEL-SECTIONED-ERROR] Error transforming RFQ format: {e}")
-            error_msg = f"❌ File rejected: Error processing file. Please check your data and try again."
+            from app.utils.excel_error_formatter import format_excel_error
+            error_msg = format_excel_error('validation_error', {'message': 'Error processing file. Please check your data and try again.'})
             await self.whatsapp_service.send_message(user.phone_number, error_msg, session_id=session)
             session.workflow_state = {}
             session.workflow_type = None
