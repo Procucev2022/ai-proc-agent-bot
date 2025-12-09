@@ -218,6 +218,7 @@ class Settings:
         # Queue Configuration
         self.batch_window_seconds: int = int(os.getenv("BATCH_WINDOW_SECONDS", "3"))
         self.please_wait_threshold_seconds: int = int(os.getenv("PLEASE_WAIT_THRESHOLD_SECONDS", "15"))
+        self.monitoring_poll_interval_seconds: int = int(os.getenv("MONITORING_POLL_INTERVAL_SECONDS", "5"))
         
         # Inactivity timeout configuration
         self.workflow_timeout_enabled: bool = os.getenv("WORKFLOW_TIMEOUT_ENABLED", "true").lower() == "true"

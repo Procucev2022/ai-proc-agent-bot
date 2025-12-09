@@ -32,6 +32,8 @@ from app.services.cancel_service import CancelService
 from app.services.session_management_service import SessionManagementService
 from app.services.message_queue_service import MessageQueueService
 from app.services.inactivity_timeout_service import get_timeout_service
+from app.redis_db import get_redis_service
+import time
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -120,13 +122,19 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
         # Route message based on type - text messages go to queue, others process directly
         message_type = webhook_data.get("type", "")
         logger.info(f"[ROUTING] message_type='{message_type}', checking if == 'text': {message_type == 'text'}")
-        
+
         if message_type == "text":
             # Enqueue text messages for batched processing
             logger.info(f"[ROUTING] Enqueueing text message for {webhook_data.get('from')}")
             background_tasks.add_task(enqueue_message_async, webhook_data)
+        
+        elif message_type == "interactive":
+            # Process interactive messages directly with session tracking
+            logger.info(f"[ROUTING] Processing interactive message for {webhook_data.get('from')}")
+            background_tasks.add_task(process_message_async, webhook_data)
+        
         else:
-            # Process non-text messages (excel, image, document, interactive) directly
+            # Process non-text messages (excel, image, document) directly
             logger.info(f"[ROUTING] Processing non-text message type='{message_type}' for {webhook_data.get('from')}")
             background_tasks.add_task(process_message_async, webhook_data)
         
@@ -336,6 +344,87 @@ def parse_json_webhook(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return data
 
 
+async def create_direct_processing_session(user_phone: str, message_type: str) -> bool:
+    """
+    Create a processing session for direct (non-queued) message processing.
+    
+    This enables the monitoring loop in message_queue_service to track
+    long-running operations and send please-wait messages when needed.
+    
+    Args:
+        user_phone: User's phone number (normalized without '+')
+        message_type: Type of message being processed (interactive, excel, image, etc.)
+    
+    Returns:
+        True if session created successfully, False if user already processing
+    """
+    try:
+        redis_service = get_redis_service()
+        
+        # Normalize phone number
+        user_phone = user_phone.lstrip('+') if user_phone.startswith('+') else user_phone
+        
+        # Check if user is already processing (prevent concurrent processing)
+        processing_key = f"{user_phone}:processing"
+        is_processing = await redis_service.exists(processing_key)
+        
+        if is_processing:
+            logger.warning(f"[SESSION] User {user_phone} already processing, skipping session creation")
+            return False
+        
+        # Mark as processing
+        await redis_service.set(processing_key, f"direct_{message_type}", ex=60)
+        
+        # Create session data (same structure as queue service)
+        session_data = {
+            "batch_id": f"direct_{user_phone}_{int(time.time() * 1000)}",
+            "started_at": time.time(),
+            "ack_sent": False,
+            "please_wait_sent": False,
+            "suppressed": False
+        }
+        
+        session_key = f"{user_phone}:session"
+        await redis_service.set(session_key, json.dumps(session_data), ex=60)
+        
+        logger.info(f"[SESSION] Created direct processing session for {user_phone} (type: {message_type})")
+        return True
+        
+    except Exception as e:
+        logger.error(f"[SESSION] Error creating session for {user_phone}: {e}", exc_info=True)
+        return False
+
+
+async def cleanup_direct_processing_session(user_phone: str) -> None:
+    """
+    Clean up processing session after direct message processing completes.
+    
+    Removes the session and processing keys from Redis to allow next message.
+    
+    Args:
+        user_phone: User's phone number (normalized without '+')
+    """
+    try:
+        redis_service = get_redis_service()
+        
+        # Normalize phone number
+        user_phone = user_phone.lstrip('+') if user_phone.startswith('+') else user_phone
+        
+        # Delete session and processing keys
+        session_key = f"{user_phone}:session"
+        processing_key = f"{user_phone}:processing"
+        response_ready_key = f"{user_phone}:response_ready"
+        
+        await redis_service.delete(session_key)
+        await redis_service.delete(processing_key)
+        await redis_service.delete(response_ready_key)
+        
+        logger.info(f"[SESSION] Cleaned up direct processing session for {user_phone}")
+        
+    except Exception as e:
+        logger.error(f"[SESSION] Error cleaning up session for {user_phone}: {e}", exc_info=True)
+
+
 async def enqueue_message_async(webhook_data: Dict[str, Any]):
     """
     Enqueue incoming text message to the message queue service.
@@ -379,10 +468,13 @@ async def process_message_async(webhook_data: Dict[str, Any]):
 
     Routes the message directly through the chat service for immediate processing.
     This is used for messages that cannot be batched (file uploads, interactive buttons).
+    
+    Creates a processing session in Redis to enable please-wait monitoring for long-running operations.
     """
     from app.utils.logging_utils import UserPhoneContext
 
     from_number = None
+    session_created = False
     try:
         from_number = webhook_data.get("from")
         
@@ -405,12 +497,33 @@ async def process_message_async(webhook_data: Dict[str, Any]):
 
         # Set phone number context for all logs in this async task
         async with UserPhoneContext(from_number):
+            # Create processing session for monitoring (enables please-wait messages)
+            session_created = await create_direct_processing_session(from_number, message_type)
+            
+            if not session_created:
+                logger.warning(
+                    f"User {from_number} is already processing another message. "
+                    f"Skipping {message_type} message to prevent concurrent processing conflicts."
+                )
+                # Send user notification that their message was received but will be processed after current operation
+                from app.services.whatsapp_service import WhatsAppService
+                whatsapp_service = WhatsAppService()
+                recipient_id = f"+{from_number}" if not from_number.startswith('+') else from_number
+                await whatsapp_service.send_message(
+                    recipient_id,
+                    "We're still processing your previous request. Please wait a moment before sending new messages."
+                )
+                return  # Exit without processing to prevent concurrent execution
+            
             # Initialize chat service with message_queue_service and db_session for non-text messages
             from app.services.chat_service import ChatService
             from app.database import get_db_session_context
 
             with get_db_session_context() as db:
-                chat_service = ChatService(db_session=db)
+                chat_service = ChatService(
+                    db_session=db,
+                    message_queue_service=message_queue_service  # Pass queue service for session management
+                )
                 try:
                     # Handle document messages specifically
                     if message_type.lower() == "document":
@@ -439,6 +552,11 @@ async def process_message_async(webhook_data: Dict[str, Any]):
                 )
             except Exception as cancel_error:
                 logger.error(f"Failed to handle technical error in async processing: {cancel_error}")
+    
+    finally:
+        # Always cleanup session if it was created
+        if session_created and from_number:
+            await cleanup_direct_processing_session(from_number)
 
 
 async def process_document_message(webhook_data: Dict[str, Any], chat_service):
@@ -486,9 +604,13 @@ async def process_document_message(webhook_data: Dict[str, Any], chat_service):
             # Send processing message immediately for Excel files
             from app.services.whatsapp_service import WhatsAppService
             whatsapp_service = WhatsAppService()
-            await whatsapp_service.send_message(from_number, "Please wait, the file is processing…")
+            
+            # Ensure from_number is not None before sending
+            if from_number:
+                await whatsapp_service.send_message(from_number, "Please wait, the file is processing…")
             
             # Process as Excel file through chat service
+            # Note: Session monitoring will also send "please wait" if processing takes >15s
             await chat_service.process_message(
                 user_phone=from_number,
                 message_content=content,
