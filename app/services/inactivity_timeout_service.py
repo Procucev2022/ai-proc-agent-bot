@@ -98,17 +98,20 @@ class InactivityTimeoutService:
         """
         
         try:
-            # Extract user_type from user_details selfClient (false = seller, true = buyer)
             user_type = None
-            if user_details and isinstance(user_details, list) and len(user_details) > 0:
-                # user_details is a list, get first user
-                first_user = user_details[0]
-                self_client = first_user.get('selfClient')
-                logger.debug(f"[TIMEOUT_MESSAGE] selfClient value: {self_client}")
-                if self_client is True:
-                    user_type = "buyer"
-                elif self_client is False:
-                    user_type = "seller"
+            first_user = None
+
+            if user_details:
+                if isinstance(user_details, list):
+                    first_user = user_details[0]
+                elif isinstance(user_details, dict):
+                    first_user = user_details
+
+                if first_user:
+                    self_client = first_user.get('self_client') or first_user.get('selfClient')
+                    user_type = "buyer" if self_client is True else "seller" if self_client is False else None
+                    logger.info(f"[TIMEOUT_MESSAGE] user_type: {user_type}")
+
                 logger.debug(f"[TIMEOUT_MESSAGE] Extracted user_type: {user_type}")
             else:
                 logger.debug(f"[TIMEOUT_MESSAGE] User details invalid or missing")
@@ -120,6 +123,7 @@ class InactivityTimeoutService:
                     "You can resume creating RFQs or checking status anytime by saying 'Hi.'"
                 )
             elif user_type == "seller":
+                logger.info("user is seller")
                 logger.debug(f"[TIMEOUT_MESSAGE] Generating seller timeout message")
                 
                 # For sellers, try to get remainder message from seller service
@@ -137,19 +141,20 @@ class InactivityTimeoutService:
                                 self.phone_number = phone_number
                         
                         user = UserObj(user_obj['orgId'], user_obj['phone'])
+                        logger.info(f"user in inactibity is:{user}")
                         session_obj = ConversationSession(**session_data)
                         remainder_result = await seller_service.handle_seller_flow_completion(user, session_obj)
-                        logger.debug(f"[TIMEOUT_MESSAGE] Seller remainder result: {remainder_result}")
-                        
+                        logger.info(f"[TIMEOUT_MESSAGE] Seller remainder result: {remainder_result}")
+
                         base_msg = (
                             "Thank you for using QUA AI! "
                             "You can resume viewing RFQs or managing bids anytime by saying 'Hi.'"
                         )
                         
                         if remainder_result.get("success") and remainder_result.get("message"):
-                            return f"{remainder_result['message']}\n\n{base_msg}"
+                            return f"{remainder_result['message']}"
                         else:
-                            logger.debug(f"[TIMEOUT_MESSAGE] Using base seller message")
+                            logger.info(f"[TIMEOUT_MESSAGE] Using base seller message")
                             return base_msg
                     except Exception as seller_error:
                         logger.warning(f"[TIMEOUT_MESSAGE] Seller service error: {seller_error}")
@@ -620,16 +625,23 @@ class InactivityTimeoutService:
             # 8. Send timeout notification LAST (after all cleanup complete)
             # Generate user-type-specific timeout message
             logger.debug(f"[TIMEOUT_SERVICE] Generating timeout message for {user_phone}")
-            from app.services.user_cache_service import get_user_cache_service
-            user_cache_service = get_user_cache_service()
-            user_details = await user_cache_service.get_user_data(user_phone)
-            logger.debug(f"[TIMEOUT_SERVICE] Retrieved user details: {bool(user_details)}")
+            
+            # Get user details from auth token
+            from app.redis_db import get_auth_redis_service
+            auth_redis = get_auth_redis_service()
+            normalized_phone = user_phone.lstrip('+')
+            user_details = await auth_redis.retrieve(normalized_phone)
+            logger.info(f"[TIMEOUT_SERVICE] Retrieved user from auth token: {bool(user_details)} {user_details}")
+            
+            # Convert to list format for _generate_timeout_message compatibility
+            if user_details and not isinstance(user_details, list):
+                user_details = [user_details]
 
             # Always prefer original session snapshot for constructing reminder
             session_snapshot = remainder_session or session_data
             logger.debug(f"[TIMEOUT_SERVICE] Using session snapshot: {bool(timeout_session_data)}")
             
-            timeout_message = await self._generate_timeout_message(user_details,timeout_session_data)
+            timeout_message = await self._generate_timeout_message(user_details, timeout_session_data)
             logger.debug(f"[TIMEOUT_SERVICE] Generated timeout message: {timeout_message[:100]}...")
             
             try:
