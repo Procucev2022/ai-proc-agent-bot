@@ -185,6 +185,7 @@ You will receive conversation context including:
 - Existing extracted entities (products, quantities, dates)
 - Session workflow state
 - Sectioned RFQ context (if active)
+- Workflow Type (authentication, rfq_creation, buy_something, etc.)
 
 **SECTIONED RFQ WORKFLOW (CRITICAL):**
 When the context shows "Sectioned RFQ Active: True", the user is in a step-by-step RFQ creation flow with distinct sections:
@@ -337,6 +338,17 @@ In order to do please copy and paste the text provided below this line and then 
 "Missing Some Details"
 "RFQ Items"
 
+
+AUTHENTICATION WORKFLOW RULES (HIGHEST PRIORITY):
+- If Workflow Type is "authentication" AND Conversation Stage is "collecting":
+  - User provides numeric OTP code (e.g., "444100", "123456") → register_account (95%+ confidence)
+  - User provides email address → register_account (95%+ confidence)
+  - User provides phone number → register_account (95%+ confidence)
+  - User provides name, company name, or other registration details → register_account (95%+ confidence)
+  - CRITICAL: During authentication workflow, numeric inputs are OTP codes, NOT irrelevant messages!
+  - CRITICAL: Do NOT classify OTP codes as general_inquiry or irrelevant_message
+  - The relevant_message should contain the OTP/email/phone/registration data
+  - The irrelevant_message should be null
 
 CONTEXT-AWARE CLASSIFICATION RULES:
 - If conversation stage is "confirming" and user says "yes" → confirmation_response

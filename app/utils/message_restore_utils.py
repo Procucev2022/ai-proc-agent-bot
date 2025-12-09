@@ -15,20 +15,39 @@ async def restore_last_bot_message(
         # ---- CASE 1: Saved message is a structured dict ----
         if isinstance(last_bot_message, dict):
 
-            body = last_bot_message.get("body")
-            header = last_bot_message.get("header")
-            footer = last_bot_message.get("footer")
+            body_obj = last_bot_message.get("body") or {}
+            body = body_obj.get("text") if isinstance(body_obj, dict) else body_obj
+            
+            header_obj = last_bot_message.get("header") or {}
+            header = header_obj.get("text") if isinstance(header_obj, dict) else header_obj
+            
+            footer_obj = last_bot_message.get("footer") or {}
+            footer = footer_obj.get("text") if isinstance(footer_obj, dict) else footer_obj
 
             # FIX: Read buttons from action.buttons if present
             action = last_bot_message.get("action") or {}
             buttons = action.get("buttons") or []
 
+            # Convert WhatsApp API format to send_configurable_buttons format
+            buttons_config = []
+            for btn in buttons:
+                if isinstance(btn, dict):
+                    # Handle nested reply format: {"type": "reply", "reply": {"id": "...", "title": "..."}}
+                    if "reply" in btn:
+                        buttons_config.append({
+                            "id": btn["reply"].get("id"),
+                            "title": btn["reply"].get("title")
+                        })
+                    # Handle direct format: {"id": "...", "title": "..."}
+                    elif "title" in btn:
+                        buttons_config.append(btn)
+
             # WhatsApp requires at least ONE button if action exists
-            if buttons:
+            if buttons_config:
                 await whatsapp_service.send_configurable_buttons(
                     recipient_id=user_phone,
                     body=body,
-                    buttons_config=buttons,
+                    buttons_config=buttons_config,
                     header=header,
                     footer=footer,
                 )
