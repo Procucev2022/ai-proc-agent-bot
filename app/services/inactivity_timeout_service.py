@@ -104,15 +104,19 @@ class InactivityTimeoutService:
             if user_details:
                 if isinstance(user_details, list):
                     first_user = user_details[0]
-                elif isinstance(user_details, dict):
+                else:
                     first_user = user_details
 
                 if first_user:
-                    self_client = first_user.get('self_client') or first_user.get('selfClient')
+                    if hasattr(first_user, 'self_client'):
+                        self_client = first_user.self_client
+                    elif hasattr(first_user, 'get'):
+                        self_client = first_user.get('self_client') or first_user.get('selfClient')
+                    else:
+                        self_client = None
+                    
                     user_type = "buyer" if self_client is True else "seller" if self_client is False else None
                     logger.info(f"[TIMEOUT_MESSAGE] user_type: {user_type}")
-
-                logger.debug(f"[TIMEOUT_MESSAGE] Extracted user_type: {user_type}")
             else:
                 logger.debug(f"[TIMEOUT_MESSAGE] User details invalid or missing")
             
@@ -133,14 +137,15 @@ class InactivityTimeoutService:
                         seller_service = SellerService()
                         # Create temporary objects from raw data for seller service
 
-                        user_obj = user_details[0]
                         # Create user object with required fields
                         class UserObj:
                             def __init__(self, org_id, phone_number):
                                 self.org_id = org_id
                                 self.phone_number = phone_number
                         
-                        user = UserObj(user_obj['orgId'], user_obj['phone'])
+                        org_id = getattr(first_user, 'org_id', None) or (first_user.get('org_id') if hasattr(first_user, 'get') else None)
+                        phone = getattr(first_user, 'phone_number', None) or (first_user.get('phone_number') if hasattr(first_user, 'get') else None)
+                        user = UserObj(org_id, phone)
                         logger.info(f"user in inactibity is:{user}")
                         session_obj = ConversationSession(**session_data)
                         remainder_result = await seller_service.handle_seller_flow_completion(user, session_obj)
