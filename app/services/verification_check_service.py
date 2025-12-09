@@ -28,7 +28,7 @@ class VerificationCheckService:
         self.otp_service = otp_service
         self.whatsapp_service = whatsapp_service
     
-    async def check_and_enforce_verification(self, user_phone: str, user_data) -> Dict[str, Any]:
+    async def check_and_enforce_verification(self, user_phone: str, user_data,session) -> Dict[str, Any]:
         """
         Check verification status and enforce verification flow if needed.
         
@@ -85,7 +85,7 @@ class VerificationCheckService:
                 logger.warning(f"Failed to refresh user data - requiring verification")
                 # FIXED: Automatically send OTP when email verification is required
                 print("user", user_phone,"email",email)
-                otp_result = await self._send_verification_otp(user_phone, email)
+                otp_result = await self._send_verification_otp(user_phone, email,session)
                 return {
                     "verification_required": True,
                     "otp_sent": otp_result.get("status") == "otp_sent",
@@ -126,7 +126,7 @@ class VerificationCheckService:
                 else:
                     # Sellers with EMAIL_VERIFIED status - still require OTP for authentication
                     logger.info(f"Seller with EMAIL_VERIFIED status - sending OTP for authentication")
-                    otp_result = await self._send_verification_otp(user_phone, email,is_daily_verification= True)
+                    otp_result = await self._send_verification_otp(user_phone, email,session=session, is_daily_verification= True)
                     return {
                         "verification_required": True,
                         "otp_sent": otp_result.get("status") == "otp_sent",
@@ -141,7 +141,7 @@ class VerificationCheckService:
             # Step 3: Unknown/invalid verification status - require verification
             logger.warning(f"Unknown verification status: {verification_status} - requiring verification")
             # FIXED: Automatically send OTP for unknown verification status
-            otp_result = await self._send_verification_otp(user_phone, email or 'your email')
+            otp_result = await self._send_verification_otp(user_phone, email or 'your email',session)
             return {
                 "verification_required": True,
                 "otp_sent": otp_result.get("status") == "otp_sent",
@@ -175,7 +175,7 @@ class VerificationCheckService:
                 full_name = 'Hi'
             
             # FIXED: Automatically send OTP for verification check errors
-            otp_result = await self._send_verification_otp(user_phone, email)
+            otp_result = await self._send_verification_otp(user_phone, email,session)
             return {
                 "verification_required": True,
                 "otp_sent": otp_result.get("status") == "otp_sent",
@@ -220,7 +220,7 @@ class VerificationCheckService:
             logger.error(f"Error refreshing user data: {e}")
             return {"success": False, "message": str(e)}
     
-    async def _send_verification_otp(self, user_phone: str, email: str,is_daily_verification: bool = False) -> Dict[str, Any]:
+    async def _send_verification_otp(self, user_phone: str, email: str,is_daily_verification: bool = False,session=None) -> Dict[str, Any]:
         """Send OTP for email verification."""
         try:
             if not email or email == 'your email':
@@ -233,7 +233,7 @@ class VerificationCheckService:
             temp_session = ConversationSession()
             temp_session.workflow_state = {}
             
-            otp_result = await self.otp_service.send_otp(user_phone, email, temp_session,is_daily_verification)
+            otp_result = await self.otp_service.send_otp(user_phone, email,session,is_daily_verification)
             logger.info(f"OTP send result: {otp_result}")
             return otp_result
             
