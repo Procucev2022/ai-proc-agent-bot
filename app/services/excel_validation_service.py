@@ -55,8 +55,12 @@ class ExcelValidationService:
             Dict containing validation result and file content or error details
         """
         try:
+            logger.info(f"[EXCEL-VALIDATION] Starting validation for file: {filename}")
+            
             # Step 1: Validate file extension
+            logger.info(f"[EXCEL-VALIDATION] Step 1: Validating file extension")
             if not self._validate_file_extension(filename):
+                logger.error(f"[EXCEL-VALIDATION] Invalid file extension: {filename}")
                 return {
                     'valid': False,
                     'error': f"Unsupported file format. Please upload an Excel file (.xlsx, .xls, .xlsm)",
@@ -64,16 +68,21 @@ class ExcelValidationService:
                 }
             
             # Step 2: Download file with timeout handling
+            logger.info(f"[EXCEL-VALIDATION] Step 2: Downloading file from URL")
             file_content = await self._download_file_with_retry(file_url)
             if not file_content:
+                logger.error(f"[EXCEL-VALIDATION] File download failed")
                 return {
                     'valid': False,
                     'error': "Could not download the file. Please try uploading again.",
                     'error_type': 'download_failed'
                 }
+            logger.info(f"[EXCEL-VALIDATION] File downloaded successfully: {len(file_content)} bytes")
             
             # Step 3: Validate file size
+            logger.info(f"[EXCEL-VALIDATION] Step 3: Validating file size")
             if len(file_content) > self.MAX_FILE_SIZE:
+                logger.error(f"[EXCEL-VALIDATION] File too large: {len(file_content)} bytes (max: {self.MAX_FILE_SIZE})")
                 error_msg = format_excel_error('file_too_large', {
                     'file_size_mb': len(file_content) / (1024*1024),
                     'max_size_mb': self.MAX_FILE_SIZE // (1024*1024)
@@ -85,31 +94,47 @@ class ExcelValidationService:
                 }
             
             # Step 4: Validate file integrity
+            logger.info(f"[EXCEL-VALIDATION] Step 4: Validating file integrity")
             integrity_check = self._validate_file_integrity(file_content)
             if not integrity_check['valid']:
+                logger.error(f"[EXCEL-VALIDATION] File integrity check failed: {integrity_check.get('error')}")
                 return integrity_check
+            logger.info(f"[EXCEL-VALIDATION] File integrity validated")
             
             # Step 5: Validate content type and format
+            logger.info(f"[EXCEL-VALIDATION] Step 5: Validating content type and format")
             content_validation = self._validate_excel_content(file_content)
             if not content_validation['valid']:
+                logger.error(f"[EXCEL-VALIDATION] Content validation failed: {content_validation.get('error')}")
                 return content_validation
+            logger.info(f"[EXCEL-VALIDATION] Content format validated: {content_validation.get('format')}")
             
             # Step 6: Test readability and security
+            logger.info(f"[EXCEL-VALIDATION] Step 6: Testing readability and security")
             readability_validation = await self._validate_excel_readability(file_content, filename)
             if not readability_validation['valid']:
+                logger.error(f"[EXCEL-VALIDATION] Readability validation failed: {readability_validation.get('error')}")
                 return readability_validation
+            logger.info(f"[EXCEL-VALIDATION] File is readable")
             
             # Step 7: Validate structure (rows, merged cells, worksheets)
+            logger.info(f"[EXCEL-VALIDATION] Step 7: Validating structure (rows, merged cells, worksheets)")
             structure_validation = await self._validate_excel_structure_comprehensive(file_content)
             if not structure_validation['valid']:
+                logger.error(f"[EXCEL-VALIDATION] Structure validation failed: {structure_validation.get('error')}")
                 return structure_validation
+            logger.info(f"[EXCEL-VALIDATION] Structure validated")
             
             # Step 8: Validate data quality
+            logger.info(f"[EXCEL-VALIDATION] Step 8: Validating data quality")
             data_validation = await self._validate_data_quality(file_content)
             if not data_validation['valid']:
+                logger.error(f"[EXCEL-VALIDATION] Data quality validation failed: {data_validation.get('error')}")
                 return data_validation
+            logger.info(f"[EXCEL-VALIDATION] Data quality validated")
             
             # Success - return validated content
+            logger.info(f"[EXCEL-VALIDATION] All validation steps passed for {filename}")
             return {
                 'valid': True,
                 'content': file_content,

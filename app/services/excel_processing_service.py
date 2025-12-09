@@ -7,6 +7,7 @@ import io
 import pandas as pd
 import base64
 import re
+import json
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
@@ -78,37 +79,53 @@ class ExcelProcessingService:
             removed_count = initial_count - len(df)
             
             if df.empty:
+                from app.utils.excel_error_formatter import format_excel_error
                 return {
                     'success': False,
-                    'error': '❌ File rejected: The uploaded Excel file contains no data. Please provide a valid Excel file containing the required data for the RFQ.'
+                    'error': format_excel_error('empty_file', {})
                 }
             
 
             
             # Use new streamlined OpenAI processing
+            logger.info(f"[EXCEL-PROCESS] Starting OpenAI processing for {filename}")
             processing_result = await self._process_excel_with_openai(df, filename)
             
+            logger.info(f"[EXCEL-PROCESS] OpenAI processing result: success={processing_result.get('success')}")
+            
             if not processing_result.get('success'):
+                logger.error(f"[EXCEL-PROCESS] OpenAI processing failed: {processing_result.get('error')}")
                 return {
                     'success': False,
                     'error': processing_result.get('error', 'Failed to process Excel data')
                 }
             
             # Extract results from OpenAI processing
-            # OpenAI returns 'rfqs' array, extract products from first RFQ
             rfqs = processing_result.get('rfqs', [])
-            products = []
-            if rfqs and len(rfqs) > 0:
-                products = rfqs[0].get('products', [])
-            processing_summary = processing_result.get('processing_summary', {})
+            logger.info(f"[EXCEL-PROCESS] Extracted {len(rfqs)} RFQs from OpenAI result")
             
-            # Validate date and location consistency
-            date_location_validation = self._validate_date_location_consistency(products)
+            processing_summary = processing_result.get('processing_summary', {})
+            logger.info(f"[EXCEL-PROCESS] Processing summary: {json.dumps(processing_summary, indent=2)}")
+            
+            # Validate date and location consistency across ALL RFQs
+            logger.info(f"[EXCEL-PROCESS] Validating date and location consistency across {len(rfqs)} RFQs")
+            date_location_validation = self._validate_rfqs_consistency(rfqs)
+            logger.info(f"[EXCEL-PROCESS] Date/location validation result: valid={date_location_validation['valid']}")
+            
             if not date_location_validation['valid']:
+                logger.error(f"[EXCEL-PROCESS] Date/location validation failed: {date_location_validation['error']}")
                 return {
                     'success': False,
                     'error': date_location_validation['error']
                 }
+            
+            # Extract products from first RFQ for legacy format
+            products = []
+            if rfqs and len(rfqs) > 0:
+                products = rfqs[0].get('products', [])
+                logger.info(f"[EXCEL-PROCESS] Extracted {len(products)} products from first RFQ")
+            else:
+                logger.warning(f"[EXCEL-PROCESS] No RFQs found in OpenAI result")
 
             # Use RFQs directly from OpenAI processing result
             rfqs = processing_result.get('rfqs', [])
@@ -128,6 +145,8 @@ class ExcelProcessingService:
             extracted_rows = processing_summary.get('total_products_extracted', 0)
             skipped_rows = processing_summary.get('skipped_rows', 0)
             
+            logger.info(f"[EXCEL-PROCESS] Statistics - Total: {total_rows}, Identified: {identified_rows}, Extracted: {extracted_rows}, Skipped: {skipped_rows}")
+            
             # Create detailed statistics for confirmation message
             processing_stats = {
                 'total_rows': total_rows,
@@ -140,8 +159,16 @@ class ExcelProcessingService:
             
             # Reject file if ANY rows are skipped
             if identified_rows > 0 and skipped_rows > 0:
+                from app.utils.excel_error_formatter import format_excel_error
                 skipped_summary = processing_summary.get('skipped_items_summary', 'One product row was skipped due to missing quantity.')
-                combined_error = f"❌ File rejected: File processing incomplete: {skipped_rows} rows skipped out of {identified_rows} total product rows. Only {extracted_rows} products extracted successfully.\n\n{skipped_summary}\n\nPlease fix your Excel file and upload again."
+                combined_error = format_excel_error('processing_incomplete', {
+                    'skipped_rows': skipped_rows,
+                    'total_rows': identified_rows,
+                    'extracted_rows': extracted_rows,
+                    'skipped_summary': skipped_summary
+                })
+                logger.warning(f"[EXCEL-PROCESS] File rejected due to skipped rows: {skipped_rows}/{identified_rows}")
+                logger.warning(f"[EXCEL-PROCESS] Skipped items summary: {skipped_summary}")
                 return {
                     'success': False,
                     'error': combined_error,
@@ -184,6 +211,8 @@ class ExcelProcessingService:
                 'should_skip_rfq_creation': False
             }
             
+            logger.info(f"[EXCEL-PROCESS] Successfully processed {filename}: {len(items)} items extracted")
+            logger.info(f"[EXCEL-PROCESS] Final result summary: {success_summary}")
             
             return final_result
             
@@ -668,18 +697,23 @@ class ExcelProcessingService:
                 
                 if filled_rows > MAX_ROWS:
                     workbook.close()
+                    from app.utils.excel_error_formatter import format_excel_error
                     return {
                         'valid': False,
-                        'error': f"File rejected: Your Excel file contains {filled_rows} rows, but only 50 rows are allowed per upload. Could you please reduce the file to 50 rows and reupload it for processing?"
+                        'error': format_excel_error('row_limit', {
+                            'actual_rows': filled_rows,
+                            'max_rows': MAX_ROWS
+                        })
                     }
                 
                 # Check 2: Merged cells validation
                 merged_ranges = list(worksheet.merged_cells.ranges)
                 if merged_ranges:
                     workbook.close()
+                    from app.utils.excel_error_formatter import format_excel_error
                     return {
                         'valid': False,
-                        'error': "Your Excel file contains merged cells. Please unmerge all cells and reupload the file to proceed with your RFQ submission."
+                        'error': format_excel_error('merged_cells', {})
                     }
                 
                 workbook.close()
@@ -694,9 +728,13 @@ class ExcelProcessingService:
                     df_cleaned = df.dropna(how='all')
                     filled_rows = len(df_cleaned)
                     if filled_rows > MAX_ROWS:
+                        from app.utils.excel_error_formatter import format_excel_error
                         return {
                             'valid': False,
-                            'error': f"❌ File rejected: Your Excel file contains {filled_rows} rows, but only 50 rows are allowed per upload. Could you please reduce the file to 50 rows and reupload it for processing?"
+                            'error': format_excel_error('row_limit', {
+                                'actual_rows': filled_rows,
+                                'max_rows': MAX_ROWS
+                            })
                         }
                     # Can't check merged cells with pandas, so assume valid
                     return {'valid': True}
@@ -718,40 +756,83 @@ class ExcelProcessingService:
             'boqfile': base64.b64encode(excel_bytes).decode('utf-8')
         }
     
-    def _validate_date_location_consistency(self, products: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Validate that all products have the same date and location."""
-        if not products:
+    def _format_date_for_display(self, date_str: str) -> str:
+        """Format date string to 'dd Month' format (e.g., '30 November')."""
+        if not date_str:
+            return date_str
+        
+        formats_to_try = [
+            "%Y-%m-%dT%H:%M:%S",  # 2025-11-30T00:00:00
+            "%Y-%m-%d",            # 2025-11-30
+        ]
+        
+        for fmt in formats_to_try:
+            try:
+                parsed_date = datetime.strptime(date_str, fmt)
+                return parsed_date.strftime("%d %B")
+            except ValueError:
+                continue
+        
+        return date_str
+    
+    def _validate_rfqs_consistency(self, rfqs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Validate that all RFQs have the same date and location."""
+        if not rfqs or len(rfqs) <= 1:
             return {'valid': True}
         
-        # Extract dates and locations from products
+        # Extract dates and locations from all RFQs
         dates = set()
-        locations = set()
+        cities = set()
+        states = set()
+        pincodes = set()
         
-        for product in products:
-            date = product.get('date', '').strip() if product.get('date') else ''
-            location = product.get('location', '').strip() if product.get('location') else ''
+        for rfq in rfqs:
+            date = rfq.get('deliveryDate', '').strip() if rfq.get('deliveryDate') else ''
+            city = rfq.get('city', '').strip() if rfq.get('city') else ''
+            state = rfq.get('state', '').strip() if rfq.get('state') else ''
+            pincode = rfq.get('pincode', '').strip() if rfq.get('pincode') else ''
             
             if date:
                 dates.add(date)
-            if location:
-                locations.add(location)
+            if city:
+                cities.add(city)
+            if state:
+                states.add(state)
+            if pincode:
+                pincodes.add(pincode)
         
         # Check if there are multiple dates or locations
         has_multiple_dates = len(dates) > 1
-        has_multiple_locations = len(locations) > 1
+        has_multiple_cities = len(cities) > 1
+        has_multiple_states = len(states) > 1
+        has_multiple_pincodes = len(pincodes) > 1
         
-        if has_multiple_dates or has_multiple_locations:
+        if has_multiple_dates or has_multiple_cities or has_multiple_states or has_multiple_pincodes:
             error_parts = []
-            if has_multiple_dates:
-                error_parts.append(f"different dates ({', '.join(sorted(dates))})")
-            if has_multiple_locations:
-                error_parts.append(f"different locations ({', '.join(sorted(locations))})")
             
-            error_message = f"❌ File rejected due to {' and '.join(error_parts)}. Please correct the file to have consistent date and location for all items, then reupload."
+            def format_list(items_set, is_date=False):
+                items_list = sorted(items_set)
+                if is_date:
+                    items_list = [self._format_date_for_display(d) for d in items_list]
+                if len(items_list) <= 2:
+                    return ', '.join(items_list)
+                return f"{items_list[0]}, {items_list[1]} +{len(items_list) - 2} more"
+            
+            if has_multiple_dates:
+                error_parts.append(f"different delivery dates ({format_list(dates, is_date=True)})")
+            if has_multiple_cities:
+                error_parts.append(f"different cities ({format_list(cities)})")
+            if has_multiple_states:
+                error_parts.append(f"different states ({format_list(states)})")
+            if has_multiple_pincodes:
+                error_parts.append(f"different pincodes ({format_list(pincodes)})")
+            
+            from app.utils.excel_error_formatter import format_excel_error
+            error_message = f"The file contains {' and '.join(error_parts)}. All items must have the same delivery date and location."
             
             return {
                 'valid': False,
-                'error': error_message
+                'error': format_excel_error('date_location_inconsistency', {'message': error_message})
             }
         
         return {'valid': True}
