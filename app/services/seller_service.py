@@ -843,6 +843,8 @@ class SellerService:
             # Fetch open RFQs where seller has not submitted bids
             reminder_result = await self._fetch_seller_open_rfqs_for_reminder(user.org_id)
 
+            logger.info(f"result from handle flow completion is:{reminder_result}")
+
             if not reminder_result.get("success"):
                 # If API fails, send generic closing message
                 return await self._send_generic_closing_message(user, session)
