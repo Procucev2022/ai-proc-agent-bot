@@ -534,10 +534,10 @@ class RegistrationService:
 
                     # Combine error message with registration prompt into ONE message
                     combined_message = (
-                        "*User Registration Rejected - User Already Exists*\n\n"
-                        "The details you provided are already registered in our system. Please try again with different details.\n\n"
-                        f"Please share your {field_list} to continue with the registration\n\n"
-                        "Make sure your email address is correct, as you'll receive an OTP there for verification."
+                        "*User Registration Failed – User Already Exists*\n\n"
+                        "The details you provided are already registered in our system. Please try again using different information.\n\n"
+                        f"To continue with the registration, please share the following details:\n{field_list}\n\n"
+                        "Please ensure your email address is correct, as you will receive an OTP there for verification."
                     )
 
                     if self.session_manager:

@@ -3518,12 +3518,17 @@ If multiple emails and user selected a number, include selection."""
                 if function_call.type == "function_call":
                     args = json.loads(function_call.arguments)
                     
+                    logger.info(f"[EXCEL-OPENAI] Raw OpenAI extraction result: {json.dumps(args, indent=2)}")
+                    
                     result = {
                         "success": True,
                         "rfqs": args.get("rfqs", []),
                         "processing_summary": args.get("processing_summary", {}),
                         "confidence": args.get("confidence", 0)
                     }
+                    
+                    logger.info(f"[EXCEL-OPENAI] Extracted {len(result['rfqs'])} RFQs with confidence {result['confidence']}%")
+                    logger.info(f"[EXCEL-OPENAI] Processing summary: {json.dumps(result['processing_summary'], indent=2)}")
                     
                     # Log successful Excel processing
                     self.interaction_logger.log_entity_extraction(

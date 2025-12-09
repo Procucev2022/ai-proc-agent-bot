@@ -877,6 +877,8 @@ class ChatService:
                 result = await self._process_interactive_message(user, session, message_content)
             elif message_type == "excel_upload":
                 result = await self._process_excel_upload(user, session, message_content)
+                # Save session immediately after Excel processing to persist the excel_file_processed flag
+                await self.session_manager.save_session(session, WorkflowType.rfq_creation)
             elif message_type == "image" or message_type == "document":
                 result = await self.image_processor.process_image_message(user, session, message_content)
                 await self.session_manager.save_session(session, WorkflowType.rfq_creation)
@@ -1779,6 +1781,10 @@ class ChatService:
 
     async def _process_excel_upload(self, user: User, session: ConversationSession, content: Any) -> Dict[str, Any]:
         """Process Excel file upload for RFQ creation."""
+        
+        # Track upload lock for cleanup
+        upload_lock = None
+        
         try:
             # Check if user needs registration
             if not user.is_registered:
@@ -1791,6 +1797,17 @@ class ChatService:
 
                 await self.session_manager.send_and_track_message(user.phone_number, registration_response, session)
                 return {"status": "handled", "response": "registration_required"}
+
+            # Check if an Excel file has already been processed in this workflow
+            if session.workflow_state and session.workflow_state.get('excel_file_processed'):
+                processed_filename = session.workflow_state.get('excel_filename', 'a file')
+                logger.info(f"[EXCEL-UPLOAD] Excel file already processed: {processed_filename} for user {user.phone_number}")
+                await self.whatsapp_service.send_message(
+                    user.phone_number,
+                    f"An Excel file ('{processed_filename}') has already been processed for this RFQ. "
+                    f"If you want to upload a different file, please type 'cancel' to restart."
+                )
+                return {"status": "handled", "response": "excel_already_processed"}
 
             # Extract document information - handle both formats
             if not isinstance(content, dict):
@@ -1838,6 +1855,35 @@ class ChatService:
                 await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
                 return {"status": "handled", "response": "validation_failed"}
 
+            # Acquire upload lock to prevent simultaneous uploads
+            from redis.asyncio import Redis
+            from app.utils.datetime_utils import utc_now
+            from app.config import get_settings
+            settings = get_settings()
+            redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+            normalized_phone = user.phone_number.lstrip('+')
+            lock_key = f"{normalized_phone}:excel_upload_lock"
+            upload_lock = redis_client.lock(lock_key, timeout=120)  # 2 minutes for processing
+            
+            acquired = await upload_lock.acquire(blocking=False)
+            if not acquired:
+                logger.info(f"[EXCEL-UPLOAD] Upload already in progress for {user.phone_number}")
+                await self.whatsapp_service.send_message(
+                    user.phone_number,
+                    "Another Excel file is currently being processed. Please wait a moment."
+                )
+                return {"status": "handled", "response": "upload_in_progress"}
+            
+            logger.info(f"[EXCEL-UPLOAD] Upload lock acquired for {user.phone_number}")
+
+            # Set excel_file_processed flag IMMEDIATELY after successful validation and lock acquisition
+            # This prevents race conditions with simultaneous uploads
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state['excel_file_processed'] = True
+            session.workflow_state['excel_processed_at'] = utc_now().isoformat()
+            session.workflow_state['excel_filename'] = filename
+            logger.info(f"[EXCEL-UPLOAD] Set excel_file_processed flag for {user.phone_number}, file: {filename}")
+
             # Process Excel file
             processing_service = ExcelProcessingService(self.openai_service)
             processing_result = await processing_service.process_excel_file(
@@ -1863,13 +1909,39 @@ class ChatService:
             if processing_result.get('success') and items and len(items) > 0:
                 # Set workflow type for RFQ creation
                 WorkflowManager.set_workflow_type(session, WorkflowType.rfq_creation, caller='excel_upload_complete')
-                return await self._handle_complete_excel(user, session, processing_result)
+                result = await self._handle_complete_excel(user, session, processing_result)
+                # Release lock after successful processing
+                if upload_lock:
+                    await upload_lock.release()
+                    logger.info(f"[EXCEL-UPLOAD] Lock released after successful processing for {user.phone_number}")
+                return result
             else:
                 # Processing failed or no items extracted
-                return await self._handle_incomplete_excel(user, session, excel_context)
+                result = await self._handle_incomplete_excel(user, session, excel_context)
+                # Release lock after incomplete handling
+                if upload_lock:
+                    await upload_lock.release()
+                    logger.info(f"[EXCEL-UPLOAD] Lock released after incomplete handling for {user.phone_number}")
+                return result
 
         except Exception as e:
             logger.error(f"Error processing Excel upload: {e}")
+            
+            # Clear the excel_file_processed flag on critical error
+            if session.workflow_state and 'excel_file_processed' in session.workflow_state:
+                del session.workflow_state['excel_file_processed']
+                del session.workflow_state['excel_processed_at']
+                del session.workflow_state['excel_filename']
+                logger.info(f"[EXCEL-UPLOAD] Cleared excel_file_processed flag due to critical error for {user.phone_number}")
+            
+            # Release lock on critical error
+            if upload_lock:
+                try:
+                    await upload_lock.release()
+                    logger.info(f"[EXCEL-UPLOAD] Lock released after critical error for {user.phone_number}")
+                except Exception as lock_error:
+                    logger.error(f"[EXCEL-UPLOAD] Failed to release lock: {lock_error}")
+            
             error_message = "Sorry, I encountered an error processing your Excel file. Please try uploading again or provide the details through text."
             await self.session_manager.send_and_track_message(user.phone_number, error_message, session)
             return {"status": "error", "response": str(e)}
@@ -2010,7 +2082,7 @@ class ChatService:
                 filename = excel_data.get('filename', 'Excel file')
                 
                 if not products:
-                    error_message = "❌ Sorry, I couldn't find the Excel data. Please upload your file again."
+                    error_message = "Sorry, I couldn't find the Excel data. Please upload your file again."
                     await self.session_manager.send_and_track_message(user.phone_number, error_message, session)
                     return {"status": "excel_data_missing"}
 
@@ -2021,7 +2093,11 @@ class ChatService:
                 if settings.use_sectioned_rfq:
                     # Handle sectioned RFQ workflow
                     result = await self._handle_excel_sectioned_rfq(user, session, products)
-                    if result.get('status') == 'excel_sectioned_rfq_initialized':
+                    if result.get('status') == 'validation_failed':
+                        # Validation failed - file rejected, return immediately
+                        logger.info(f"[EXCEL-CONFIRMED] File rejected due to validation failure")
+                        return result
+                    elif result.get('status') == 'excel_sectioned_rfq_initialized':
                         # Continue with sectioned RFQ flow using PurchaseIntentHandler
                         # update flag in session to hide modify btn 
                         session.workflow_state['excel_source'] = True
@@ -2119,55 +2195,70 @@ class ChatService:
         
     async def _handle_excel_sectioned_rfq(self, user: User, session: ConversationSession, products: List[Dict]) -> Dict[str, Any]:
         """Handle Excel data in sectioned RFQ workflow."""
+        from app.services.workflow_manager import WorkflowManager
+        
+        # Initialize sectioned RFQ workflow
+        if not WorkflowManager.is_sectioned_rfq_active(session):
+            logger.debug(f"[EXCEL-SECTIONED] Initializing sectioned RFQ workflow")
+            WorkflowManager.initialize_sectioned_rfq(session)
+            WorkflowManager.set_sectioned_rfq_section(session, "date_location")
+            if "sectioned_rfq" in session.workflow_state:
+                session.workflow_state["sectioned_rfq"]["active"] = True
+
         try:
-            from app.services.workflow_manager import WorkflowManager
-            
-            # Initialize sectioned RFQ workflow
-            if not WorkflowManager.is_sectioned_rfq_active(session):
-                logger.debug(f"[EXCEL-SECTIONED] Initializing sectioned RFQ workflow")
-                WorkflowManager.initialize_sectioned_rfq(session)
-                WorkflowManager.set_sectioned_rfq_section(session, "date_location")
-                if "sectioned_rfq" in session.workflow_state:
-                    session.workflow_state["sectioned_rfq"]["active"] = True
-
             products, delivery_details = await self.transform_rfq_to_section_rfq_format(session, products)
-            
-            # Store Excel products in items section
-            WorkflowManager.update_section_data(session, "items", products)
-            logger.debug(f"[EXCEL-SECTIONED] Stored {len(products)} products in items section")
-            
-            # Store delivery details in date_location section using proper field names
-            if delivery_details:
-                WorkflowManager.update_section_data(session, "date_location", delivery_details)
-                logger.debug(f"[EXCEL-SECTIONED] Stored delivery details: {delivery_details}")
-
-            # Clear existing excel session data
-            fields_to_clear = [
-                'completeness', 'missing_fields', 'conversation_stage',
-                'user_phone', 'upload_timestamp', 'filename', 'total_items', 'delivery_date',
-                'pincode', 'state', 'city', 'current_intent_result', 'original_message',
-                'original_intent','excel_confirmation_data','awaiting_excel_confirmation'
-            ]
-            
-            # Set extracted_entities to empty list
-            session.workflow_state['extracted_entities'] = []
-            
-            # Add external_user_id field
-            if session.workflow_state.get('user_phone'):
-                session.workflow_state['external_user_id'] = session.workflow_state['user_phone']
-            
-            # Clear other fields
-            for field in fields_to_clear:
-                session.workflow_state.pop(field, None)
-            
-           
-            await self.session_manager.save_session(session, WorkflowType.rfq_creation)
-            
-            return {"status": "excel_sectioned_rfq_initialized", "message": "Sectioned RFQ workflow started"}
-            
+        except ValueError as ve:
+            # Validation failed - send error message and reject file
+            error_msg = str(ve)
+            logger.error(f"[EXCEL-SECTIONED] Validation failed: {error_msg}")
+            await self.whatsapp_service.send_message(user.phone_number, error_msg, session_id=session)
+            # Clear workflow state and return validation failure
+            session.workflow_state = {}
+            session.workflow_type = None
+            await self.session_manager.save_session(session, None)
+            return {"status": "validation_failed", "error": error_msg}
         except Exception as e:
-            logger.error(f"[EXCEL-SECTIONED-ERROR] Error handling Excel sectioned RFQ: {e}")
+            logger.error(f"[EXCEL-SECTIONED-ERROR] Error transforming RFQ format: {e}")
+            from app.utils.excel_error_formatter import format_excel_error
+            error_msg = format_excel_error('validation_error', {'message': 'Error processing file. Please check your data and try again.'})
+            await self.whatsapp_service.send_message(user.phone_number, error_msg, session_id=session)
+            session.workflow_state = {}
+            session.workflow_type = None
+            await self.session_manager.save_session(session, None)
             return {"status": "error", "error": str(e)}
+        
+        # Store Excel products in items section
+        WorkflowManager.update_section_data(session, "items", products)
+        logger.debug(f"[EXCEL-SECTIONED] Stored {len(products)} products in items section")
+        
+        # Store delivery details in date_location section using proper field names
+        if delivery_details:
+            WorkflowManager.update_section_data(session, "date_location", delivery_details)
+            logger.debug(f"[EXCEL-SECTIONED] Stored delivery details: {delivery_details}")
+
+        # Clear existing excel session data
+        fields_to_clear = [
+            'completeness', 'missing_fields', 'conversation_stage',
+            'user_phone', 'upload_timestamp', 'filename', 'total_items', 'delivery_date',
+            'pincode', 'state', 'city', 'current_intent_result', 'original_message',
+            'original_intent','excel_confirmation_data','awaiting_excel_confirmation'
+        ]
+        
+        # Set extracted_entities to empty list
+        session.workflow_state['extracted_entities'] = []
+        
+        # Add external_user_id field
+        if session.workflow_state.get('user_phone'):
+            session.workflow_state['external_user_id'] = session.workflow_state['user_phone']
+        
+        # Clear other fields
+        for field in fields_to_clear:
+            session.workflow_state.pop(field, None)
+        
+       
+        await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+        
+        return {"status": "excel_sectioned_rfq_initialized", "message": "Sectioned RFQ workflow started"}
 
 
     async def transform_rfq_to_section_rfq_format(self, session: ConversationSession, products: List[Dict]) -> tuple[List[Dict], Dict]:
@@ -2200,20 +2291,39 @@ class ChatService:
                     delivery_details['deliveryDate'] = date_validation.get('normalized_date', delivery_details['deliveryDate'])
                     logger.debug(f"[TRANSFORM-RFQ] Delivery date validated: {delivery_details['deliveryDate']}")
                 else:
-                    logger.warning(f"[TRANSFORM-RFQ] Invalid delivery date: {date_validation.get('error')}")
-                    delivery_details['deliveryDate'] = ''
+                    # Date validation failed - raise exception to reject file
+                    from app.utils.excel_error_formatter import format_excel_error
+                    error_msg = date_validation.get('error', 'Invalid delivery date')
+                    logger.error(f"[TRANSFORM-RFQ] Date validation failed: {error_msg}")
+                    raise ValueError(format_excel_error('date_validation', {'message': error_msg}))
             
-            # Auto-fill city/state from pincode if available using sectioned RFQ handler
-            if delivery_details.get('pincode') and (not delivery_details.get('city') or not delivery_details.get('state')):
-                logger.debug(f"[TRANSFORM-RFQ] Auto-filling location from pincode: {delivery_details['pincode']}")
-                from app.services.handlers.sectioned_rfq_creation_handler import SectionedRFQCreationHandler
-                sectioned_handler = SectionedRFQCreationHandler(
-                    entity_service=self.entity_service,
-                    whatsapp_service=self.whatsapp_service,
-                    cancel_service=None,
-                    session_manager=self.session_manager
-                )
-                delivery_details = await sectioned_handler._autofill_location_from_pincode(delivery_details)
+            # Validate pincode if provided
+            if delivery_details.get('pincode'):
+                from app.utils.pincode_lookup import get_location_from_pincode_async
+                pincode = delivery_details['pincode'].strip()
+                
+                # Validate pincode format
+                if not pincode.isdigit() or len(pincode) != 6:
+                    from app.utils.excel_error_formatter import format_excel_error
+                    error_msg = f"Invalid pincode '{pincode}'. Pincode must be a 6-digit number."
+                    logger.error(f"[TRANSFORM-RFQ] Pincode format validation failed: {error_msg}")
+                    raise ValueError(format_excel_error('pincode_validation', {'message': error_msg}))
+                
+                # Validate pincode existence
+                location = await get_location_from_pincode_async(pincode)
+                if not location:
+                    from app.utils.excel_error_formatter import format_excel_error
+                    error_msg = f"Pincode '{pincode}' not found. Please provide a valid Indian pincode."
+                    logger.error(f"[TRANSFORM-RFQ] Pincode existence validation failed: {error_msg}")
+                    raise ValueError(format_excel_error('pincode_validation', {'message': error_msg}))
+                
+                # Auto-fill city/state from validated pincode
+                if not delivery_details.get('city') or not delivery_details.get('state'):
+                    logger.debug(f"[TRANSFORM-RFQ] Auto-filling location from validated pincode: {pincode}")
+                    if location.get('city'):
+                        delivery_details['city'] = location['city']
+                    if location.get('state'):
+                        delivery_details['state'] = location['state']
             
             # Transform each product to match sectioned RFQ items format exactly
             for product in products:
@@ -2232,9 +2342,13 @@ class ChatService:
             
             return transformed_products, delivery_details
             
+        except ValueError as ve:
+            # Re-raise ValueError for validation failures
+            raise
         except Exception as e:
+            from app.utils.excel_error_formatter import format_excel_error
             logger.error(f"[TRANSFORM-RFQ-ERROR] Error transforming RFQ format: {e}")
-            return products, {}
+            raise ValueError(format_excel_error('validation_error', {'message': 'Error processing file. Please check your data and try again.'}))
     
 
             
@@ -2313,7 +2427,7 @@ class ChatService:
                 skipped_items_summary = processing_summary.get('skipped_items_summary', '')
                 
                 # Show rejection message with skipped items details
-                rejection_message = f"❌ File rejected: {processing_result.get('error', 'File processing incomplete')}\n\n{skipped_items_summary}\n\nPlease fix your Excel file and upload again."
+                rejection_message = processing_result.get('error', 'File processing incomplete')
                 await self.session_manager.send_and_track_message(user.phone_number, rejection_message, session)
                 
                 # Update session state - waiting for excel reupload

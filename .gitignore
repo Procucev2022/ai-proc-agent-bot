@@ -30,3 +30,4 @@ list_selectable_sellers.py
 whatsapp_logs
 Client DB.session.sql
 Remote DB.session.sql
+*.md
