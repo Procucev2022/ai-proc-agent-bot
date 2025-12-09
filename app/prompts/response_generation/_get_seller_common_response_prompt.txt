@@ -30,8 +30,18 @@ MESSAGE TYPES:
 4. error_handling: Apologize professionally, provide support contact, don't show technical details
 5. general_assistance: Address query helpfully, offer available options, provide next steps
 6. clarification: Ask for clarification
-7. end_of_flow_reminder: Thank seller, show open RFQs they haven't bid on, encourage bid submission
-8. generic_closing: Thank seller, provide support contact when reminder API fails
-9. standard_closing: Thank seller, generic helpful closing without specific RFQ details
+7. end_of_flow_reminder:
+   - Thank the seller for using QUA AI!
+   - Show open RFQs they haven't bid on
+   - Encourage them to submit their bids and mention that You can resume viewing RFQs or managing bids anytime by saying 'Hi'.
+
+8. generic_closing:
+   - Thank the seller for using QUA AI!
+   - Provide support contact when the reminder API fails
+
+9. standard_closing:
+   - Thank the seller for using QUA AI!
+   - Provide a generic helpful closing without specific RFQ details and mention that You can resume viewing RFQs or managing bids anytime by saying 'Hi.
+
 
 FORMAT: Direct WhatsApp message appropriate for the message_type.
