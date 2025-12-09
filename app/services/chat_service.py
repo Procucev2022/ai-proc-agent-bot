@@ -877,6 +877,8 @@ class ChatService:
                 result = await self._process_interactive_message(user, session, message_content)
             elif message_type == "excel_upload":
                 result = await self._process_excel_upload(user, session, message_content)
+                # Save session immediately after Excel processing to persist the excel_file_processed flag
+                await self.session_manager.save_session(session, WorkflowType.rfq_creation)
             elif message_type == "image" or message_type == "document":
                 result = await self.image_processor.process_image_message(user, session, message_content)
                 await self.session_manager.save_session(session, WorkflowType.rfq_creation)
@@ -1779,6 +1781,10 @@ class ChatService:
 
     async def _process_excel_upload(self, user: User, session: ConversationSession, content: Any) -> Dict[str, Any]:
         """Process Excel file upload for RFQ creation."""
+        
+        # Track upload lock for cleanup
+        upload_lock = None
+        
         try:
             # Check if user needs registration
             if not user.is_registered:
@@ -1791,6 +1797,17 @@ class ChatService:
 
                 await self.session_manager.send_and_track_message(user.phone_number, registration_response, session)
                 return {"status": "handled", "response": "registration_required"}
+
+            # Check if an Excel file has already been processed in this workflow
+            if session.workflow_state and session.workflow_state.get('excel_file_processed'):
+                processed_filename = session.workflow_state.get('excel_filename', 'a file')
+                logger.info(f"[EXCEL-UPLOAD] Excel file already processed: {processed_filename} for user {user.phone_number}")
+                await self.whatsapp_service.send_message(
+                    user.phone_number,
+                    f"An Excel file ('{processed_filename}') has already been processed for this RFQ. "
+                    f"If you want to upload a different file, please type 'cancel' to restart."
+                )
+                return {"status": "handled", "response": "excel_already_processed"}
 
             # Extract document information - handle both formats
             if not isinstance(content, dict):
@@ -1838,6 +1855,35 @@ class ChatService:
                 await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
                 return {"status": "handled", "response": "validation_failed"}
 
+            # Acquire upload lock to prevent simultaneous uploads
+            from redis.asyncio import Redis
+            from app.utils.datetime_utils import utc_now
+            from app.config import get_settings
+            settings = get_settings()
+            redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+            normalized_phone = user.phone_number.lstrip('+')
+            lock_key = f"{normalized_phone}:excel_upload_lock"
+            upload_lock = redis_client.lock(lock_key, timeout=120)  # 2 minutes for processing
+            
+            acquired = await upload_lock.acquire(blocking=False)
+            if not acquired:
+                logger.info(f"[EXCEL-UPLOAD] Upload already in progress for {user.phone_number}")
+                await self.whatsapp_service.send_message(
+                    user.phone_number,
+                    "Another Excel file is currently being processed. Please wait a moment."
+                )
+                return {"status": "handled", "response": "upload_in_progress"}
+            
+            logger.info(f"[EXCEL-UPLOAD] Upload lock acquired for {user.phone_number}")
+
+            # Set excel_file_processed flag IMMEDIATELY after successful validation and lock acquisition
+            # This prevents race conditions with simultaneous uploads
+            session.workflow_state = session.workflow_state or {}
+            session.workflow_state['excel_file_processed'] = True
+            session.workflow_state['excel_processed_at'] = utc_now().isoformat()
+            session.workflow_state['excel_filename'] = filename
+            logger.info(f"[EXCEL-UPLOAD] Set excel_file_processed flag for {user.phone_number}, file: {filename}")
+
             # Process Excel file
             processing_service = ExcelProcessingService(self.openai_service)
             processing_result = await processing_service.process_excel_file(
@@ -1863,13 +1909,39 @@ class ChatService:
             if processing_result.get('success') and items and len(items) > 0:
                 # Set workflow type for RFQ creation
                 WorkflowManager.set_workflow_type(session, WorkflowType.rfq_creation, caller='excel_upload_complete')
-                return await self._handle_complete_excel(user, session, processing_result)
+                result = await self._handle_complete_excel(user, session, processing_result)
+                # Release lock after successful processing
+                if upload_lock:
+                    await upload_lock.release()
+                    logger.info(f"[EXCEL-UPLOAD] Lock released after successful processing for {user.phone_number}")
+                return result
             else:
                 # Processing failed or no items extracted
-                return await self._handle_incomplete_excel(user, session, excel_context)
+                result = await self._handle_incomplete_excel(user, session, excel_context)
+                # Release lock after incomplete handling
+                if upload_lock:
+                    await upload_lock.release()
+                    logger.info(f"[EXCEL-UPLOAD] Lock released after incomplete handling for {user.phone_number}")
+                return result
 
         except Exception as e:
             logger.error(f"Error processing Excel upload: {e}")
+            
+            # Clear the excel_file_processed flag on critical error
+            if session.workflow_state and 'excel_file_processed' in session.workflow_state:
+                del session.workflow_state['excel_file_processed']
+                del session.workflow_state['excel_processed_at']
+                del session.workflow_state['excel_filename']
+                logger.info(f"[EXCEL-UPLOAD] Cleared excel_file_processed flag due to critical error for {user.phone_number}")
+            
+            # Release lock on critical error
+            if upload_lock:
+                try:
+                    await upload_lock.release()
+                    logger.info(f"[EXCEL-UPLOAD] Lock released after critical error for {user.phone_number}")
+                except Exception as lock_error:
+                    logger.error(f"[EXCEL-UPLOAD] Failed to release lock: {lock_error}")
+            
             error_message = "Sorry, I encountered an error processing your Excel file. Please try uploading again or provide the details through text."
             await self.session_manager.send_and_track_message(user.phone_number, error_message, session)
             return {"status": "error", "response": str(e)}
