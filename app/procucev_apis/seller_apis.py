@@ -236,7 +236,7 @@ class SellerAPIService:
             )
             
             # Mock successful response for now
-            if response.get('status_code') == 200:
+            if response.get('success') is True:
                 return {
                     "success": True,
                     "open_rfqs": response.get("open_rfqs", []),
