@@ -604,7 +604,7 @@ Return only the selected email address or "none" if no clear selection.
             
             if user_type == "buyer":
                 # CRITICAL: Check verification status before allowing buyer access
-                verification_check = await self.verification_check_service.check_and_enforce_verification(user_phone, selected_user)
+                verification_check = await self.verification_check_service.check_and_enforce_verification(user_phone, selected_user,session)
                 
                 if not verification_check.get("access_granted"):
                     # User doesn't meet verification requirements
@@ -686,7 +686,7 @@ Return only the selected email address or "none" if no clear selection.
                 }
             elif user_type == "seller":
                 # CRITICAL: Check verification status before allowing seller access
-                verification_check = await self.verification_check_service.check_and_enforce_verification(user_phone, selected_user)
+                verification_check = await self.verification_check_service.check_and_enforce_verification(user_phone, selected_user,session)
                 
                 if not verification_check.get("access_granted"):
                     # Check if redirect to support is required

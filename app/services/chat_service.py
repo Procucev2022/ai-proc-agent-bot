@@ -1222,7 +1222,7 @@ class ChatService:
 
             if intent == "support" and confidence > 0.7:
                 logger.info(f"Support intent detected with {confidence}% confidence - handling immediately")
-                result = await self._handle_support_request(user, message)
+                result = await self._handle_support_request(user, message,session)
                 return result
 
             # Handle pending intent switch choices (user responding to "1. Continue or 2. Switch")
@@ -1273,7 +1273,7 @@ class ChatService:
                     elif new_intent == "greeting":
                         return await self._handle_greeting_inquiry(user, new_message,session ,intent_result)
                     else:
-                        return await self._handle_fallback(user, new_message)
+                        return await self._handle_fallback(user, new_message,session)
                 elif result.get("status") == "error":
                     # Handle intent switch errors
                     logger.error(f"Intent switch error: {result.get('error')}")
@@ -1356,7 +1356,7 @@ class ChatService:
 
             # Handle support requests immediately - even during active workflows
             if intent == "support" and confidence > 0.7:
-                result = await self._handle_support_request(user, message)
+                result = await self._handle_support_request(user, message,session)
                 return result
 
             # Handle contextual intents with direct response capability
@@ -1495,7 +1495,7 @@ class ChatService:
 
                 elif intent == "support" and confidence > 0.7:
                     # Support inquiry routing
-                    return await self._handle_support_request(user, message)
+                    return await self._handle_support_request(user, message,session)
 
                 else:
                     # Intent unclear or general → default seller flow (Active RFQs)
@@ -1711,7 +1711,8 @@ class ChatService:
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
                     profile_message,
-                    buttons_config
+                    buttons_config,
+                    session_id=session
                 )
                 
                 return {"status": "bfs_search_handled"}
@@ -1730,9 +1731,9 @@ class ChatService:
                 return await self._handle_greeting_inquiry(user, message,session, intent_result)
 
             elif confidence < 0.5:
-                return await self._handle_clarification_request(user, message)
+                return await self._handle_clarification_request(user, message,session)
             else:
-                return await self._handle_fallback(user, message)
+                return await self._handle_fallback(user, message,session)
 
         except Exception as e:
             logger.error(f"Error processing text message: {e}")
@@ -2656,7 +2657,7 @@ class ChatService:
             return await self._handle_error_response(e, user.phone_number, "faq_request",
                                                      "I'm having trouble accessing FAQ information. Please try again or contact support.")
 
-    async def _handle_support_request(self, user: User, message: str) -> Dict[str, Any]:
+    async def _handle_support_request(self, user: User, message: str,session) -> Dict[str, Any]:
         """Handle support requests by providing contact information and menu options."""
         try:
             settings = get_settings()
@@ -2694,7 +2695,8 @@ class ChatService:
                 user.phone_number,
                 support_message,
                 buttons_config,
-                header
+                header,
+                session_id=session
             )
             
             return {"status": "support_handled"}
@@ -2703,7 +2705,7 @@ class ChatService:
             return await self._handle_error_response(e, user.phone_number, "support_request",
                                                      "For support, please contact info.support.com")
 
-    async def _handle_clarification_request(self, user: User, message: str) -> Dict[str, Any]:
+    async def _handle_clarification_request(self, user: User, message: str,session) -> Dict[str, Any]:
         """Handle ambiguous messages requiring clarification."""
         try:
             # Check user role to provide appropriate menu
@@ -2720,7 +2722,8 @@ class ChatService:
                     user.phone_number,
                     "What can I assist you with today?",
                     buttons_config,
-                    "Please choose an option:"
+                    "Please choose an option:",
+                    session_id=session
                 )
             elif user_role == "seller":
                 # Seller fallback with buttons
@@ -2732,7 +2735,8 @@ class ChatService:
                     user.phone_number,
                     f"Hi {user.name}! What would you like to do today?",
                     buttons_config,
-                    "Please choose an option:"
+                    "Please choose an option:",
+                    session_id=session
                 )
             else:
                 # Fallback based on user role
@@ -2758,7 +2762,8 @@ class ChatService:
                     user.phone_number,
                     "How can I help you with your procurement needs today?",
                     buttons_config,
-                    "Please choose an option:"
+                    "Please choose an option:",
+                    session_id=session
                 )
             
             return {"status": "clarification_sent"}
@@ -2767,7 +2772,7 @@ class ChatService:
             return await self._handle_error_response(e, user.phone_number, "clarification_request",
                                                      "Could you be more specific about your procurement needs?")
 
-    async def _handle_fallback(self, user: User, message: str) -> Dict[str, Any]:
+    async def _handle_fallback(self, user: User, message: str,session) -> Dict[str, Any]:
         """Handle messages that don't fit other categories."""
         try:
             # Check user role to provide appropriate menu
@@ -2784,7 +2789,8 @@ class ChatService:
                     user.phone_number,
                     "What can I assist you with today?",
                     buttons_config,
-                    "Please choose an option:"
+                    "Please choose an option:",
+                    session_id=session
                 )
             elif user_role == "seller":
                 # Seller fallback with buttons
@@ -2796,7 +2802,8 @@ class ChatService:
                     user.phone_number,
                     "What would you like to do today?",
                     buttons_config,
-                    "Please choose an option:"
+                    "Please choose an option:",
+                    session_id=session
                 )
             else:
                 # Fallback based on user role
@@ -2822,7 +2829,8 @@ class ChatService:
                     user.phone_number,
                     "How can I help you with your procurement needs today?",
                     buttons_config,
-                    "Please choose an option:"
+                    "Please choose an option:",
+                    session_id=session
                 )
             
             return {"status": "fallback_handled"}
@@ -3029,7 +3037,8 @@ class ChatService:
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
                 profile_message,
-                buttons_config
+                buttons_config,
+                session_id=session
             )
             
             return {"status": "bfs_coming_soon_handled"}
@@ -3048,7 +3057,7 @@ class ChatService:
         
         elif button_id == "contact_support" or button_id == "other_support" or button_id == "get_support":
             # Trigger support flow
-            return await self._handle_support_request(user, "I need support")
+            return await self._handle_support_request(user, "I need support",session)
         
         elif button_id == "exit":
             # Trigger exit flow

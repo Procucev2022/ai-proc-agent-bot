@@ -897,7 +897,7 @@ class ProfileSelectionService:
             else:
                 # No existing token - perform verification check
                 verification_check = await self.authentication_service.verification_check_service.check_and_enforce_verification(
-                    user_phone, user_data
+                    user_phone, user_data,session
                 )
 
             if not verification_check.get("access_granted"):
