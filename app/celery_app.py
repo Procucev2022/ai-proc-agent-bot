@@ -20,6 +20,7 @@ celery_app = Celery(
         'app.tasks.vector_store_sync_task',
         'app.tasks.seller_matching_task',
         'app.tasks.daily_aggregation_task',
+        'app.tasks.daily_category_vector_rebuild_task',
         'app.tasks.test_cron_task'
     ]
 )
