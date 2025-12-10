@@ -15,6 +15,7 @@ ENABLE_AUTO_CATEGORIZATION = True
 ENABLE_VECTOR_STORE_SYNC = True
 ENABLE_SELLER_MATCHING = True
 ENABLE_DAILY_AGGREGATION = False
+ENABLE_DAILY_CATEGORY_REBUILD = True  # Daily rebuild of category_items vector store
 ENABLE_TEST_CRON = True
 # ============================================================================
 
@@ -95,6 +96,16 @@ if ENABLE_DAILY_AGGREGATION:
         }
     }
 
+if ENABLE_DAILY_CATEGORY_REBUILD:
+    beat_schedule['daily-category-vector-rebuild-task'] = {
+        'task': 'app.tasks.daily_category_vector_rebuild_task.rebuild_category_vector_store',
+        'schedule': crontab(minute=0, hour=2),  # Daily at 2:00 AM
+        'options': {
+            'expires': 7200,
+            'queue': 'vector_store'
+        }
+    }
+
 if ENABLE_TEST_CRON:
     beat_schedule['test-cron-job'] = {
         'task': 'app.tasks.test_cron_task.test_cron_job',
@@ -111,6 +122,7 @@ task_routes = {
     'app.tasks.vector_store_sync_task.*': {'queue': 'vector_store'},
     'app.tasks.seller_matching_task.*': {'queue': 'seller_matching'},
     'app.tasks.daily_aggregation_task.*': {'queue': 'aggregation'},
+    'app.tasks.daily_category_vector_rebuild_task.*': {'queue': 'vector_store'},
     'app.tasks.test_cron_task.*': {'queue': 'default'},
 }
 
