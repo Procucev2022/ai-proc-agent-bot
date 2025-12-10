@@ -97,10 +97,19 @@ class LearningCategorizationService:
                     "error": "Failed to generate 3-level categorization",
                     "details": categorization_result.get("error", "Unknown error")
                 }
-            
+
             # Extract categorization data
             categorization = categorization_result["categorization"]
-            
+
+            # De-duplicate: Check for hierarchy conflicts and resolve them
+            categorization = self._deduplicate_category_hierarchy(
+                db=db,
+                level_1=categorization["level_1"],
+                level_2=categorization["level_2"],
+                level_3=categorization["level_3"]
+            )
+            logger.info(f"Post-dedup categories: L1={categorization['level_1']}, L2={categorization['level_2']}, L3={categorization['level_3']}")
+
             # Check if this exact 3-level category already exists
             existing_exact = db.query(LearningCategory).filter(
                 and_(
@@ -285,7 +294,229 @@ class LearningCategorizationService:
             return False
         finally:
             db.close()
-    
+
+    def _deduplicate_category_hierarchy(
+        self,
+        db,
+        level_1: str,
+        level_2: str,
+        level_3: str
+    ) -> Dict[str, str]:
+        """
+        De-duplicate category hierarchy by checking for conflicts with existing categories.
+
+        Resolves issues where:
+        - A Level 1 category name appears as Level 2 elsewhere
+        - A Level 2 category name appears as Level 1 elsewhere
+        - Similar conflicts that break hierarchy consistency
+
+        Args:
+            db: Database session
+            level_1: Generated Level 1 category
+            level_2: Generated Level 2 category
+            level_3: Generated Level 3 category
+
+        Returns:
+            Dict with corrected level_1, level_2, level_3 values
+        """
+        try:
+            # Get all existing categories for conflict checking
+            existing_categories = db.query(LearningCategory).all()
+
+            if not existing_categories:
+                # No existing categories, no conflicts possible
+                return {"level_1": level_1, "level_2": level_2, "level_3": level_3}
+
+            # Build lookup sets for each level
+            existing_l1 = set()
+            existing_l2 = set()
+            existing_l3 = set()
+            l2_to_l1_map = {}  # Maps L2 -> its parent L1 (with highest usage)
+            l1_l2_pairs = {}   # Maps (L1, L2) -> usage count
+
+            for cat in existing_categories:
+                existing_l1.add(cat.level_1_category)
+                existing_l2.add(cat.level_2_category)
+                existing_l3.add(cat.level_3_category)
+
+                # Track L2 to L1 mapping with usage frequency
+                l2_key = cat.level_2_category
+                if l2_key not in l2_to_l1_map:
+                    l2_to_l1_map[l2_key] = (cat.level_1_category, cat.usage_frequency)
+                else:
+                    # Keep the L1 with higher usage
+                    if cat.usage_frequency > l2_to_l1_map[l2_key][1]:
+                        l2_to_l1_map[l2_key] = (cat.level_1_category, cat.usage_frequency)
+
+                # Track L1-L2 pair usage
+                pair_key = (cat.level_1_category, cat.level_2_category)
+                l1_l2_pairs[pair_key] = l1_l2_pairs.get(pair_key, 0) + cat.usage_frequency
+
+            corrected_l1 = level_1
+            corrected_l2 = level_2
+            corrected_l3 = level_3
+
+            # Rule 1: If generated L1 exists as L2 elsewhere, check if it should stay as L2
+            if level_1 in existing_l2 and level_1 not in existing_l1:
+                # L1 is actually used as L2 - find its parent L1
+                if level_1 in l2_to_l1_map:
+                    parent_l1 = l2_to_l1_map[level_1][0]
+                    logger.warning(f"De-dup: '{level_1}' exists as L2 under '{parent_l1}'. Promoting '{parent_l1}' to L1.")
+                    corrected_l1 = parent_l1
+                    corrected_l2 = level_1
+                    # L3 stays as is or becomes what was L2
+                    if level_2 != level_1:
+                        corrected_l3 = level_2  # Push original L2 down to L3
+
+            # Rule 2: If generated L2 exists as L1 elsewhere, use it as L1
+            # Check if L2 is primarily used as L1 (more categories under it as L1)
+            elif level_2 in existing_l1:
+                # Count how many L2 categories exist under this as L1
+                l1_usage_count = sum(1 for cat in existing_categories if cat.level_1_category == level_2)
+                # Count how many times it appears as L2
+                l2_usage_count = sum(1 for cat in existing_categories if cat.level_2_category == level_2)
+
+                # If it's used more as L1 than L2, or only as L1, swap
+                if l1_usage_count > l2_usage_count:
+                    logger.warning(f"De-dup: '{level_2}' is primarily L1 ({l1_usage_count} as L1 vs {l2_usage_count} as L2). Swapping.")
+                    corrected_l1 = level_2
+                    corrected_l2 = level_1  # Swap
+                    corrected_l3 = level_3
+
+            # Rule 3: If L2 already exists under a DIFFERENT L1, use the existing L1
+            elif level_2 in l2_to_l1_map:
+                existing_parent_l1 = l2_to_l1_map[level_2][0]
+                if existing_parent_l1 != level_1:
+                    # Check which L1-L2 pair has higher usage
+                    existing_pair_usage = l1_l2_pairs.get((existing_parent_l1, level_2), 0)
+                    new_pair_usage = 0  # New pair has no usage yet
+
+                    if existing_pair_usage > new_pair_usage:
+                        logger.warning(f"De-dup: '{level_2}' already exists under '{existing_parent_l1}' (usage: {existing_pair_usage}). Using existing L1.")
+                        corrected_l1 = existing_parent_l1
+
+            # Rule 4: Fuzzy match L2 to consolidate similar category names
+            # e.g., "Valves" vs "Valves & Fittings", "Cables & Wiring" vs "Cabling & Wiring"
+            if corrected_l2 not in existing_l2:
+                best_match = self._find_similar_l2(corrected_l2, existing_l2, l2_to_l1_map, corrected_l1)
+                if best_match:
+                    logger.warning(f"De-dup: '{corrected_l2}' similar to existing '{best_match}'. Using existing L2.")
+                    corrected_l2 = best_match
+                    # If the matched L2 belongs to a different L1, use that L1 too
+                    if best_match in l2_to_l1_map:
+                        matched_l1 = l2_to_l1_map[best_match][0]
+                        if matched_l1 != corrected_l1:
+                            logger.warning(f"De-dup: Using L1 '{matched_l1}' from matched L2 '{best_match}'.")
+                            corrected_l1 = matched_l1
+
+            if corrected_l1 != level_1 or corrected_l2 != level_2 or corrected_l3 != level_3:
+                logger.info(f"De-dup corrected: [{level_1} > {level_2} > {level_3}] -> [{corrected_l1} > {corrected_l2} > {corrected_l3}]")
+
+            return {
+                "level_1": corrected_l1,
+                "level_2": corrected_l2,
+                "level_3": corrected_l3
+            }
+
+        except Exception as e:
+            logger.error(f"Error in de-duplication: {str(e)}")
+            # Return original values if de-dup fails
+            return {"level_1": level_1, "level_2": level_2, "level_3": level_3}
+
+    def _find_similar_l2(
+        self,
+        new_l2: str,
+        existing_l2_set: set,
+        l2_to_l1_map: Dict,
+        preferred_l1: str,
+        similarity_threshold: float = 0.70
+    ) -> Optional[str]:
+        """
+        Find an existing L2 category that is similar to the new L2.
+
+        Uses token-based similarity to catch variations like:
+        - "Valves" vs "Valves & Fittings"
+        - "Springs" vs "Mechanical Springs"
+        - "Hydraulic Components" vs "Hydraulic & Pneumatic Components"
+
+        Args:
+            new_l2: The new L2 category name
+            existing_l2_set: Set of existing L2 category names
+            l2_to_l1_map: Mapping of L2 -> (L1, usage)
+            preferred_l1: The L1 we'd prefer to match under
+            similarity_threshold: Minimum similarity score (0-1) to consider a match
+
+        Returns:
+            Best matching existing L2 name, or None if no good match
+        """
+        from difflib import SequenceMatcher
+
+        def normalize(s: str) -> str:
+            """Normalize string for comparison."""
+            return s.lower().replace('&', ' and ').replace('-', ' ').replace(',', ' ')
+
+        def tokenize(s: str) -> set:
+            """Extract meaningful tokens from category name."""
+            normalized = normalize(s)
+            # Remove common filler words
+            stopwords = {'and', 'the', 'of', 'for', 'with', 'in', 'to', 'a'}
+            tokens = set(normalized.split()) - stopwords
+            return tokens
+
+        def calculate_similarity(s1: str, s2: str) -> float:
+            """Calculate similarity using both token overlap and sequence matching."""
+            tokens1 = tokenize(s1)
+            tokens2 = tokenize(s2)
+
+            # Token-based Jaccard similarity
+            if tokens1 and tokens2:
+                intersection = tokens1 & tokens2
+                union = tokens1 | tokens2
+                jaccard = len(intersection) / len(union)
+                is_subset = tokens1.issubset(tokens2) or tokens2.issubset(tokens1)
+            else:
+                jaccard = 0.0
+                is_subset = False
+
+            # Sequence-based similarity
+            seq_ratio = SequenceMatcher(None, normalize(s1), normalize(s2)).ratio()
+
+            # Subset bonus: when one category name contains all tokens of another
+            # e.g., "Valves" -> "Valves & Fittings", "Springs" -> "Mechanical Springs"
+            subset_bonus = 0.25 if is_subset else 0.0
+
+            # Combined score (equal weights + subset bonus)
+            combined = (jaccard * 0.5 + seq_ratio * 0.5) + subset_bonus
+            return min(combined, 1.0)
+
+        best_match = None
+        best_score = 0.0
+        best_same_l1 = False
+
+        for existing_l2 in existing_l2_set:
+            score = calculate_similarity(new_l2, existing_l2)
+
+            if score >= similarity_threshold:
+                # Check if this L2 is under the same L1 (preferred)
+                same_l1 = False
+                if existing_l2 in l2_to_l1_map:
+                    same_l1 = l2_to_l1_map[existing_l2][0] == preferred_l1
+
+                # Prefer matches under the same L1, then highest similarity
+                if same_l1 and not best_same_l1:
+                    best_match = existing_l2
+                    best_score = score
+                    best_same_l1 = True
+                elif same_l1 == best_same_l1 and score > best_score:
+                    best_match = existing_l2
+                    best_score = score
+                    best_same_l1 = same_l1
+
+        if best_match:
+            logger.debug(f"Fuzzy match: '{new_l2}' -> '{best_match}' (score: {best_score:.2f}, same_l1: {best_same_l1})")
+
+        return best_match
+
     def get_learning_category_suggestions(
         self, 
         item_description: str, 

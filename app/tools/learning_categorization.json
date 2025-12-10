@@ -1,7 +1,7 @@
 {
   "type": "function",
   "name": "generate_3_level_categorization",
-  "description": "Generate a structured 3-level categorization hierarchy for a procurement item",
+  "description": "Generate a structured 3-level categorization hierarchy for a procurement item, where Level 3 is the normalized item name itself",
   "parameters": {
     "type": "object",
     "properties": {
@@ -10,12 +10,12 @@
         "description": "Top-level category (broad industry/functional area). Examples: Office Equipment, Safety & Security, Construction Materials, Industrial Equipment, Electronics & Technology"
       },
       "level_2_category": {
-        "type": "string", 
+        "type": "string",
         "description": "Mid-level category (specific functional group). Examples: Digital Devices, Personal Protection, Building Materials, Power Systems, Communication Equipment"
       },
       "level_3_category": {
         "type": "string",
-        "description": "Specific category (precise item type). Examples: Laptops & Accessories, Safety Helmets, Concrete & Cement, Generators & UPS, Network Equipment"
+        "description": "The normalized item name itself (NOT a category). This should be the actual product/item being categorized, cleaned up and standardized. Examples: laptop, MacBook Pro laptop, safety helmet, Acer, MSI laptop, construction adhesive"
       },
       "confidence_score": {
         "type": "number",
