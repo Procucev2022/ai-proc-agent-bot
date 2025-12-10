@@ -498,9 +498,11 @@ async def process_message_async(webhook_data: Dict[str, Any]):
         # Set phone number context for all logs in this async task
         async with UserPhoneContext(from_number):
             # Create processing session for monitoring (enables please-wait messages)
+            # Allow concurrent processing for documents and images, but not for interactive messages
+            allow_concurrent = message_type.lower() in ["document", "image"]
             session_created = await create_direct_processing_session(from_number, message_type)
             
-            if not session_created:
+            if not session_created and not allow_concurrent:
                 logger.warning(
                     f"User {from_number} is already processing another message. "
                     f"Skipping {message_type} message to prevent concurrent processing conflicts."
@@ -511,9 +513,16 @@ async def process_message_async(webhook_data: Dict[str, Any]):
                 recipient_id = f"+{from_number}" if not from_number.startswith('+') else from_number
                 await whatsapp_service.send_message(
                     recipient_id,
-                    "We're still processing your previous request. Please wait a moment before sending new messages."
+                    "We're still processing your previous request. Please wait until it completes before sending a new one."
                 )
                 return  # Exit without processing to prevent concurrent execution
+            
+            # Log if allowing concurrent processing
+            if not session_created and allow_concurrent:
+                logger.info(
+                    f"[SESSION] Allowing concurrent processing for {message_type} message from {from_number} "
+                    f"(session already exists but concurrent processing is permitted for this message type)"
+                )
             
             # Initialize chat service with message_queue_service and db_session for non-text messages
             from app.services.chat_service import ChatService

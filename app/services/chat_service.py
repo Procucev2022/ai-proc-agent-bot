@@ -1805,7 +1805,7 @@ class ChatService:
                 await self.whatsapp_service.send_message(
                     user.phone_number,
                     f"An Excel file ('{processed_filename}') has already been processed for this RFQ. "
-                    f"If you want to upload a different file, please type 'cancel' to restart."
+                    f"If you would like to upload a different excel file, please create a new RFQ by completing the current one, or by cancelling it."
                 )
                 return {"status": "handled", "response": "excel_already_processed"}
 
@@ -1870,7 +1870,7 @@ class ChatService:
                 logger.info(f"[EXCEL-UPLOAD] Upload already in progress for {user.phone_number}")
                 await self.whatsapp_service.send_message(
                     user.phone_number,
-                    "Another Excel file is currently being processed. Please wait a moment."
+                    "Currently, we can only process one excel file per RFQ. To upload another file, please create a new RFQ by completing the current one, or by cancelling it."
                 )
                 return {"status": "handled", "response": "upload_in_progress"}
             
