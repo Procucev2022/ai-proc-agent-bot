@@ -14,9 +14,6 @@ from app.services.handlers.seller_rfq_interest_handler import SellerRFQInterestH
 
 logger = logging.getLogger(__name__)
 
-# Portal URL for RFQ details
-RFQ_PORTAL_BASE_URL = "https://p2pdevuiindia.azurewebsites.net"
-
 
 class InteractiveMessageProcessor:
     """Processes interactive messages (buttons, lists)."""
@@ -60,41 +57,10 @@ class InteractiveMessageProcessor:
         logger.info(f"Button response from {user.phone_number}: {button_id}")
 
         # Handle RFQ notification button responses from sellers
-        if button_id.startswith(SellerNotificationService.BUTTON_CHECK_DETAILS):
-            return await self._handle_rfq_check_details(user, button_id, session)
-        elif button_id.startswith(SellerNotificationService.BUTTON_INTERESTED):
+        if button_id.startswith(SellerNotificationService.BUTTON_INTERESTED):
             return await self._handle_rfq_interested(user, button_id, session)
 
         return {"status": "button_handled", "button_id": button_id}
-
-    async def _handle_rfq_check_details(self, user: User, button_id: str,
-                                         session: ConversationSession) -> Dict[str, Any]:
-        """
-        Handle 'Check Details' button click from seller RFQ notification.
-
-        Button ID format: rfq_check_details_{rfq_id}_{seller_id}
-        """
-        # Parse button_id to extract rfq_id (seller_id not needed for check details)
-        suffix = button_id.replace(f"{SellerNotificationService.BUTTON_CHECK_DETAILS}_", "")
-        parts = suffix.split("_")
-        rfq_id = parts[0] if parts else None
-
-        logger.info(f"Seller {user.phone_number} clicked Check Details for RFQ {rfq_id}")
-
-        # Send response with link to RFQ details
-        rfq_details_url = f"{RFQ_PORTAL_BASE_URL}/rfq/{rfq_id}"
-        message = f"For more details about this RFQ, please visit:\n{rfq_details_url}"
-
-        await self.whatsapp_service.send_message(
-            recipient_id=user.phone_number,
-            message=message
-        )
-
-        return {
-            "status": "rfq_check_details_handled",
-            "rfq_id": rfq_id,
-            "response_sent": True
-        }
 
     async def _handle_rfq_interested(self, user: User, button_id: str,
                                       session: ConversationSession) -> Dict[str, Any]:

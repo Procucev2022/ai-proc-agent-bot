@@ -37,7 +37,6 @@ class SellerNotificationService:
     """
 
     # Button IDs for handling responses
-    BUTTON_CHECK_DETAILS = "rfq_check_details"
     BUTTON_INTERESTED = "rfq_interested"
 
     def __init__(self):
@@ -142,10 +141,6 @@ class SellerNotificationService:
         if seller_id:
             return [
                 {
-                    "id": f"{self.BUTTON_CHECK_DETAILS}_{rfq_id}_{seller_id}",
-                    "title": "Check Details"
-                },
-                {
                     "id": f"{self.BUTTON_INTERESTED}_{rfq_id}_{seller_id}",
                     "title": "I'm Interested"
                 }
@@ -153,10 +148,6 @@ class SellerNotificationService:
         else:
             # Legacy format without seller_id
             return [
-                {
-                    "id": f"{self.BUTTON_CHECK_DETAILS}_{rfq_id}",
-                    "title": "Check Details"
-                },
                 {
                     "id": f"{self.BUTTON_INTERESTED}_{rfq_id}",
                     "title": "I'm Interested"
