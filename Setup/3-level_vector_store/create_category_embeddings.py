@@ -25,6 +25,7 @@ import chromadb.utils.embedding_functions as embedding_functions
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from app.database import get_db_session
+from app.config import get_settings
 from app.models import LearningCategory, LearningCategoryItem, SellerLearningMapping
 from app.services.seller_data_adapter import SellerDataAdapter
 
@@ -34,11 +35,15 @@ logger = logging.getLogger(__name__)
 
 def create_unified_vector_store(clear_existing: bool = False):
     """Create unified ChromaDB vector store for learning taxonomy."""
-    
-    # Initialize ChromaDB
-    chroma_path = "./unified_chroma_db"
-    chroma_client = chromadb.PersistentClient(path=chroma_path)
+    settings = get_settings()
+
+    # Connect to ChromaDB server
+    chroma_client = chromadb.HttpClient(
+        host=settings.chroma_host,
+        port=settings.chroma_port
+    )
     embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+    logger.info(f"Connected to ChromaDB server at {settings.chroma_host}:{settings.chroma_port}")
     
     # Handle existing collection
     if clear_existing:
