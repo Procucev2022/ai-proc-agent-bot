@@ -430,37 +430,31 @@ class ChatService:
             message_intent_result = None
 
             # CRITICAL: Handle RFQ notification buttons BEFORE intent classification
-            # These buttons (rfq_interested, rfq_check_details) should skip intent classification entirely
+            # These buttons (rfq_interested) should skip intent classification entirely
             if message_type == "interactive" and isinstance(message_content, dict):
                 button_id = message_content.get("button_reply", {}).get("id", "")
-                if button_id.startswith("rfq_check_details") or button_id.startswith("rfq_interested"):
+                if button_id.startswith("rfq_interested"):
                     logger.info(f"RFQ notification button detected: {button_id} - skipping intent classification")
-                    from app.services.handlers.seller_rfq_interest_handler import SellerRFQInterestHandler, RFQ_PORTAL_BASE_URL
+                    from app.services.handlers.seller_rfq_interest_handler import SellerRFQInterestHandler
 
                     # Parse button_id to extract rfq_id and seller_id
-                    # Format: rfq_interested_{rfq_id}_{seller_id} or rfq_check_details_{rfq_id}_{seller_id}
+                    # Format: rfq_interested_{rfq_id}_{seller_id}
                     # Note: RFQ ID may contain underscores (e.g., RFQ_TEST_001), seller_id is UUID with dashes
                     # Split from right with maxsplit=1 to get seller_id, rest is rfq_id
-                    prefix = "rfq_interested_" if button_id.startswith("rfq_interested") else "rfq_check_details_"
+                    prefix = "rfq_interested_"
                     suffix = button_id[len(prefix):]
                     parts = suffix.rsplit("_", 1)  # Split from right, max 1 split
                     rfq_id = parts[0] if parts else None
                     seller_id = parts[1] if len(parts) > 1 else None
 
-                    if button_id.startswith("rfq_check_details"):
-                        # Send portal link directly for Check Details
-                        rfq_details_url = f"{RFQ_PORTAL_BASE_URL}/rfq/{rfq_id}"
-                        await self.whatsapp_service.send_message(user_phone, f"For more details about this RFQ, please visit:\n{rfq_details_url}")
-                        return {"status": "rfq_check_details_handled", "rfq_id": rfq_id}
-                    else:
-                        # Handle I'm Interested - use the handler directly
-                        handler = SellerRFQInterestHandler(
-                            whatsapp_service=self.whatsapp_service,
-                            authentication_service=self.authentication_service,
-                            session_manager=self.session_manager,
-                            otp_service=self.authentication_service.otp_service if self.authentication_service else None
-                        )
-                        return await handler.handle_rfq_interest_click(user_phone, rfq_id, seller_id, session)
+                    # Handle I'm Interested - use the handler directly
+                    handler = SellerRFQInterestHandler(
+                        whatsapp_service=self.whatsapp_service,
+                        authentication_service=self.authentication_service,
+                        session_manager=self.session_manager,
+                        otp_service=self.authentication_service.otp_service if self.authentication_service else None
+                    )
+                    return await handler.handle_rfq_interest_click(user_phone, rfq_id, seller_id, session)
 
                 if button_id.startswith("confirm_exit") or button_id.startswith("decline_exit"):
                     logger.info(f"Exit buttons clicked in auth workflow  - handling immediately to prevent loop")

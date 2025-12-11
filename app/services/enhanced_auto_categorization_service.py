@@ -19,6 +19,7 @@ from typing import Dict, Any, List, Optional
 import chromadb
 import chromadb.utils.embedding_functions as embedding_functions
 
+from ..config import get_settings
 from ..database import get_db_session
 from ..models import AutoCategorizationLog
 from .auto_categorization_service import AutoCategorizationService
@@ -26,42 +27,49 @@ from .openai_service import OpenAIService
 
 logger = logging.getLogger(__name__)
 
+
 class EnhancedAutoCategorizationService:
     """
     Enhanced auto-categorization using unified 3-level taxonomy vector store.
-    
+
     Provides fast categorization with fallback to existing service when needed.
+    Uses ChromaDB server mode (HttpClient) for multi-worker deployments.
     """
-    
-    def __init__(self, chroma_path: str = "./unified_chroma_db"):
-        """Initialize the enhanced auto-categorization service."""
-        self.chroma_path = chroma_path
-        
-        # Initialize ChromaDB client
-        self.chroma_client = chromadb.PersistentClient(path=chroma_path)
+
+    def __init__(self):
+        """Initialize the enhanced auto-categorization service with ChromaDB server."""
+        settings = get_settings()
+
+        # Use Sentence Transformer embedding function
         self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name="all-MiniLM-L6-v2"
         )
-        
-        # # Get collection
-        # self.collection = self.chroma_client.get_collection(
-        #     name="learning_taxonomy",
-        #     embedding_function=self.embedding_function
-        # )
-        # Get collection
+
+        # Connect to ChromaDB server (required for multi-worker support)
+        self.chroma_client = chromadb.HttpClient(
+            host=settings.chroma_host,
+            port=settings.chroma_port
+        )
+
+        # Test connection - fail fast if server is not running
         try:
-            self.collection = self.chroma_client.get_collection(
-                name="learning_taxonomy",
-                embedding_function=self.embedding_function
-            )
-        except Exception:  # Handles case when collection doesn't exist
-            self.collection = self.chroma_client.create_collection(
-                name="learning_taxonomy",
-                embedding_function=self.embedding_function
-            )
+            self.chroma_client.heartbeat()
+            logger.info(f"EnhancedAutoCategorizationService connected to ChromaDB server at {settings.chroma_host}:{settings.chroma_port}")
+        except Exception as e:
+            raise RuntimeError(
+                f"ChromaDB server not available at {settings.chroma_host}:{settings.chroma_port}. "
+                f"Start the server with: chroma run --host 0.0.0.0 --port {settings.chroma_port} --path ./chroma_db"
+            ) from e
+
+        # Get or create collection
+        self.collection = self.chroma_client.get_or_create_collection(
+            name="learning_taxonomy",
+            embedding_function=self.embedding_function
+        )
+
         # Initialize fallback service
         self.fallback_service = AutoCategorizationService()
-        
+
         # Initialize OpenAI service
         self.openai_service = OpenAIService()
 

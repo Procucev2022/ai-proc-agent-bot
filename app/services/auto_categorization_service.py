@@ -60,39 +60,49 @@ def get_project_root() -> Path:
 class AutoCategorizationService:
     """
     Service for automatically categorizing RFQ items using vector search and AI.
-    
+
     Uses ChromaDB with Sentence Transformer embeddings for fast similarity search,
     then leverages OpenAI for intelligent final categorization decisions with
     confidence scoring and reasoning.
+
+    Uses ChromaDB server mode (HttpClient) for multi-worker deployments.
     """
-    
-    def __init__(self, persist_directory: Optional[str] = None):
-        """Initialize the auto-categorization service with ChromaDB."""
-        if persist_directory:
-            self.persist_directory = persist_directory
-        else:
-            # Always use project root + chroma_db for consistent storage location
-            project_root = get_project_root()
-            self.persist_directory = str(project_root / "chroma_db")
-        
-        # Initialize ChromaDB client with Sentence Transformer embeddings
-        self.chroma_client = chromadb.PersistentClient(path=self.persist_directory)
-        
+
+    def __init__(self):
+        """Initialize the auto-categorization service with ChromaDB server."""
+        settings = get_settings()
+
         # Use Sentence Transformer embedding function
         self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name="all-MiniLM-L6-v2"
         )
-        
+
+        # Connect to ChromaDB server (required for multi-worker support)
+        self.chroma_client = chromadb.HttpClient(
+            host=settings.chroma_host,
+            port=settings.chroma_port
+        )
+
+        # Test connection - fail fast if server is not running
+        try:
+            self.chroma_client.heartbeat()
+            logger.info(f"Connected to ChromaDB server at {settings.chroma_host}:{settings.chroma_port}")
+        except Exception as e:
+            raise RuntimeError(
+                f"ChromaDB server not available at {settings.chroma_host}:{settings.chroma_port}. "
+                f"Start the server with: chroma run --host 0.0.0.0 --port {settings.chroma_port} --path ./chroma_db"
+            ) from e
+
         # Get or create collection with embedding function
         self.collection = self.chroma_client.get_or_create_collection(
             name="category_items",
             embedding_function=self.embedding_function
         )
-        
+
         # Initialize OpenAI service
         self.openai_service = OpenAIService()
-        
-        # Initialize Learning Categorization service  
+
+        # Initialize Learning Categorization service
         self.learning_service = LearningCategorizationService()
     
     def populate_embeddings_from_db(self) -> int:
@@ -563,11 +573,12 @@ class AutoCategorizationService:
     def get_collection_stats(self) -> Dict[str, Any]:
         """Get statistics about the ChromaDB collection."""
         try:
+            settings = get_settings()
             count = self.collection.count()
             return {
                 "total_items": count,
                 "collection_name": self.collection.name,
-                "persist_directory": self.persist_directory
+                "chroma_server": f"{settings.chroma_host}:{settings.chroma_port}"
             }
         except Exception as e:
             logger.error(f"Error getting collection stats: {str(e)}")
@@ -655,11 +666,12 @@ class AutoCategorizationService:
                     "error": "OpenAI service not properly initialized"
                 }
             
+            settings = get_settings()
             return {
                 "status": "healthy",
                 "chromadb_items": collection_stats.get("total_items", 0),
                 "database_categories": category_count,
-                "persist_directory": self.persist_directory
+                "chroma_server": f"{settings.chroma_host}:{settings.chroma_port}"
             }
             
         except Exception as e:

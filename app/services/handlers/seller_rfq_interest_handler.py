@@ -16,9 +16,6 @@ from app.redis_db import get_auth_redis_service
 
 logger = logging.getLogger(__name__)
 
-# Portal URL for RFQ details
-RFQ_PORTAL_BASE_URL = "https://p2pdevuiindia.azurewebsites.net"
-
 
 class SellerRFQInterestHandler:
     """
@@ -70,8 +67,8 @@ class SellerRFQInterestHandler:
 
         # 3. Route based on auth state
         if auth_state["state"] == "correct_seller":
-            # Already authenticated as correct seller - send portal link directly
-            return await self._send_portal_link(user_phone, rfq_id, session)
+            # Already authenticated as correct seller - redirect to seller flow
+            return await self._redirect_to_seller_flow(user_phone, rfq_id, seller_id, session)
 
         elif auth_state["state"] == "not_auth":
             # Not authenticated - start OTP auth for target seller
@@ -419,48 +416,76 @@ class SellerRFQInterestHandler:
             logger.error(f"Error getting seller email for {user_phone}: {e}")
             return None, None
 
-    async def _send_portal_link(self, user_phone: str, rfq_id: str,
-                                session: ConversationSession) -> Dict[str, Any]:
+    async def _redirect_to_seller_flow(self, user_phone: str, rfq_id: str,
+                                        seller_id: str, session: ConversationSession) -> Dict[str, Any]:
         """
-        Send portal link message after successful authentication.
+        Redirect to seller service flow after successful authentication.
 
         Args:
             user_phone: User's phone number
-            rfq_id: RFQ ID to include in portal link
+            rfq_id: RFQ ID the seller is interested in
+            seller_id: Seller's ID
             session: Current conversation session
         """
+        from app.services.seller_service import SellerService
 
-        success_message = (
-            f"View full details and submit your quote:\n{RFQ_PORTAL_BASE_URL}"
+        logger.info(f"Redirecting {user_phone} to seller flow for RFQ {rfq_id}")
+
+        # Get authenticated user data from Redis (already a User object from schemas)
+        normalized_phone = user_phone.lstrip('+')
+        user = await self.auth_redis_service.retrieve(normalized_phone)
+
+        if not user:
+            logger.error(f"No authenticated user data found for {user_phone}")
+            await self.whatsapp_service.send_message(
+                user_phone,
+                "Sorry, there was an error processing your request. Please try again."
+            )
+            return {"status": "error", "error": "User data not found"}
+
+        # Set up the workflow state for RFQ selection - this ensures the seller service
+        # routes to _handle_rfq_selection_response which processes the specific RFQ
+        WorkflowManager.set_workflow_type(session, WorkflowType.seller_rfq_view, caller="seller_rfq_interest_handler")
+        session.workflow_state = {
+            "seller_workflow_state": "awaiting_rfq_selection"
+        }
+
+        # Initialize seller service and trigger the workflow with the specific RFQ ID
+        seller_service = SellerService(
+            whatsapp_service=self.whatsapp_service,
+            session_manager=self.session_manager
         )
 
-        await self.whatsapp_service.send_message(user_phone, success_message)
+        # Trigger seller workflow with the specific RFQ ID as the message
+        # The _handle_rfq_selection_response will extract and process this RFQ
+        result = await seller_service.handle_seller_workflow(
+            user=user,
+            session=session,
+            message=rfq_id
+        )
 
-        # Clear workflow after sending link
-        session.workflow_type = None
-        session.workflow_state = {}
-
-        if self.session_manager:
-            await self.session_manager.save_session(session)
+        # Send the message if not already sent by the seller service
+        if result.get("message") and not result.get("message_already_sent"):
+            await self.whatsapp_service.send_message(user_phone, result["message"])
 
         return {
-            "status": "portal_link_sent",
+            "status": "redirected_to_seller_flow",
             "rfq_id": rfq_id,
-            "portal_url": RFQ_PORTAL_BASE_URL,
-            "workflow_cleared": True
+            "seller_flow_result": result
         }
 
     async def handle_otp_validated(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
         """
-        Called after successful OTP validation to send portal link.
+        Called after successful OTP validation to redirect to seller flow.
 
         This method is called from authentication_service.handle_email_otp_validation
         when the workflow type is seller_rfq_intimation.
         """
         rfq_id = session.workflow_state.get("rfq_id")
+        seller_id = session.workflow_state.get("target_seller_id")
 
         if not rfq_id:
             logger.error(f"No rfq_id found in session for {user_phone}")
             return {"status": "error", "error": "RFQ ID not found in session"}
 
-        return await self._send_portal_link(user_phone, rfq_id, session)
+        return await self._redirect_to_seller_flow(user_phone, rfq_id, seller_id, session)

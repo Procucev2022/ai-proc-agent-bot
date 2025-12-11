@@ -78,6 +78,14 @@ class Settings:
         self.celery_task_time_limit = int(os.getenv("CELERY_TASK_TIME_LIMIT", "360"))
         self.celery_beat_schedule_enabled = os.getenv("CELERY_BEAT_SCHEDULE_ENABLED", "true").lower() == "true"
 
+        # ChromaDB configuration (server mode for multi-worker support)
+        self.chroma_host = os.getenv("CHROMA_HOST", "localhost")
+        self.chroma_port = int(os.getenv("CHROMA_PORT", "8100"))
+        self.chroma_use_server = os.getenv("CHROMA_USE_SERVER", "true").lower() == "true"
+        # Fallback paths for PersistentClient (used when server is not available)
+        self.chroma_persist_directory = os.getenv("CHROMA_PERSIST_DIRECTORY", "./chroma_db")
+        self.chroma_unified_persist_directory = os.getenv("CHROMA_UNIFIED_PERSIST_DIRECTORY", "./unified_chroma_db")
+
         # Redis session storage configuration
         self.redis_session_storage_enabled = os.getenv("REDIS_SESSION_STORAGE_ENABLED", "true").lower() == "true"
         self.redis_session_ttl_seconds = int(os.getenv("REDIS_SESSION_TTL_SECONDS", "900"))  # 15 minutes default (timeout + buffer)

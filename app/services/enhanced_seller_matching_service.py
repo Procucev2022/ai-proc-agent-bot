@@ -22,35 +22,53 @@ from math import radians, cos, sin, asin, sqrt
 import chromadb
 import chromadb.utils.embedding_functions as embedding_functions
 
+from ..config import get_settings
 from ..database import get_db_session
 from ..models import Seller
 from .openai_service import OpenAIService
 
 logger = logging.getLogger(__name__)
 
+
 class EnhancedSellerMatchingService:
     """
     Enhanced seller matching using unified 3-level taxonomy vector store.
-    
+
     Provides fast seller discovery based on category matching and location.
+    Uses ChromaDB server mode (HttpClient) for multi-worker deployments.
     """
-    
-    def __init__(self, chroma_path: str = "./unified_chroma_db"):
-        """Initialize the enhanced seller matching service."""
-        self.chroma_path = chroma_path
-        
-        # Initialize ChromaDB client
-        self.chroma_client = chromadb.PersistentClient(path=chroma_path)
+
+    def __init__(self):
+        """Initialize the enhanced seller matching service with ChromaDB server."""
+        settings = get_settings()
+
+        # Use Sentence Transformer embedding function
         self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name="all-MiniLM-L6-v2"
         )
-        
-        # Get collection
-        self.collection = self.chroma_client.get_collection(
+
+        # Connect to ChromaDB server (required for multi-worker support)
+        self.chroma_client = chromadb.HttpClient(
+            host=settings.chroma_host,
+            port=settings.chroma_port
+        )
+
+        # Test connection - fail fast if server is not running
+        try:
+            self.chroma_client.heartbeat()
+            logger.info(f"EnhancedSellerMatchingService connected to ChromaDB server at {settings.chroma_host}:{settings.chroma_port}")
+        except Exception as e:
+            raise RuntimeError(
+                f"ChromaDB server not available at {settings.chroma_host}:{settings.chroma_port}. "
+                f"Start the server with: chroma run --host 0.0.0.0 --port {settings.chroma_port} --path ./chroma_db"
+            ) from e
+
+        # Get or create collection
+        self.collection = self.chroma_client.get_or_create_collection(
             name="learning_taxonomy",
             embedding_function=self.embedding_function
         )
-        
+
         # Initialize OpenAI service
         self.openai_service = OpenAIService()
     
