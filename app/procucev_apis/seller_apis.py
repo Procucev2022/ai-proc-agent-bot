@@ -133,7 +133,7 @@ class SellerAPIService:
             )
 
             # Mock successful response for now
-            if response.get('status_code') == 200:
+            if response.get('success') is True:
                 return {"success": True, "email_sent": True, "data": response}
             else:
                 return {"success": False, "error": response.get('message', 'Failed to send RFQ email')}

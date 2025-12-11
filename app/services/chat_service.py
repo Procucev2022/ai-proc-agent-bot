@@ -466,7 +466,7 @@ class ChatService:
                     logger.info(f"Exit buttons clicked in auth workflow  - handling immediately to prevent loop")
                     exit_result = await self.exit_service.handle_exit_intent(user_phone, session,message=message_content)
                     return exit_result
-                if button_id.startswith("confirm_cancel") or button_id.startswith("'decline_cancel"):
+                if button_id.startswith("confirm_cancel") or button_id.startswith("'decline_cancel") or button_id.startswith("cancel_no_credits"):
                     logger.info(f"Cancel buttons clicked in auth workflow  - handling immediately to prevent loop")
                     cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message_content)
                     await self.session_manager.save_session(session, session.workflow_type)
@@ -3443,8 +3443,10 @@ class ChatService:
                 else None
             )
 
+
             # Check if user is already inside seller workflow
             is_existing = workflow_type == "seller_rfq_view"
+
 
             # --- Helper: send message once only ---
             async def send_response(result , session):
@@ -3458,6 +3460,7 @@ class ChatService:
                 user, session, message, intent_result
             )
 
+
             # --- Workflow init logic (only for new flows) ---
             if not is_existing and result.get("success"):
                 if result.get("workflow_step") in [
@@ -3470,12 +3473,47 @@ class ChatService:
                     await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
             # Handle display_rfqs_to_seller workflow step with buttons
-            if result.get("workflow_step") in ["display_rfqs_to_seller" , "general_seller_response"] :
+            if result.get("workflow_step") in ["display_rfqs_to_seller" , "general_seller_response","awaiting_plan_selection"] :
                 buttons_config = [
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
                 
+                msg = result.get("message")
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    msg,
+                    buttons_config
+                )
+                # Save assistant response in history
+                if msg:
+                    self.session_manager.add_message_to_history(session, "assistant", msg)
+                    await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
+
+            elif result.get("workflow_step") in ["general_seller_response","payment_link_generated",
+                                               "awaiting_plan_selection"]:
+
+                buttons_config = [
+                    {"id": "view_rfqs", "title": "Request Active RFQs"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+
+                msg = result.get("message")
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    msg,
+                    buttons_config
+                )
+                # Save assistant response in history
+                if msg:
+                    self.session_manager.add_message_to_history(session, "assistant", msg)
+                    await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
+
+            elif result.get("workflow_step") in ["no_credits_available"]:
+                buttons_config = [
+                    {"id": "cancel_no_credits", "title": "Cancel"}
+                ]
                 msg = result.get("message")
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,

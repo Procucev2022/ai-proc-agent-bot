@@ -585,11 +585,16 @@ class SellerService:
 
             response_message = await self.response_helpers.generate_seller_contextual_response(context)
 
-            # Update session state - clear available_plans to prevent re-showing
-            session.workflow_state["seller_workflow_state"] = "payment_link_sent"
-            session.workflow_state["selected_plan"] = selected_plan
 
-            await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
+            from app.models import ConversationOutcome
+            session.outcome = ConversationOutcome.completed
+            session.workflow_type = None
+            # session.workflow_state = {}
+            session.workflow_state["seller_workflow_state"] = {}
+
+            logger.info(f"Cleared workflow_type and workflow_state after successful RFQ creation")
+
+            await self.session_manager.save_session(session,persist_to_db=False)
 
             return {
                 "success": True,
@@ -633,12 +638,12 @@ class SellerService:
                     successful_results = batch_result.get("results", {}).get("successful", [])
                     failed_results = batch_result.get("results", {}).get("failed", [])
 
-                    # Update sent flags for successful emails
-                    successful_rfq_ids = [result["rfq_id"] for result in successful_results]
-                    if successful_rfq_ids:
-                        await self.seller_api_service.update_rfq_seller_sent_flag(
-                            successful_rfq_ids[0], seller_id
-                        )
+                    # # Update sent flags for successful emails
+                    # successful_rfq_ids = [result["rfq_id"] for result in successful_results]
+                    # if successful_rfq_ids:
+                    #     await self.seller_api_service.update_rfq_seller_sent_flag(
+                    #         successful_rfq_ids[0], seller_id
+                    #     )
 
                     # Format results for consistency with enhanced error handling
                     email_results = []

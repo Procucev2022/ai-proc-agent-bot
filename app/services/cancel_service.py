@@ -303,6 +303,10 @@ class CancelService:
                 "Your request has been cancelled. What can I assist you with next?"
             )
 
+            # If user_type is unknown, fetch from auth system
+            if not user_type:
+                user_type = await self._get_user_type_from_auth(user_phone)
+
             # Check if user is a buyer and send buttons accordingly
             logger.info(f"User type from parameter: {user_type} (type: {type(user_type)})")
 
@@ -326,6 +330,7 @@ class CancelService:
                 )
             elif is_seller:
                 buttons_config = [
+                    {"id": "view_rfqs", "title": "Request Active RFQs"},
                     {"id": "rfq_status", "title": "Check RFQs Status"},
                     {"id": "contact_support", "title": "Contact Support"}
                 ]
@@ -346,6 +351,35 @@ class CancelService:
         except Exception as e:
             logger.error(f"Error sending cancellation message to {user_phone}: {e}")
             return False
+
+    async def _get_user_type_from_auth(self, user_phone: str) -> str:
+        """
+        Get user type from Redis auth token when not available in cache.
+
+        Args:
+            user_phone: User's phone number
+
+        Returns:
+            User type string ("buyer" or "seller") or None if not found
+        """
+        try:
+            from app.redis_db import get_auth_redis_service
+            
+            auth_redis_service = get_auth_redis_service()
+            normalized_phone = user_phone.lstrip('+')
+            user_data = await auth_redis_service.retrieve(user_phone)
+            
+            if user_data:
+                role = user_data.role.value
+                if role:
+                    return role
+            
+            logger.warning(f"Could not find user type in Redis auth token for {user_phone}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting user type from Redis auth for {user_phone}: {e}")
+            return None
 
     def _get_last_bot_message(self, session: ConversationSession) -> str:
         """
