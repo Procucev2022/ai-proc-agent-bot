@@ -4,6 +4,11 @@ Seller RFQ Interest Handler.
 Handles seller authentication flow when clicking 'I'm Interested' on RFQ notification.
 This handler manages the seller_rfq_intimation workflow type which can ONLY be
 initiated from the "I'm Interested" button handler.
+
+Flow:
+1. Seller clicks "I'm Interested" -> Show intermediate buttons (Check Details / Request RFQ)
+2. If "Check Details" -> Send Procucev website link
+3. If "Request RFQ" -> Proceed with seller authentication flow
 """
 
 import logging
@@ -13,6 +18,7 @@ from app.services.whatsapp_service import WhatsAppService
 from app.services.workflow_manager import WorkflowManager
 from app.services.openai_service import OpenAIService
 from app.redis_db import get_auth_redis_service
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +39,7 @@ class SellerRFQInterestHandler:
         self.otp_service = otp_service
         self.openai_service = OpenAIService()
         self.auth_redis_service = get_auth_redis_service()
+        self.settings = get_settings()
 
     async def handle_rfq_interest_click(self, user_phone: str, rfq_id: str,
                                         seller_id: str, session: ConversationSession) -> Dict[str, Any]:
@@ -67,8 +74,8 @@ class SellerRFQInterestHandler:
 
         # 3. Route based on auth state
         if auth_state["state"] == "correct_seller":
-            # Already authenticated as correct seller - redirect to seller flow
-            return await self._redirect_to_seller_flow(user_phone, rfq_id, seller_id, session)
+            # Already authenticated as correct seller - show intermediate buttons
+            return await self._show_intermediate_buttons(user_phone, rfq_id, seller_id, session)
 
         elif auth_state["state"] == "not_auth":
             # Not authenticated - start OTP auth for target seller
@@ -416,8 +423,138 @@ class SellerRFQInterestHandler:
             logger.error(f"Error getting seller email for {user_phone}: {e}")
             return None, None
 
+    async def _show_intermediate_buttons(self, user_phone: str, rfq_id: str,
+                                          seller_id: str, session: ConversationSession) -> Dict[str, Any]:
+        """
+        Show intermediate buttons after successful authentication.
+
+        Shows two options:
+        - Check Details: Opens Procucev website to view RFQ details
+        - Request RFQ: Proceeds with seller workflow to request the RFQ
+
+        Args:
+            user_phone: User's phone number
+            rfq_id: RFQ ID the seller is interested in
+            seller_id: Seller's ID
+            session: Current conversation session
+        """
+        logger.info(f"Showing intermediate buttons to {user_phone} for RFQ {rfq_id}")
+
+        # Import here to avoid circular imports
+        from app.services.seller_notification_service import SellerNotificationService
+
+        # Get intermediate buttons configuration
+        notification_service = SellerNotificationService()
+        buttons = notification_service.get_intermediate_rfq_buttons(rfq_id, seller_id)
+
+        # Send message with intermediate buttons
+        message = (
+            f"*RFQ ID:* {rfq_id}\n\n"
+            "What would you like to do?\n\n"
+            "*Check Details* - View RFQ details on the Procucev website\n"
+            "*Request RFQ* - Request this RFQ to be sent to your email"
+        )
+
+        response = await self.whatsapp_service.send_configurable_buttons(
+            recipient_id=user_phone,
+            body=message,
+            buttons_config=buttons,
+            header="RFQ Options",
+            footer="Select an option to proceed"
+        )
+
+        # Store rfq_id and seller_id in session for handling button clicks
+        session.workflow_state = session.workflow_state or {}
+        session.workflow_state["rfq_id"] = rfq_id
+        session.workflow_state["target_seller_id"] = seller_id
+        session.workflow_state["auth_stage"] = "intermediate_selection"
+
+        if self.session_manager:
+            await self.session_manager.save_session(session)
+
+        if response.success:
+            logger.info(f"Sent intermediate buttons to {user_phone} for RFQ {rfq_id}")
+            return {
+                "status": "intermediate_buttons_sent",
+                "rfq_id": rfq_id,
+                "seller_id": seller_id,
+                "message_id": response.message_id
+            }
+        else:
+            logger.error(f"Failed to send intermediate buttons: {response.error}")
+            return {
+                "status": "error",
+                "error": f"Failed to send options: {response.error}"
+            }
+
+    async def handle_check_details_click(self, user_phone: str, rfq_id: str,
+                                         seller_id: str, session: ConversationSession) -> Dict[str, Any]:
+        """
+        Handle "Check Details" button click - send Procucev website link and return to seller menu.
+
+        Args:
+            user_phone: User's phone number
+            rfq_id: RFQ ID
+            seller_id: Seller ID
+            session: Current conversation session
+
+        Returns:
+            Dictionary with flow status
+        """
+        logger.info(f"Handling Check Details click for phone={user_phone}, rfq_id={rfq_id}")
+
+        # Get Procucev website URL from config
+        website_url = self.settings.procucev_rfq_details_url
+
+        # Send URL message with Request RFQ button
+        message = (
+            f"You can view the RFQ details on the Procucev website:\n\n"
+            f"{website_url}"
+        )
+        buttons = [
+            {"id": f"rfq_request_{rfq_id}_{seller_id}", "title": "Request RFQ"}
+        ]
+        await self.whatsapp_service.send_configurable_buttons(
+            recipient_id=user_phone,
+            body=message,
+            buttons_config=buttons
+        )
+
+        # Clear workflow - user remains authenticated as seller but exits current workflow
+        from app.utils.datetime_utils import utc_now
+        session.workflow_type = None
+        session.workflow_state = {"last_activity_at": utc_now().isoformat()}
+        if self.session_manager:
+            await self.session_manager.save_session(session)
+
+        return {
+            "status": "check_details_sent",
+            "rfq_id": rfq_id,
+            "website_url": website_url
+        }
+
+    async def handle_request_rfq_click(self, user_phone: str, rfq_id: str,
+                                       seller_id: str, session: ConversationSession) -> Dict[str, Any]:
+        """
+        Handle "Request RFQ" button click - proceed with seller workflow.
+
+        Uses the same flow as "I'm Interested" button - calls _redirect_to_seller_flow.
+
+        Args:
+            user_phone: User's phone number
+            rfq_id: RFQ ID the seller is interested in
+            seller_id: Seller's ID
+            session: Current conversation session
+
+        Returns:
+            Dictionary with flow status and seller workflow result
+        """
+        logger.info(f"Handling Request RFQ click for phone={user_phone}, rfq_id={rfq_id}")
+
+        return await self._redirect_to_seller_flow(user_phone, rfq_id, seller_id, session)
+
     async def _redirect_to_seller_flow(self, user_phone: str, rfq_id: str,
-                                        seller_id: str, session: ConversationSession) -> Dict[str, Any]:
+                                       seller_id: str, session: ConversationSession) -> Dict[str, Any]:
         """
         Redirect to seller service flow after successful authentication.
 
@@ -476,7 +613,7 @@ class SellerRFQInterestHandler:
 
     async def handle_otp_validated(self, user_phone: str, session: ConversationSession) -> Dict[str, Any]:
         """
-        Called after successful OTP validation to redirect to seller flow.
+        Called after successful OTP validation to show intermediate buttons.
 
         This method is called from authentication_service.handle_email_otp_validation
         when the workflow type is seller_rfq_intimation.
@@ -488,4 +625,4 @@ class SellerRFQInterestHandler:
             logger.error(f"No rfq_id found in session for {user_phone}")
             return {"status": "error", "error": "RFQ ID not found in session"}
 
-        return await self._redirect_to_seller_flow(user_phone, rfq_id, seller_id, session)
+        return await self._show_intermediate_buttons(user_phone, rfq_id, seller_id, session)

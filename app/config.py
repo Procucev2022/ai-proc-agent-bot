@@ -181,6 +181,12 @@ class Settings:
         self.rfq_followup_note = os.getenv("RFQ_FOLLOWUP_NOTE",
                                            "https://p2pdevuiindia.azurewebsites.net/login")
 
+        # Procucev website URL for RFQ details (used in "Check Details" button)
+        self.procucev_rfq_details_url = os.getenv(
+            "PROCUCEV_RFQ_DETAILS_URL",
+            "https://p2pdevuiindia.azurewebsites.net"
+        )
+
         # Fetch RFQ limit
         self.rfq_fetch_limit = int(os.getenv("RFQ_FETCH_LIMIT", "3"))
         

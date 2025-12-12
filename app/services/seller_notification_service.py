@@ -38,6 +38,9 @@ class SellerNotificationService:
 
     # Button IDs for handling responses
     BUTTON_INTERESTED = "rfq_interested"
+    # Intermediate step buttons (shown after clicking "I'm Interested")
+    BUTTON_CHECK_DETAILS = "rfq_check_details"
+    BUTTON_REQUEST_RFQ = "rfq_request"
 
     def __init__(self):
         self.whatsapp_service = WhatsAppService()
@@ -153,6 +156,32 @@ class SellerNotificationService:
                     "title": "I'm Interested"
                 }
             ]
+
+    def get_intermediate_rfq_buttons(self, rfq_id: str, seller_id: str) -> List[Dict[str, str]]:
+        """
+        Get intermediate step button configuration after "I'm Interested" is clicked.
+
+        Shows two options:
+        - Check Details: Opens Procucev website to view RFQ details
+        - Request RFQ: Proceeds with seller authentication flow
+
+        Args:
+            rfq_id: The RFQ ID
+            seller_id: The seller ID for authentication flow
+
+        Returns:
+            List of button configurations for Check Details and Request RFQ
+        """
+        return [
+            {
+                "id": f"{self.BUTTON_CHECK_DETAILS}_{rfq_id}_{seller_id}",
+                "title": "Check Details"
+            },
+            {
+                "id": f"{self.BUTTON_REQUEST_RFQ}_{rfq_id}_{seller_id}",
+                "title": "Request RFQ"
+            }
+        ]
 
     def check_seller_workflow_status(
         self,

@@ -456,6 +456,46 @@ class ChatService:
                     )
                     return await handler.handle_rfq_interest_click(user_phone, rfq_id, seller_id, session)
 
+                # Handle "Check Details" button - intermediate step after authentication
+                if button_id.startswith("rfq_check_details"):
+                    logger.info(f"RFQ Check Details button detected: {button_id}")
+                    from app.services.handlers.seller_rfq_interest_handler import SellerRFQInterestHandler
+
+                    # Parse button_id: rfq_check_details_{rfq_id}_{seller_id}
+                    prefix = "rfq_check_details_"
+                    suffix = button_id[len(prefix):]
+                    parts = suffix.rsplit("_", 1)
+                    rfq_id = parts[0] if parts else None
+                    seller_id = parts[1] if len(parts) > 1 else None
+
+                    handler = SellerRFQInterestHandler(
+                        whatsapp_service=self.whatsapp_service,
+                        authentication_service=self.authentication_service,
+                        session_manager=self.session_manager,
+                        otp_service=self.authentication_service.otp_service if self.authentication_service else None
+                    )
+                    return await handler.handle_check_details_click(user_phone, rfq_id, seller_id, session)
+
+                # Handle "Request RFQ" button - intermediate step after authentication
+                if button_id.startswith("rfq_request"):
+                    logger.info(f"RFQ Request button detected: {button_id}")
+                    from app.services.handlers.seller_rfq_interest_handler import SellerRFQInterestHandler
+
+                    # Parse button_id: rfq_request_{rfq_id}_{seller_id}
+                    prefix = "rfq_request_"
+                    suffix = button_id[len(prefix):]
+                    parts = suffix.rsplit("_", 1)
+                    rfq_id = parts[0] if parts else None
+                    seller_id = parts[1] if len(parts) > 1 else None
+
+                    handler = SellerRFQInterestHandler(
+                        whatsapp_service=self.whatsapp_service,
+                        authentication_service=self.authentication_service,
+                        session_manager=self.session_manager,
+                        otp_service=self.authentication_service.otp_service if self.authentication_service else None
+                    )
+                    return await handler.handle_request_rfq_click(user_phone, rfq_id, seller_id, session)
+
                 if button_id.startswith("confirm_exit") or button_id.startswith("decline_exit"):
                     logger.info(f"Exit buttons clicked in auth workflow  - handling immediately to prevent loop")
                     exit_result = await self.exit_service.handle_exit_intent(user_phone, session,message=message_content)
