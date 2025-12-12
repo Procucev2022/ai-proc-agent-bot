@@ -3454,6 +3454,8 @@ class ChatService:
                 user, session, message, intent_result
             )
 
+            logger.info(f"seller rsult:{result}")
+
 
             # --- Workflow init logic (only for new flows) ---
             if not is_existing and result.get("success"):
@@ -3488,7 +3490,7 @@ class ChatService:
                                                "awaiting_plan_selection"]:
 
                 buttons_config = [
-                    {"id": "view_rfqs", "title": "Request Active RFQs"},
+                    {"id": "view_rfqs", "title": "Active RFQs"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
