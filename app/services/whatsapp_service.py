@@ -456,6 +456,7 @@ class WhatsAppService:
                 "footer": {"text": footer},
                 "action": {"buttons": button_list}
             }
+            logger.info(f"payalod is:{content}")
 
             
             if header:

@@ -3476,6 +3476,7 @@ class ChatService:
                 ]
                 
                 msg = result.get("message")
+                logger.info(f"mg to be send:{msg}")
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
                     msg,
