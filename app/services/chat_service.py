@@ -529,7 +529,7 @@ class ChatService:
 
             # Classify intent once for all message routing and tracking
             try:
-                conversation_context = ChatServiceHelpers.build_conversation_context(session, message_content)
+                conversation_context = await ChatServiceHelpers.build_conversation_context(session, message_content)
                 # Now using async OpenAI service
                 message_intent_result = await self.intent_service.classify_intent(message_content, conversation_context)
                 intent = message_intent_result.get('intent')
@@ -1152,7 +1152,7 @@ class ChatService:
             intent_result = message_intent_result
             if not intent_result:
                 # Fallback: classify intent if not provided (shouldn't happen with our optimization)
-                conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
+                conversation_context = await ChatServiceHelpers.build_conversation_context(session, message)
                 intent_result = await self.intent_service.classify_intent(message, conversation_context)
                 logger.warning(f"Had to fallback to intent classification - this shouldn't happen")
 
@@ -3491,7 +3491,7 @@ class ChatService:
                                                "awaiting_plan_selection"]:
 
                 buttons_config = [
-                    {"id": "view_rfqs", "title": "Active RFQs"},
+                    {"id": "view_rfqs", "title": "Request Active RFQs"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]

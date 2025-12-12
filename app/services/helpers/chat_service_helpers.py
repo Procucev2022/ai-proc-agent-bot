@@ -14,6 +14,8 @@ from app.schemas.rfq import RFQValidationSchema
 
 logger = logging.getLogger(__name__)
 
+logger = logging.getLogger(__name__)
+
 
 class ChatServiceHelpers:
     """Pure utility methods extracted from ChatService."""
@@ -181,7 +183,7 @@ class ChatServiceHelpers:
         return context
 
     @staticmethod
-    def build_conversation_context(session: ConversationSession, current_message: str) -> dict:
+    async def build_conversation_context(session: ConversationSession, current_message: str) -> dict:
         """
         Build optimized conversation context for intent classification.
 
@@ -211,6 +213,19 @@ class ChatServiceHelpers:
 
         workflow_state = session.workflow_state or {}
 
+        # Fetch user role from Redis for better intent classification
+        user_role = None
+        if session.external_user_id:
+            try:
+                from app.redis_db import get_auth_redis_service
+                auth_service = get_auth_redis_service()
+                # Use auth:{phone_number} format as specified
+                user_data = await auth_service.get(f"auth:{session.external_user_id}", as_json=True)
+                if user_data:
+                    user_role = user_data.get("role")
+            except Exception as e:
+                logger.warning(f"Failed to fetch user role from Redis: {e}")
+
         # Minimal session_status with only the critical flag used by intent_service fallback
         # has_incomplete_products is used in intent_service.py line 121
         return {
@@ -219,6 +234,7 @@ class ChatServiceHelpers:
             'bot_last_message': bot_last_message,
             'workflow_state': workflow_state,
             'conversation_stage': conversation_stage,  # Pre-computed stage for OpenAI context
+            'user_role': user_role,  # Add user role for better intent classification
             'session_status': {
                 'has_incomplete_products': bool(
                     workflow_state.get("incomplete_products") and

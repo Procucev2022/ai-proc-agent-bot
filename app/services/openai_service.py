@@ -337,6 +337,10 @@ class OpenAIService:
                     history_text = "\n".join(history_parts)
                     context_info += f"\n\nRECENT CONVERSATION HISTORY:\n{history_text}"
 
+                # Add user role for better intent classification
+                if context.get('user_role'):
+                    context_info += f"\n\nUSER ROLE: {context.get('user_role')}"
+
                 # Add current session state (optimized - reduced verbosity)
                 if context.get('workflow_state'):
                     workflow_state = context['workflow_state']
