@@ -31,3 +31,4 @@ whatsapp_logs
 Client DB.session.sql
 Remote DB.session.sql
 *.md
+.vscode

@@ -16,8 +16,12 @@ Key responsibilities:
 """
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from typing import Optional, Dict, Any
+
+# Project root directory (parent of 'app' folder)
+PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 class Settings:
     """
@@ -83,8 +87,9 @@ class Settings:
         self.chroma_port = int(os.getenv("CHROMA_PORT", "8100"))
         self.chroma_use_server = os.getenv("CHROMA_USE_SERVER", "true").lower() == "true"
         # Fallback paths for PersistentClient (used when server is not available)
-        self.chroma_persist_directory = os.getenv("CHROMA_PERSIST_DIRECTORY", "./chroma_db")
-        self.chroma_unified_persist_directory = os.getenv("CHROMA_UNIFIED_PERSIST_DIRECTORY", "./unified_chroma_db")
+        # Use absolute paths based on project root to avoid issues with current working directory
+        self.chroma_persist_directory = os.getenv("CHROMA_PERSIST_DIRECTORY", str(PROJECT_ROOT / "chroma_db"))
+        self.chroma_unified_persist_directory = os.getenv("CHROMA_UNIFIED_PERSIST_DIRECTORY", str(PROJECT_ROOT / "unified_chroma_db"))
 
         # Redis session storage configuration
         self.redis_session_storage_enabled = os.getenv("REDIS_SESSION_STORAGE_ENABLED", "true").lower() == "true"
