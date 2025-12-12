@@ -3464,6 +3464,7 @@ class ChatService:
         - General seller queries
         """
         try:
+            logger.info(f"message is:{message}")
             workflow_state = session.workflow_state or {}
             current_seller_state = workflow_state.get("seller_workflow_state")
 
