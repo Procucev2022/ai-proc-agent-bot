@@ -614,16 +614,7 @@ class SellerService:
         """Process RFQ email requests after credit verification using batch API with enhanced error handling."""
         try:
             seller_id = user.id
-            
-
-            # Send acknowledgment
-            ack_context = {
-                "workflow_state": "rfq_email_processing",
-                "selected_rfq_ids": selected_rfq_ids,
-            }
-
-            ack_message = await self.response_helpers.generate_seller_contextual_response(ack_context)
-            await self.whatsapp_service.send_message(user.phone_number, ack_message)
+        
 
             # Send batch RFQ email request
             try:
