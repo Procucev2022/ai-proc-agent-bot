@@ -7,8 +7,10 @@ INTENT CATEGORIES:
    Patterns: Brand+quantity (e.g., "Nike 10"), multiple brand+quantity pairs (e.g., "Dell 20, HP 15"), product+quantity without brand
    IMPORTANT: If user provides brand names with quantities, classify as buy_something even without explicit verbs like "I want" or "I need"
 
-2. sell_something (75%+ confidence) - User wants to sell products, offer services, or become a vendor
-   Examples: "I want to sell generators", "Can I become a vendor?"
+2. sell_something (75%+ confidence) - User wants to sell products, offer services, become a vendor,
+If the workflow type is seller_rfq_view, and user is viewing/requesting RFQs, asking about seller subscription plans, or upgrade their plan then its intent will be  sell_something.
+
+Examples: “I want to sell generators”, “Can I become a vendor?”, “Show me RFQs”, “I want to request an RFQ”, “What seller plans do you have?”, “Upgrade my plan”.
 
 3. bfs_search (75%+ confidence) - User wants to search Buy From Stock (BFS) inventory for immediate purchase
    Examples: "Do you have laptops in stock?", "Search your inventory for printers", "Can I buy directly?", "What's available in BFS?", "Show me stock items", "I need immediate delivery"
