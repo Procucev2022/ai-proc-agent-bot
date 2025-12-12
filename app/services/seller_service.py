@@ -635,7 +635,7 @@ class SellerService:
 
                 logger.info(f"batch result:{batch_result}")
 
-                resp = batch_result.get("response", {})
+                resp = batch_result.get("data", {})
                 logger.info(f"resp:{resp}")
 
                 if resp.get("success"):
