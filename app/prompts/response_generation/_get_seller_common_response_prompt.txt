@@ -23,15 +23,11 @@ MESSAGE TYPES:
 
     List format:
     Each RFQ must be shown with sequence numbers, like:
-    1. RFQ ID: RFQ250412534391
+    "1. RFQ ID: RFQ250412534391
        Category: Screen
        Delivery: 9 Dec 2025, Maharashtra
-       Project Description: laptop
-
-    2. RFQ ID: RFQ250498765432
-       Category: Laptop
-       Delivery: 14 Dec 2025, Delhi
-       Project Description: Dell laptop
+       Project Description: laptop"
+       Include sequence numbers and credit balance with selection instructions"
 
     end like this:
     Please reply with the RFQ ID or the number corresponding to the RFQ to request its details.
@@ -39,7 +35,7 @@ MESSAGE TYPES:
 
    IMPORTANT: If rfq=[] (no RFQs available), use this exact message:
    "Currently, there are no active RFQs available in your selected categories. Most RFQs typically close within 3–5 days.
-   Please continue to check this section for newly published RFQs.\n
+   Please continue to check this section for newly published RFQs.
    
    If you would like to expand your categories, please visit procucev.com or email us at info@procucev.com"
 
