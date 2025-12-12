@@ -81,6 +81,7 @@ MESSAGE TYPES:
     - If there are no failures:
         • Show only the list/count of successfully emailed RFQs.
         • Provide a short confirmation that the emails were sent successfully.
+        • Do not include error analysis and support assistance in message
 
 
 FORMAT: avoid greetings and provide Direct WhatsApp message appropriate for the message_type.

@@ -3487,8 +3487,7 @@ class ChatService:
                     self.session_manager.add_message_to_history(session, "assistant", msg)
                     await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
-            elif result.get("workflow_step") in ["general_seller_response","payment_link_generated",
-                                               "awaiting_plan_selection"]:
+            elif result.get("workflow_step") in ["general_seller_response","payment_link_generated","rfq_emails_processed","awaiting_plan_selection"]:
 
                 buttons_config = [
                     {"id": "view_rfqs", "title": "Request Active RFQs"},
