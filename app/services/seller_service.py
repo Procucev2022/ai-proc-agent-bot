@@ -633,22 +633,22 @@ class SellerService:
                     seller_id=user.org_id
                 )
 
-                if batch_result.get("success"):
-                    # Process successful results
-                    successful_results = batch_result.get("results", {}).get("successful", [])
-                    failed_results = batch_result.get("results", {}).get("failed", [])
+                logger.info(f"batch result:{batch_result}")
 
-                    # # Update sent flags for successful emails
-                    # successful_rfq_ids = [result["rfq_id"] for result in successful_results]
-                    # if successful_rfq_ids:
-                    #     await self.seller_api_service.update_rfq_seller_sent_flag(
-                    #         successful_rfq_ids[0], seller_id
-                    #     )
+                resp = batch_result.get("response", {})
+                logger.info(f"resp:{resp}")
 
-                    # Format results for consistency with enhanced error handling
+                if resp.get("success"):
+                    results = resp.get("results", {})
+                    successful_results = results.get("successful", [])
+                    failed_results = results.get("failed", [])
+
+                    logger.info(f"success: {successful_results}")
+                    logger.info(f"failed: {failed_results}")
+
                     email_results = []
 
-                    # Add successful results
+                    # Successful emails
                     for result in successful_results:
                         email_results.append({
                             "rfq_id": result["rfq_id"],
@@ -657,19 +657,20 @@ class SellerService:
                             "error_code": None
                         })
 
-                    # Add failed results with error code analysis
+                    # Failed emails
                     for result in failed_results:
-                        error_code = result.get("error_code")
-                        error_message = result.get("error", "Unknown error")
-
                         email_results.append({
-                            "rfq_id": result["rfq_id"],
+                            "rfq_id": result.get("rfq_id"),
                             "success": False,
-                            "error": error_message,
-                            "error_code": error_code
+                            "error": result.get("error", "Unknown error"),
+                            "error_code": result.get("error_code")
                         })
 
+                    logger.info(f"email result: {email_results}")
+
                     successful_emails = len(successful_results)
+                    logger.info(f"successful emails: {successful_emails}")
+
 
                 else:
                     # Handle batch failure - all emails failed

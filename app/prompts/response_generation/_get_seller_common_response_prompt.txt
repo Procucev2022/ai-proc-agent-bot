@@ -35,8 +35,7 @@ MESSAGE TYPES:
 
     Footer instructions:
     “Please reply with the RFQ ID or the number corresponding to the RFQ to request its details.
-    If you want to check the details for any RFQ, you can log in to the portal at www.procucev.com.
-    (Type 'Exit' anytime to end the chat.)”
+    If you want to check the details for any RFQ, you can log in to the portal at www.procucev.com”
 
    IMPORTANT: If rfq=[] (no RFQs available), use this exact message:
    "Currently, there are no active RFQs available in your selected categories. Most RFQs typically close within 3–5 days.
