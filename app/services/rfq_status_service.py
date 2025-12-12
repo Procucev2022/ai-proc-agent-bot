@@ -62,7 +62,7 @@ class RFQStatusService:
                 ]
             elif user.role == UserRole.SELLER:
                 return [
-                    {"id": "view_rfqs", "title": "Active RFQs"},
+                    {"id": "view_rfqs", "title": "Request Active RFQs"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
