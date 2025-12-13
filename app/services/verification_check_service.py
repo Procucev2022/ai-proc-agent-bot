@@ -228,12 +228,14 @@ class VerificationCheckService:
                 return {"status": "otp_send_failed", "reason": "invalid_email"}
             
             logger.info(f"Sending verification OTP to {email} for user {user_phone}")
-            # Create a minimal session for OTP sending
-            from app.models import ConversationSession
-            temp_session = ConversationSession()
-            temp_session.workflow_state = {}
             
-            otp_result = await self.otp_service.send_otp(user_phone, email,session,is_daily_verification)
+            # Use provided session or create a minimal session for OTP sending
+            if session is None:
+                from app.models import ConversationSession
+                session = ConversationSession()
+                session.workflow_state = {}
+            
+            otp_result = await self.otp_service.send_otp(user_phone, email, session, is_daily_verification)
             logger.info(f"OTP send result: {otp_result}")
             return otp_result
             
