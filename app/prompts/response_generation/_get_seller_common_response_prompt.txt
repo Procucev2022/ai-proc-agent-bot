@@ -78,6 +78,7 @@ MESSAGE TYPES:
         • Show only the list/count of successfully emailed RFQs.
         • Provide a short confirmation that the emails were sent successfully.
         • Do not include error analysis and support assistance in message
+        e.g. The RFQ with ID RFQ251012677102 was emailed successfully.
 
 
 FORMAT: avoid greetings and provide Direct WhatsApp message appropriate for the message_type.
