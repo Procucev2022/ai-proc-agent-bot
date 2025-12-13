@@ -306,7 +306,22 @@ class AttachmentHelpers:
             # Clear pending_attachments after moving them to approved
             session.workflow_state["pending_attachments"] = []
 
-            logger.info(f"Approved {approved_count} attachments in session - total attachments now: {len(session.workflow_state['extracted_entities'][0]['attachments'])}")
+            # Also sync attachments to pending RFQ entities so they're included in schema creation
+            all_attachments = session.workflow_state["extracted_entities"][0]["attachments"]
+            if session.workflow_state.get("pending_rfq"):
+                session.workflow_state["pending_rfq"]["entities"]["attachments"] = all_attachments
+                logger.info(f"Synced attachments to pending_rfq.entities")
+            if session.workflow_state.get("pending_optional_rfq"):
+                session.workflow_state["pending_optional_rfq"]["entities"]["attachments"] = all_attachments
+                logger.info(f"Synced attachments to pending_optional_rfq.entities")
+            if session.workflow_state.get("pending_combined_rfq"):
+                session.workflow_state["pending_combined_rfq"]["combined_schema"]["attachments"] = all_attachments
+                logger.info(f"Synced attachments to pending_combined_rfq.combined_schema")
+            if session.workflow_state.get("pending_optional_combined_rfq"):
+                session.workflow_state["pending_optional_combined_rfq"]["combined_schema"]["attachments"] = all_attachments
+                logger.info(f"Synced attachments to pending_optional_combined_rfq.combined_schema")
+
+            logger.info(f"Approved {approved_count} attachments in session - total attachments now: {len(all_attachments)}")
             return True
             
         except Exception as e:

@@ -116,6 +116,20 @@ def setup_basic_logging(level: str = "INFO"):
     root_logger.setLevel(getattr(logging, level))
     root_logger.addHandler(console_handler)
 
+    # Silence noisy third-party loggers
+    noisy_loggers = [
+        "openai",
+        "openai._base_client",
+        "httpcore",
+        "httpcore.connection",
+        "httpcore.http11",
+        "httpx",
+        "urllib3",
+        "asyncio",
+    ]
+    for logger_name in noisy_loggers:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
 def log_info(logger: logging.Logger, message: str, user_id: str = None, phone_number: str = None, **kwargs):
     """Log info message with optional context."""
     extra = {}
