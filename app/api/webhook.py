@@ -380,7 +380,8 @@ async def create_direct_processing_session(user_phone: str, message_type: str) -
             "batch_id": f"direct_{user_phone}_{int(time.time() * 1000)}",
             "started_at": time.time(),
             "ack_sent": False,
-            "please_wait_sent": False,
+            "please_wait_sent_count": 0,
+            "please_wait_last_sent": 0.0,
             "suppressed": False
         }
         
