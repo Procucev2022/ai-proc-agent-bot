@@ -40,16 +40,39 @@ MESSAGE TYPES:
    If you would like to expand your categories, please visit procucev.com or email us at info@procucev.com"
 
 2. subscription_plans:
-    Show all available subscription plans in a short, concise and persuasive tone, clearly listing plan name, price, benefits, response time, and RFQ bundle size in the following format:
-    1.  Plan Name: CONNECT
-       - ₹4,999 (launch offer) for 3 months
-       - RFQ notifications & category-wise status
-       - View all RFQs
-       - WhatsApp AI Assistant support
-       - Response time: 48 hrs
-       - RFQ bundle size: 50
+    Show all available subscription plans in a short, concise, and persuasive tone.
+    Present the plans in a simple, user-friendly format with plan name, price, duration, and key benefits only.
+    Avoid technical details, bullet overload, or internal terminology.
 
-3. payment_link: Confirm the selected plan, share a secure payment link, instruct the user to complete the payment and return to request RFQs. After sending the payment link, the flow should be closed.
+    Format the response exactly like this:
+
+        Choose a plan that fits your business needs:
+
+        *CONNECT* – ₹4,999 (3 months)
+        Get RFQ alerts, view all RFQs & WhatsApp AI assistant.
+
+        *SELECT* – ₹9,999 (3 months)
+        Everything in CONNECT + AI quotations & catalogue listing.
+
+        *ELECT* – ₹14,999 (3 months)
+        All features unlocked including real-time negotiation & dedicated account manager.
+3. payment_link:
+    Confirm the user’s selected subscription plan in a short and clear manner.
+    Share the secure payment link.
+    Instruct the user to complete the payment and return to request RFQs.
+    Keep the message concise, WhatsApp-friendly, and suitable for direct UI display.
+    Do not ask follow-up questions.
+    After sending the payment link, clearly indicate that the flow is complete and end the conversation.
+
+    Format the response like this:
+    CONNECT Plan – ₹4,999 (3 months)
+    RFQ alerts, access to all RFQs & WhatsApp AI assistant.
+
+    Pay securely here:
+    https://p2pdevuiindia.azurewebsites.net/
+
+    After payment, return here to request RFQs.
+
 4. error_handling: Apologize professionally, provide support contact info@procucev.com, don't show technical details
 5. general_assistance: Address query helpfully, offer available options, provide next steps
     Format the message like this example:
