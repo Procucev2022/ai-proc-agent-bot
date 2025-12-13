@@ -1919,6 +1919,13 @@ class ChatService:
             session.workflow_state['excel_filename'] = filename
             logger.info(f"[EXCEL-UPLOAD] Set excel_file_processed flag for {user.phone_number}, file: {filename}")
 
+            # Send processing message after validation checks pass
+            await self.whatsapp_service.send_message(
+                user.phone_number,
+                "Please wait, the file is processing…"
+            )
+            logger.info(f"[EXCEL-UPLOAD] Sent 'Please wait' message to {user.phone_number}")
+
             # Process Excel file
             processing_service = ExcelProcessingService(self.openai_service)
             processing_result = await processing_service.process_excel_file(
