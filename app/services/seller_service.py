@@ -94,6 +94,10 @@ class SellerService:
             Dict containing workflow response and next steps
         """
         try:
+            # Check if message is asking to view available RFQs - bypass workflow state
+            if self._is_view_available_rfq_request(message):
+                return await self._display_rfqs_to_seller(user, session, message)
+
             # Get current workflow state
             workflow_state = session.workflow_state or {}
             current_state = workflow_state.get("seller_workflow_state")
@@ -167,30 +171,18 @@ class SellerService:
                 return await self._handle_rfq_fetch_error(user, session)
 
             # Step 2: Fetch seller current credits
-
             credits_result = await self._check_seller_credits(user.org_id)
 
-            rfqs = rfq_result.get("rfqs")
-            total_count = rfq_result.get("total_count")
-            credits_available = credits_result.get("credits_available")
+            rfqs = rfq_result.get("rfqs", [])
+            total_count = rfq_result.get("total_count", 0)
+            credits_available = credits_result.get("credits_available", 0)
 
-            # Prepare context for AI response generation
-            context = {
-                "workflow_state": "display_rfqs_to_seller",
-                "rfqs": rfqs,
-                "total_count": total_count,
-                "credits_available": credits_available,
-                "has_credits": credits_available > 0
-            }
-
-            # Generate contextual response based on credit status
-            if credits_available > 0:
-                # Show RFQs with credit info
-                response_message = await self.response_helpers.generate_seller_contextual_response(context)
-            else:
-                # Show RFQs with subscription prompt
-                context["workflow_state"] = "display_rfqs_no_credits"
-                response_message = await self.response_helpers.generate_seller_contextual_response(context)
+            # Generate hardcoded RFQ display message
+            response_message = self._generate_hardcoded_rfq_display(
+                rfqs=rfqs,
+                total_count=total_count,
+                credits_available=credits_available
+            )
 
             # Update session workflow state
             WorkflowManager.set_workflow_type(session, WorkflowType.seller_rfq_view, caller="seller_service")
@@ -210,6 +202,47 @@ class SellerService:
         except Exception as e:
             logger.error(f"Error displaying RFQs to seller: {e}")
             raise
+
+    def _generate_hardcoded_rfq_display(self, rfqs: List[Dict], total_count: int, credits_available: int) -> str:
+        """Generate hardcoded RFQ display message based on credits and RFQ availability."""
+        
+        print("rfq", rfqs)# Case 1: No RFQs available
+        if not rfqs or total_count == 0:
+            return ("Currently, there are no active RFQs available in your selected categories. Most RFQs typically close within 3–5 days.\n"
+                   "Please continue to check this section for newly published RFQs.\n\n"
+                   "If you would like to expand your categories, please visit procucev.com or email us at info@procucev.com")
+        
+        # Case 2 & 3: RFQs available - show them with different credit messages
+        message_parts = []
+        
+        if credits_available <= 0:
+            message_parts.append("You do not have enough credits to request the RFQ. In order to request more RFQs please buy credits. Use the plans to subscribe and add credits so that you can request for RFQs")
+        else:
+            message_parts.append("Here are some RFQs available for you in your selected categories. You can use your available credits to request RFQs.")
+        
+        message_parts.append(f"*Available Credit:* {credits_available}")
+        message_parts.append(f"*Total RFQs Available:* {total_count}")
+        message_parts.append("")
+        
+        # Display RFQs with sequence numbers
+        for i, rfq in enumerate(rfqs, 1):
+            rfq_id = rfq.get("rfq_id", "")
+            category = rfq.get("categories", "")
+            delivery_date = rfq.get("delivery_date", "")
+            location = rfq.get("location", "")
+            project_description = rfq.get("project_description", "")
+            
+            # Format: 1. **RFQ251012730180**
+            message_parts.append(f"{i}. *{rfq_id}*")
+            message_parts.append(f"    • {category}")
+            message_parts.append(f"    • {delivery_date}, {location}")
+            message_parts.append(f"    • {project_description}")
+        
+        message_parts.append("")
+        message_parts.append("Please reply with the RFQ ID or the number corresponding to the RFQ to request its details.")
+        message_parts.append("If you want to check the details for any RFQ, you can log in to the portal at procurev.com")
+        
+        return "\n".join(message_parts)
 
     async def _handle_rfq_selection_response(self, user: User, session: ConversationSession,message: str) -> Dict[str, Any]:
         """Handle seller's RFQ selection when they have credits."""
@@ -585,16 +618,15 @@ class SellerService:
 
             response_message = await self.response_helpers.generate_seller_contextual_response(context)
 
-
+            # Clear session state immediately after payment link generation
             from app.models import ConversationOutcome
             session.outcome = ConversationOutcome.completed
             session.workflow_type = None
-            # session.workflow_state = {}
-            session.workflow_state["seller_workflow_state"] = {}
+            session.workflow_state = {}  # Clear entire workflow state
 
-            logger.info(f"Cleared workflow_type and workflow_state after successful RFQ creation")
+            logger.info(f"Cleared workflow_type and workflow_state immediately after payment link generation")
 
-            await self.session_manager.save_session(session,persist_to_db=False)
+            await self.session_manager.save_session(session)
 
             return {
                 "success": True,
@@ -1019,6 +1051,19 @@ class SellerService:
             logger.error(f"Error extracting plan selection: {e}")
             return None
 
+
+    def _is_view_available_rfq_request(self, message: str) -> bool:
+        """Check if message is requesting to view available RFQs."""
+        message_lower = message.lower().strip()
+        
+        # Keywords that indicate viewing available RFQs
+        view_rfq_keywords = [
+            "view available rfqs", "view available rfq","show available rfq", "available rfq",
+            "view rfq", "show rfq", "list rfq", "see rfq",
+            "view available", "show available",
+        ]
+        
+        return any(keyword in message_lower for keyword in view_rfq_keywords)
 
     def _build_seller_conversation_context(self, session: ConversationSession, message: str) -> Dict[str, Any]:
         """Build conversation context for seller responses."""

@@ -1919,6 +1919,13 @@ class ChatService:
             session.workflow_state['excel_filename'] = filename
             logger.info(f"[EXCEL-UPLOAD] Set excel_file_processed flag for {user.phone_number}, file: {filename}")
 
+            # Send processing message after validation checks pass
+            await self.whatsapp_service.send_message(
+                user.phone_number,
+                "Please wait, the file is processing…"
+            )
+            logger.info(f"[EXCEL-UPLOAD] Sent 'Please wait' message to {user.phone_number}")
+
             # Process Excel file
             processing_service = ExcelProcessingService(self.openai_service)
             processing_result = await processing_service.process_excel_file(
@@ -2713,6 +2720,7 @@ class ChatService:
                 header = "What else can I help you with?"
             elif user_role == "seller":
                 buttons_config = [
+                    {"id": "view_rfqs", "title": "Request Active RFQs"},
                     {"id": "rfq_status", "title": "Show RFQ status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
@@ -3528,7 +3536,7 @@ class ChatService:
                     self.session_manager.add_message_to_history(session, "assistant", msg)
                     await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
-            elif result.get("workflow_step") in ["general_seller_response","payment_link_generated","rfq_emails_processed","awaiting_plan_selection"]:
+            elif result.get("workflow_step") in ["general_seller_response","awaiting_plan_selection"]:
 
                 buttons_config = [
                     {"id": "view_rfqs", "title": "Request Active RFQs"},
@@ -3547,6 +3555,28 @@ class ChatService:
                     self.session_manager.add_message_to_history(session, "assistant", msg)
                     await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 
+            elif result.get("workflow_step") in ["payment_link_generated","rfq_emails_processed"]:
+
+                buttons_config = [
+                    {"id": "view_rfqs", "title": "Request Active RFQs"},
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "get_support", "title": "Get Support Info"}
+                ]
+
+                msg = result.get("message")
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    msg,
+                    buttons_config,
+                )
+                # Save assistant response in history
+                if msg:
+                    self.session_manager.add_message_to_history(session, "assistant", msg)
+                    await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
+                    logger.info("after saving now clearing ")
+                    # Clear workflow state without confirmation (automatic cancellation)
+                    await self.cancel_service._clear_workflow_state(session)
+
             elif result.get("workflow_step") in ["no_credits_available"]:
                 buttons_config = [
                     {"id": "cancel_no_credits", "title": "Cancel"}
@@ -3564,6 +3594,8 @@ class ChatService:
             else:
                 # Send message normally
                 await send_response(result , session)
+
+
 
             return {"status": "seller_flow_processed", **result}
 

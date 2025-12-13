@@ -1326,6 +1326,7 @@ Analyze their response to determine their true choice.
                 model=self.default_model,
                 input=[{"role": "user", "content": prompt}],
                 tools=[merge_tool],
+                tool_choice={"type": "function", "name": "classify_seller_intent"},
                 instructions=self._load_prompt(
                     "response_generation", 
                     "_get_seller_intent_response_prompt",
