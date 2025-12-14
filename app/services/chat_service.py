@@ -133,6 +133,7 @@ class ChatService:
         self._seller_service = None
         self._rfq_status_service = None
         self._format_modification_handler = None
+        self._bfs_search_handler = None
 
         # Initialize only lightweight services that need database sessions
         self.chat_summary_service = ChatSummaryService(db_session=db_session)
@@ -338,6 +339,17 @@ class ChatService:
                 db_session=self.db_session
             )
         return self._rfq_status_service
+
+    @property
+    def bfs_search_handler(self):
+        """Lazy-load BFSSearchHandler only when needed."""
+        if self._bfs_search_handler is None:
+            from app.services.handlers.bfs_search_handler import BFSSearchHandler
+            self._bfs_search_handler = BFSSearchHandler(
+                whatsapp_service=self.whatsapp_service,
+                session_manager=self.session_manager
+            )
+        return self._bfs_search_handler
 
     async def cleanup(self):
         """Cleanup resources - close OpenAI client to prevent connection leaks."""
@@ -1432,6 +1444,15 @@ class ChatService:
                     await self.session_manager.save_session(session, WorkflowType.rfq_creation)
                     return result
 
+            # Handle BFS search pending - user clicked search_bfs button and now providing product description
+            if session.workflow_state.get("bfs_search_pending"):
+                logger.info(f"[BFS] Processing pending BFS search with message: {message[:50]}...")
+                # Clear the pending flag
+                session.workflow_state.pop("bfs_search_pending", None)
+                await self.session_manager.save_session(session, persist_to_db=False)
+                # Route to BFS handler
+                return await self.bfs_search_handler.handle_bfs_search(user, session, message)
+
             # Handle Excel confirmation responses BEFORE pending confirmations
             if session.workflow_state.get("awaiting_excel_confirmation"):
                 result = await self._handle_excel_confirmation_response(user, session, message, intent_result)
@@ -1723,33 +1744,9 @@ class ChatService:
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result,
                                                                                  self._should_use_summary_aware_extraction)
             elif intent == "bfs_search" and confidence > 0.7:
-                # Handle BFS search intent with profile selection message
-                user_role = user.role.value if hasattr(user.role, 'value') else user.role
-                user_email = getattr(user, 'email', 'your profile')
-                
-                # Create the profile selection message
-                profile_message = f"Got it, you're looking to check if items are available in stock.\nLet's continue with your {user_role.title()} profile ({user_email}).\n\nBFS Search coming soon!\nPlease confirm what you'd like to do next:"
-                
-                if user_role == "buyer":
-                    buttons_config = [
-                        {"id": "create_rfq", "title": "Create new RFQ"},
-                        {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "get_support", "title": "Get Support Info"}
-                    ]
-                else:  # seller or other roles
-                    buttons_config = [
-                        {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "get_support", "title": "Get Support Info"}
-                    ]
-                
-                await self.whatsapp_service.send_configurable_buttons(
-                    user.phone_number,
-                    profile_message,
-                    buttons_config,
-                    session_id=session
-                )
-                
-                return {"status": "bfs_search_handled"}
+                # Handle BFS search intent
+                logger.info(f"BFS search intent detected")
+                return await self.bfs_search_handler.handle_bfs_search(user, session, message)
             elif intent == "sell_something" and confidence > 0.7:
                 # Normal sell_something flow - user wants to sell with current account
                 return await self._handle_seller_flow(user, session, message, intent_result)
@@ -3054,37 +3051,69 @@ class ChatService:
                 return await self._activate_sectioned_rfq(user, session)
         
         elif button_id == "search_bfs":
-            # Handle BFS search coming soon with profile selection message
-            user_role = user.role.value if hasattr(user.role, 'value') else user.role
-            user_email = getattr(user, 'email', 'your profile')
-            
-            # Create the profile selection message
-            profile_message = (
-                "Got it! You’re looking to check if items are available in stock.\n\n"
-                "🔍 *BFS Search coming soon!*"
-            )
-
-            if user_role == "buyer":
-                buttons_config = [
-                    {"id": "create_rfq", "title": "Create new RFQ"},
-                    {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "get_support", "title": "Get Support Info"}
-                ]
-            else:  # seller or other roles
-                buttons_config = [
-                    {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "get_support", "title": "Get Support Info"}
-                ]
-            
-            await self.whatsapp_service.send_configurable_buttons(
+            # Prompt user to describe what they want to search
+            await self.whatsapp_service.send_message(
                 user.phone_number,
-                profile_message,
-                buttons_config,
+                "What products are you looking for?",
                 session_id=session
             )
-            
-            return {"status": "bfs_coming_soon_handled"}
-        
+
+            # Set a flag so the next message triggers BFS search
+            if not session.workflow_state:
+                session.workflow_state = {}
+            session.workflow_state["bfs_search_pending"] = True
+            await self.session_manager.save_session(session, persist_to_db=False)
+
+            return {"status": "bfs_awaiting_product_description"}
+
+        elif button_id == "bfs_place_bid":
+            # Placeholder for BFS place bid functionality
+            await self.whatsapp_service.send_message(
+                user.phone_number,
+                "Place Bid functionality coming soon!",
+                session_id=session
+            )
+            return {"status": "bfs_place_bid_placeholder"}
+
+        elif button_id == "bfs_raise_rfq":
+            # Route to sectioned RFQ creation with original searched products
+            logger.info(f"[BFS] Raising RFQ from BFS search")
+
+            # Get original searched products (what user was looking for)
+            searched_products = session.workflow_state.get("bfs_searched_products", []) if session.workflow_state else []
+
+            # Clear BFS state
+            if session.workflow_state:
+                session.workflow_state.pop("bfs_results", None)
+                session.workflow_state.pop("bfs_searched_products", None)
+
+            # Store for RFQ pre-population
+            if searched_products:
+                if not session.workflow_state:
+                    session.workflow_state = {}
+                session.workflow_state["bfs_rfq_products"] = searched_products
+                await self.session_manager.save_session(session, persist_to_db=False)
+
+            # Activate sectioned RFQ workflow
+            return await self._activate_sectioned_rfq(user, session)
+
+        elif button_id == "bfs_cancel":
+            # Cancel BFS workflow using cancel service pattern
+            logger.info(f"[BFS] Cancelling BFS workflow")
+
+            # Clear BFS state
+            if session.workflow_state:
+                session.workflow_state.pop("bfs_results", None)
+                session.workflow_state.pop("bfs_search_pending", None)
+                session.workflow_state.pop("bfs_searched_products", None)
+                await self.session_manager.save_session(session, persist_to_db=False)
+
+            # Use cancel service to send cancellation message with appropriate buttons
+            user_role = user.role.value if hasattr(user.role, 'value') else user.role
+            await self.cancel_service._send_cancellation_message(user.phone_number, user_role)
+
+            return {"status": "bfs_cancelled"}
+
         elif button_id == "rfq_status" or button_id == "check_rfqs":
             # Trigger RFQ status check flow
             return await self._handle_rfq_status_inquiry(user, "Check my RFQ status", session)
