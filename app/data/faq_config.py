@@ -78,7 +78,9 @@ FULL_FAQ_CONTEXT =\
        The bot summarises all collected details and asks the user for final confirmation before submitting the RFQ.
 
 - Credits & Available RFQs:
-    Select your selling interests first, then choose your Seller profile to view credits and available RFQs.
+    On WhatsApp, select your selling interests first and then choose your Seller profile to view credits and available RFQs.
+    You can also check the same on the portal at www.procucev.com
+.
 - Subscription Plans:
     CONNECT – ₹4,999 (3 months)
     RFQ alerts, access to all RFQs & WhatsApp AI assistant.     
