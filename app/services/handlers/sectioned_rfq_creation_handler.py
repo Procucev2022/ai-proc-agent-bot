@@ -661,9 +661,17 @@ class SectionedRFQCreationHandler:
         # Check if we have at least one item
         if not items_data or len(items_data) == 0:
             # No items yet, ask user
-            msg = ("Please share the items for your RFQ with name, brand/specs (if any), and quantity.\n\n"
-                   "Example:\n"
-                   "Laptop Dell Inspiron - 5, Printer HP LaserJet - 2, Desktop HP 17\" - 10")
+            msg= (
+    "Please share the items for your RFQ in the following format:\n\n"
+    "*Item 1:* Laptops\n"
+    "*Quantity:* 15\n"
+    "*Specifications:* 10\" display, HP, i7 processor, blue color\n\n"
+    "*Item 2:* Cables\n"
+    "*Quantity:* 1\n"
+    "*Specifications:* 25 meters, 10 mm width\n\n"
+    "If you have the item details in an *Excel or CSV file*, you may attach the file now."
+)
+
             buttons_config = [
                 {"id": "restart_rfq", "title": "Restart"}
             ]
@@ -859,8 +867,11 @@ class SectionedRFQCreationHandler:
 
             # Ask about attachments directly (don't call confirmation_handler yet)
             optional_message = (
-                "Would you like to add any specification documents, product images, or attachments to your RFQ?\n\n"
-                "If yes, please upload them now — or click on 'Continue' to skip and proceed."
+                "Would you like to add any *specification documents, product images, or other attachments* to your RFQ?\n\n"
+                "You may upload files in the following formats: *JPEG, PNG, PDF, Excel, DOCX, or CSV*\n"
+                "• *Maximum 4 attachments*\n"
+                "• *Each file up to 1 MB*\n\n"
+                "If yes, please upload the files now — or click *Continue* to skip this step and proceed.\n\n"
             )
 
             # Send message with Continue button
@@ -1455,12 +1466,17 @@ class SectionedRFQCreationHandler:
                 logger.info(f"[SECTIONED_RFQ] Items already exist from initial message ({len(items_data)} items), displaying confirmation")
                 # Items already exist, go directly to items section handler which will display confirmation
                 return await self._handle_items_section(user, session, "", [])
+            msg = (
+                "Please share the items for your RFQ in the following format:\n\n"
+                "*Item 1:* Laptops\n"
+                "*Quantity:* 15\n"
+                "*Specifications:* 10\" display, HP, i7 processor, blue color\n\n"
+                "*Item 2:* Cables\n"
+                "*Quantity:* 1\n"
+                "*Specifications:* 25 meters, 10 mm width\n\n"
+                "If you have the item details in an *Excel or CSV file*, you may attach the file now."
+            )
 
-            # No items yet, ask for them
-            msg = ("Please share the items for your RFQ with name, brand/specs (if any), and quantity — "
-                  "you can add multiple items together in one message.\n\n"
-                  "📝 Example:\n"
-                  "Laptop Dell Inspiron - 5, Printer HP LaserJet - 2, Desktop HP 17\" - 10")
             await self.whatsapp_service.send_message(user.phone_number, msg, session_id=session)
             return {"status": "awaiting_items"}
 
