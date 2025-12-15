@@ -1423,7 +1423,9 @@ Analyze their response to determine their true choice.
                 template = f.read()
 
             # Format the template with provided arguments
-            return template.format(**kwargs)
+            if kwargs:
+                return template.format(**kwargs)
+            return template
 
         except Exception as e:
             logger.error(f"Error loading prompt {prompt_name}: {e}")
