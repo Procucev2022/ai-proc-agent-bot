@@ -139,6 +139,7 @@ class SellerDataAdapter:
         LEFT JOIN user u ON o.uuid = u.org_uuid
         LEFT JOIN org_division_category odc ON o.uuid = odc.organization_id AND odc.category IS NOT NULL
         WHERE COALESCE(o.opt_out, 0) != 1  -- Exclude opted-out sellers
+          AND o.self_client = 0  -- Only sellers (0 = seller, 1 = buyer)
           AND o.organization_name IS NOT NULL  -- Must have organization name
           AND o.organization_name != ''  -- Not empty
           AND EXISTS (
