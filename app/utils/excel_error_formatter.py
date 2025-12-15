@@ -31,27 +31,27 @@ class ExcelErrorFormatter:
             
             'invalid_quantity': lambda d: f"File Processing Failed: The 'Quantity' column contains non-numeric values such as {d.get('example_values', '@200')}. Please update the file with numeric quantities only.",
             
-            'merged_cells': lambda d: "File Processing Failed: Merged cells were detected. Please unmerge all cells and upload the corrected file.",
+            'merged_cells': lambda d: f"File Processing Failed: {d.get('message', 'Merged cells were detected. Please unmerge all cells and upload the corrected file.')}",
             
-            'empty_file': lambda d: "File Processing Failed: The file contains no data. Please provide the required product details in Excel or directly in your message.",
+            'empty_file': lambda d: f"File Processing Failed: {d.get('message', 'The file contains no data. Please provide the required product details in Excel or directly in your message.')}",
             
             'multiple_worksheets': lambda d: f"File Processing Failed: The Excel file contains {d.get('worksheet_count', 'multiple')} worksheets, but only 1 worksheet is allowed. Please use a single sheet and reupload.",
             
             'file_too_large': lambda d: f"File Processing Failed: Your Excel file is {d.get('file_size_mb', 'N/A'):.1f}MB, but only files up to {d.get('max_size_mb', 3)}MB are allowed.",
             
-            'password_protected': lambda d: "File Processing Failed: Your Excel file is password protected. Please upload an unprotected Excel file.",
+            'password_protected': lambda d: f"File Processing Failed: {d.get('message', 'Your Excel file is password protected. Please upload an unprotected Excel file.')}",
             
-            'invalid_format': lambda d: "File Processing Failed: The uploaded file is not a valid Excel format. Please upload a .xlsx, .xls, or .xlsm file.",
+            'invalid_format': lambda d: f"File Processing Failed: {d.get('message', 'The uploaded file is not a valid Excel format. Please upload a .xlsx, .xls, or .xlsm file.')}",
             
-            'corrupted_file': lambda d: "File Processing Failed: The Excel file appears to be corrupted or damaged. Please try uploading again.",
+            'corrupted_file': lambda d: f"File Processing Failed: {d.get('message', 'The Excel file appears to be corrupted or damaged. Please try uploading again.')}",
             
-            'no_headers': lambda d: "File Processing Failed: Your Excel file doesn't have proper column headers. Please add clear column headers in the first row and reupload.",
+            'no_headers': lambda d: f"File Processing Failed: {d.get('message', \"Your Excel file doesn't have proper column headers. Please add clear column headers in the first row and reupload.\")}",
             
             'mixed_data_types': lambda d: f"File Processing Failed: The '{d.get('column_name', 'Procurement Requirement')}' field contains mixed data types. Please provide a clear and consistent description with uniform formatting.",
             
             'unsupported_format': lambda d: f"File Processing Failed: The file format '{d.get('format', 'unknown')}' is not supported. Please upload an Excel file (.xlsx, .xls, .xlsm).",
             
-            'download_failed': lambda d: "File Processing Failed: Could not download the uploaded file. Please try uploading again.",
+            'download_failed': lambda d: f"File Processing Failed: {d.get('message', 'Could not download the uploaded file. Please try uploading again.')}",
             
             'validation_error': lambda d: f"File Processing Failed: {d.get('message', 'An error occurred while validating your Excel file. Please try again.')}",
             
@@ -61,7 +61,9 @@ class ExcelErrorFormatter:
             
             'processing_incomplete': lambda d: f"File Processing Failed: File processing incomplete. {d.get('skipped_rows', 0)} row(s) skipped out of {d.get('total_rows', 0)} total product rows. Only {d.get('extracted_rows', 0)} products extracted successfully.\n\n{d.get('skipped_summary', '')}\n\nPlease fix your Excel file and upload again.",
             
-            'date_location_inconsistency': lambda d: f"File Processing Failed: {d.get('message', 'Inconsistent date and location data detected.')}"
+            'date_location_inconsistency': lambda d: f"File Processing Failed: {d.get('message', 'Inconsistent date and location data detected.')}",
+            
+            'special_characters_in_headers': lambda d: f"File Processing Failed: {d.get('message', f\"The column headers in your data contain special characters, such as '{d.get('example_header', 'Display Name/Code')}'. Please modify these headers to include only letters, numbers, spaces, and basic punctuation. Could you please update the headers accordingly and resend the information?\")}"
         }
         
         formatter = error_formats.get(error_type)
