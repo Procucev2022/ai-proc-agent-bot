@@ -277,10 +277,16 @@ class PurchaseIntentHandler:
 
         # If no new entities but not a modification request, send general clarification
         clarification_message = (
-            "Please share the items for your RFQ with *name, brand/specs (if any), and quantity* — you can add multiple items together in one message.\n\n"
-            "📝 Example:\n"
-            "Laptop Dell Inspiron - 5, Printer HP LaserJet - 2, Desktop HP 17\" - 10"
+            "Please share the items for your RFQ in the following format:\n\n"
+            "*Item 1:* Laptops\n"
+            "*Quantity:* 15\n"
+            "*Specifications:* 10\" display, HP, i7 processor, blue color\n\n"
+            "*Item 2:* Cables\n"
+            "*Quantity:* 1\n"
+            "*Specifications:* 25 meters, 10 mm width\n\n"
+            "If you have the item details in an *Excel or CSV file*, you may attach the file now."
         )
+
         await self.whatsapp_service.send_message(user.phone_number, clarification_message, session_id=session)
         await self.session_manager.save_session(session, WorkflowType.rfq_creation)
 

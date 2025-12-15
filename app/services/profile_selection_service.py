@@ -810,8 +810,12 @@ class ProfileSelectionService:
                     if result.get('status') == 'profile_selected_and_authenticated' or result.get(
                             'redirect_to_main_flow'):
                         # Show buying options with the exact buttons requested
-                        buying_message = f"Perfect! Continuing with your Buyer profile ({profile['email']}).\nWhat would you like to do?"
-                        
+                        buying_message = (
+                            f"Perfect! We’ll continue with your Buyer profile (*{profile['email']}*).\n"
+                            "What would you like to do next?\n\n"
+                            "If you’d like to create an RFQ using Excel, please attach your file here.\n\n"
+                        )
+
                         buttons_config = [
                             {"id": "create_rfq", "title": "Create new RFQ"},
                             {"id": "rfq_status", "title": "Check RFQ Status"},
@@ -996,7 +1000,13 @@ class ProfileSelectionService:
                     name = name.title()
                 else:
                     name = 'there'
-                menu_message = f"Perfect! Continuing with your Buyer profile ({email}).\nWhat would you like to do?"
+                menu_message = (
+                    f"Perfect! We’ll continue with your Buyer profile (*{profile['email']}*).\n"
+                    "What would you like to do next?\n\n"
+                    "If you’d like to create an RFQ using Excel, please attach your file here.\n\n"
+                    "(*You can type 'Exit' at any time to end the chat.*)"
+                )
+
                 header = f"Hi {name}!"
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},

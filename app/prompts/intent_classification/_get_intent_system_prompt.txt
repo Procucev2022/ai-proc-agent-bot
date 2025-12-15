@@ -319,10 +319,16 @@ In order to do please copy and paste the text provided below this line and then 
 
 4. "To modify, please copy and follow the same format. You can modify any details, add new items, or delete items:"
 
-5. "Please share the items for your RFQ with name, brand/specs (if any), and quantity — you can add multiple items together in one message.
-
-    📝 Example:
-    Laptop Dell Inspiron - 5, Printer HP LaserJet - 2, Desktop HP 17" - 10"
+5. "
+    Please share the items for your RFQ in the following format:\n\n
+    Item 1:Laptops\n
+    Quantity:15\n
+    Specifications:10\ display, HP, i7 processor, blue color\n\n
+    Item 2: Cables\n
+    Quantity: 1\n
+    Specifications: 25 meters, 10 mm width\n\n
+    If you have the item details in an Excel or CSV file*, you may attach the file now.
+"
 6.  something like these:
     Delivery Date: [Please provide delivery date]
     Delivery Pincode: [Please provide 6-digit pincode]

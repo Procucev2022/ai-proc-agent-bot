@@ -2173,8 +2173,12 @@ class ChatService:
                 first_name = user.name.split()[0].capitalize() if user.name else "there"
                 
                 # Send the specified greeting message with buttons
-                greeting_message = f"Hi {first_name}! What can I assist you with today?\nLet's continue with your buyer profile ({user.email})\n(Type 'Exit' anytime to end the chat)"
-                
+                greeting_message = (
+                    f"Hi {first_name}! Let's continue with your buyer profile ({user.email})\n"
+                    "What can I assist you with today?\n\n"
+                    "If you’d like to create an RFQ using Excel, please attach your file here.\n\n"
+                )
+
                 # Role-based button configuration
                 if user_role == "buyer":
                     buttons_config = [
@@ -2573,7 +2577,10 @@ class ChatService:
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "search_bfs", "title": "Search Stocks"}
                 ]
-                profile_message = f"Let's continue with your buyer profile ({user.email})"
+                profile_message = (
+                    f"Perfect! We’ll continue with your Buyer profile (*{user.email}*).\n\n"
+                    "If you’d like to create an RFQ using Excel, please attach your file here.\n\n"
+                )
                 # Extract first name and capitalize first letter
                 first_name = user.name.split()[0].capitalize() if user.name else "there"
                 header = f"Hi {first_name}! What can I assist you with today?"
@@ -2598,7 +2605,10 @@ class ChatService:
                             {"id": "rfq_status", "title": "Check RFQ Status"},
                             {"id": "search_bfs", "title": "Search Stocks"}
                         ]
-                        profile_message = f"Let's continue with your buyer profile ({user.email})"
+                        profile_message = (
+                            f"We’ll continue with your Buyer profile (*{user.email}*).\n\n"
+                            "If you’d like to create an RFQ using Excel, please attach your file here.\n\n"
+                        )
                         # Extract first name and capitalize first letter
                         first_name = user.name.split()[0].capitalize() if user.name else "there"
                         header = f"Hi {first_name}! What can I assist you with today?"
