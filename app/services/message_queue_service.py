@@ -83,7 +83,8 @@ class ProcessingSession:
     batch_id: str
     started_at: float
     ack_sent: bool = False
-    please_wait_sent: bool = False
+    please_wait_sent_count: int = 0
+    please_wait_last_sent: float = 0.0
     suppressed: bool = False
     
     def to_json(self) -> str:
@@ -123,6 +124,7 @@ class MessageQueueService:
         # Configuration
         self.batch_window = settings.batch_window_seconds  # Default: 3s
         self.please_wait_threshold = settings.please_wait_threshold_seconds  # Default: 15s
+        self.max_please_wait_count = settings.max_please_wait_count  # Default: 3
         self.monitoring_poll_interval = settings.monitoring_poll_interval_seconds  # Default: 5s
         
         # WhatsApp service for direct sending (ack, please-wait)
@@ -417,8 +419,18 @@ class MessageQueueService:
                             session = ProcessingSession.from_json(session_json)
                             duration = now - session.started_at
                             
-                            # Send please-wait if threshold exceeded
-                            if duration >= self.please_wait_threshold and not session.please_wait_sent:
+                            # Calculate which interval we're in based on duration
+                            # E.g., threshold=15s: intervals at 15s, 30s, 45s, 60s...
+                            intervals_passed = int(duration // self.please_wait_threshold)
+                            
+                            # Send please-wait if we've entered a new interval AND haven't reached max count
+                            should_send = (
+                                intervals_passed > 0 and
+                                session.please_wait_sent_count < intervals_passed and
+                                session.please_wait_sent_count < self.max_please_wait_count
+                            )
+                            
+                            if should_send:
                                 # Check if response is already ready (prevents late please-wait)
                                 response_ready_key = self._key_response_ready(user_phone)
                                 response_ready = await self.redis.get(response_ready_key)
@@ -443,30 +455,51 @@ class MessageQueueService:
                                 if lock_acquired:
                                     # This worker won the race - double-check and send
                                     try:
+                                        # CRITICAL: Double-check response_ready INSIDE lock (race condition prevention)
+                                        response_ready_recheck = await self.redis.get(response_ready_key)
+                                        if response_ready_recheck:
+                                            logger.debug(
+                                                f"[MONITOR] Response ready detected inside lock for {user_phone}, "
+                                                f"skipping please-wait (double-checked locking)"
+                                            )
+                                            continue
+                                        
+                                        # Double-check session hasn't been updated by another worker
                                         session_json_check = await self.redis.get(key)
                                         if not session_json_check:
                                             continue
                                         
                                         session_check = ProcessingSession.from_json(session_json_check)
-                                        if session_check.please_wait_sent:
+                                        
+                                        # Verify we should still send (counter might have been updated)
+                                        if session_check.please_wait_sent_count >= self.max_please_wait_count:
                                             logger.debug(
-                                                f"[MONITOR] Please-wait already sent by another worker "
-                                                f"for {user_phone}"
+                                                f"[MONITOR] Max please-wait count ({self.max_please_wait_count}) "
+                                                f"reached for {user_phone}"
+                                            )
+                                            continue
+                                        
+                                        if session_check.please_wait_sent_count >= intervals_passed:
+                                            logger.debug(
+                                                f"[MONITOR] Please-wait already sent for interval {intervals_passed} "
+                                                f"by another worker for {user_phone}"
                                             )
                                             continue
                                         
                                         logger.debug(
-                                            f"[MONITOR] Sending please-wait to {user_phone} "
-                                            f"after {duration:.1f}s"
+                                            f"[MONITOR] Sending please-wait #{session_check.please_wait_sent_count + 1} "
+                                            f"to {user_phone} after {duration:.1f}s "
+                                            f"(interval {intervals_passed}/{self.max_please_wait_count})"
                                         )
                                         await self._send_please_wait(user_phone)
                                         
-                                        # Update session
-                                        session.please_wait_sent = True
+                                        # Update session with counter and timestamp
+                                        session_check.please_wait_sent_count += 1
+                                        session_check.please_wait_last_sent = time.time()
                                         await self.redis.setex(
                                             key,
                                             60,  # Refresh TTL
-                                            session.to_json()
+                                            session_check.to_json()
                                         )
                                     except Exception as send_error:
                                         logger.error(
