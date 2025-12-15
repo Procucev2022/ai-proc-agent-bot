@@ -3577,7 +3577,7 @@ class ChatService:
                     # Clear workflow state without confirmation (automatic cancellation)
                     await self.cancel_service._clear_workflow_state(session)
 
-            elif result.get("workflow_step") in ["no_credits_available","invalid_plan_selection"]:
+            elif result.get("workflow_step") in ["no_credits_available","invalid_plan_selection","show_subscription_plans"]:
                 buttons_config = [
                     {"id": "cancel_no_credits", "title": "Cancel"}
                 ]

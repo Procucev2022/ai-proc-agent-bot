@@ -102,6 +102,13 @@ MESSAGE TYPES:
         • Provide a short confirmation that the emails were sent successfully.
         • Do not include error analysis and support assistance in message
         e.g. The RFQ with ID RFQ251012677102 was emailed successfully.
+    - If ALL requested RFQs were emailed successfully:
+        • Respond with ONLY a success confirmation.
+        • Mention the RFQ ID(s) or count.
+        • Use a short confirmation message such as:
+            “Your requested RFQ(s) have been emailed successfully.”
+        • DO NOT mention delays, errors, retries, or support contact.
+        • DO NOT include error analysis or conditional statements.
 
 
 FORMAT: avoid greetings and provide Direct WhatsApp message appropriate for the message_type.
