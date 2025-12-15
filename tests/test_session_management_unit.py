@@ -26,7 +26,8 @@ class TestSessionManagementLogic:
             "batch_id": f"direct_{user_phone}_{int(time.time() * 1000)}",
             "started_at": time.time(),
             "ack_sent": False,
-            "please_wait_sent": False,
+            "please_wait_sent_count": 0,
+            "please_wait_last_sent": 0.0,
             "suppressed": False
         }
         
@@ -34,14 +35,16 @@ class TestSessionManagementLogic:
         assert "batch_id" in session_data
         assert "started_at" in session_data
         assert "ack_sent" in session_data
-        assert "please_wait_sent" in session_data
+        assert "please_wait_sent_count" in session_data
+        assert "please_wait_last_sent" in session_data
         assert "suppressed" in session_data
         
         # Verify types
         assert isinstance(session_data["batch_id"], str)
         assert isinstance(session_data["started_at"], float)
         assert isinstance(session_data["ack_sent"], bool)
-        assert isinstance(session_data["please_wait_sent"], bool)
+        assert isinstance(session_data["please_wait_sent_count"], int)
+        assert isinstance(session_data["please_wait_last_sent"], float)
         assert isinstance(session_data["suppressed"], bool)
         
         # Verify batch_id format
@@ -55,7 +58,8 @@ class TestSessionManagementLogic:
             "batch_id": "direct_919876543210_1234567890",
             "started_at": 1234567890.123,
             "ack_sent": False,
-            "please_wait_sent": False,
+            "please_wait_sent_count": 0,
+            "please_wait_last_sent": 0.0,
             "suppressed": False
         }
         

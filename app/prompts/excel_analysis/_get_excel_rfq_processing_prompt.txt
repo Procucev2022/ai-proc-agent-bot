@@ -30,7 +30,7 @@ Map Excel columns to these RFQ fields:
 **Required Fields (per product):**
 - description: Must be non-empty string
 - quantity: Must be positive number (SKIP PRODUCT IF MISSING OR ZERO). Maximum allowed: 100,000 pieces/units per product.
-- unitofMeasures: Must be non-empty string (default to "pcs" if missing)
+- unitofMeasures: Must be non-empty string (default to "Units" if missing)
 
 **Optional Fields:**
 - brand: Can be null
@@ -142,12 +142,12 @@ Row 15: {'0': '', '1': 'Pincode', '2': '560037', '3': '', '4': '', '5': ''}
     "products": [
       {"description": "Motherboards", "quantity": 2, "unitofMeasures": "pcs", "brand": "", "remarks": "1a123"},
       {"description": "Batteries", "quantity": 5, "unitofMeasures": "pcs", "brand": "", "remarks": "2A345"},
-      {"description": "Screens", "quantity": 10, "unitofMeasures": "pcs", "brand": "", "remarks": ""},
-      {"description": "chips", "quantity": 5, "unitofMeasures": "pcs", "brand": "", "remarks": ""},
-      {"description": "Silicon", "quantity": 8, "unitofMeasures": "pcs", "brand": "", "remarks": ""},
-      {"description": "Glass", "quantity": 50, "unitofMeasures": "pcs", "brand": "", "remarks": ""},
-      {"description": "Plastics", "quantity": 100, "unitofMeasures": "pcs", "brand": "", "remarks": ""},
-      {"description": "Minerals", "quantity": 50, "unitofMeasures": "pcs", "brand": "", "remarks": ""}
+      {"description": "Screens", "quantity": 10, "unitofMeasures": "Units", "brand": "", "remarks": ""},
+      {"description": "chips", "quantity": 5, "unitofMeasures": "Units", "brand": "", "remarks": ""},
+      {"description": "Silicon", "quantity": 8, "unitofMeasures": "Units", "brand": "", "remarks": ""},
+      {"description": "Glass", "quantity": 50, "unitofMeasures": "Units", "brand": "", "remarks": ""},
+      {"description": "Plastics", "quantity": 100, "unitofMeasures": "Units", "brand": "", "remarks": ""},
+      {"description": "Minerals", "quantity": 50, "unitofMeasures": "Units", "brand": "", "remarks": ""}
     ],
     "deliveryDate": "2025-11-05",
     "state": null,
