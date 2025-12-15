@@ -45,7 +45,7 @@ class ExcelErrorFormatter:
             
             'corrupted_file': lambda d: f"File Processing Failed: {d.get('message', 'The Excel file appears to be corrupted or damaged. Please try uploading again.')}",
             
-            'no_headers': lambda d: f"File Processing Failed: {d.get('message', \"Your Excel file doesn't have proper column headers. Please add clear column headers in the first row and reupload.\")}",
+            'no_headers': lambda d: f"File Processing Failed: {d.get('message', 'Your Excel file does not have proper column headers. Please add clear column headers in the first row and reupload.')}",
             
             'mixed_data_types': lambda d: f"File Processing Failed: The '{d.get('column_name', 'Procurement Requirement')}' field contains mixed data types. Please provide a clear and consistent description with uniform formatting.",
             
@@ -63,7 +63,7 @@ class ExcelErrorFormatter:
             
             'date_location_inconsistency': lambda d: f"File Processing Failed: {d.get('message', 'Inconsistent date and location data detected.')}",
             
-            'special_characters_in_headers': lambda d: f"File Processing Failed: {d.get('message', f\"The column headers in your data contain special characters, such as '{d.get('example_header', 'Display Name/Code')}'. Please modify these headers to include only letters, numbers, spaces, and basic punctuation. Could you please update the headers accordingly and resend the information?\")}"
+            'special_characters_in_headers': lambda d: f"File Processing Failed: {d.get('message', f'The column headers in your data contain special characters, such as \'{d.get(\'example_header\', \'Display Name/Code\')}\'. Please modify these headers to include only letters, numbers, spaces, and basic punctuation. Could you please update the headers accordingly and resend the information?')}"
         }
         
         formatter = error_formats.get(error_type)
