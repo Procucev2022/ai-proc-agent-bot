@@ -77,5 +77,12 @@ FULL_FAQ_CONTEXT =\
     4. **final_confirmation section**  
        The bot summarises all collected details and asks the user for final confirmation before submitting the RFQ.
 
-
+- Credits & Available RFQs:
+    Select your selling interests first, then choose your Seller profile to view credits and available RFQs.
+- Subscription Plans:
+    CONNECT – ₹4,999 (3 months)
+    RFQ alerts, access to all RFQs & WhatsApp AI assistant.     
+    SELECT – ₹9,999 (3 months)
+    Everything in CONNECT + AI quotations & catalogue listing.
+    
 """
