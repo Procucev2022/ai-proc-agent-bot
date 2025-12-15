@@ -63,7 +63,7 @@ class ExcelErrorFormatter:
             
             'date_location_inconsistency': lambda d: f"File Processing Failed: {d.get('message', 'Inconsistent date and location data detected.')}",
             
-            'special_characters_in_headers': lambda d: f"File Processing Failed: {d.get('message', f'The column headers in your data contain special characters, such as \'{d.get(\'example_header\', \'Display Name/Code\')}\'. Please modify these headers to include only letters, numbers, spaces, and basic punctuation. Could you please update the headers accordingly and resend the information?')}"
+            'special_characters_in_headers': lambda d: f"File Processing Failed: {d.get('message', 'The column headers in your data contain special characters, such as ' + repr(d.get('example_header', 'Display Name/Code')) + '. Please modify these headers to include only letters, numbers, spaces, and basic punctuation. Could you please update the headers accordingly and resend the information?')}"
         }
         
         formatter = error_formats.get(error_type)
