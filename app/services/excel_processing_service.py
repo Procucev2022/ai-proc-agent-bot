@@ -185,7 +185,7 @@ class ExcelProcessingService:
                     'S.No': len(items) + 1,
                     'ItemDescription': product.get('description', ''),
                     'Specification': product.get('brand', ''),
-                    'Uom': product.get('unitofMeasures', 'pcs'),
+                    'Uom': product.get('unitofMeasures', 'Units'),
                     'Quantity': product.get('quantity'),
                     'Remarks': product.get('remarks', '')
                 }
@@ -352,7 +352,7 @@ class ExcelProcessingService:
                     
                     # Set default UOM if missing but quantity exists
                     if 'Uom' not in item and 'Quantity' in item:
-                        item['Uom'] = 'pcs'
+                        item['Uom'] = 'Units'
                     
                     items.append(item)
 
@@ -470,7 +470,7 @@ class ExcelProcessingService:
             # Validate UOM values
             uom = item.get('Uom', '').lower().strip()
             if uom in ['each', 'per item', 'item']:
-                validation_result['warnings'].append(f"Item {i}: Consider using standard UOM like 'pcs' instead of '{uom}'")
+                validation_result['warnings'].append(f"Item {i}: Consider using standard UOM like 'Units' instead of '{uom}'")
             
 
         
@@ -631,7 +631,7 @@ class ExcelProcessingService:
                     'S.No': sno,  # Keep as integer
                     'ItemDescription': str(item.get('ItemDescription', '')),
                     'Specification': str(item.get('Specification', '')),
-                    'Uom': str(item.get('Uom', 'pcs')),
+                    'Uom': str(item.get('Uom', 'Units')),
                     'Quantity': quantity,  # Keep as integer
                     'Remarks': str(item.get('Remarks', ''))
                 }
