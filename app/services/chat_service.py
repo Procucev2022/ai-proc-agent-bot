@@ -2331,63 +2331,83 @@ class ChatService:
             transformed_products = []
             delivery_details = {}
             
-            # Extract delivery details from session - map to sectioned RFQ format
-            if session.workflow_state.get('delivery_date'):
-                delivery_details['deliveryDate'] = session.workflow_state['delivery_date']
-            if session.workflow_state.get('pincode'):
-                delivery_details['pincode'] = session.workflow_state['pincode']
-            if session.workflow_state.get('city'):
-                delivery_details['city'] = session.workflow_state['city']
-            if session.workflow_state.get('state'):
-                delivery_details['state'] = session.workflow_state['state']
+            # Check if date_location section is already confirmed in sectioned RFQ
+            sectioned_rfq = session.workflow_state.get('sectioned_rfq', {})
+            date_location_confirmed = (
+                sectioned_rfq.get('sections', {})
+                .get('date_location', {})
+                .get('confirmed', False)
+            )
             
-            # Validate and normalize delivery date if provided using sectioned RFQ handler
-            if delivery_details.get('deliveryDate'):
-                from app.services.handlers.sectioned_rfq_creation_handler import SectionedRFQCreationHandler
-                sectioned_handler = SectionedRFQCreationHandler(
-                    entity_service=self.entity_service,
-                    whatsapp_service=self.whatsapp_service,
-                    cancel_service=None,
-                    session_manager=self.session_manager
+            if date_location_confirmed:
+                # Use confirmed date_location data, ignore Excel date/location
+                confirmed_data = (
+                    sectioned_rfq.get('sections', {})
+                    .get('date_location', {})
+                    .get('data', {})
                 )
-                date_validation = await sectioned_handler._validate_delivery_date(delivery_details['deliveryDate'])
-                if date_validation.get('is_valid'):
-                    delivery_details['deliveryDate'] = date_validation.get('normalized_date', delivery_details['deliveryDate'])
-                    logger.debug(f"[TRANSFORM-RFQ] Delivery date validated: {delivery_details['deliveryDate']}")
-                else:
-                    # Date validation failed - raise exception to reject file
-                    from app.utils.excel_error_formatter import format_excel_error
-                    error_msg = date_validation.get('error', 'Invalid delivery date')
-                    logger.error(f"[TRANSFORM-RFQ] Date validation failed: {error_msg}")
-                    raise ValueError(format_excel_error('date_validation', {'message': error_msg}))
+                delivery_details = confirmed_data.copy()
+                logger.debug(f"[TRANSFORM-RFQ] Using confirmed date_location data, ignoring Excel: {delivery_details}")
+            else:
+                # Extract delivery details from session - map to sectioned RFQ format
+                if session.workflow_state.get('delivery_date'):
+                    delivery_details['deliveryDate'] = session.workflow_state['delivery_date']
+                if session.workflow_state.get('pincode'):
+                    delivery_details['pincode'] = session.workflow_state['pincode']
+                if session.workflow_state.get('city'):
+                    delivery_details['city'] = session.workflow_state['city']
+                if session.workflow_state.get('state'):
+                    delivery_details['state'] = session.workflow_state['state']
             
-            # Validate pincode if provided
-            if delivery_details.get('pincode'):
-                from app.utils.pincode_lookup import get_location_from_pincode_async
-                pincode = delivery_details['pincode'].strip()
+            # Only validate if date_location is not already confirmed
+            if not date_location_confirmed:
+                # Validate and normalize delivery date if provided using sectioned RFQ handler
+                if delivery_details.get('deliveryDate'):
+                    from app.services.handlers.sectioned_rfq_creation_handler import SectionedRFQCreationHandler
+                    sectioned_handler = SectionedRFQCreationHandler(
+                        entity_service=self.entity_service,
+                        whatsapp_service=self.whatsapp_service,
+                        cancel_service=None,
+                        session_manager=self.session_manager
+                    )
+                    date_validation = await sectioned_handler._validate_delivery_date(delivery_details['deliveryDate'])
+                    if date_validation.get('is_valid'):
+                        delivery_details['deliveryDate'] = date_validation.get('normalized_date', delivery_details['deliveryDate'])
+                        logger.debug(f"[TRANSFORM-RFQ] Delivery date validated: {delivery_details['deliveryDate']}")
+                    else:
+                        # Date validation failed - raise exception to reject file
+                        from app.utils.excel_error_formatter import format_excel_error
+                        error_msg = date_validation.get('error', 'Invalid delivery date')
+                        logger.error(f"[TRANSFORM-RFQ] Date validation failed: {error_msg}")
+                        raise ValueError(format_excel_error('date_validation', {'message': error_msg}))
                 
-                # Validate pincode format
-                if not pincode.isdigit() or len(pincode) != 6:
-                    from app.utils.excel_error_formatter import format_excel_error
-                    error_msg = f"Invalid pincode '{pincode}'. Pincode must be a 6-digit number."
-                    logger.error(f"[TRANSFORM-RFQ] Pincode format validation failed: {error_msg}")
-                    raise ValueError(format_excel_error('pincode_validation', {'message': error_msg}))
-                
-                # Validate pincode existence
-                location = await get_location_from_pincode_async(pincode)
-                if not location:
-                    from app.utils.excel_error_formatter import format_excel_error
-                    error_msg = f"Pincode '{pincode}' not found. Please provide a valid Indian pincode."
-                    logger.error(f"[TRANSFORM-RFQ] Pincode existence validation failed: {error_msg}")
-                    raise ValueError(format_excel_error('pincode_validation', {'message': error_msg}))
-                
-                # Auto-fill city/state from validated pincode
-                if not delivery_details.get('city') or not delivery_details.get('state'):
-                    logger.debug(f"[TRANSFORM-RFQ] Auto-filling location from validated pincode: {pincode}")
-                    if location.get('city'):
-                        delivery_details['city'] = location['city']
-                    if location.get('state'):
-                        delivery_details['state'] = location['state']
+                # Validate pincode if provided
+                if delivery_details.get('pincode'):
+                    from app.utils.pincode_lookup import get_location_from_pincode_async
+                    pincode = delivery_details['pincode'].strip()
+                    
+                    # Validate pincode format
+                    if not pincode.isdigit() or len(pincode) != 6:
+                        from app.utils.excel_error_formatter import format_excel_error
+                        error_msg = f"Invalid pincode '{pincode}'. Pincode must be a 6-digit number."
+                        logger.error(f"[TRANSFORM-RFQ] Pincode format validation failed: {error_msg}")
+                        raise ValueError(format_excel_error('pincode_validation', {'message': error_msg}))
+                    
+                    # Validate pincode existence
+                    location = await get_location_from_pincode_async(pincode)
+                    if not location:
+                        from app.utils.excel_error_formatter import format_excel_error
+                        error_msg = f"Pincode '{pincode}' not found. Please provide a valid Indian pincode."
+                        logger.error(f"[TRANSFORM-RFQ] Pincode existence validation failed: {error_msg}")
+                        raise ValueError(format_excel_error('pincode_validation', {'message': error_msg}))
+                    
+                    # Auto-fill city/state from validated pincode
+                    if not delivery_details.get('city') or not delivery_details.get('state'):
+                        logger.debug(f"[TRANSFORM-RFQ] Auto-filling location from validated pincode: {pincode}")
+                        if location.get('city'):
+                            delivery_details['city'] = location['city']
+                        if location.get('state'):
+                            delivery_details['state'] = location['state']
             
             # Transform each product to match sectioned RFQ items format exactly
             for product in products:
