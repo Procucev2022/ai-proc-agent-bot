@@ -581,13 +581,21 @@ class ChatService:
 
             # Classify intent once for all message routing and tracking
             try:
-                conversation_context = await ChatServiceHelpers.build_conversation_context(session, message_content)
+                # Sanitize message content for intent classification - strip base64 data to avoid token limits
+                classification_content = message_content
+                if message_type == "excel_upload" and isinstance(message_content, dict):
+                    # Create sanitized copy without base64 data for classification
+                    classification_content = f"Excel file upload: {message_content.get('document', {}).get('filename', 'unknown')}"
+
+                conversation_context = await ChatServiceHelpers.build_conversation_context(session, classification_content)
                 # Now using async OpenAI service
-                message_intent_result = await self.intent_service.classify_intent(message_content, conversation_context)
+                message_intent_result = await self.intent_service.classify_intent(classification_content, conversation_context)
                 intent = message_intent_result.get('intent')
                 confidence = message_intent_result.get('confidence', 0)
 
-                self.session_manager.add_message_to_history(session, "user", message_content, message_type, intent, confidence)
+                # For history, also use sanitized content for excel uploads
+                history_content = classification_content if message_type == "excel_upload" else message_content
+                self.session_manager.add_message_to_history(session, "user", history_content, message_type, intent, confidence)
             except Exception as e:
                 # If intent classification fails, still track the message without intent
                 logger.warning(f"Intent classification failed during message tracking: {e}")
@@ -1829,6 +1837,16 @@ class ChatService:
 
                 await self.session_manager.send_and_track_message(user.phone_number, registration_response, session)
                 return {"status": "handled", "response": "registration_required"}
+
+            # Check if user is in optional phase - treat Excel as attachment instead of bulk upload
+            has_pending_optional = bool(
+                session.workflow_state.get("pending_optional_rfq") or
+                session.workflow_state.get("pending_optional_combined_rfq")
+            )
+            if has_pending_optional:
+                logger.info(f"[EXCEL-UPLOAD] User {user.phone_number} is in optional phase - treating Excel as attachment")
+                # Delegate to image processor to handle as attachment
+                return await self.image_processor.process_image_message(user, session, content)
 
             # Check if an Excel file has already been processed in this workflow
             if session.workflow_state and session.workflow_state.get('excel_file_processed'):

@@ -18,6 +18,7 @@ from app.services.excel_processing_service import ExcelProcessingService
 from app.procucev_apis.rfq_apis import RFQAPIService
 from app.utils.datetime_utils import utc_now
 from app.config import get_settings
+from app.services.processors.image_message_processor import ImageMessageProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,21 @@ class ExcelMessageProcessor:
                 )
                 await self.whatsapp_service.send_message(user.phone_number, registration_response)
                 return {"status": "handled", "response": "registration_required"}
-            
+
+            # Check if user is in optional phase - treat Excel as attachment instead of bulk upload
+            has_pending_optional = bool(
+                session.workflow_state.get("pending_optional_rfq") or
+                session.workflow_state.get("pending_optional_combined_rfq")
+            )
+            if has_pending_optional:
+                logger.info(f"[EXCEL-UPLOAD] User {user.phone_number} is in optional phase - treating Excel as attachment")
+                # Delegate to image processor to handle as attachment
+                image_processor = ImageMessageProcessor(
+                    whatsapp_service=self.whatsapp_service,
+                    response_helpers=self.response_helpers
+                )
+                return await image_processor.process_image_message(user, session, content)
+
             # Check if an Excel file has already been processed in this workflow
             if session.workflow_state and session.workflow_state.get('excel_file_processed'):
                 processed_filename = session.workflow_state.get('excel_filename', 'a file')
