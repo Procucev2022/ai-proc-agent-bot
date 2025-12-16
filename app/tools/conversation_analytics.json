@@ -1,0 +1,144 @@
+{
+  "type": "function",
+  "name": "analyze_conversations",
+  "description": "Analyze conversation sessions and return individual session details with buyer and seller metrics separated",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "date": {
+        "type": "string",
+        "description": "Analysis date in YYYY-MM-DD format"
+      },
+      "total_sessions": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Total number of conversation sessions analyzed"
+      },
+      "sessions": {
+        "type": "array",
+        "description": "List of analyzed sessions with separated metrics",
+        "items": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "description": "Unique session identifier"
+            },
+            "user_type": {
+              "type": "string",
+              "enum": ["buyer", "seller", "unknown"],
+              "description": "Type of user identified from conversation"
+            },
+            "email": {
+              "type": "string",
+              "description": "Email address used by the user"
+            },
+            "confidence_score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "Confidence score for user classification"
+            },
+
+            "buyer_metrics": {
+              "type": "object",
+              "description": "Buyer-specific RFQ metrics (set all to 0 if not a buyer)",
+              "properties": {
+                "number_of_buyer_chats": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Number of chats where the user acted as a buyer"
+              },
+                "successful_rfqs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "RFQs successfully created by buyer"
+                },
+                "incomplete_rfqs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "RFQs started but not completed"
+                },
+                "buyers_started_but_not_raised_rfq": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Buyer intent shown but RFQ not raised (0 or 1)"
+                }
+              },
+              "required": [
+                "successful_rfqs", "incomplete_rfqs", "buyers_started_but_not_raised_rfq", "number_of_buyer_chats"
+              ]
+            },
+
+            "seller_metrics": {
+              "type": "object",
+              "description": "Seller-specific metrics (set all to 0 if not a seller)",
+              "properties": {
+                "number_of_seller_chats": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Number of chats where the user acted as a seller"
+              },
+
+                "subscription_plans_requested": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Number of subscription or plan inquiries"
+                },
+                "zero_credit_rfq_attempt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Seller tried to access RFQs with zero credits (0 or 1)"
+                }
+              },
+              "required": [
+                "subscription_plans_requested", "zero_credit_rfq_attempt","number_of_seller_chats"
+              ]
+            },
+
+            "registration_metrics": {
+              "type": "object",
+              "description": "Registration-related outcomes",
+              "properties": {
+                "successful_registration": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Successful registration count"
+                },
+                "failed_registration": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Failed registration attempts"
+                }
+              },
+              "required": [
+                "successful_registration",
+                "failed_registration"
+              ]
+            },
+
+            "analysis_reasoning": {
+              "type": "string",
+              "description": "Explanation of how metrics were inferred from conversation"
+            }
+          },
+          "required": [
+            "session_id",
+            "user_type",
+            "email",
+            "confidence_score",
+            "buyer_metrics",
+            "seller_metrics",
+            "registration_metrics",
+            "analysis_reasoning"
+          ]
+        }
+      }
+    },
+    "required": [
+      "date",
+      "total_sessions",
+      "sessions"
+    ]
+  }
+}
