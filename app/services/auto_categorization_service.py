@@ -584,48 +584,48 @@ class AutoCategorizationService:
             logger.error(f"Error getting collection stats: {str(e)}")
             return {"error": str(e)}
     
-    def categorize_with_learning(
-        self, 
+    async def categorize_with_learning(
+        self,
         item_description: str,
         user_id: str,
         session_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Enhanced categorization that includes learning category creation.
-        
+
         This method first performs normal auto-categorization, then creates
         a 3-level learning category using the result as context.
-        
+
         Args:
             item_description: Description of the item to categorize
             user_id: User ID for audit trail
             session_id: Optional session ID for tracking
-            
+
         Returns:
             Dict with both auto-categorization and learning categorization results
         """
         try:
             # Step 1: Perform regular auto-categorization
-            auto_result = self.categorize_item(
+            auto_result = await self.categorize_item(
                 item_description=item_description,
                 user_id=user_id,
                 session_id=session_id
             )
-            
+
             # Step 2: Create learning category if auto-categorization succeeded
             learning_result = None
             if auto_result.get("success"):
                 client_category = auto_result.get("category")
                 similar_items = auto_result.get("similar_items_used", [])
-                
-                learning_result = self.learning_service.create_3_level_category(
+
+                learning_result = await self.learning_service.create_3_level_category(
                     item_description=item_description,
                     client_category=client_category,
                     similar_items=similar_items,
                     user_id=user_id,
                     session_id=session_id
                 )
-            
+
             # Combine results
             return {
                 "success": auto_result.get("success", False),
@@ -633,7 +633,7 @@ class AutoCategorizationService:
                 "learning_categorization": learning_result,
                 "method": "auto_categorization_with_learning"
             }
-            
+
         except Exception as e:
             logger.error(f"Error in categorize_with_learning: {str(e)}")
             return {
