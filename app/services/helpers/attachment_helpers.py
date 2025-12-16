@@ -47,8 +47,8 @@ class AttachmentHelpers:
 
     # Maximum number of attachments allowed per RFQ
     MAX_ATTACHMENTS_PER_RFQ = 4
-    # Maximum file size in bytes (1MB)
-    MAX_FILE_SIZE_BYTES = 1 * 1024 * 1024  # 1MB
+    # Maximum file size in bytes (2MB)
+    MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024  # 2MB
 
     @staticmethod
     async def download_and_encode_attachment(file_url: str, filename: str = None, mime_type: str = None) -> Dict[str, Any]:
