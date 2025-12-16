@@ -287,19 +287,20 @@ class CancelService:
             logger.error(f"Error sending confirmation message to {user_phone}: {e}")
             return False
 
-    async def _send_cancellation_message(self, user_phone: str, user_type=None) -> bool:
+    async def _send_cancellation_message(self, user_phone: str, user_type=None, custom_message: str = None) -> bool:
         """
-        Send cancellation success message to user with buyer buttons if user is a buyer.
+        Send cancellation success message to user with buyer/seller buttons.
 
         Args:
             user_phone: User's phone number
             user_type: User type (string from cache, optional)
+            custom_message: Custom message to send instead of default (optional)
 
         Returns:
             True if message sent successfully
         """
         try:
-            cancellation_message = (
+            cancellation_message = custom_message or (
                 "Your request has been cancelled. What can I assist you with next?"
             )
 

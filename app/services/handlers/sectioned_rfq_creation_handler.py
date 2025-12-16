@@ -71,6 +71,9 @@ def _format_date_for_display(date_str: str) -> str:
 # Maximum retry attempts per section
 MAX_RETRY_ATTEMPTS = 3
 
+# Maximum items allowed for text input (Excel uploads can have more)
+MAX_TEXT_INPUT_ITEMS = 5
+
 
 class SectionedRFQCreationHandler:
     """Handles sectioned RFQ creation workflow."""
@@ -629,6 +632,9 @@ class SectionedRFQCreationHandler:
             if "item " in message_lower and ("qty:" in message_lower or "quantity:" in message_lower):
                 return await self._process_items_modification_direct(user, session, message)
 
+        # Check if data is from Excel upload (allows more than MAX_TEXT_INPUT_ITEMS)
+        is_from_excel = WorkflowManager.is_sectioned_rfq_from_excel(session)
+
         if not items_data or len(items_data) == 0:
             # Need to extract items - ONE TIME entity extraction
 
@@ -638,6 +644,11 @@ class SectionedRFQCreationHandler:
             )
 
             items_data = entity_result.get("products", [])
+
+            # Enforce item limit for text input (not Excel)
+            if not is_from_excel and len(items_data) > MAX_TEXT_INPUT_ITEMS:
+                return await self._display_item_limit_exceeded(user, session, len(items_data))
+
             WorkflowManager.update_section_data(session, "items", items_data)
         elif message and message.strip():
             # We have existing items AND user provided a message - user might be providing missing fields
@@ -652,6 +663,10 @@ class SectionedRFQCreationHandler:
             # Merge new extraction with existing items
             new_items = entity_result.get("products", [])
             if new_items:
+                # Enforce item limit for text input (not Excel)
+                if not is_from_excel and len(new_items) > MAX_TEXT_INPUT_ITEMS:
+                    return await self._display_item_limit_exceeded(user, session, len(new_items))
+
                 items_data = new_items  # Use the merged result from entity service
                 WorkflowManager.update_section_data(session, "items", items_data)
         else:
@@ -752,13 +767,17 @@ class SectionedRFQCreationHandler:
         # Step 3: Format valid - DIRECTLY replace entire items array (no AI processing)
         items_data = parsed_result["items"]
 
+        # Enforce item limit for text input (not Excel)
+        is_from_excel = WorkflowManager.is_sectioned_rfq_from_excel(session)
+        if not is_from_excel and len(items_data) > MAX_TEXT_INPUT_ITEMS:
+            return await self._display_item_limit_exceeded(user, session, len(items_data))
+
         WorkflowManager.update_section_data(session, "items", items_data)
         WorkflowManager.reset_section_retry(session, "items")
         WorkflowManager.set_awaiting_section_modification(session, "items", False)
 
         # Save session immediately after update to persist changes
         await self.session_manager.save_session(session, persist_to_db=False)
-
 
         # Step 4: Re-display for confirmation
         return await self._display_items_confirmation(user, session, items_data)
@@ -771,17 +790,17 @@ class SectionedRFQCreationHandler:
         message = f"RFQ Items ({len(items_data)}):\n\n{display_text}"
 
         # Check if data is from Excel upload
-        is_excel_source = session.workflow_state.get('excel_source', False) if session.workflow_state else False
-        
+        is_from_excel = WorkflowManager.is_sectioned_rfq_from_excel(session)
+
         # Build buttons config - hide Modify button if data is from Excel upload
         buttons_config = [
             {"id": "confirm_items", "title": "Confirm"}
         ]
-        
+
         # Only add Modify button if data is NOT from Excel upload
-        if not is_excel_source:
+        if not is_from_excel:
             buttons_config.append({"id": "modify_items", "title": "Modify"})
-        
+
         buttons_config.append({"id": "restart_rfq", "title": "Restart"})
         
         await self.whatsapp_service.send_configurable_buttons(
@@ -834,6 +853,28 @@ class SectionedRFQCreationHandler:
         await self.session_manager.save_session(session, persist_to_db=False)
 
         return {"status": "awaiting_missing_item_fields"}
+
+    async def _display_item_limit_exceeded(self, user: User, session: ConversationSession,
+                                            item_count: int) -> Dict[str, Any]:
+        """Display error and cancel workflow when text input exceeds maximum item limit."""
+        logger.warning(f"[SECTIONED_RFQ] Item limit exceeded: {item_count} items (max {MAX_TEXT_INPUT_ITEMS}) - cancelling workflow")
+
+        message = (
+            f"You've provided {item_count} items. Each RFQ can have a maximum of {MAX_TEXT_INPUT_ITEMS} items.\n\n"
+            f"For RFQs with more items, please upload an Excel file.\n\n"
+            f"What would you like to do next?"
+        )
+
+        # Cancel the workflow
+        await self.cancel_service._clear_workflow_state(session)
+
+        # Determine user type for appropriate menu buttons
+        user_type = "buyer" if user.role else "seller"
+
+        # Send message with menu buttons
+        await self.cancel_service._send_cancellation_message(user.phone_number, user_type, custom_message=message)
+
+        return {"status": "item_limit_exceeded_cancelled", "item_count": item_count}
 
     # ========================================================================
     # ATTACHMENTS SECTION

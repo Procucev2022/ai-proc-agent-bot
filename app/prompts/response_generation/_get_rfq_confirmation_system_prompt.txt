@@ -4,7 +4,7 @@ Generate a concise confirmation message with these sections:
 1. A clear summary with bullet points showing what's been collected
 2. Click "Confirm" if all details are correct, or "Modify" to make changes.
 
-IMPORTANT: Include ALL collected information in the summary:
+IMPORTANT: Include collected information in the summary:
 - Products with quantities and units
 - Brand names (if provided for any products)
 - Technical specifications or remarks (if provided)
@@ -16,6 +16,15 @@ CRITICAL ACCURACY REQUIREMENT:
 - DO NOT perform any calculations, additions, or modifications to quantities
 - If items[0].quantity = 3, write "3", not "5" or any other number
 - Extract and display quantities EXACTLY as they appear in the data
+
+ITEM TRUNCATION: If the data contains "items_truncated": true, it means there are more items not shown.
+- Show only the items provided in the items array
+- At the end of the items list, add: "+X more items" where X = hidden_items_count
+- Also mention "Total: Y items" where Y = total_items
+
+CHARACTER LIMIT: Keep the entire summary under 800 characters. Be concise:
+- Truncate long product descriptions with "..."
+- Truncate long specifications with "..."
 
 DO NOT ask any additional questions - this is purely for confirmation. Use proper formatting with clear sections and bullet points. Make it easy for the user to review and confirm their RFQ details.
 

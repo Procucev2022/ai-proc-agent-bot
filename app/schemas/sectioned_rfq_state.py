@@ -58,6 +58,7 @@ class SectionedRFQState(BaseModel):
     )
     pending_restart: bool = Field(default=False, description="Whether restart confirmation is pending")
     initial_extraction_done: bool = Field(default=False, description="Whether initial entity extraction has been performed")
+    from_excel: bool = Field(default=False, description="Whether RFQ originated from Excel upload (allows >5 items)")
 
     class Config:
         json_schema_extra = {
@@ -171,7 +172,8 @@ class SectionedRFQState(BaseModel):
                 for key, state in self.sections.items()
             },
             "pending_restart": self.pending_restart,
-            "initial_extraction_done": self.initial_extraction_done
+            "initial_extraction_done": self.initial_extraction_done,
+            "from_excel": self.from_excel
         }
 
     @classmethod
@@ -186,7 +188,8 @@ class SectionedRFQState(BaseModel):
             current_section=SectionType(data.get("current_section", "date_location")),
             sections=sections,
             pending_restart=data.get("pending_restart", False),
-            initial_extraction_done=data.get("initial_extraction_done", False)
+            initial_extraction_done=data.get("initial_extraction_done", False),
+            from_excel=data.get("from_excel", False)
         )
 
 
