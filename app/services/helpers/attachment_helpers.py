@@ -48,7 +48,7 @@ class AttachmentHelpers:
     # Maximum number of attachments allowed per RFQ
     MAX_ATTACHMENTS_PER_RFQ = 4
     # Maximum file size in bytes (1MB)
-    MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024  # 1MB
+    MAX_FILE_SIZE_BYTES = 1 * 1024 * 1024  # 1MB
 
     @staticmethod
     async def download_and_encode_attachment(file_url: str, filename: str = None, mime_type: str = None) -> Dict[str, Any]:
@@ -394,34 +394,50 @@ class AttachmentHelpers:
     def validate_attachment_type(filename: str, mime_type: str) -> Dict[str, Any]:
         """
         Validate if attachment type is supported.
-        
+
         Args:
             filename: Name of the file
             mime_type: MIME type of the file
-            
+
         Returns:
             Dict with validation result
         """
         supported_types = [
             "image/jpeg", "image/jpg", "image/png", "image/gif",
-            "application/pdf"
+            "application/pdf",
+            # Excel file types - supported as attachments during optional phase
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # xlsx
+            "application/vnd.ms-excel",  # xls
+            "application/vnd.ms-excel.sheet.macroEnabled.12",  # xlsm
+            # Word document types
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # docx
+            "application/msword",  # doc
+            # AutoCAD file types (DWG and DXF)
+            "application/acad",  # dwg
+            "application/x-acad",  # dwg
+            "image/x-dwg",  # dwg
+            "image/vnd.dwg",  # dwg
+            "application/dxf",  # dxf
+            "image/vnd.dxf",  # dxf
+            "image/x-dxf",  # dxf
+            "application/octet-stream",  # generic binary (often used for CAD files)
         ]
-        
-        supported_extensions = [".jpg", ".jpeg", ".png", ".gif", ".pdf"]
+
+        supported_extensions = [".jpg", ".jpeg", ".png", ".gif", ".pdf", ".xlsx", ".xls", ".xlsm", ".docx", ".doc", ".dwg", ".dxf"]
         
         # Check MIME type
         if mime_type not in supported_types:
             return {
                 "valid": False,
-                "error": f"Unsupported file type: {mime_type}. Supported types: JPG, PNG, GIF, PDF"
+                "error": f"Unsupported file type: {mime_type}. Supported types: JPG, PNG, GIF, PDF, Excel, Word, AutoCAD"
             }
-        
+
         # Check file extension
         file_ext = filename.lower().split('.')[-1] if '.' in filename else ""
         if f".{file_ext}" not in supported_extensions:
             return {
                 "valid": False,
-                "error": f"Unsupported file extension: .{file_ext}. Supported: JPG, PNG, GIF, PDF"
+                "error": f"Unsupported file extension: .{file_ext}. Supported: JPG, PNG, GIF, PDF, XLSX, XLS, DOCX, DOC, DWG, DXF"
             }
         
         return {"valid": True}

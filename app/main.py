@@ -474,14 +474,26 @@ async def upload_excel_file(
 ):
     """Process Excel file upload for testing."""
     try:
+        import base64
+
         # Read file content
         file_content = await file.read()
 
+        # Determine MIME type for Excel files
+        excel_mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        if file.filename.lower().endswith('.xls'):
+            excel_mime_type = "application/vnd.ms-excel"
+        elif file.filename.lower().endswith('.xlsm'):
+            excel_mime_type = "application/vnd.ms-excel.sheet.macroEnabled.12"
+
         # Create mock document message structure (same as WhatsApp webhook)
+        # Include base64 data for attachment support when user is in optional phase
         document_content = {
             "document": {
                 "filename": file.filename,
-                "link": "mock://uploaded-file"
+                "link": "mock://uploaded-file",
+                "data": base64.b64encode(file_content).decode('utf-8'),
+                "mime_type": excel_mime_type
             }
         }
 

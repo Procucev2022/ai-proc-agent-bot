@@ -620,10 +620,10 @@ async def process_document_message(webhook_data: Dict[str, Any], chat_service):
                 message_type="excel_upload"
             )
         else:
-            # Handle non-Excel documents
+            # Handle non-Excel documents (PDFs, images sent as docs, DOCX, etc.)
             await chat_service.process_message(
                 user_phone=from_number,
-                message_content=f"Received document: {filename}",
+                message_content=content,
                 message_type="document"
             )
 
