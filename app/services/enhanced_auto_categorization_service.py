@@ -578,7 +578,7 @@ class EnhancedAutoCategorizationService:
 
             # Step 3: Fallback to existing auto-categorization service
             logger.info("Using fallback auto-categorization service")
-            fallback_result = self.fallback_service.categorize_with_learning(
+            fallback_result = await self.fallback_service.categorize_with_learning(
                 item_description=item_description,
                 user_id=user_id,
                 session_id=session_id

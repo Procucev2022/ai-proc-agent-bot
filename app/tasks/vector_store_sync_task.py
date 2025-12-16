@@ -31,18 +31,23 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 2, 'countdown': 300})
-def sync_vector_store(self):
+def sync_vector_store(self, clear_existing: bool = False, cleanup_buyer_mappings: bool = False):
     """
     Sync seller data to vector store for enhanced semantic matching.
 
     This task:
-    1. Maps sellers to learning categories using OpenAI
-    2. Creates/updates vector embeddings in ChromaDB
-    3. Enables Phase 1 of hybrid seller matching
+    1. (Optional) Cleans up buyer mappings from SellerLearningMapping table
+    2. Maps sellers to learning categories using OpenAI
+    3. Creates/updates vector embeddings in ChromaDB
+    4. Enables Phase 1 of hybrid seller matching
 
     The vector store is used by EnhancedSellerMatchingService to quickly
     find semantically relevant seller candidates, which are then filtered
     by SellerRecommendationService business rules.
+
+    Args:
+        clear_existing: If True, clears the ChromaDB collection before rebuilding
+        cleanup_buyer_mappings: If True, removes buyer mappings from SellerLearningMapping
 
     Returns:
         Dict with sync status and statistics
@@ -61,6 +66,7 @@ def sync_vector_store(self):
 
         logger.info("=" * 60)
         logger.info("Starting vector store sync task")
+        logger.info(f"Options: clear_existing={clear_existing}, cleanup_buyer_mappings={cleanup_buyer_mappings}")
         logger.info("=" * 60)
 
         sync_results = {
@@ -69,6 +75,28 @@ def sync_vector_store(self):
             "steps_failed": [],
             "timestamp": datetime.utcnow().isoformat()
         }
+
+        # STEP 0 (Optional): Cleanup buyer mappings from SellerLearningMapping
+        if cleanup_buyer_mappings:
+            logger.info("Step 0: Cleaning up buyer mappings from SellerLearningMapping...")
+            try:
+                cleanup_result = _cleanup_buyer_mappings()
+                if cleanup_result.get("success"):
+                    sync_results["steps_completed"].append("buyer_mapping_cleanup")
+                    sync_results["cleanup_stats"] = cleanup_result
+                    logger.info(f"SUCCESS: Removed {cleanup_result.get('deleted_count', 0)} buyer mappings")
+                else:
+                    logger.warning(f"Buyer mapping cleanup failed: {cleanup_result.get('error')}")
+                    sync_results["steps_failed"].append({
+                        "step": "buyer_mapping_cleanup",
+                        "error": cleanup_result.get("error")
+                    })
+            except Exception as e:
+                logger.warning(f"Buyer mapping cleanup exception: {str(e)}")
+                sync_results["steps_failed"].append({
+                    "step": "buyer_mapping_cleanup",
+                    "error": str(e)
+                })
 
         # STEP 1: Map sellers to learning categories
         logger.info("Step 1/2: Mapping sellers to learning categories...")
@@ -107,7 +135,7 @@ def sync_vector_store(self):
         # STEP 2: Create vector embeddings in ChromaDB
         logger.info("Step 2/2: Creating vector embeddings in ChromaDB...")
         try:
-            embedding_result = _run_vector_embedding_creation()
+            embedding_result = _run_vector_embedding_creation(clear_existing=clear_existing)
 
             if embedding_result.get("success"):
                 sync_results["steps_completed"].append("vector_embedding_creation")
@@ -154,6 +182,66 @@ def sync_vector_store(self):
             "error": str(e),
             "timestamp": datetime.utcnow().isoformat()
         }
+
+
+def _cleanup_buyer_mappings() -> Dict[str, Any]:
+    """
+    Remove buyer mappings from SellerLearningMapping table.
+
+    Buyers are organizations with self_client = 1. Their mappings should not
+    exist in the seller learning mapping table.
+
+    Returns:
+        Dict with cleanup results
+    """
+    from app.database import get_db_session, execute_remote_query
+    from app.models import SellerLearningMapping
+
+    try:
+        db = get_db_session()
+
+        # Get buyer UUIDs from remote database
+        buyer_query = """
+            SELECT uuid FROM organization WHERE self_client = 1
+        """
+        buyer_results = execute_remote_query(buyer_query)
+        buyer_ids = [r['uuid'] for r in buyer_results]
+
+        if not buyer_ids:
+            logger.info("No buyers found in remote database")
+            return {
+                "success": True,
+                "deleted_count": 0,
+                "buyer_count": 0
+            }
+
+        logger.info(f"Found {len(buyer_ids)} buyers to check for mappings")
+
+        # Delete mappings for buyers
+        deleted_count = db.query(SellerLearningMapping).filter(
+            SellerLearningMapping.seller_id.in_(buyer_ids)
+        ).delete(synchronize_session='fetch')
+
+        db.commit()
+
+        logger.info(f"Deleted {deleted_count} buyer mappings from SellerLearningMapping")
+
+        return {
+            "success": True,
+            "deleted_count": deleted_count,
+            "buyer_count": len(buyer_ids)
+        }
+
+    except Exception as e:
+        logger.error(f"Error cleaning up buyer mappings: {str(e)}")
+        db.rollback()
+        return {
+            "success": False,
+            "error": str(e),
+            "deleted_count": 0
+        }
+    finally:
+        db.close()
 
 
 def _run_seller_category_mapping() -> Dict[str, Any]:
@@ -374,11 +462,14 @@ async def _async_map_sellers_to_categories(batch_size: int = 10) -> Dict[str, An
         db.close()
 
 
-def _run_vector_embedding_creation() -> Dict[str, Any]:
+def _run_vector_embedding_creation(clear_existing: bool = False) -> Dict[str, Any]:
     """
     Run vector embedding creation (Step 3 of setup).
 
     Creates/updates vector embeddings in ChromaDB for fast semantic search.
+
+    Args:
+        clear_existing: If True, clears the ChromaDB collection before rebuilding
     """
     try:
         # Add Setup directory to path for imports
@@ -388,10 +479,8 @@ def _run_vector_embedding_creation() -> Dict[str, Any]:
 
         from create_category_embeddings import create_unified_vector_store
 
-        logger.info("Creating vector embeddings in ChromaDB...")
-        # Don't clear existing on periodic sync (clear_existing=False)
-        # This preserves existing embeddings and only updates changed ones
-        success = create_unified_vector_store(clear_existing=False)
+        logger.info(f"Creating vector embeddings in ChromaDB (clear_existing={clear_existing})...")
+        success = create_unified_vector_store(clear_existing=clear_existing)
 
         if success:
             return {
@@ -421,30 +510,57 @@ def _run_vector_embedding_creation() -> Dict[str, Any]:
 
 
 # Manual trigger function for testing
-def trigger_vector_store_sync():
+def trigger_vector_store_sync(clear_existing: bool = False, cleanup_buyer_mappings: bool = False):
     """
     Manually trigger vector store sync (for testing).
 
+    Args:
+        clear_existing: If True, clears ChromaDB collection before rebuilding
+        cleanup_buyer_mappings: If True, removes buyer mappings from SellerLearningMapping
+
     Usage:
         from app.tasks.vector_store_sync_task import trigger_vector_store_sync
+
+        # Normal sync
         result = trigger_vector_store_sync()
+
+        # Full rebuild with cleanup
+        result = trigger_vector_store_sync(clear_existing=True, cleanup_buyer_mappings=True)
     """
-    logger.info("Manually triggering vector store sync...")
-    result = sync_vector_store.apply_async()
+    logger.info(f"Manually triggering vector store sync (clear_existing={clear_existing}, cleanup_buyer_mappings={cleanup_buyer_mappings})...")
+    result = sync_vector_store.apply_async(kwargs={
+        'clear_existing': clear_existing,
+        'cleanup_buyer_mappings': cleanup_buyer_mappings
+    })
     return {
         "task_id": result.id,
         "status": "triggered",
+        "clear_existing": clear_existing,
+        "cleanup_buyer_mappings": cleanup_buyer_mappings,
         "message": "Vector store sync task has been queued"
     }
 
 
 if __name__ == "__main__":
+    import argparse
+
     # Configure logging for direct execution
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
 
+    parser = argparse.ArgumentParser(description='Run vector store sync task')
+    parser.add_argument('--clear-existing', action='store_true',
+                       help='Clear ChromaDB collection before rebuilding')
+    parser.add_argument('--cleanup-buyer-mappings', action='store_true',
+                       help='Remove buyer mappings from SellerLearningMapping table')
+    args = parser.parse_args()
+
     print("Running vector store sync task directly...")
-    result = sync_vector_store()
+    print(f"Options: clear_existing={args.clear_existing}, cleanup_buyer_mappings={args.cleanup_buyer_mappings}")
+    result = sync_vector_store(
+        clear_existing=args.clear_existing,
+        cleanup_buyer_mappings=args.cleanup_buyer_mappings
+    )
     print(f"\nResult: {result}")
