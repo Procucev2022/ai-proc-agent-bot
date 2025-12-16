@@ -1272,3 +1272,42 @@ class WorkflowManager:
                    f"Resetting sectioned RFQ (caller: {caller_info})")
 
         session.workflow_state["sectioned_rfq"] = initialize_sectioned_rfq_state()
+
+    @staticmethod
+    def set_sectioned_rfq_from_excel(session: ConversationSession,
+                                      value: bool = True,
+                                      caller: Optional[str] = None) -> None:
+        """
+        Set whether sectioned RFQ originated from Excel upload.
+
+        Args:
+            session: Conversation session
+            value: Whether from Excel (default True)
+            caller: Optional caller identification
+        """
+        session.workflow_state = session.workflow_state or {}
+        caller_info = caller or inspect.stack()[1].function
+
+        logger.info(f"[SECTIONED_RFQ_EXCEL] Session {session.session_id}: "
+                   f"Setting from_excel: {value} (caller: {caller_info})")
+
+        if "sectioned_rfq" not in session.workflow_state:
+            WorkflowManager.initialize_sectioned_rfq(session)
+
+        session.workflow_state["sectioned_rfq"]["from_excel"] = value
+
+    @staticmethod
+    def is_sectioned_rfq_from_excel(session: ConversationSession) -> bool:
+        """
+        Check if sectioned RFQ originated from Excel upload.
+
+        Args:
+            session: Conversation session
+
+        Returns:
+            True if from Excel upload
+        """
+        if not session.workflow_state:
+            return False
+        sectioned_rfq = session.workflow_state.get("sectioned_rfq", {})
+        return sectioned_rfq.get("from_excel", False)

@@ -515,9 +515,24 @@ def _format_quantity(qty) -> str:
         return str(qty)
 
 
+MAX_DISPLAY_ITEMS = 5  # Maximum items to display before truncating
+MAX_DESCRIPTION_LENGTH = 40  # Truncate item descriptions
+MAX_SPECIFICATION_LENGTH = 50  # Truncate specifications
+MAX_MESSAGE_LENGTH = 900  # Reserve ~124 chars for header/buttons overhead
+
+
+def _truncate_text(text: str, max_length: int) -> str:
+    """Truncate text with ellipsis if it exceeds max_length."""
+    if not text or len(text) <= max_length:
+        return text
+    return text[:max_length - 3].rstrip() + "..."
+
+
 def generate_items_display(products: List[Dict[str, Any]]) -> str:
     """
     Generate display format for items.
+    Truncates to MAX_DISPLAY_ITEMS and shows "+n items" for the rest.
+    Also truncates long descriptions/specifications and respects MAX_MESSAGE_LENGTH.
 
     Args:
         products: List of product dictionaries
@@ -528,32 +543,57 @@ def generate_items_display(products: List[Dict[str, Any]]) -> str:
     if not products:
         return "No items"
 
-    result = []
+    total_items = len(products)
+    display_count = min(total_items, MAX_DISPLAY_ITEMS)
 
-    for idx, item in enumerate(products, 1):
-        result.append(f"Item {idx}: {item.get('description', '')}")
-        result.append(f"Qty: {_format_quantity(item.get('quantity', ''))}")
+    # Try with current display_count, reduce if message too long
+    while display_count > 0:
+        result = []
 
-        # Combine brand and remarks into specification
-        spec_parts = []
-        if item.get('brand'):
-            spec_parts.append(item['brand'])
-        if item.get('remarks'):
-            spec_parts.append(item['remarks'])
+        for idx, item in enumerate(products[:display_count], 1):
+            description = _truncate_text(item.get('description', ''), MAX_DESCRIPTION_LENGTH)
+            result.append(f"Item {idx}: {description}")
+            result.append(f"Qty: {_format_quantity(item.get('quantity', ''))}")
 
-        specification = ', '.join(spec_parts) if spec_parts else ''
-        result.append(f"Specification: {specification}")
+            # Combine brand and remarks into specification
+            spec_parts = []
+            if item.get('brand'):
+                spec_parts.append(item['brand'])
+            if item.get('remarks'):
+                spec_parts.append(item['remarks'])
 
-        # Add blank line separator between items (except after last item)
-        if idx < len(products):
+            specification = ', '.join(spec_parts) if spec_parts else ''
+            specification = _truncate_text(specification, MAX_SPECIFICATION_LENGTH)
+            result.append(f"Specification: {specification}")
+
+            # Add blank line separator between items (except after last displayed item)
+            if idx < display_count:
+                result.append("")
+
+        # Add "+n items" indicator if truncated
+        if total_items > display_count:
+            remaining = total_items - display_count
             result.append("")
+            result.append(f"+{remaining} more item{'s' if remaining > 1 else ''}")
 
-    return "\n".join(result)
+        output = "\n".join(result)
+
+        # Check if within limit
+        if len(output) <= MAX_MESSAGE_LENGTH:
+            return output
+
+        # Too long, reduce display count and retry
+        display_count -= 1
+
+    # Fallback: show minimal info
+    return f"{total_items} items (details too long to display)"
 
 
 def generate_items_display_with_missing(products: List[Dict[str, Any]], incomplete_items: List[Dict]) -> tuple[str, list[str]]:
     """
     Generate display format for items with missing field indicators.
+    Truncates to MAX_DISPLAY_ITEMS and shows "+n items" for the rest.
+    Also truncates long descriptions/specifications and respects MAX_MESSAGE_LENGTH.
 
     Args:
         products: List of product dictionaries
@@ -570,45 +610,69 @@ def generate_items_display_with_missing(products: List[Dict[str, Any]], incomple
     for incomplete in incomplete_items:
         missing_map[incomplete["index"]] = incomplete["missing_fields"]
 
-    result = []
-    all_missing_labels = []
+    total_items = len(products)
+    display_count = min(total_items, MAX_DISPLAY_ITEMS)
 
-    for idx, item in enumerate(products, 1):
-        missing_fields = missing_map.get(idx, [])
+    # Try with current display_count, reduce if message too long
+    while display_count > 0:
+        result = []
+        all_missing_labels = []
 
-        # Description
-        description = item.get('description', '')
-        if not description or 'description' in missing_fields:
-            description = "[Please provide product name]"
-            if "Product Name" not in all_missing_labels:
-                all_missing_labels.append("Product Name")
-        result.append(f"Item {idx}: {description}")
+        for idx, item in enumerate(products[:display_count], 1):
+            missing_fields = missing_map.get(idx, [])
 
-        # Quantity
-        quantity = item.get('quantity', '')
-        if not quantity or 'quantity' in missing_fields:
-            quantity = "[Please provide quantity]"
-            if "Quantity" not in all_missing_labels:
-                all_missing_labels.append("Quantity")
-        else:
-            quantity = _format_quantity(quantity)
-        result.append(f"Qty: {quantity}")
+            # Description
+            description = item.get('description', '')
+            if not description or 'description' in missing_fields:
+                description = "[Please provide product name]"
+                if "Product Name" not in all_missing_labels:
+                    all_missing_labels.append("Product Name")
+            else:
+                description = _truncate_text(description, MAX_DESCRIPTION_LENGTH)
+            result.append(f"Item {idx}: {description}")
 
-        # Combine brand and remarks into specification
-        spec_parts = []
-        if item.get('brand'):
-            spec_parts.append(item['brand'])
-        if item.get('remarks'):
-            spec_parts.append(item['remarks'])
+            # Quantity
+            quantity = item.get('quantity', '')
+            if not quantity or 'quantity' in missing_fields:
+                quantity = "[Please provide quantity]"
+                if "Quantity" not in all_missing_labels:
+                    all_missing_labels.append("Quantity")
+            else:
+                quantity = _format_quantity(quantity)
+            result.append(f"Qty: {quantity}")
 
-        specification = ', '.join(spec_parts) if spec_parts else ''
-        result.append(f"Specification: {specification}")
+            # Combine brand and remarks into specification
+            spec_parts = []
+            if item.get('brand'):
+                spec_parts.append(item['brand'])
+            if item.get('remarks'):
+                spec_parts.append(item['remarks'])
 
-        # Add blank line separator between items (except after last item)
-        if idx < len(products):
+            specification = ', '.join(spec_parts) if spec_parts else ''
+            specification = _truncate_text(specification, MAX_SPECIFICATION_LENGTH)
+            result.append(f"Specification: {specification}")
+
+            # Add blank line separator between items (except after last displayed item)
+            if idx < display_count:
+                result.append("")
+
+        # Add "+n items" indicator if truncated
+        if total_items > display_count:
+            remaining = total_items - display_count
             result.append("")
+            result.append(f"+{remaining} more item{'s' if remaining > 1 else ''}")
 
-    return "\n".join(result), all_missing_labels
+        output = "\n".join(result)
+
+        # Check if within limit
+        if len(output) <= MAX_MESSAGE_LENGTH:
+            return output, all_missing_labels
+
+        # Too long, reduce display count and retry
+        display_count -= 1
+
+    # Fallback: show minimal info
+    return f"{total_items} items (details too long to display)", []
 
 
 def generate_delivery_display_with_invalid_pincode(data: Dict[str, str]) -> str:

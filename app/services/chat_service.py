@@ -2273,6 +2273,9 @@ class ChatService:
             await self.session_manager.save_session(session, None)
             return {"status": "error", "error": str(e)}
         
+        # Mark this sectioned RFQ as originating from Excel (allows >5 items)
+        WorkflowManager.set_sectioned_rfq_from_excel(session, True, caller="excel_sectioned_rfq")
+
         # Store Excel products in items section
         WorkflowManager.update_section_data(session, "items", products)
         logger.debug(f"[EXCEL-SECTIONED] Stored {len(products)} products in items section")

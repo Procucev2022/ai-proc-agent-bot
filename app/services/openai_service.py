@@ -2742,6 +2742,17 @@ Determine the best category for the input item based on the similar items and th
             context_text = "Generate RFQ confirmation for the following data:\n\n"
             # Clean RFQ data for JSON serialization and format dates
             clean_rfq_data = self._clean_for_json_serialization(rfq_data)
+
+            # Truncate items to max 5 for display (WhatsApp 1024 char limit)
+            MAX_DISPLAY_ITEMS = 5
+            items = clean_rfq_data.get("items", [])
+            total_items = len(items)
+            if total_items > MAX_DISPLAY_ITEMS:
+                clean_rfq_data["items"] = items[:MAX_DISPLAY_ITEMS]
+                clean_rfq_data["items_truncated"] = True
+                clean_rfq_data["total_items"] = total_items
+                clean_rfq_data["hidden_items_count"] = total_items - MAX_DISPLAY_ITEMS
+                logger.info(f"Truncated RFQ items from {total_items} to {MAX_DISPLAY_ITEMS} for confirmation display")
             
             # Format delivery date for display
             if clean_rfq_data.get("delivery_date"):
