@@ -38,7 +38,7 @@ from app.services.email_service import EmailService
 health_logger = logging.getLogger("api_health_monitor")
 health_logger.setLevel(logging.INFO)
 
-# Add rotating file handler
+# Add date-based file handler (consistent with other services)
 from logging.handlers import RotatingFileHandler
 import os
 
@@ -46,26 +46,30 @@ log_dir = "logs"
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
-log_file = os.path.join(log_dir, "api_health_monitor.log")
-file_handler = RotatingFileHandler(
-    log_file,
-    maxBytes=5 * 1024 * 1024,  # 5MB
-    backupCount=10,
-    encoding='utf-8'
-)
-file_handler.setLevel(logging.INFO)
-formatter = logging.Formatter(
-    '%(asctime)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-file_handler.setFormatter(formatter)
-health_logger.addHandler(file_handler)
+# Use date-based log file naming like other services
+log_file = os.path.join(log_dir, f"api_health_monitor_{datetime.now().strftime('%Y-%m-%d')}.log")
 
-# Also log warnings/errors to console
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.WARNING)
-console_handler.setFormatter(formatter)
-health_logger.addHandler(console_handler)
+# Add file handler if not already present
+if not health_logger.handlers:
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=5 * 1024 * 1024,  # 5MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    file_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(formatter)
+    health_logger.addHandler(file_handler)
+
+    # Also log warnings/errors to console
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.WARNING)
+    console_handler.setFormatter(formatter)
+    health_logger.addHandler(console_handler)
 
 
 class HealthStatus(Enum):
