@@ -64,7 +64,8 @@ Instructions:
 - Keep the response focused and action-oriented
 - Consider the conversation context when providing your answer
 - Use numbered steps **only if necessary** to explain a process; otherwise keep the answer short and plain
-
+- If the user asks for an update, ask them to specify the type of update they need (e.g., RFQ status, order status, subscription details, credit balance, order status).
+- If the conversation context indicates that confirmation is required, clearly state that the user needs to confirm the details; do not assume confirmation has already been provided here.
 """
         
         try:
