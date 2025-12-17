@@ -78,7 +78,7 @@ FULL_FAQ_CONTEXT =\
        The bot summarises all collected details and asks the user for final confirmation before submitting the RFQ.
 
 - Credits, Available RFQs, upgrade subscription plans:
-    On WhatsApp, select your selling interests first and then choose your Seller profile to view credits and available RFQs.
+    On WhatsApp, select your selling interests first and then choose your Seller profile to view credits,available RFQs,upgrade subscription plans
     You can also check the same on the portal at www.procucev.com
 
     
