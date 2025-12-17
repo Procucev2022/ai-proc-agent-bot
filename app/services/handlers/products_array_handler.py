@@ -175,14 +175,11 @@ class ProductsArrayHandler:
         existing_incomplete = session.workflow_state.get("incomplete_products", [])
         if self._no_products_mentioned(products) and not existing_incomplete:
             no_products_message = (
-                "Please share the items for your RFQ in the following format:\n\n"
-                "*Item 1:* Laptops\n"
-                "*Quantity:* 15\n"
-                "*Specifications:* 10\" display, HP, i7 processor, blue color\n\n"
-                "*Item 2:* Cables\n"
-                "*Quantity:* 1\n"
-                "*Specifications:* 25 meters, 10 mm width\n\n"
-                "If you have the item details in an *Excel or CSV file*, you may attach the file now."
+                "Please share the items for your RFQ in the following format, as shown below:\n\n"
+                "• *15 Laptops* – 10\" display, HP, i7 processor, blue color\n"
+                "• *Cables* – 25 meters, 10 mm width\n"
+                "• *Tables* – add brand, unit of measure (UoM), specifications (if any)\n\n"
+                "Alternatively, you may upload the item details in an *Excel or CSV file*."
             )
 
             await self.whatsapp_service.send_message(user.phone_number, no_products_message)
