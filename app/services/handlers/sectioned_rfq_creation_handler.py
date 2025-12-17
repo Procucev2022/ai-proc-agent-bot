@@ -676,16 +676,13 @@ class SectionedRFQCreationHandler:
         # Check if we have at least one item
         if not items_data or len(items_data) == 0:
             # No items yet, ask user
-            msg= (
-    "Please share the items for your RFQ in the following format:\n\n"
-    "*Item 1:* Laptops\n"
-    "*Quantity:* 15\n"
-    "*Specifications:* 10\" display, HP, i7 processor, blue color\n\n"
-    "*Item 2:* Cables\n"
-    "*Quantity:* 1\n"
-    "*Specifications:* 25 meters, 10 mm width\n\n"
-    "If you have the item details in an *Excel or CSV file*, you may attach the file now."
-)
+            msg = (
+                "Please share the items for your RFQ in the following format, as shown below:\n\n"
+                "• *15 Laptops* – 10\" display, HP, i7 processor, blue color\n"
+                "• *Cables* – 25 meters, 10 mm width\n"
+                "• *Tables* – add brand, unit of measure (UoM), specifications (if any)\n\n"
+                "Alternatively, you may upload the item details in an *Excel or CSV file*."
+            )
 
             buttons_config = [
                 {"id": "restart_rfq", "title": "Restart"}
@@ -1507,15 +1504,13 @@ class SectionedRFQCreationHandler:
                 logger.info(f"[SECTIONED_RFQ] Items already exist from initial message ({len(items_data)} items), displaying confirmation")
                 # Items already exist, go directly to items section handler which will display confirmation
                 return await self._handle_items_section(user, session, "", [])
+
             msg = (
-                "Please share the items for your RFQ in the following format:\n\n"
-                "*Item 1:* Laptops\n"
-                "*Quantity:* 15\n"
-                "*Specifications:* 10\" display, HP, i7 processor, blue color\n\n"
-                "*Item 2:* Cables\n"
-                "*Quantity:* 1\n"
-                "*Specifications:* 25 meters, 10 mm width\n\n"
-                "If you have the item details in an *Excel or CSV file*, you may attach the file now."
+                "Please share the items for your RFQ in the following format, as shown below:\n\n"
+                "• *15 Laptops* – 10\" display, HP, i7 processor, blue color\n"
+                "• *Cables* – 25 meters, 10 mm width\n"
+                "• *Tables* – add brand, unit of measure (UoM), specifications (if any)\n\n"
+                "Alternatively, you may upload the item details in an *Excel or CSV file*."
             )
 
             await self.whatsapp_service.send_message(user.phone_number, msg, session_id=session)

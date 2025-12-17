@@ -517,12 +517,20 @@ def _format_quantity(qty) -> str:
 
 MAX_DISPLAY_ITEMS = 5  # Maximum items to display before truncating
 MAX_DESCRIPTION_LENGTH = 40  # Truncate item descriptions
-MAX_SPECIFICATION_LENGTH = 50  # Truncate specifications
+MAX_SPECIFICATION_LENGTH = 90  # Truncate specifications (brand + remarks)
 MAX_MESSAGE_LENGTH = 900  # Reserve ~124 chars for header/buttons overhead
 
 
+def _sanitize_text(text: str) -> str:
+    """Remove null bytes and control characters (except newlines/tabs)."""
+    if not text or not isinstance(text, str):
+        return text or ''
+    return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
+
+
 def _truncate_text(text: str, max_length: int) -> str:
-    """Truncate text with ellipsis if it exceeds max_length."""
+    """Sanitize and truncate text with ellipsis if it exceeds max_length."""
+    text = _sanitize_text(text)
     if not text or len(text) <= max_length:
         return text
     return text[:max_length - 3].rstrip() + "..."
