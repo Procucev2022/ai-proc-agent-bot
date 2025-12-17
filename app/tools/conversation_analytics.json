@@ -31,8 +31,21 @@
             },
             "email": {
               "type": "string",
-              "description": "Email address used by the user"
+              "description": "Primary email address used by the user"
             },
+            "buyer_email": {
+              "type": "string",
+              "description": "Email address used when acting as buyer (empty if no buyer activity)"
+            },
+            "seller_email": {
+              "type": "string",
+              "description": "Email address used when acting as seller (empty if no seller activity)"
+            },
+            "phone_number": {
+              "type": "string",
+              "description": "external user id which is present in session data"
+            },
+
             "confidence_score": {
               "type": "number",
               "minimum": 0,
@@ -126,6 +139,8 @@
             "session_id",
             "user_type",
             "email",
+            "buyer_email",
+            "seller_email",
             "confidence_score",
             "buyer_metrics",
             "seller_metrics",

@@ -1,18 +1,20 @@
 """
-Conversation Analytics Service - With Batch Processing
+Conversation Analytics Service - With Batch Processing and DataFrame Creation
 """
 
 import logging
 import json
-from typing import Dict, Any, List
+import pandas as pd
+from typing import Dict, Any, List, Tuple
 from datetime import datetime, date, timezone
 from sqlalchemy import func
 
-from app.database import get_db_session
+from app.database import get_db_session, get_remote_db_session
 from app.models import ConversationSession
 from app.services.openai_service import OpenAIService
 from app.config import get_settings
 from app.utils.logging_utils import log_service_method
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,136 @@ class ConversationAnalyticsService:
         self.openai_service = OpenAIService()
         self.batch_size = 5  # Process 5 sessions per AI call
 
+    def _create_dataframes_from_sessions(self, sessions_data: List[Dict[str, Any]], analysis_date: str) -> Tuple[
+        pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """
+        Create buyer, seller, and unknown DataFrames from analyzed sessions.
+        STRICT SEPARATION: Only buyers in buyer_df, only sellers in seller_df, only unknowns in unknown_df
+
+        Args:
+            sessions_data: List of analyzed session dictionaries
+            analysis_date: Date string for the analysis
+
+        Returns:
+            Tuple of (buyer_df, seller_df, unknown_df)
+        """
+        buyer_records = []
+        seller_records = []
+        unknown_records = []
+
+        for session in sessions_data:
+            session_id = session.get('session_id', '')
+            user_type = session.get('user_type', 'unknown')
+            email = session.get('email', '')
+            confidence_score = session.get('confidence_score', 0)
+
+            # Extract metrics and emails
+            buyer_metrics = session.get('buyer_metrics', {})
+            seller_metrics = session.get('seller_metrics', {})
+            registration_metrics = session.get('registration_metrics', {})
+            buyer_email = session.get('buyer_email', '')
+            seller_email = session.get('seller_email', '')
+
+            # Check if session has buyer activity (any non-zero buyer metric)
+            has_buyer_activity = (
+                    buyer_metrics.get('successful_rfqs', 0) > 0 or
+                    buyer_metrics.get('incomplete_rfqs', 0) > 0 or
+                    buyer_metrics.get('buyers_started_but_not_raised_rfq', 0) > 0 or
+                    buyer_metrics.get('number_of_buyer_chats', 0) > 0
+            )
+
+            # Check if session has seller activity (any non-zero seller metric)
+            has_seller_activity = (
+                    seller_metrics.get('subscription_plans_requested', 0) > 0 or
+                    seller_metrics.get('zero_credit_rfq_attempt', 0) > 0 or
+                    seller_metrics.get('number_of_seller_chats', 0) > 0
+            )
+
+            # Add to buyer_df if has buyer metrics
+            if has_buyer_activity:
+                buyer_record = {
+                    'date': analysis_date,
+                    'session_id': session_id,
+                    'phone_number': session.get('phone_number', ''),
+                    'user_type': user_type,
+                    'buyer_email': buyer_email or email,
+                    'successful_rfq': buyer_metrics.get('successful_rfqs', 0),
+                    'incomplete_rfq': buyer_metrics.get('incomplete_rfqs', 0),
+                    'buyers_started_but_not_raised_rfq': buyer_metrics.get('buyers_started_but_not_raised_rfq', 0),
+                    'number_of_buyer_chats': buyer_metrics.get('number_of_buyer_chats', 0),
+                    'successful_registration': registration_metrics.get('successful_registration', 0),
+                    'failed_registration': registration_metrics.get('failed_registration', 0),
+                    'confidence_score': confidence_score
+                }
+                buyer_records.append(buyer_record)
+
+            # Add to seller_df if has seller metrics
+            if has_seller_activity:
+                seller_record = {
+                    'date': analysis_date,
+                    'session_id': session_id,
+                    'phone_number': session.get('phone_number', ''),
+                    'user_type': user_type,
+                    'seller_email': seller_email or email,
+                    'subscription_plans_requested': seller_metrics.get('subscription_plans_requested', 0),
+                    'zero_credit_rfq_attempt': seller_metrics.get('zero_credit_rfq_attempt', 0),
+                    'number_of_seller_chats': seller_metrics.get('number_of_seller_chats', 0),
+                    'successful_registration': registration_metrics.get('successful_registration', 0),
+                    'failed_registration': registration_metrics.get('failed_registration', 0),
+                    'confidence_score': confidence_score
+                }
+                seller_records.append(seller_record)
+
+            # Add to unknown_df if has NO buyer or seller activity
+            if not has_buyer_activity and not has_seller_activity:
+                unknown_record = {
+                    'date': analysis_date,
+                    'session_id': session_id,
+                    'phone_number': session.get('external_user_id', ''),
+                    'user_type': user_type,
+                    'email': email,
+                    'confidence_score': confidence_score,
+                    'analysis_reasoning': session.get('analysis_reasoning', '')
+                }
+                unknown_records.append(unknown_record)
+
+        # Create DataFrames
+        buyer_df = pd.DataFrame(buyer_records)
+        seller_df = pd.DataFrame(seller_records)
+        unknown_df = pd.DataFrame(unknown_records)
+
+        # Reorder columns for better readability
+        if not buyer_df.empty:
+            buyer_cols = [
+                'date', 'session_id', 'phone_number', 'user_type', 'buyer_email',
+                'successful_rfq', 'incomplete_rfq', 'buyers_started_but_not_raised_rfq',
+                'number_of_buyer_chats', 'successful_registration', 'failed_registration',
+                'confidence_score'
+            ]
+            buyer_df = buyer_df[buyer_cols]
+
+        if not seller_df.empty:
+            seller_cols = [
+                'date', 'session_id', 'phone_number', 'user_type', 'seller_email',
+                'subscription_plans_requested', 'zero_credit_rfq_attempt',
+                'number_of_seller_chats', 'successful_registration', 'failed_registration',
+                'confidence_score'
+            ]
+            seller_df = seller_df[seller_cols]
+
+        if not unknown_df.empty:
+            unknown_cols = [
+                'date', 'session_id', 'phone_number', 'user_type', 'email',
+                'confidence_score', 'analysis_reasoning'
+            ]
+            unknown_df = unknown_df[unknown_cols]
+
+        logger.info(
+            f"[CONVERSATION-ANALYTICS] Created DataFrames: "
+            f"{len(buyer_df)} buyer rows, {len(seller_df)} seller rows, {len(unknown_df)} unknown rows"
+        )
+
+        return buyer_df, seller_df, unknown_df
 
     async def _process_sessions_in_batches(self, sessions: List[ConversationSession], target_date: date) -> Dict[
         str, Any]:
@@ -55,7 +187,7 @@ class ConversationAnalyticsService:
                     batch_num,
                     target_date
                 )
-                print("ai",ai_response)
+                print("ai", ai_response)
 
                 if ai_response and 'sessions' in ai_response:
                     # AI returns flat format with all sessions in this batch
@@ -231,7 +363,7 @@ Analyze ALL {len(batch_data)} conversation sessions in this batch and return met
 
 1. For EACH session independently:
    - Determine user type (buyer/seller/unknown)
-   - Extract email address from conversation history
+   - Extract buyer_email and seller_email separately from conversation history
    - Calculate all metrics based on conversation patterns
    - Provide confidence score (0-100)
    - Explain reasoning
@@ -245,62 +377,23 @@ Analyze ALL {len(batch_data)} conversation sessions in this batch and return met
 3. Return Format:
    - Set total_sessions to {len(batch_data)}
    - Include ALL {len(batch_data)} sessions in the sessions array
-   - Each session must have: session_id, user_type, email, confidence_score, metrics, analysis_reasoning
+   - Each session must have: session_id, user_type, email, buyer_email, seller_email, confidence_score, buyer_metrics, seller_metrics, registration_metrics, analysis_reasoning
 
 CRITICAL: You must analyze and return data for ALL {len(batch_data)} sessions.
 Session IDs to process: {', '.join(session_ids)}
-
-Example output structure for 2 sessions:
-{{
-  "date": "{target_date}",
-  "total_sessions": 2,
-  "sessions": [
-    {{
-      "session_id": "session_1",
-      "user_type": "buyer",
-      "email": "user1@example.com",
-      "confidence_score": 90,
-      "metrics": {{
-        "successful_rfqs": 1,
-        "incomplete_rfqs": 0,
-        "buyers_started_but_not_raised_rfq": 0,
-        "subscription_plans_requested": 0,
-        "zero_credit_rfq_attempt": 0,
-        "successful_registration": 1,
-        "failed_registration": 0
-      }},
-      "analysis_reasoning": "User completed buyer registration and created one RFQ..."
-    }},
-    {{
-      "session_id": "session_2",
-      "user_type": "seller",
-      "email": "user2@example.com",
-      "confidence_score": 85,
-      "metrics": {{
-        "successful_rfqs": 0,
-        "incomplete_rfqs": 0,
-        "buyers_started_but_not_raised_rfq": 0,
-        "subscription_plans_requested": 1,
-        "zero_credit_rfq_attempt": 0,
-        "successful_registration": 0,
-        "failed_registration": 1
-      }},
-      "analysis_reasoning": "User attempted seller registration but failed..."
-    }}
-  ]
-}}
 """
         return prompt
 
     async def analyze_daily_conversations(self, target_date: date = None) -> Dict[str, Any]:
         """
         Analyze conversations for a specific date using AI with batch processing.
+        Returns result with DataFrames included.
 
         Args:
             target_date: Date to analyze (defaults to today)
 
         Returns:
-            Dict with flat sessions array containing all analyzed sessions
+            Dict with sessions array and buyer/seller DataFrames
         """
         if target_date is None:
             target_date = datetime.now(timezone.utc).date()
@@ -325,6 +418,9 @@ Example output structure for 2 sessions:
                         "date": str(target_date),
                         "total_sessions": 0,
                         "sessions": [],
+                        "buyer_df": pd.DataFrame(),
+                        "seller_df": pd.DataFrame(),
+                        "unknown_df": pd.DataFrame(),
                         "message": "No conversations found for analysis"
                     }
 
@@ -336,12 +432,45 @@ Example output structure for 2 sessions:
                 # Process sessions in batches - AI returns flat format
                 result = await self._process_sessions_in_batches(sessions, target_date)
 
+                # Create DataFrames from analyzed sessions
+                buyer_df, seller_df, unknown_df = self._create_dataframes_from_sessions(
+                    result.get('sessions', []),
+                    result.get('date', str(target_date))
+                )
+
+                # Query remote database after creating DataFrames
+                remote_rfq_df = self._query_remote_users()
+                
+                # Join buyer_df with remote_rfq_df
+                if not buyer_df.empty and not remote_rfq_df.empty:
+                    buyer_df['phone_clean'] = buyer_df['phone_number'].str.replace('+', '', regex=False)
+                    remote_rfq_df['phone_clean'] = remote_rfq_df['phone'].str.replace('+', '', regex=False)
+                    joined_buyer_df = buyer_df.merge(remote_rfq_df, on=['phone_clean'], how='outer')
+                    
+                    # Keep only relevant columns
+                    relevant_cols = [
+                        'date', 'phone_number', 'email', 'session_id', 'confidence_score',
+                        'successful_rfqs', 'incomplete_rfqs', 'buyers_started_but_not_raised_rfq',
+                        'username', 'org_uuid', 'user_uuid', 'total_rfqs_raised', 
+                        'total_items_in_rfqs', 'total_distinct_rfq_category', 'org_id'
+                    ]
+                    joined_buyer_df = joined_buyer_df[[col for col in relevant_cols if col in joined_buyer_df.columns]]
+                else:
+                    joined_buyer_df = buyer_df
+                
+                # Add DataFrames to result
                 result["success"] = True
                 result["analysis_timestamp"] = datetime.now(timezone.utc).isoformat()
+                result["buyer_df"] = joined_buyer_df
+                result["seller_df"] = seller_df
+                result["unknown_df"] = unknown_df
+                result["remote_rfq_df"] = remote_rfq_df
+                result["joined_buyer_df"]=joined_buyer_df
 
                 logger.info(
                     f"[CONVERSATION-ANALYTICS] Analysis completed for {target_date}. "
-                    f"Total sessions analyzed: {result['total_sessions']}"
+                    f"Total sessions analyzed: {result['total_sessions']}, "
+                    f"Buyer rows: {len(buyer_df)}, Seller rows: {len(seller_df)}, Unknown rows: {len(unknown_df)}"
                 )
                 return result
 
@@ -354,11 +483,57 @@ Example output structure for 2 sessions:
                 "date": str(target_date),
                 "total_sessions": 0,
                 "sessions": [],
+                "buyer_df": pd.DataFrame(),
+                "seller_df": pd.DataFrame(),
+                "unknown_df": pd.DataFrame(),
                 "error": str(e)
             }
 
     async def __aenter__(self):
         return self
+
+    def _query_remote_users(self):
+        """Query remote database for RFQ analytics data."""
+        try:
+            remote_db = get_remote_db_session()
+            query = """
+            SELECT
+                DATE(rfh.created_ts) AS date,
+                u.username,
+                u.phone,
+                u.org_uuid,
+                u.uuid AS user_uuid,
+                COUNT(DISTINCT rfh.rfq_id) AS total_rfqs_raised,
+                COUNT(ri.uuid) AS total_items_in_rfqs,
+                COUNT(DISTINCT CONCAT(rfh.rfq_id, '_', ri.category)) AS total_distinct_rfq_category,
+                u.org_uuid AS org_id
+            FROM user u
+            JOIN rfq_header rfh 
+                ON u.uuid = rfh.user
+            LEFT JOIN rfq_items ri 
+                ON ri.rfq_uuid = rfh.uuid
+            WHERE 
+                DATE(rfh.created_ts) = '2025-12-09'
+                AND u.self_client = 1
+                AND rfh.source_type = 'W'
+            GROUP BY 
+                DATE(rfh.created_ts),
+                u.username,
+                u.phone,
+                u.org_uuid,
+                u.uuid
+            ORDER BY 
+                u.username
+            """
+            result = remote_db.execute(text(query))
+            rfq_data = [dict(row._mapping) for row in result]
+            remote_db.close()
+            rfq_df = pd.DataFrame(rfq_data)
+            logger.info(f"[CONVERSATION-ANALYTICS] Retrieved {len(rfq_df)} RFQ records from remote database")
+            return rfq_df
+        except Exception as e:
+            logger.error(f"[CONVERSATION-ANALYTICS] Remote database query failed: {e}")
+            return []
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
@@ -367,22 +542,47 @@ Example output structure for 2 sessions:
 if __name__ == "__main__":
     import asyncio
     from datetime import date, datetime
-    
+
+
     async def main():
         service = ConversationAnalyticsService()
         today = datetime(2025, 12, 9).date()
         print(f"Analyzing conversations for {today}...")
-        
+
         result = await service.analyze_daily_conversations(today)
         print(f"\nResults:")
         print(f"Success: {result.get('success', False)}")
         print(f"Total sessions: {result.get('total_sessions', 0)}")
-        
-        if result.get('sessions'):
-            print(f"Sessions analyzed: {len(result['sessions'])}")
-            for session in result['sessions'][:3]:  # Show first 3
-                print(f"  - {session.get('session_id')}: {session.get('user_type')}")
-        else:
-            print("No sessions found for analysis")
-    
+
+        # Access DataFrames
+        buyer_df = result.get('buyer_df')
+        seller_df = result.get('seller_df')
+        unknown_df = result.get('unknown_df')
+        joined_df=result.get("joined_buyer_df")
+
+        if buyer_df is not None and not buyer_df.empty:
+            print(f"\n=== Buyer DataFrame ({len(buyer_df)} rows) ===")
+            print(buyer_df.head())
+            # Optionally save to CSV
+            buyer_df.to_csv(f'buyer_analytics_{today}.csv', index=False)
+
+        if seller_df is not None and not seller_df.empty:
+            print(f"\n=== Seller DataFrame ({len(seller_df)} rows) ===")
+            print(seller_df.head())
+            # Optionally save to CSV
+            seller_df.to_csv(f'seller_analytics_{today}.csv', index=False)
+
+        if unknown_df is not None and not unknown_df.empty:
+            print(f"\n=== Unknown DataFrame ({len(unknown_df)} rows) ===")
+            print(unknown_df.head())
+            # Optionally save to CSV
+            unknown_df.to_csv(f'unknown_analytics_{today}.csv', index=False)
+
+        if joined_df is not None and not joined_df.empty:
+            print(f"\n=== Unknown DataFrame ({len(joined_df)} rows) ===")
+            print(joined_df.head())
+            # Optionally save to CSV
+            joined_df.to_csv(f'joined_analytics_{today}.csv', index=False)
+
+
     asyncio.run(main())
