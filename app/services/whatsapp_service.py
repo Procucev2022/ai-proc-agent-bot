@@ -432,10 +432,24 @@ class WhatsAppService:
                     cache_data.pop("irrelevant_response", None)
                     await redis_service.set(cache_key, cache_data, ex=43200)
             
+            # Sanitize body text - remove control characters that can cause API errors
+            import re
+            def sanitize_text(text: str) -> str:
+                """Remove null bytes and control characters (except newlines/tabs)."""
+                if not isinstance(text, str):
+                    return text
+                return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
+
+            combined_body = sanitize_text(combined_body)
+            if header:
+                header = sanitize_text(header)
+            if footer:
+                footer = sanitize_text(footer)
+
             # Log button details for debugging
             button_titles = [btn.get('title', 'Unknown') for btn in buttons_config]
             logger.info(f"Sending buttons to {recipient_id}: {button_titles}")
-            
+
             button_list = []
             for i, button in enumerate(buttons_config):
                 if not button.get("title"):
