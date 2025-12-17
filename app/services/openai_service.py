@@ -2745,6 +2745,7 @@ Determine the best category for the input item based on the similar items and th
 
             # Truncate items to max 5 for display (WhatsApp 1024 char limit)
             MAX_DISPLAY_ITEMS = 5
+            MAX_SPEC_LENGTH = 90  # Max chars for brand/remarks fields
             items = clean_rfq_data.get("items", [])
             total_items = len(items)
             if total_items > MAX_DISPLAY_ITEMS:
@@ -2753,7 +2754,29 @@ Determine the best category for the input item based on the similar items and th
                 clean_rfq_data["total_items"] = total_items
                 clean_rfq_data["hidden_items_count"] = total_items - MAX_DISPLAY_ITEMS
                 logger.info(f"Truncated RFQ items from {total_items} to {MAX_DISPLAY_ITEMS} for confirmation display")
-            
+
+            # Truncate brand/remarks fields and sanitize control characters in items
+            import re
+            def sanitize_and_truncate(text: str, max_len: int = MAX_SPEC_LENGTH) -> str:
+                """Remove control chars and truncate to max length."""
+                if not isinstance(text, str):
+                    return text
+                # Remove null bytes and control characters (except newlines/tabs)
+                text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
+                if len(text) > max_len:
+                    return text[:max_len - 3] + '...'
+                return text
+
+            for item in clean_rfq_data.get("items", []):
+                if isinstance(item, dict):
+                    if item.get("brand"):
+                        item["brand"] = sanitize_and_truncate(item["brand"])
+                    if item.get("remarks"):
+                        item["remarks"] = sanitize_and_truncate(item["remarks"])
+                    # Also sanitize description (but don't truncate as harshly)
+                    if item.get("description"):
+                        item["description"] = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', str(item["description"]))
+
             # Format delivery date for display
             if clean_rfq_data.get("delivery_date"):
 
