@@ -141,7 +141,7 @@ class WebhookHealthMonitorService:
         # HTTP session for health checks
         self._session: Optional[aiohttp.ClientSession] = None
         
-        health_logger.debug(
+        health_logger.info(  # TEMP_TEST: was debug
             f"WebhookHealthMonitorService initialized: "
             f"worker_id={self.worker_id}, "
             f"check_interval={self.check_interval}s, "
@@ -180,17 +180,17 @@ class WebhookHealthMonitorService:
             return
         
         if not self.settings.webhook_health_monitoring_enabled:
-            health_logger.debug(f"{self.worker_id}: Health monitoring disabled by configuration")
+            health_logger.info(f"{self.worker_id}: Health monitoring disabled by configuration")  # TEMP_TEST: was debug
             return
         
         self._running = True
-        health_logger.debug(f"{self.worker_id}: Attempting to become monitoring leader")
+        health_logger.info(f"{self.worker_id}: Attempting to become monitoring leader")  # TEMP_TEST: was debug
         
         try:
             while self._running:
                 if await self._try_acquire_leader_lock():
                     if not self.is_leader:
-                        health_logger.debug(f"{self.worker_id}: Acquired leader lock, starting monitoring")
+                        health_logger.info(f"{self.worker_id}: Acquired leader lock, starting monitoring")  # TEMP_TEST: was debug
                         self.is_leader = True
                     
                     await self._run_as_leader()
@@ -204,16 +204,16 @@ class WebhookHealthMonitorService:
         finally:
             await self._release_leader_lock()
             await self._close_session()
-            health_logger.debug(f"{self.worker_id}: Health monitoring stopped")
+            health_logger.info(f"{self.worker_id}: Health monitoring stopped")  # TEMP_TEST: was debug
     
     async def stop_monitoring(self):
         """Stop the health monitoring loop and cleanup resources."""
-        health_logger.debug(f"{self.worker_id}: Stopping health monitoring")
+        health_logger.info(f"{self.worker_id}: Stopping health monitoring")  # TEMP_TEST: was debug
         self._running = False
 
         # Close aiohttp session
         await self._close_session()
-        health_logger.debug(f"{self.worker_id}: Cleaned up HTTP session")
+        health_logger.info(f"{self.worker_id}: Cleaned up HTTP session")  # TEMP_TEST: was debug
     
     async def _try_acquire_leader_lock(self) -> bool:
         """
@@ -296,7 +296,7 @@ class WebhookHealthMonitorService:
             current_leader = await self.redis.get(self.LEADER_LOCK_KEY)
             if current_leader == self.worker_id:
                 await self.redis.delete(self.LEADER_LOCK_KEY)
-                health_logger.debug(f"{self.worker_id}: Released leader lock")
+                health_logger.info(f"{self.worker_id}: Released leader lock")  # TEMP_TEST: was debug
         
         except Exception as e:
             health_logger.error(f"{self.worker_id}: Error releasing leader lock: {e}")
@@ -335,7 +335,7 @@ class WebhookHealthMonitorService:
         
         # Log check result
         if status == HealthStatus.OK:
-            health_logger.debug(f"API health check: status=OK, latency={latency_ms}ms")
+            health_logger.info(f"API health check: status=OK, latency={latency_ms}ms")  # TEMP_TEST: was debug
         elif status == HealthStatus.WARNING:
             health_logger.warning(f"API health check: status=WARNING, latency={latency_ms}ms")
         else:
@@ -500,20 +500,20 @@ class WebhookHealthMonitorService:
         
         elif current_state == MonitorState.FAILING:
             # Recovered before alert threshold
-            health_logger.debug("State transition: FAILING → HEALTHY (recovered within grace period)")
+            health_logger.info("State transition: FAILING → HEALTHY (recovered within grace period)")  # TEMP_TEST: was debug
             state["current_state"] = MonitorState.HEALTHY.value
             state["failure_start_time"] = None
         
         elif current_state == MonitorState.ALERTING:
             # Start recovery confirmation
-            health_logger.debug("State transition: ALERTING → RECOVERED (recovery detected)")
+            health_logger.info("State transition: ALERTING → RECOVERED (recovery detected)")  # TEMP_TEST: was debug
             state["current_state"] = MonitorState.RECOVERED.value
             state["consecutive_successes"] = 1  # Reset counter
         
         elif current_state == MonitorState.RECOVERED:
             # Check if recovery confirmed (need N consecutive successes)
             if state["consecutive_successes"] >= self.recovery_confirmations:
-                health_logger.debug(
+                health_logger.info(  # TEMP_TEST: was debug
                     f"State transition: RECOVERED → HEALTHY "
                     f"(recovery confirmed with {self.recovery_confirmations} checks)"
                 )
