@@ -77,14 +77,9 @@ FULL_FAQ_CONTEXT =\
     4. **final_confirmation section**  
        The bot summarises all collected details and asks the user for final confirmation before submitting the RFQ.
 
-- Credits & Available RFQs:
-    On WhatsApp, select your selling interests first and then choose your Seller profile to view credits and available RFQs.
+- Credits, Available RFQs, upgrade subscription plans:
+    On WhatsApp, select your selling interests first and then choose your Seller profile to view credits,available RFQs,upgrade subscription plans
     You can also check the same on the portal at www.procucev.com
-.
-- Subscription Plans:
-    CONNECT – ₹4,999 (3 months)
-    RFQ alerts, access to all RFQs & WhatsApp AI assistant.     
-    SELECT – ₹9,999 (3 months)
-    Everything in CONNECT + AI quotations & catalogue listing.
+
     
 """
