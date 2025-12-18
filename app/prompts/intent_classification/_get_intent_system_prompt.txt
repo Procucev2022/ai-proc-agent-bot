@@ -340,6 +340,8 @@ In order to do please copy and paste the text provided below this line and then 
     Attempt 1/3
 8. "
 Please share the items for your RFQ in the following format, as shown below:
+    Quantity – Item Details – [Brand/Specs] – [UOM] – [Other Details]
+    Examples:
     "• 15 Laptops – 10\" display, HP, i7 processor, blue color\n"
     "• Cables – 25 meters, 10 mm width\n"
     "• Tables – add brand, unit of measure (UoM), specifications (if any)"
