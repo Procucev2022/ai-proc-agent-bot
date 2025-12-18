@@ -25,21 +25,22 @@
               "description": "Unique session identifier"
             },
             "user_type": {
-              "type": "string",
-              "enum": ["buyer", "seller", "unknown"],
-              "description": "Type of user identified from conversation"
-            },
+            "type": "string",
+            "enum": ["buyer", "seller", "hybrid", "unknown"],
+            "description": "User role classification based on detected behavior in the session"
+          },
             "email": {
+            "type": "string",
+            "description": "Primary email explicitly confirmed by the user; may match buyer_email or seller_email in hybrid sessions"
+          },
+
+           "buyer_email": {
               "type": "string",
-              "description": "Primary email address used by the user"
-            },
-            "buyer_email": {
-              "type": "string",
-              "description": "Email address used when acting as buyer (empty if no buyer activity)"
+              "description": "Email address used when the user creates an RFQ using a buyer profile or checks RFQ status using a buyer profile"
             },
             "seller_email": {
               "type": "string",
-              "description": "Email address used when acting as seller (empty if no seller activity)"
+              "description": "Email address used when the user requests RFQs, responds to RFQs, checks subscriptions or credits, or checks RFQ status using a seller profile"
             },
             "phone_number": {
               "type": "string",
@@ -62,7 +63,7 @@
                 "minimum": 0,
                 "description": "Number of chats where the user acted as a buyer"
               },
-                "successful_rfqs": {
+                "successful_rfqs_ai": {
                   "type": "integer",
                   "minimum": 0,
                   "description": "RFQs successfully created by buyer"
@@ -79,7 +80,7 @@
                 }
               },
               "required": [
-                "successful_rfqs", "incomplete_rfqs", "buyers_started_but_not_raised_rfq", "number_of_buyer_chats"
+                "successful_rfqs_ai", "incomplete_rfqs", "buyers_started_but_not_raised_rfq", "number_of_buyer_chats"
               ]
             },
 
@@ -102,10 +103,15 @@
                   "type": "integer",
                   "minimum": 0,
                   "description": "Seller tried to access RFQs with zero credits (0 or 1)"
+                },
+                "rfq_requested_ai": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Number of RFQs requested or accessed by the seller during this session"
                 }
               },
               "required": [
-                "subscription_plans_requested", "zero_credit_rfq_attempt","number_of_seller_chats"
+                "subscription_plans_requested", "zero_credit_rfq_attempt","number_of_seller_chats","rfq_requested_ai"
               ]
             },
 
