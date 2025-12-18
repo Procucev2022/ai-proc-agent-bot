@@ -176,7 +176,7 @@ class ProductsArrayHandler:
         if self._no_products_mentioned(products) and not existing_incomplete:
             no_products_message = (
                 "Please share your RFQ items in this format:\n"
-                "Quantity – Item Details – [Brand/Specs] – [UOM] – [Other Details]\n\n"
+                "*Quantity – Item Details – [Brand/Specs] – [UOM] – [Other Details]*\n\n"
                 "Examples:\n"
                 "• 15 – Laptop – HP – pieces – 10\" display, i7 processor, blue\n"
                 "• 25 – Cable – 10 m roll, 10 mm thickness\n"

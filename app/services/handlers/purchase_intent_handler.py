@@ -278,7 +278,7 @@ class PurchaseIntentHandler:
         # If no new entities but not a modification request, send general clarification
         clarification_message = (
             "Please share your RFQ items in this format:\n"
-            "Quantity – Item Details – [Brand/Specs] – [UOM] – [Other Details]\n\n"
+            "*Quantity – Item Details – [Brand/Specs] – [UOM] – [Other Details]*\n\n"
             "Examples:\n"
             "• 15 – Laptop – HP – pieces – 10\" display, i7 processor, blue\n"
             "• 25 – Cable – 10 m roll, 10 mm thickness\n"
