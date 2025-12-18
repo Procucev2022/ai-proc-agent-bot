@@ -10,7 +10,7 @@ from datetime import datetime, date, timezone
 from sqlalchemy import func
 
 from app.database import get_db_session, get_remote_db_session
-from app.models import ConversationSession
+from app.models import ConversationSession, BuyerDailyMetrics, SellerDailyMetrics, DailyAggregates, MetricMaster
 from app.services.openai_service import OpenAIService
 from app.config import get_settings
 from app.utils.logging_utils import log_service_method
@@ -49,6 +49,7 @@ class ConversationAnalyticsService:
             user_type = session.get('user_type', 'unknown')
             email = session.get('email', '')
             confidence_score = session.get('confidence_score', 0)
+            analysis_reasoning=session.get('analysis_reasoning',"")
 
             # Extract metrics and emails
             buyer_metrics = session.get('buyer_metrics', {})
@@ -59,7 +60,7 @@ class ConversationAnalyticsService:
 
             # Check if session has buyer activity (any non-zero buyer metric)
             has_buyer_activity = (
-                    buyer_metrics.get('successful_rfqs', 0) > 0 or
+                    buyer_metrics.get('successful_rfqs_ai', 0) > 0 or
                     buyer_metrics.get('incomplete_rfqs', 0) > 0 or
                     buyer_metrics.get('buyers_started_but_not_raised_rfq', 0) > 0 or
                     buyer_metrics.get('number_of_buyer_chats', 0) > 0
@@ -80,13 +81,14 @@ class ConversationAnalyticsService:
                     'phone_number': session.get('phone_number', ''),
                     'user_type': user_type,
                     'buyer_email': buyer_email or email,
-                    'successful_rfq': buyer_metrics.get('successful_rfqs', 0),
+                    'successful_rfqs_ai': buyer_metrics.get('successful_rfqs_ai', 0),
                     'incomplete_rfq': buyer_metrics.get('incomplete_rfqs', 0),
                     'buyers_started_but_not_raised_rfq': buyer_metrics.get('buyers_started_but_not_raised_rfq', 0),
                     'number_of_buyer_chats': buyer_metrics.get('number_of_buyer_chats', 0),
                     'successful_registration': registration_metrics.get('successful_registration', 0),
                     'failed_registration': registration_metrics.get('failed_registration', 0),
-                    'confidence_score': confidence_score
+                    'confidence_score': confidence_score,
+                    'analysis_reasoning':analysis_reasoning
                 }
                 buyer_records.append(buyer_record)
 
@@ -98,12 +100,14 @@ class ConversationAnalyticsService:
                     'phone_number': session.get('phone_number', ''),
                     'user_type': user_type,
                     'seller_email': seller_email or email,
+                    'requested_rfq_ai':seller_metrics.get('rfq_requested_ai',0),
                     'subscription_plans_requested': seller_metrics.get('subscription_plans_requested', 0),
                     'zero_credit_rfq_attempt': seller_metrics.get('zero_credit_rfq_attempt', 0),
                     'number_of_seller_chats': seller_metrics.get('number_of_seller_chats', 0),
                     'successful_registration': registration_metrics.get('successful_registration', 0),
                     'failed_registration': registration_metrics.get('failed_registration', 0),
-                    'confidence_score': confidence_score
+                    'confidence_score': confidence_score,
+                    'analysis_reasoning': analysis_reasoning
                 }
                 seller_records.append(seller_record)
 
@@ -129,18 +133,18 @@ class ConversationAnalyticsService:
         if not buyer_df.empty:
             buyer_cols = [
                 'date', 'session_id', 'phone_number', 'user_type', 'buyer_email',
-                'successful_rfq', 'incomplete_rfq', 'buyers_started_but_not_raised_rfq',
+                'successful_rfqs_ai', 'incomplete_rfq', 'buyers_started_but_not_raised_rfq',
                 'number_of_buyer_chats', 'successful_registration', 'failed_registration',
-                'confidence_score'
+                'confidence_score','analysis_reasoning'
             ]
             buyer_df = buyer_df[buyer_cols]
 
         if not seller_df.empty:
             seller_cols = [
-                'date', 'session_id', 'phone_number', 'user_type', 'seller_email',
+                'date', 'session_id', 'phone_number', 'user_type', 'seller_email','requested_rfq_ai',
                 'subscription_plans_requested', 'zero_credit_rfq_attempt',
                 'number_of_seller_chats', 'successful_registration', 'failed_registration',
-                'confidence_score'
+                'confidence_score','analysis_reasoning'
             ]
             seller_df = seller_df[seller_cols]
 
@@ -369,7 +373,7 @@ Analyze ALL {len(batch_data)} conversation sessions in this batch and return met
    - Explain reasoning
 
 2. Metric Guidelines:
-   - BUYERS: Count successful_rfqs, incomplete_rfqs, buyers_started_but_not_raised_rfq, registrations
+   - BUYERS: Count successful_rfqs_ai, incomplete_rfqs, buyers_started_but_not_raised_rfq, registrations
    - SELLERS: Count subscription_plans_requested, zero_credit_rfq_attempt, registrations
    - UNKNOWN: Set all metrics to 0
    - Always include ALL metric fields (set to 0 if not applicable)
@@ -421,6 +425,8 @@ Session IDs to process: {', '.join(session_ids)}
                         "buyer_df": pd.DataFrame(),
                         "seller_df": pd.DataFrame(),
                         "unknown_df": pd.DataFrame(),
+                        "joined_buyer_df": pd.DataFrame(),
+                        "joined_seller_df": pd.DataFrame(),
                         "message": "No conversations found for analysis"
                     }
 
@@ -440,6 +446,7 @@ Session IDs to process: {', '.join(session_ids)}
 
                 # Query remote database after creating DataFrames
                 remote_rfq_df = self._query_remote_users()
+                remote_seller_rfq_df = self._query_remote_seller_rfqs()
                 
                 # Join buyer_df with remote_rfq_df
                 if not buyer_df.empty and not remote_rfq_df.empty:
@@ -447,30 +454,70 @@ Session IDs to process: {', '.join(session_ids)}
                     remote_rfq_df['phone_clean'] = remote_rfq_df['phone'].str.replace('+', '', regex=False)
                     joined_buyer_df = buyer_df.merge(remote_rfq_df, on=['phone_clean'], how='outer')
                     
+                    # Coalesce date columns
+                    joined_buyer_df['date'] = joined_buyer_df['date_x'].fillna(joined_buyer_df['date_y'])
+                    
                     # Keep only relevant columns
                     relevant_cols = [
-                        'date', 'phone_number', 'email', 'session_id', 'confidence_score',
-                        'successful_rfqs', 'incomplete_rfqs', 'buyers_started_but_not_raised_rfq',
+                        'date', 'phone_number', 'buyer_email','session_id', 'confidence_score',
+                        'successful_rfqs_ai', 'incomplete_rfqs', 'buyers_started_but_not_raised_rfq',
                         'username', 'org_uuid', 'user_uuid', 'total_rfqs_raised', 
-                        'total_items_in_rfqs', 'total_distinct_rfq_category', 'org_id'
+                        'total_items_in_rfqs', 'total_distinct_rfq_category','number_of_buyer_chats',
+                        'successful_registration','failed_registration','analysis_reasoning'
                     ]
                     joined_buyer_df = joined_buyer_df[[col for col in relevant_cols if col in joined_buyer_df.columns]]
+                    
+                    # Dump joined buyer DataFrame to database
+                    self._dump_joined_buyer_df_to_db(joined_buyer_df, db)
+                    
+                    # Calculate and store daily aggregates
+                    self.calculate_and_store_daily_aggregates(target_date, db)
                 else:
                     joined_buyer_df = buyer_df
+                
+                # Join seller_df with remote_seller_rfq_df
+                if not seller_df.empty and not remote_seller_rfq_df.empty:
+                    seller_df['phone_clean'] = seller_df['phone_number'].str.replace('+', '', regex=False)
+                    remote_seller_rfq_df['phone_clean'] = remote_seller_rfq_df['phone'].str.replace('+', '', regex=False)
+                    joined_seller_df = seller_df.merge(remote_seller_rfq_df, on=['phone_clean'], how='outer')
+
+                    # joined_seller_df.to_csv('seller after join.csv',index=False)
+                    
+                    # Coalesce date columns - use rfq_date when date is empty
+                    joined_seller_df['date'] = joined_seller_df['date'].fillna(joined_seller_df['rfq_date'])
+                    
+                    # Keep only relevant columns
+                    seller_relevant_cols = [
+                        'date', 'phone_number', 'seller_email','session_id', 'confidence_score',
+                        'requested_rfq_ai', 'subscription_plans_requested', 'zero_credit_rfq_attempt',
+                        'number_of_seller_chats', 'successful_registration', 'failed_registration',
+                        'username', 'org_uuid', 'user_uuid', 'total_rfqs_requested', 'analysis_reasoning'
+                    ]
+                    joined_seller_df = joined_seller_df[[col for col in seller_relevant_cols if col in joined_seller_df.columns]]
+                    # joined_seller_df.to_csv('after_filter.csv',index=False)
+                    # Dump joined seller DataFrame to database
+                    self._dump_joined_seller_df_to_db(joined_seller_df, db)
+                    
+                    # Calculate and store seller daily aggregates
+                    self.calculate_and_store_seller_daily_aggregates(target_date, db)
+                else:
+                    joined_seller_df = seller_df
                 
                 # Add DataFrames to result
                 result["success"] = True
                 result["analysis_timestamp"] = datetime.now(timezone.utc).isoformat()
                 result["buyer_df"] = joined_buyer_df
-                result["seller_df"] = seller_df
+                result["seller_df"] = joined_seller_df
                 result["unknown_df"] = unknown_df
                 result["remote_rfq_df"] = remote_rfq_df
-                result["joined_buyer_df"]=joined_buyer_df
+                result["remote_seller_rfq_df"] = remote_seller_rfq_df
+                result["joined_buyer_df"] = joined_buyer_df
+                result["joined_seller_df"] = joined_seller_df
 
                 logger.info(
                     f"[CONVERSATION-ANALYTICS] Analysis completed for {target_date}. "
                     f"Total sessions analyzed: {result['total_sessions']}, "
-                    f"Buyer rows: {len(buyer_df)}, Seller rows: {len(seller_df)}, Unknown rows: {len(unknown_df)}"
+                    f"Buyer rows: {len(joined_buyer_df)}, Seller rows: {len(joined_seller_df)}, Unknown rows: {len(unknown_df)}"
                 )
                 return result
 
@@ -486,12 +533,135 @@ Session IDs to process: {', '.join(session_ids)}
                 "buyer_df": pd.DataFrame(),
                 "seller_df": pd.DataFrame(),
                 "unknown_df": pd.DataFrame(),
+                "joined_buyer_df": pd.DataFrame(),
+                "joined_seller_df": pd.DataFrame(),
                 "error": str(e)
             }
 
     async def __aenter__(self):
         return self
 
+    def _dump_joined_buyer_df_to_db(self, joined_buyer_df: pd.DataFrame, db_session) -> None:
+        """Dump joined buyer DataFrame to BuyerDailyMetrics table."""
+        try:
+            records_inserted = 0
+            skipped = 0
+            for _, row in joined_buyer_df.iterrows():
+                # Get date from either date_x or date_y column (from merge)
+                date_val = row.get('date_x') if pd.notna(row.get('date_x')) else row.get('date_y')
+                if not pd.notna(date_val):
+                    date_val = row.get('date')
+                
+                # Skip rows without date
+                if not pd.notna(date_val):
+                    skipped += 1
+                    continue
+
+                relevant_cols = [
+                    'date', 'phone_number', 'email', 'session_id', 'confidence_score',
+                    'successful_rfqs_ai', 'incomplete_rfqs', 'buyers_started_but_not_raised_rfq',
+                    'username', 'org_uuid', 'user_uuid', 'total_rfqs_raised',
+                    'total_items_in_rfqs', 'total_distinct_rfq_category', 'number_of_buyer_chats',
+                    'successful_registration', 'failed_registration', 'analysis_reasoning'
+                ]
+                
+                buyer_metric = BuyerDailyMetrics(
+                    date=pd.to_datetime(date_val).date(),
+                    session_id=str(row.get('session_id', '')),
+                    email=str(row.get('buyer_email', '')) if pd.notna(row.get('buyer_email')) and row.get('buyer_email', '') != '' else str(row.get('username', '')) if pd.notna(row.get('username')) else None,
+                    phone_number=str(row.get('phone_number', '')) if pd.notna(row.get('phone_number')) else None,
+                    total_rfq_raised=int(row.get('total_rfqs_raised', 0)) if pd.notna(row.get('total_rfqs_raised')) else 0,
+                    total_items_in_rfqs=int(row.get('total_items_in_rfqs', 0)) if pd.notna(row.get('total_items_in_rfqs')) else 0,
+                    total_distinct_categories_in_rfq=int(row.get('total_distinct_rfq_category', 0)) if pd.notna(row.get('total_distinct_rfq_category')) else 0,
+                    buyers_started_but_not_raised_rfq=int(row.get('buyers_started_but_not_raised_rfq', 0)) if pd.notna(row.get('buyers_started_but_not_raised_rfq')) else 0,
+                    failed_registration=int(row.get('failed_registration', 0)) if pd.notna(row.get('failed_registration')) else 0,
+                    successfully_registered=int(row.get('successful_registration', 0)) if pd.notna(row.get('successful_registration')) else 0,
+                    number_of_chats=int(row.get('number_of_buyer_chats', 0)) if pd.notna(row.get('number_of_buyer_chats')) else 0,
+                    successful_rfqs_ai=int(row.get('successful_rfqs_ai', 0)) if pd.notna(row.get('successful_rfqs_ai')) else 0,
+                    avg_products_per_rfq=float(row.get('total_items_in_rfqs', 0) / row.get('total_rfqs_raised', 1)) if pd.notna(row.get('total_rfqs_raised')) and row.get('total_rfqs_raised', 0) > 0 else None,
+                    avg_categories_per_rfq=float(row.get('total_distinct_rfq_category', 0) / row.get('total_rfqs_raised', 1)) if pd.notna(row.get('total_rfqs_raised')) and row.get('total_rfqs_raised', 0) > 0 else None,
+                    org_id=str(row.get('org_uuid', '')) if pd.notna(row.get('org_uuid')) else None,
+                    uuid=str(row.get('user_uuid', '')) if pd.notna(row.get('user_uuid')) else None,
+                    ai_reasoning=str(row.get('analysis_reasoning', '')) if pd.notna(row.get('analysis_reasoning')) else None
+                )
+                
+                # Use merge to handle unique constraint
+                existing = db_session.query(BuyerDailyMetrics).filter(
+                    BuyerDailyMetrics.date == buyer_metric.date,
+                    BuyerDailyMetrics.email == buyer_metric.email,
+                    BuyerDailyMetrics.phone_number == buyer_metric.phone_number
+                ).first()
+                
+                if not existing:
+                    db_session.add(buyer_metric)
+                    records_inserted += 1
+            
+            db_session.commit()
+            logger.info(f"[CONVERSATION-ANALYTICS] Inserted {records_inserted} records into BuyerDailyMetrics table (skipped {skipped} rows without date)")
+            
+        except Exception as e:
+            logger.error(f"[CONVERSATION-ANALYTICS] Failed to dump joined buyer DataFrame to database: {e}")
+            db_session.rollback()
+    
+    def calculate_and_store_daily_aggregates(self, target_date, db_session) -> None:
+        """Calculate aggregates from buyer_daily_metrics and store in daily_aggregates table."""
+        try:
+            from sqlalchemy import func, distinct
+            
+            # Query buyer_daily_metrics for the target date
+            buyer_metrics = db_session.query(BuyerDailyMetrics).filter(
+                BuyerDailyMetrics.date == target_date
+            ).all()
+            
+            if not buyer_metrics:
+                logger.info(f"[CONVERSATION-ANALYTICS] No buyer metrics found for {target_date}")
+                return
+            
+            # Calculate aggregates with metric S.No
+            aggregates = [
+                ('buyer', 1, 'Number of Chats Initiated By Buyers', sum(m.number_of_chats for m in buyer_metrics)),
+                ('buyer', 2, 'Unique Buyers', len(set((m.email, m.phone_number) for m in buyer_metrics if m.email or m.phone_number))),
+                ('buyer', 3, 'Total RFQs Submitted', sum(m.total_rfq_raised for m in buyer_metrics)),
+                ('buyer', 4, 'Unique Buyers Submitted RFQ', len(set((m.email, m.phone_number) for m in buyer_metrics if m.total_rfq_raised > 0 and (m.email or m.phone_number)))),
+                ('buyer', 5, 'Avg Products per RFQ', 
+                 sum(m.total_items_in_rfqs for m in buyer_metrics) / sum(m.total_rfq_raised for m in buyer_metrics) 
+                 if sum(m.total_rfq_raised for m in buyer_metrics) > 0 else 0),
+                ('buyer', 6, 'Avg Categories per RFQ', 
+                 sum(m.total_distinct_categories_in_rfq for m in buyer_metrics) / sum(m.total_rfq_raised for m in buyer_metrics) 
+                 if sum(m.total_rfq_raised for m in buyer_metrics) > 0 else 0),
+                ('buyer', 7, 'Incomplete RFQs', sum(m.buyers_started_but_not_raised_rfq for m in buyer_metrics)),
+                ('buyer', 8, 'No. of Registrations failed', sum(m.failed_registration for m in buyer_metrics)),
+                ('buyer', 9, 'Total Items in All RFQs', sum(m.total_items_in_rfqs for m in buyer_metrics)),
+                ('buyer', 10, 'Total Distinct RFQ Category Combinations', sum(m.total_distinct_categories_in_rfq for m in buyer_metrics))
+            ]
+            
+            # Insert or update aggregates
+            for role, metric_s_no, metric_name, value in aggregates:
+                existing = db_session.query(DailyAggregates).filter(
+                    DailyAggregates.date == target_date,
+                    DailyAggregates.role == role,
+                    DailyAggregates.metric_s_no == metric_s_no
+                ).first()
+                
+                if existing:
+                    existing.value = value
+                else:
+                    aggregate = DailyAggregates(
+                        date=target_date,
+                        role=role,
+                        metric_s_no=metric_s_no,
+                        metric_name=metric_name,
+                        value=value
+                    )
+                    db_session.add(aggregate)
+            
+            db_session.commit()
+            logger.info(f"[CONVERSATION-ANALYTICS] Stored {len(aggregates)} daily aggregates for {target_date}")
+            
+        except Exception as e:
+            logger.error(f"[CONVERSATION-ANALYTICS] Failed to calculate daily aggregates: {e}")
+            db_session.rollback()
+    
     def _query_remote_users(self):
         """Query remote database for RFQ analytics data."""
         try:
@@ -534,6 +704,132 @@ Session IDs to process: {', '.join(session_ids)}
         except Exception as e:
             logger.error(f"[CONVERSATION-ANALYTICS] Remote database query failed: {e}")
             return []
+    
+    def _query_remote_seller_rfqs(self):
+        """Query remote database for seller RFQ data with quotations."""
+        try:
+            remote_db = get_remote_db_session()
+            query = """
+            SELECT 
+                DATE(rfqv.created_ts) AS rfq_date,
+                u.uuid,
+                u.org_uuid,
+                u.username,
+                u.phone,
+                COUNT(DISTINCT rfqv.rfq_id) AS total_rfqs_requested
+            FROM development_gmtbfs.rfq_vendors rfqv
+            JOIN user u 
+                ON u.org_uuid = rfqv.organization_uuid
+            WHERE rfqv.quotation_received > 0
+              AND rfqv.created_ts LIKE '2025-12-06%'
+            GROUP BY DATE(rfqv.created_ts), u.uuid
+            """
+            result = remote_db.execute(text(query))
+            seller_rfq_data = [dict(row._mapping) for row in result]
+            remote_db.close()
+            seller_rfq_df = pd.DataFrame(seller_rfq_data)
+            logger.info(f"[CONVERSATION-ANALYTICS] Retrieved {len(seller_rfq_df)} seller RFQ records from remote database")
+            return seller_rfq_df
+        except Exception as e:
+            logger.error(f"[CONVERSATION-ANALYTICS] Remote seller RFQ query failed: {e}")
+            return pd.DataFrame()
+    
+    def _dump_joined_seller_df_to_db(self, joined_seller_df: pd.DataFrame, db_session) -> None:
+        """Dump joined seller DataFrame to SellerDailyMetrics table."""
+        try:
+            records_inserted = 0
+            skipped = 0
+            for _, row in joined_seller_df.iterrows():
+                # Get date from either date or rfq_date column (from merge)
+                date_val = row.get('date') if pd.notna(row.get('date')) else row.get('rfq_date')
+                
+                # Skip rows without date
+                if not pd.notna(date_val):
+                    skipped += 1
+                    continue
+                
+                seller_metric = SellerDailyMetrics(
+                    date=pd.to_datetime(date_val).date(),
+                    session_id=str(row.get('session_id', '')),
+                    email=str(row.get('seller_email', '')) if pd.notna(row.get('seller_email')) and row.get('seller_email', '') != '' else str(row.get('username', '')) if pd.notna(row.get('username')) else None,
+                    phone_number=str(row.get('phone_number', '')) if pd.notna(row.get('phone_number')) else str(row.get('phone_clean', '')) if pd.notna(row.get('phone_clean')) else None,
+                    number_of_chats=int(row.get('number_of_seller_chats', 0)) if pd.notna(row.get('number_of_seller_chats')) else 0,
+                    seller_failed_registration=int(row.get('failed_registration', 0)) if pd.notna(row.get('failed_registration')) else 0,
+                    seller_successful_registration=int(row.get('successful_registration', 0)) if pd.notna(row.get('successful_registration')) else 0,
+                    ai_reasoning=str(row.get('analysis_reasoning', '')) if pd.notna(row.get('analysis_reasoning')) else None,
+                    rfq_requested_ai=int(row.get('requested_rfq_ai', 0)) if pd.notna(row.get('requested_rfq_ai')) else 0,
+                    total_rfq_requested=int(row.get('total_rfqs_requested', 0)) if pd.notna(row.get('total_rfqs_requested')) else 0,
+                    subscription_plans_requested=int(row.get('subscription_plans_requested', 0)) if pd.notna(row.get('subscription_plans_requested')) else 0,
+                    zero_credit_rfq_attempt=int(row.get('zero_credit_rfq_attempt', 0)) if pd.notna(row.get('zero_credit_rfq_attempt')) else 0,
+                    org_id=str(row.get('org_uuid', '')) if pd.notna(row.get('org_uuid')) else None,
+                    uuid=str(row.get('user_uuid', '')) if pd.notna(row.get('user_uuid')) else None,
+                    total_rfqs_requested_with_quotation=int(row.get('total_rfqs_requested', 0)) if pd.notna(row.get('total_rfqs_requested')) else 0
+                )
+                
+                # Use merge to handle unique constraint
+                existing = db_session.query(SellerDailyMetrics).filter(
+                    SellerDailyMetrics.date == seller_metric.date,
+                    SellerDailyMetrics.email == seller_metric.email,
+                    SellerDailyMetrics.phone_number == seller_metric.phone_number
+                ).first()
+                
+                if not existing:
+                    db_session.add(seller_metric)
+                    records_inserted += 1
+            
+            db_session.commit()
+            logger.info(f"[CONVERSATION-ANALYTICS] Inserted {records_inserted} records into SellerDailyMetrics table (skipped {skipped} rows without date)")
+            
+        except Exception as e:
+            logger.error(f"[CONVERSATION-ANALYTICS] Failed to dump joined seller DataFrame to database: {e}")
+            db_session.rollback()
+    
+    def calculate_and_store_seller_daily_aggregates(self, target_date, db_session) -> None:
+        """Calculate seller aggregates from seller_daily_metrics and store in daily_aggregates table."""
+        try:
+            seller_metrics = db_session.query(SellerDailyMetrics).filter(
+                SellerDailyMetrics.date == target_date
+            ).all()
+            
+            if not seller_metrics:
+                logger.info(f"[CONVERSATION-ANALYTICS] No seller metrics found for {target_date}")
+                return
+            
+            seller_aggregates = [
+                ('seller', 11, 'Seller Chats Initiated', sum(m.number_of_chats for m in seller_metrics)),
+                ('seller', 12, 'Unique Sellers', len(set((m.email, m.phone_number) for m in seller_metrics if m.email or m.phone_number))),
+                ('seller', 13, 'Total RFQs Requested', sum(m.total_rfq_requested for m in seller_metrics)),
+                ('seller', 14, 'Subscription Plans Requested', sum(m.subscription_plans_requested for m in seller_metrics)),
+                ('seller', 15, 'Seller Registration Failed', sum(m.seller_failed_registration for m in seller_metrics)),
+                ('seller', 16, 'Seller Successful Registration', sum(m.seller_successful_registration for m in seller_metrics)),
+                ('seller', 17, 'Zero Credit RFQ Attempt', sum(m.zero_credit_rfq_attempt for m in seller_metrics))
+            ]
+            
+            for role, metric_s_no, metric_name, value in seller_aggregates:
+                existing = db_session.query(DailyAggregates).filter(
+                    DailyAggregates.date == target_date,
+                    DailyAggregates.role == role,
+                    DailyAggregates.metric_s_no == metric_s_no
+                ).first()
+                
+                if existing:
+                    existing.value = value
+                else:
+                    aggregate = DailyAggregates(
+                        date=target_date,
+                        role=role,
+                        metric_s_no=metric_s_no,
+                        metric_name=metric_name,
+                        value=value
+                    )
+                    db_session.add(aggregate)
+            
+            db_session.commit()
+            logger.info(f"[CONVERSATION-ANALYTICS] Stored {len(seller_aggregates)} seller daily aggregates for {target_date}")
+            
+        except Exception as e:
+            logger.error(f"[CONVERSATION-ANALYTICS] Failed to calculate seller daily aggregates: {e}")
+            db_session.rollback()
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
@@ -558,31 +854,34 @@ if __name__ == "__main__":
         buyer_df = result.get('buyer_df')
         seller_df = result.get('seller_df')
         unknown_df = result.get('unknown_df')
-        joined_df=result.get("joined_buyer_df")
+        joined_buyer_df = result.get("joined_buyer_df")
+        joined_seller_df = result.get("joined_seller_df")
 
         if buyer_df is not None and not buyer_df.empty:
             print(f"\n=== Buyer DataFrame ({len(buyer_df)} rows) ===")
             print(buyer_df.head())
-            # Optionally save to CSV
             buyer_df.to_csv(f'buyer_analytics_{today}.csv', index=False)
 
         if seller_df is not None and not seller_df.empty:
             print(f"\n=== Seller DataFrame ({len(seller_df)} rows) ===")
             print(seller_df.head())
-            # Optionally save to CSV
             seller_df.to_csv(f'seller_analytics_{today}.csv', index=False)
 
         if unknown_df is not None and not unknown_df.empty:
             print(f"\n=== Unknown DataFrame ({len(unknown_df)} rows) ===")
             print(unknown_df.head())
-            # Optionally save to CSV
             unknown_df.to_csv(f'unknown_analytics_{today}.csv', index=False)
 
-        if joined_df is not None and not joined_df.empty:
-            print(f"\n=== Unknown DataFrame ({len(joined_df)} rows) ===")
-            print(joined_df.head())
-            # Optionally save to CSV
-            joined_df.to_csv(f'joined_analytics_{today}.csv', index=False)
+        if joined_buyer_df is not None and not joined_buyer_df.empty:
+            print(f"\n=== Joined Buyer DataFrame ({len(joined_buyer_df)} rows) ===")
+            print(joined_buyer_df.head())
+            joined_buyer_df.to_csv(f'joined_buyer_analytics_{today}.csv', index=False)
+        
+        if joined_seller_df is not None and not joined_seller_df.empty:
+            print(f"\n=== Joined Seller DataFrame ({len(joined_seller_df)} rows) ===")
+            print(joined_seller_df.head())
+            joined_seller_df.to_csv(f'joined_seller_analytics_{today}.csv', index=False)
+
 
 
     asyncio.run(main())
