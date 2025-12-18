@@ -517,7 +517,7 @@ def _format_quantity(qty) -> str:
 
 MAX_DISPLAY_ITEMS = 5  # Maximum items to display before truncating
 MAX_DESCRIPTION_LENGTH = 40  # Truncate item descriptions
-MAX_SPECIFICATION_LENGTH = 90  # Truncate specifications (brand + remarks)
+MAX_SPECIFICATION_LENGTH = 70  # Truncate specifications (brand + remarks)
 MAX_MESSAGE_LENGTH = 900  # Reserve ~124 chars for header/buttons overhead
 
 

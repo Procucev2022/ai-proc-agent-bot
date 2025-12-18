@@ -2745,7 +2745,7 @@ Determine the best category for the input item based on the similar items and th
 
             # Truncate items to max 5 for display (WhatsApp 1024 char limit)
             MAX_DISPLAY_ITEMS = 5
-            MAX_SPEC_LENGTH = 90  # Max chars for brand/remarks fields
+            MAX_SPEC_LENGTH = 70  # Max chars for brand/remarks fields
             items = clean_rfq_data.get("items", [])
             total_items = len(items)
             if total_items > MAX_DISPLAY_ITEMS:
@@ -2830,6 +2830,22 @@ Determine the best category for the input item based on the similar items and th
                         if '\\n' in summary:
                             logger.warning("Found escaped newlines in summary, converting to actual newlines")
                             summary = summary.replace('\\n', '\n')
+
+                        # Truncate summary to fit WhatsApp interactive message body limit (1024 chars)
+                        # Reserve space for footer and buttons overhead
+                        MAX_BODY_LENGTH = 900
+                        if len(summary) > MAX_BODY_LENGTH:
+                            logger.warning(f"RFQ confirmation summary too long ({len(summary)} chars), truncating to {MAX_BODY_LENGTH}")
+                            # Find a good truncation point (end of a line)
+                            truncated = summary[:MAX_BODY_LENGTH]
+                            last_newline = truncated.rfind('\n')
+                            if last_newline > MAX_BODY_LENGTH * 0.7:  # Keep at least 70% of content
+                                truncated = truncated[:last_newline]
+                            # Add indicator that content was truncated
+                            if total_items > MAX_DISPLAY_ITEMS:
+                                truncated += f"\n\n+{total_items - MAX_DISPLAY_ITEMS} more items..."
+                            summary = truncated
+
                         return summary
 
                     # Fallback if no summary
