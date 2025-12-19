@@ -16,6 +16,7 @@ ENABLE_VECTOR_STORE_SYNC = True
 ENABLE_SELLER_MATCHING = True
 ENABLE_DAILY_AGGREGATION = False
 ENABLE_DAILY_CATEGORY_REBUILD = True  # Daily rebuild of category_items vector store
+ENABLE_LOG_CLEANUP = True  # Daily log cleanup and archival
 ENABLE_TEST_CRON = True
 # ============================================================================
 
@@ -106,6 +107,16 @@ if ENABLE_DAILY_CATEGORY_REBUILD:
         }
     }
 
+if ENABLE_LOG_CLEANUP:
+    beat_schedule['log-cleanup-task'] = {
+        'task': 'app.tasks.log_cleanup_task.cleanup_logs',
+        'schedule': crontab(minute=0, hour=2),  # Daily at 2:00 AM
+        'options': {
+            'expires': 7200,
+            'queue': 'maintenance'
+        }
+    }
+
 if ENABLE_TEST_CRON:
     beat_schedule['test-cron-job'] = {
         'task': 'app.tasks.test_cron_task.test_cron_job',
@@ -123,6 +134,7 @@ task_routes = {
     'app.tasks.seller_matching_task.*': {'queue': 'seller_matching'},
     'app.tasks.daily_aggregation_task.*': {'queue': 'aggregation'},
     'app.tasks.daily_category_vector_rebuild_task.*': {'queue': 'vector_store'},
+    'app.tasks.log_cleanup_task.*': {'queue': 'maintenance'},
     'app.tasks.test_cron_task.*': {'queue': 'default'},
 }
 
