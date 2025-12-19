@@ -192,7 +192,7 @@ class ConversationAnalyticsService:
                     batch_num,
                     target_date
                 )
-                print("ai", ai_response)
+                logger.info(f"ai response:{ai_response}")
 
                 if ai_response and 'sessions' in ai_response:
                     # AI returns flat format with all sessions in this batch
@@ -444,9 +444,7 @@ Session IDs to process: {', '.join(session_ids)}
                     result.get('sessions', []),
                     result.get('date', str(target_date))
                 )
-                print("buyer df", buyer_df)
-                print("seller df", seller_df)
-                print("unkonwdf",unknown_df)
+
 
                 # Query remote database after creating DataFrames
                 remote_rfq_df = self._query_remote_users(target_date)
@@ -1008,7 +1006,7 @@ if __name__ == "__main__":
         
         current_date = start_date
         while current_date <= end_date:
-            print(f"Analyzing conversations for {current_date}...")
+            print(f"Analyzing conversations for {current_date}")
             result = await service.analyze_daily_conversations(current_date)
             print(f"Success: {result.get('success', False)}, Sessions: {result.get('total_sessions', 0)}")
             current_date += timedelta(days=1)
