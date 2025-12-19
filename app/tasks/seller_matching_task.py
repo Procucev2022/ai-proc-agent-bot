@@ -269,9 +269,8 @@ def get_sellers_notified_in_last_24hrs() -> Set[str]:
 
     Returns:
         Set of vendor_uuid strings to exclude from selection
-        TODO: Update to 24hr, Set to 15 min for Testing
     """
-    cutoff_time = datetime.utcnow() - timedelta(minutes=15)
+    cutoff_time = datetime.utcnow() - timedelta(hours=24)
 
     query = """
         SELECT DISTINCT vendor_uuid
