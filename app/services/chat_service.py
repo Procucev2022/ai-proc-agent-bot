@@ -447,6 +447,11 @@ class ChatService:
                     rfq_id = parts[0] if parts else None
                     seller_id = parts[1] if len(parts) > 1 else None
 
+                    # Track button click in conversation history before handling
+                    self.session_manager.add_message_to_history(
+                        session, "user", f"[Button: I'm Interested] RFQ: {rfq_id}", "interactive"
+                    )
+
                     # Handle I'm Interested - use the handler directly
                     handler = SellerRFQInterestHandler(
                         whatsapp_service=self.whatsapp_service,
@@ -468,6 +473,11 @@ class ChatService:
                     rfq_id = parts[0] if parts else None
                     seller_id = parts[1] if len(parts) > 1 else None
 
+                    # Track button click in conversation history before handling
+                    self.session_manager.add_message_to_history(
+                        session, "user", f"[Button: Check Details] RFQ: {rfq_id}", "interactive"
+                    )
+
                     handler = SellerRFQInterestHandler(
                         whatsapp_service=self.whatsapp_service,
                         authentication_service=self.authentication_service,
@@ -487,6 +497,11 @@ class ChatService:
                     parts = suffix.rsplit("_", 1)
                     rfq_id = parts[0] if parts else None
                     seller_id = parts[1] if len(parts) > 1 else None
+
+                    # Track button click in conversation history before handling
+                    self.session_manager.add_message_to_history(
+                        session, "user", f"[Button: Request RFQ] RFQ: {rfq_id}", "interactive"
+                    )
 
                     handler = SellerRFQInterestHandler(
                         whatsapp_service=self.whatsapp_service,
