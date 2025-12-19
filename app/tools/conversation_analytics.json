@@ -123,22 +123,34 @@
 
             "registration_metrics": {
               "type": "object",
-              "description": "Registration-related outcomes",
+              "description": "Registration-related outcomes separated by user type",
               "properties": {
-                "successful_registration": {
+                "buyer_successful_registration": {
                   "type": "integer",
                   "minimum": 0,
-                  "description": "Successful registration count"
+                  "description": "Successful buyer registration count"
                 },
-                "failed_registration": {
+                "buyer_failed_registration": {
                   "type": "integer",
                   "minimum": 0,
-                  "description": "Failed registration attempts"
+                  "description": "Failed buyer registration attempts"
+                },
+                "seller_successful_registration": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Successful seller registration count"
+                },
+                "seller_failed_registration": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Failed seller registration attempts"
                 }
               },
               "required": [
-                "successful_registration",
-                "failed_registration"
+                "buyer_successful_registration",
+                "buyer_failed_registration",
+                "seller_successful_registration",
+                "seller_failed_registration"
               ]
             },
 
@@ -178,6 +190,33 @@
     ]
   },
 
+            "seller_rfq_interest_event": {
+                "type": "array",
+                "description": "Captured ONLY from user messages contains [Button: I'm Interested] ",
+
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "rfq_id": {
+                      "type": "string",
+                      "description": "Extracted directly from the user message text after the token 'RFQ:' (e.g., '[Button: I\\'m Interested] RFQ: RFQ251812340564')"
+                    },
+                    "seller_id": {
+                      "type": "string",
+                      "description": "Extracted directly from the same user message after the token 'SellerID:'"
+
+                    },
+                    "response_date": {
+                      "type": "string",
+                      "description": "Taken directly from the user message timestamp when the 'I am interested' button was clicked"
+
+                    }
+                  },
+                  "required": ["rfq_id","seller_id","response_date"]
+                }
+              },
+
+
 
             "analysis_reasoning": {
               "type": "string",
@@ -195,6 +234,7 @@
             "seller_metrics",
             "registration_metrics",
             "unknown_user_metrics",
+            "seller_rfq_interest_event",
             "analysis_reasoning"
           ]
         }
