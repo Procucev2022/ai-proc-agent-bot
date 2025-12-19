@@ -41,6 +41,9 @@ class Settings:
         self.debug = os.getenv("DEBUG", "false").lower() == "true"
         self.log_level = os.getenv("LOG_LEVEL", "INFO").upper()
         
+        # Project root directory (used for relative paths)
+        self.PROJECT_ROOT = PROJECT_ROOT
+        
         # Database configuration
         self.local_database_url = os.getenv("LOCAL_DATABASE_URL")
         self.client_database_url = os.getenv("CLIENT_DATABASE_URL")
@@ -106,7 +109,9 @@ class Settings:
         
         # Logging configuration
         self.log_to_database = os.getenv("LOG_TO_DATABASE", "false").lower() == "true"
-        self.log_retention_days = int(os.getenv("LOG_RETENTION_DAYS", "30"))
+        self.log_retention_days = int(os.getenv("LOG_RETENTION_DAYS", "7"))
+        self.archive_retention_days = int(os.getenv("ARCHIVE_RETENTION_DAYS", "30"))
+        self.enable_log_cleanup = os.getenv("ENABLE_LOG_CLEANUP", "true").lower() == "true"
         
         # External API configuration
         self.procurement_api_url = os.getenv("PROCUREMENT_API_URL")
