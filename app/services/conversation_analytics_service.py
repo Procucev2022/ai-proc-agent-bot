@@ -85,8 +85,8 @@ class ConversationAnalyticsService:
                     'incomplete_rfq': buyer_metrics.get('incomplete_rfqs', 0),
                     'buyers_started_but_not_raised_rfq': buyer_metrics.get('buyers_started_but_not_raised_rfq', 0),
                     'number_of_buyer_chats': buyer_metrics.get('number_of_buyer_chats', 0),
-                    'successful_registration': registration_metrics.get('successful_registration', 0),
-                    'failed_registration': registration_metrics.get('failed_registration', 0),
+                    'successful_registration': registration_metrics.get('buyer_successful_registration', 0),
+                    'failed_registration': registration_metrics.get('buyer_failed_registration', 0),
                     'confidence_score': confidence_score,
                     'analysis_reasoning':analysis_reasoning
                 }
@@ -105,8 +105,8 @@ class ConversationAnalyticsService:
                     'subscription_plans_requested': seller_metrics.get('subscription_plans_requested', 0),
                     'zero_credit_rfq_attempt': seller_metrics.get('zero_credit_rfq_attempt', 0),
                     'number_of_seller_chats': seller_metrics.get('number_of_seller_chats', 0),
-                    'successful_registration': registration_metrics.get('successful_registration', 0),
-                    'failed_registration': registration_metrics.get('failed_registration', 0),
+                    'successful_registration': registration_metrics.get('seller_successful_registration', 0),
+                    'failed_registration': registration_metrics.get('seller_failed_registration', 0),
                     'confidence_score': confidence_score,
                     'analysis_reasoning': analysis_reasoning
                 }
@@ -162,6 +162,24 @@ class ConversationAnalyticsService:
         )
 
         return buyer_df, seller_df, unknown_df
+    
+    def _create_seller_rfq_interest_event_df(self, sessions_data: List[Dict[str, Any]], analysis_date: str) -> pd.DataFrame:
+        """Create seller RFQ interest event DataFrame from AI metrics."""
+        interest_records = []
+        
+        for session in sessions_data:
+            seller_interest_events = session.get('seller_rfq_interest_event', [])
+            if seller_interest_events:
+                for event in seller_interest_events:
+                    record = {
+                        'rfq_id': event.get('rfq_id', ''),
+                        'seller_id': event.get('seller_id', ''),
+                        'response_date': event.get('response_date', analysis_date),
+                        'session_id': session.get('session_id', '')
+                    }
+                    interest_records.append(record)
+        
+        return pd.DataFrame(interest_records)
 
     async def _process_sessions_in_batches(self, sessions: List[ConversationSession], target_date: date) -> Dict[
         str, Any]:
@@ -192,6 +210,7 @@ class ConversationAnalyticsService:
                     batch_num,
                     target_date
                 )
+                print("ai",ai_response)
                 logger.info(f"ai response:{ai_response}")
 
                 if ai_response and 'sessions' in ai_response:
@@ -444,11 +463,29 @@ Session IDs to process: {', '.join(session_ids)}
                     result.get('sessions', []),
                     result.get('date', str(target_date))
                 )
+                
+                # Create seller_rfq_interest_event_df from AI metrics
+                seller_rfq_interest_event_df = self._create_seller_rfq_interest_event_df(
+                    result.get('sessions', []),
+                    result.get('date', str(target_date))
+                )
 
 
                 # Query remote database after creating DataFrames
                 remote_rfq_df = self._query_remote_users(target_date)
                 remote_seller_rfq_df = self._query_remote_seller_rfqs(target_date)
+                remote_rfq_category_df = self._query_remote_rfq_categories(target_date)
+                
+                # Join seller_rfq_interest_event_df with remote RFQ categories
+                if not seller_rfq_interest_event_df.empty and not remote_rfq_category_df.empty:
+                    joined_seller_interest_df = seller_rfq_interest_event_df.merge(
+                        remote_rfq_category_df, 
+                        left_on=['date', 'rfq_id'], 
+                        right_on=['date', 'rfq_id'], 
+                        how='inner'
+                    )
+                else:
+                    joined_seller_interest_df = seller_rfq_interest_event_df
                 
                 # Join buyer_df with remote_rfq_df
                 if not buyer_df.empty and not remote_rfq_df.empty:
@@ -529,7 +566,7 @@ Session IDs to process: {', '.join(session_ids)}
                     self._dump_unknown_df_to_db(unknown_df, db)
                     
                     # Calculate and store unknown daily aggregates
-                    self.calculate_and_store_unknown_daily_aggregates(target_date, db)
+                    # self.calculate_and_store_unknown_daily_aggregates(target_date, db)
                 
 
                 
@@ -543,6 +580,8 @@ Session IDs to process: {', '.join(session_ids)}
                 result["remote_seller_rfq_df"] = remote_seller_rfq_df
                 result["joined_buyer_df"] = joined_buyer_df
                 result["joined_seller_df"] = joined_seller_df
+                result["seller_rfq_interest_event_df"] = seller_rfq_interest_event_df
+                result["joined_seller_interest_df"] = joined_seller_interest_df
 
                 logger.info(
                     f"[CONVERSATION-ANALYTICS] Analysis completed for {target_date}. "
@@ -764,6 +803,35 @@ Session IDs to process: {', '.join(session_ids)}
             logger.error(f"[CONVERSATION-ANALYTICS] Remote seller RFQ query failed: {e}")
             return pd.DataFrame()
     
+    def _query_remote_rfq_categories(self, target_date: date):
+        """Query remote database for RFQ categories data."""
+        try:
+            remote_db = get_remote_db_session()
+            query = """
+            SELECT
+                DATE(rh.created_ts) AS date,
+                rh.rfq_id,
+                rh.uuid AS rfq_uuid,
+                ri.category
+            FROM rfq_header rh
+            JOIN rfq_items ri
+                ON rh.uuid = ri.rfq_uuid
+            WHERE DATE(rh.created_ts) = :target_date
+            GROUP BY
+                rh.rfq_id,
+                rh.uuid,
+                ri.category
+            """
+            result = remote_db.execute(text(query), {'target_date': str(target_date)})
+            rfq_category_data = [dict(row._mapping) for row in result]
+            remote_db.close()
+            rfq_category_df = pd.DataFrame(rfq_category_data)
+            logger.info(f"[CONVERSATION-ANALYTICS] Retrieved {len(rfq_category_df)} RFQ category records from remote database")
+            return rfq_category_df
+        except Exception as e:
+            logger.error(f"[CONVERSATION-ANALYTICS] Remote RFQ category query failed: {e}")
+            return pd.DataFrame()
+    
     def _dump_joined_seller_df_to_db(self, joined_seller_df: pd.DataFrame, db_session) -> None:
         """Dump joined seller DataFrame to SellerDailyMetrics table."""
         try:
@@ -824,6 +892,8 @@ Session IDs to process: {', '.join(session_ids)}
                 logger.info(f"[CONVERSATION-ANALYTICS] No seller metrics found for {target_date}")
                 return
             
+
+            
             seller_aggregates = [
                 ('seller', 11, 'Seller Chats Initiated', sum(m.number_of_chats for m in seller_metrics)),
                 ('seller', 12, 'Unique Sellers', len(set((m.email, m.phone_number) for m in seller_metrics if m.email or m.phone_number))),
@@ -861,6 +931,8 @@ Session IDs to process: {', '.join(session_ids)}
             logger.error(f"[CONVERSATION-ANALYTICS] Failed to calculate seller daily aggregates: {e}")
             db_session.rollback()
     
+   
+
     def calculate_and_store_category_aggregates(self, target_date, db_session) -> None:
         """Calculate category aggregates from remote database and store in category_aggregates table."""
         try:
@@ -1002,7 +1074,7 @@ if __name__ == "__main__":
         from datetime import timedelta
         
         end_date = datetime(2025, 12, 19).date()
-        start_date = datetime(2025, 12, 9).date()
+        start_date = datetime(2025, 12, 19).date()
         
         current_date = start_date
         while current_date <= end_date:

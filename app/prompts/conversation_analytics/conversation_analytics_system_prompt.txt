@@ -210,9 +210,15 @@ FINAL NOTES:
 - Do NOT assume RFQ creation or registration unless explicitly completed
 - Most metrics will be 0 or 1 per session, except number_of_faq_or_general_queries which can be >=0
 
+###  Seller RFQ Interest Event (I am interested click)
+Definition:
+- This event MUST be captured only  when the seller explicitly clicks the
+  "I am interested" button for an RFQ or message content is : Button: I'm Interested
 
-
-
+Extraction Rules:
+- rfq_id → extract value after "RFQ:"
+- seller_id → extract value after "SellerID:" if present
+- response_date → use message.timestamp
 ----------------------------------------------------
 ANALYSIS GUIDELINES
 ----------------------------------------------------
