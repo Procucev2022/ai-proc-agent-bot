@@ -461,7 +461,7 @@ class ChatService:
 
                     # Track button click in conversation history before handling
                     self.session_manager.add_message_to_history(
-                        session, "user", f"[Button: I'm Interested] RFQ: {rfq_id}", "interactive"
+                        session, "user", f"[Button: I'm Interested] RFQ: {rfq_id} SellerID:{seller_id}", "interactive"
                     )
 
                     # Handle I'm Interested - use the handler directly
