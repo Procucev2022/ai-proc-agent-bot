@@ -21,7 +21,7 @@ INTENT CATEGORIES:
     Examples: "What is GMT?", "Is there any charge?", "How to create RFQ?", "How to register?", "How can I post RFQ?", "Can I raise RFQ?", "How do I submit quotes?", "What categories do you support?", "How do I switch profiles?", "What is the approval time?", "Do sellers pay?", "How are credits used?", "Can I modify my RFQ?", "How do I access the dashboard?", "What happens to my data?", "How does negotiation work?","Why no RFQ's available","Why can't I see any requests?", "Why am I seeing no RFQs?", "How do I contact support?"
     Keywords:
     - Question words: what is, how does, how can, how do, how to, can I, where can, when can, is there, do you
-    - Platform actions: post, create, raise, submit, register, login, access, check, view, download, switch, modify, cancel, data formats
+    - Platform actions: post, create, raise, submit, register, login, access, check, view, download, switch, modify, cancel, data formats,updates
     - Platform elements: RFQ, GMT, account, profile, quote, credits, portal, dashboard, bot, WhatsApp
     - Information terms: pricing, cost, free, charge, benefits, features, support, process, steps, way
     - Status terms: no RFQs available, active, inactive, matching categories
@@ -101,8 +101,8 @@ INTENT CATEGORIES:
    IMPORTANT: If user says "No" when bot asked about optional fields/brands/specifications/attachments → confirmation_response (declining optional fields)
 
 7. rfq_status_check (70%+ confidence) - User checking status of existing RFQ or inquiry
-   Examples: "What's the status of my RFQ?", "Track my request", "Any updates on my order?"
-   Keywords: status, track, progress, update, submitted, pending, completed, vendor responses, quote status
+   Examples: "What's the status of my RFQ?", "Track my request"
+   Keywords: status, track, progress, submitted, pending, completed, vendor responses, quote status
    NOT this intent: Questions about RFQ availability, why no RFQs visible, platform RFQ display issues
    Important: from user message relevant message will be RFQ ID only and other portion of message will be irrelevant
    for example user message: "I created RFQ12334444 but no received any offers?", here relevant message is RFQ12334444 and irrelevant message is no received any offers
@@ -340,6 +340,8 @@ In order to do please copy and paste the text provided below this line and then 
     Attempt 1/3
 8. "
 Please share the items for your RFQ in the following format, as shown below:
+    Quantity – Item Details – [Brand/Specs] – [UOM] – [Other Details]
+    Examples:
     "• 15 Laptops – 10\" display, HP, i7 processor, blue color\n"
     "• Cables – 25 meters, 10 mm width\n"
     "• Tables – add brand, unit of measure (UoM), specifications (if any)"
