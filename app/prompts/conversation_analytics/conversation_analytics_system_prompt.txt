@@ -98,14 +98,22 @@ Populate ONLY based on seller actions:
   → Seller attempted RFQ access with zero credits (must be explicitly stated)
 - Seller RFQ Requested
     event MUST be counted when the seller performs ANY of the following actions:
-    → Clicks "Request Active RFQs", "I'm Interested", or similar seller RFQ listing
+    → Clicks "Request Active RFQs" or similar seller RFQ listing
     → Explicitly requests RFQ access (even if blocked due to credits)
     → Attempts to view or respond to an RFQ
 
-IMPORTANT:
-- This is DIFFERENT from buyer RFQ creation
-- Seller RFQ request does NOT mean RFQ creation
-- Seller RFQ request means seller-side demand for RFQs
+    IMPORTANT:
+    - This is DIFFERENT from buyer RFQ creation
+    - Seller RFQ request does NOT mean RFQ creation
+    - Seller RFQ request means seller-side demand for RFQs
+- Seller RFQ Responded
+    event MUST be counted when the seller performs ANY of the following actions:
+    → Seller receives an RFQ notification message
+    → Seller clicks "I am interested" button
+
+    IMPORTANT:
+    - Seller RFQ response means explicit intent to participate
+    - Simply viewing RFQs does NOT count as a response
 
 ### Registration Metrics
 Apply to BOTH buyer and seller registrations:
@@ -114,6 +122,96 @@ Apply to BOTH buyer and seller registrations:
   → Registration completed and confirmed
 - `failed_registration`
   → Registration started but failed (OTP failure, validation failure, abandonment)
+
+###  UNKNOWN USER METRICS
+Apply ONLY when user_type = "unknown":
+
+A. Unregistered Sellers Initiated Chat but Not Registered
+
+Definition:
+- User explicitly shows seller intent
+- User starts a seller-related conversation
+- User does NOT complete seller registration
+
+Seller Intent Signals include (but are not limited to):
+- "I want to sell"
+- "How to get RFQs?"
+- "Seller account"
+- "How to register as vendor"
+- "Subscription"
+- "Credits"
+
+Counting Rule:
+- Set unregistered_seller_initiated_chat = 1 when ANY seller intent signal is present AND successful_registration = 0
+- Otherwise, set it to 0
+
+
+B. Unregistered Sellers Requested RFQ
+
+Definition:
+- User behaves like a seller
+- Explicitly asks to view/request RFQs
+- User is NOT registered
+
+Seller RFQ Request Signals:
+- "Show active RFQs"
+- "Any RFQs available?"
+- "Can I see buyer RFQs?"
+- Clicking RFQ list but blocked due to registration or zero credits
+
+Counting Rule:
+- Set unregistered_seller_requested_rfq = 1 when any seller RFQ request action is detected AND successful_registration = 0
+- Otherwise, set it to 0
+
+
+C. Unregistered Buyers Initiated Chat but Not Continued (with Details)
+
+Definition:
+- User starts buyer conversation
+- May provide partial details (product name, quantity, pincode)
+- Drops before confirming or completing RFQ
+
+Buyer Intent Signals:
+- "I want to buy ..."
+- Sharing product details, quantity, delivery date, or pincode
+- Starting RFQ flow but not completing it
+
+Counting Rule:
+- Set unregistered_buyer_started_but_dropped = 1 when buyer intent signals exist AND successful_rfqs = 0
+- Optionally capture stage of drop in buyer_drop_stage:
+    - product_details
+    - quantity
+    - pincode
+    - delivery_date
+    - confirmation
+- Otherwise, set it to 0
+
+
+D. Number of FAQ or General Queries (Unknown Users)
+
+Definition:
+- Messages that are general inquiries, platform-related, or help-related
+- Examples:
+    - "What is RFQ?"
+    - "How does this work?"
+    - "Is this free?"
+    - "How to register?"
+- Count only **user messages**, ignore bot replies, ignore buyer/seller transactional steps
+
+Counting Rule:
+- Count number of messages that match FAQ/general query intent
+- Set number_of_faq_or_general_queries accordingly
+
+
+FINAL NOTES:
+
+- Apply these metrics ONLY when user_type = "unknown"
+- Do NOT infer emails for unknown users
+- Do NOT assume RFQ creation or registration unless explicitly completed
+- Most metrics will be 0 or 1 per session, except number_of_faq_or_general_queries which can be >=0
+
+
+
 
 ----------------------------------------------------
 ANALYSIS GUIDELINES

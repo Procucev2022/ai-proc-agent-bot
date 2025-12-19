@@ -880,7 +880,6 @@ class SellerDailyMetrics(Base):
     seller_successful_registration = Column(Integer, default=0)
     ai_reasoning = Column(Text, nullable=True)
     rfq_requested_ai = Column(Integer, default=0)
-    total_rfq_requested = Column(Integer, default=0)
     subscription_plans_requested = Column(Integer, default=0)
     zero_credit_rfq_attempt = Column(Integer, default=0)
     org_id = Column(String(255), nullable=True)
@@ -930,4 +929,47 @@ class DailyAggregates(Base):
     
     __table_args__ = (
         UniqueConstraint('date', 'role', 'metric_name', name='unique_daily_aggregate'),
+    )
+
+class CategoryAggregates(Base):
+    """
+    Category aggregates table for storing daily RFQ category metrics.
+    
+    Stores daily category-wise RFQ counts including total RFQs raised
+    and RFQs with quotations for category performance analysis.
+    """
+    __tablename__ = "category_aggregates"
+    
+    id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    date = Column(Date, nullable=False, index=True)
+    category_name = Column(String(255), nullable=False, index=True)
+    total_rfq_raised_category = Column(Integer, default=0)
+    total_rfqs_with_quotations = Column(Integer, default=0)
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    
+    __table_args__ = (
+        UniqueConstraint('date', 'category_name', name='unique_category_aggregate'),
+    )
+
+class UnknownDailyMetrics(Base):
+    """
+    Daily unknown user metrics table for users with no buyer/seller activity.
+    
+    Stores daily metrics for users who had conversations but showed no clear
+    buyer or seller behavior patterns.
+    """
+    __tablename__ = "unknown_daily_metrics"
+    
+    id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    date = Column(Date, nullable=False, index=True)
+    session_id = Column(String(255), nullable=False)
+    phone_number = Column(String(15), nullable=True)
+    user_type = Column(String(50), default='unknown')
+    email = Column(String(255), nullable=True)
+    confidence_score = Column(DECIMAL(5,2), nullable=True)
+    ai_reasoning = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    
+    __table_args__ = (
+        UniqueConstraint('date', 'session_id', 'phone_number', name='unique_unknown_daily_metrics'),
     )

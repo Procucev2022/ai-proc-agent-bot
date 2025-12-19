@@ -108,10 +108,16 @@
                   "type": "integer",
                   "minimum": 0,
                   "description": "Number of RFQs requested or accessed by the seller during this session"
-                }
+                },
+                "rfq_response_ai": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Number of RFQs responded to by the seller in this session (counted when the seller clicks 'I am interested' after receiving an RFQ notification)"
+                  }
+
               },
               "required": [
-                "subscription_plans_requested", "zero_credit_rfq_attempt","number_of_seller_chats","rfq_requested_ai"
+                "subscription_plans_requested", "zero_credit_rfq_attempt","number_of_seller_chats","rfq_requested_ai","rfq_response_ai"
               ]
             },
 
@@ -136,6 +142,43 @@
               ]
             },
 
+            "unknown_user_metrics": {
+    "type": "object",
+    "description": "Metrics for users who did not complete registration or did not perform clear buyer/seller actions",
+    "properties": {
+      "unregistered_seller_initiated_chat": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "1 if user showed seller intent but did not complete registration, else 0"
+      },
+      "unregistered_seller_requested_rfq": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "1 if unregistered seller attempted to view or request RFQs, else 0"
+      },
+      "unregistered_buyer_started_but_dropped": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "1 if user showed buyer intent but did not complete RFQ creation, else 0"
+      },
+      "number_of_faq_or_general_queries": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Number of FAQ or general query messages from the user in this session"
+      }
+    },
+    "required": [
+      "unregistered_seller_initiated_chat",
+      "unregistered_seller_requested_rfq",
+      "unregistered_buyer_started_but_dropped",
+      "number_of_faq_or_general_queries"
+    ]
+  },
+
+
             "analysis_reasoning": {
               "type": "string",
               "description": "Explanation of how metrics were inferred from conversation"
@@ -151,6 +194,7 @@
             "buyer_metrics",
             "seller_metrics",
             "registration_metrics",
+            "unknown_user_metrics",
             "analysis_reasoning"
           ]
         }
