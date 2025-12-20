@@ -158,7 +158,7 @@ class ExcelConfirmationHelpers:
                         product = {
                             'description': item.get('ItemDescription', ''),
                             'quantity': item.get('Quantity'),
-                            'unitofMeasures': item.get('Uom', 'pcs'),
+                            'unitofMeasures': item.get('Uom', 'unit(s)'),
                             'brand': item.get('Specification', ''),
                             'remarks': item.get('Remarks', '')
                         }
