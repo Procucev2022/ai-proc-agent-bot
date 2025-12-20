@@ -2429,7 +2429,7 @@ class ChatService:
                 transformed_product = {
                     'description': product.get('description', ''),
                     'quantity': int(product.get('quantity', 0)) if product.get('quantity') and str(product.get('quantity')).isdigit() else 0,
-                    'unitofMeasures': product.get('uom', 'pcs'),
+                    'unitofMeasures': product.get('uom', 'unit(s)'),
                     'brand': product.get('projectDesc', ''),
                     'remarks': product.get('remarks', ''),
                     'deliveryDate': delivery_details.get('deliveryDate', ''),

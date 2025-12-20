@@ -10,7 +10,9 @@ from typing import Dict, Optional, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
 
-from app.database import get_db_session
+from sqlalchemy import text
+
+from app.database import get_db_session, get_remote_db_session
 from app.models import Seller
 from app.services.whatsapp_service import WhatsAppService
 from app.services.openai_service import OpenAIService
@@ -160,9 +162,63 @@ class OptOutService:
         return self.db_session.query(Seller).filter(Seller.seller_id == seller_id).first()
     
     async def _update_seller_opt_out_status(self, seller_id: str, opted_out: bool) -> None:
-        """Update seller's opt-out status."""
+        """Update seller's opt-out status in both local and remote databases."""
+        # Update local database
         seller = self.db_session.query(Seller).filter(Seller.seller_id == seller_id).first()
         if seller:
             seller.opted_out_notifications = opted_out
             seller.updated_at = datetime.utcnow()
             self.db_session.commit()
+            logger.info(f"Updated local opt-out status for seller {seller_id}: opted_out={opted_out}")
+
+        # Update remote database (source of truth)
+        remote_updated = await self._update_remote_opt_out_status(seller_id, opted_out)
+        if not remote_updated:
+            logger.warning(f"Failed to update remote opt-out status for seller {seller_id}")
+
+    async def _update_remote_opt_out_status(self, seller_id: str, opted_out: bool) -> bool:
+        """
+        Update seller's opt-out status in the remote organization table.
+
+        Args:
+            seller_id: The seller/organization UUID
+            opted_out: True to opt-out, False to opt-in
+
+        Returns:
+            True if update successful, False otherwise
+        """
+        db = None
+        try:
+            db = get_remote_db_session()
+
+            # Remote DB uses opt_out field: 1 = opted out, 0 = opted in
+            opt_out_value = 1 if opted_out else 0
+
+            query = """
+                UPDATE organization
+                SET opt_out = :opt_out_value
+                WHERE uuid = :seller_id
+            """
+
+            result = db.execute(text(query), {
+                'seller_id': seller_id,
+                'opt_out_value': opt_out_value
+            })
+
+            db.commit()
+
+            if result.rowcount > 0:
+                logger.info(f"Updated remote opt-out status for seller {seller_id}: opt_out={opt_out_value}")
+                return True
+            else:
+                logger.warning(f"No rows updated in remote DB for seller {seller_id} - seller may not exist")
+                return False
+
+        except Exception as e:
+            if db:
+                db.rollback()
+            logger.error(f"Failed to update remote opt-out status for seller {seller_id}: {e}")
+            return False
+        finally:
+            if db:
+                db.close()
