@@ -352,7 +352,7 @@ class ExcelProcessingService:
                     
                     # Set default UOM if missing but quantity exists
                     if 'Uom' not in item and 'Quantity' in item:
-                        item['Uom'] = 'Units'
+                        item['Uom'] = 'unit(s)'
                     
                     items.append(item)
 

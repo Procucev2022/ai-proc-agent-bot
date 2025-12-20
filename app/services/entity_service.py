@@ -1126,6 +1126,12 @@ class EntityService:
                     print(f"EntityService: Positionally merging new product '{new_prod.get('description')}' into existing product at index {existing_idx}")
                     for key, value in new_prod.items():
                         if value is not None and value != '':
+                            # Don't overwrite existing UOM with default "unit(s)"
+                            if key == "unitofMeasures" and value == "unit(s)":
+                                existing_uom = merged_products[existing_idx].get("unitofMeasures")
+                                if existing_uom and existing_uom != "unit(s)":
+                                    print(f"  Preserving existing UOM '{existing_uom}' (not overwriting with default)")
+                                    continue
                             merged_products[existing_idx][key] = value
                             print(f"  Updated {key}={value}")
             else:
@@ -1135,6 +1141,12 @@ class EntityService:
                         print(f"EntityService: Positionally merging new product at index {i}")
                         for key, value in new_prod.items():
                             if value is not None and value != '':
+                                # Don't overwrite existing UOM with default "unit(s)"
+                                if key == "unitofMeasures" and value == "unit(s)":
+                                    existing_uom = merged_products[i].get("unitofMeasures")
+                                    if existing_uom and existing_uom != "unit(s)":
+                                        print(f"  Preserving existing UOM '{existing_uom}' (not overwriting with default)")
+                                        continue
                                 merged_products[i][key] = value
                                 print(f"  Updated {key}={value}")
 
@@ -1180,6 +1192,12 @@ class EntityService:
                     # Only update if value is not None and not empty string
                     # This prevents overwriting existing good data with empty values
                     if value is not None and value != '':
+                        # Don't overwrite existing UOM with default "unit(s)"
+                        if key == "unitofMeasures" and value == "unit(s)":
+                            existing_uom = merged_products[existing_index].get("unitofMeasures")
+                            if existing_uom and existing_uom != "unit(s)":
+                                print(f"  Preserving existing UOM '{existing_uom}' (not overwriting with default)")
+                                continue
                         merged_products[existing_index][key] = value
                         print(f"  Updated {key}={value}")
             elif new_desc_lower:

@@ -82,39 +82,62 @@ ITEM-SPECIFIC FIELDS (extract for each product):
 
 CRITICAL EXTRACTION RULES:
 
-1. **Quantity vs Unit of Measures**: DO NOT confuse specs/ratings with quantity
-   - "Motors 1000KV" → quantity: "", unitofMeasures: "1000KV" (1000KV is a unit of measure, NOT quantity)
-   - "Batteries 5000mAh" → quantity: "", unitofMeasures: "5000mAh" (5000mAh is a unit of measure, NOT quantity)
-   - "100 Motors 1000KV" → quantity: 100, unitofMeasures: "1000KV" (100 is quantity, 1000KV is a unit of measure)
+1. **UOM Categories** - There are THREE types of UOM scenarios:
 
-2. **Unit of Measure Extraction**: Extract UOM from user's message context
-   - "25 meters cables" → unitofMeasures: "25 meters", remarks: ""
-   - "50kg rice" → unitofMeasures: "50 kg"
-   - "100 boxes" → unitofMeasures: "100 boxes"
-   - "10 laptops" → unitofMeasures: "unit(s)" (countable items use unit(s))
-   - "motors" (no unit mentioned) → unitofMeasures: "" (empty, will be asked)
+   A. **COUNTABLE ITEMS** (laptops, chairs, printers, bottles, bags, boxes of screws):
+      - UOM is always "unit(s)"
+      - Examples:
+        * "10 laptops" → quantity: 10, unitofMeasures: "unit(s)"
+        * "5 boxes of screws" → quantity: 5, unitofMeasures: "unit(s)", description: "boxes of screws"
+        * "20 water bottles" → quantity: 20, unitofMeasures: "unit(s)"
 
-3. **Measurement vs Quantity (CRITICAL)**:
-   - A measurement (meters, kg, liters, sq mtr, cubic ft, etc.) is NOT the same as quantity/count
-   - "25 meters of rope" does NOT mean 25 ropes - it means ONE item measuring 25 meters
-   - "2500 sq mtr vinyl" does NOT mean 2500 pieces - it means vinyl of 2500 square meters area
-   - NEVER assume the measurement value is the quantity count
-   - MEASUREMENT UNITS that are NOT quantity (always set quantity="" when these appear without explicit count):
-     * Area: sq mtr, sq ft, square meters, square feet, sqm, sft
-     * Length: meters, feet, inches, mm, cm, yards
-     * Weight: kg, grams, tons, lbs, pounds
-     * Volume: liters, ml, gallons, cubic meters, cubic feet
-     * Capacity: mAh, KV, watts, ampere
-   - If ONLY measurement is provided (no explicit count like "need 5 rolls" or "quantity 10"):
-     → Set quantity to "" (empty) so system asks for actual count
-     → Put measurement in unitofMeasures
-   - Example: "25 meters of rope, 15 mm thick" → quantity: "", unitofMeasures: "25 meters", remarks: "15 mm thickness"
-   - Example: "50kg rice" → quantity: "", unitofMeasures: "50 kg", remarks: ""
-   - Example: "2500 sq mtr vinyl 7.5mm thick" → quantity: "", unitofMeasures: "2500 sq mtr", remarks: "7.5mm thick"
+   B. **MEASURED ITEMS** (weight, length, area, volume):
+      - UOM includes the FULL measurement with number (e.g., "200 kg", "25 meters", "100 sq ft")
+      - MEASUREMENT UNITS: kg, grams, tons, lbs, meters, feet, cm, mm, liters, ml, sq mtr, sq ft, cubic meters, etc.
+      - Examples:
+        * "200kg Steel bars" → quantity: "" (ASK), unitofMeasures: "200 kg", description: "Steel bars"
+        * "25 meters of cable" → quantity: "" (ASK), unitofMeasures: "25 meters", description: "cable"
+        * "50ml water bottles" → quantity: "" (ASK), unitofMeasures: "50 ml", description: "water bottles"
 
-4. **Specifications in Remarks**: Technical details always go to remarks
-   - "18gb RAM, 1tb SSD" → remarks field, NOT description
-   - Keep product type (description) separate from technical details
+   C. **MEASURED ITEMS WITH EXPLICIT COUNT** (both count AND measurement provided):
+      - First number is QUANTITY (count), measurement goes to UOM
+      - Examples:
+        * "20 200kg Steel bars" → quantity: 20, unitofMeasures: "200 kg", description: "Steel bars"
+        * "5 50ml water bottles" → quantity: 5, unitofMeasures: "50 ml", description: "water bottles"
+        * "10 rolls of 25m cable" → quantity: 10, unitofMeasures: "25 meters", description: "cable" OR description: "rolls of cable"
+        * "100 qty 25 meters cables" → quantity: 100, unitofMeasures: "25 meters", description: "cables"
+
+2. **RATINGS/SPECS GO TO REMARKS** (NOT UOM):
+   - Electrical ratings (KV, mAh, watts, ampere) are SPECIFICATIONS, not measurements
+   - These go to REMARKS field, UOM should be "unit(s)"
+   - Examples:
+     * "1000KV motors" → quantity: "" (ASK), unitofMeasures: "unit(s)", remarks: "1000KV"
+     * "5000mAh batteries" → quantity: "" (ASK), unitofMeasures: "unit(s)", remarks: "5000mAh"
+     * "50 1000KV motors" → quantity: 50, unitofMeasures: "unit(s)", remarks: "1000KV"
+     * "100 5000mAh batteries" → quantity: 100, unitofMeasures: "unit(s)", remarks: "5000mAh"
+
+3. **QUANTITY RULES**:
+   - If ONLY measurement is provided (no explicit count): quantity = "" (empty, system will ask)
+   - If explicit count is provided: quantity = that count
+   - NEVER confuse measurement values with quantity count
+   - Examples:
+     * "200kg Steel bars" → quantity: "" (we don't know if they want 1 bar, 5 bars, etc.)
+     * "20 200kg Steel bars" → quantity: 20 (they want 20 bars, each 200kg)
+
+4. **CONTAINER DESCRIPTIONS**:
+   - Containers (boxes, bags, rolls, packs) are part of the DESCRIPTION, not UOM
+   - UOM is still "unit(s)" for counting containers
+   - Examples:
+     * "5 boxes of screws" → description: "boxes of screws", quantity: 5, unitofMeasures: "unit(s)"
+     * "10 bags of cement" → description: "bags of cement", quantity: 10, unitofMeasures: "unit(s)"
+     * "3 rolls of tape" → description: "rolls of tape", quantity: 3, unitofMeasures: "unit(s)"
+
+5. **OTHER SPECIFICATIONS IN REMARKS**:
+   - Technical details always go to remarks field
+   - Examples:
+     * "18gb RAM, 1tb SSD" → remarks field
+     * "15 mm thickness" → remarks field
+     * "stainless steel body" → remarks field
 
 EXTRACTION EXAMPLES:
 
@@ -185,20 +208,22 @@ Products: [
 ]
 
 Example 8: "Motors 1000KV"
-CRITICAL: DO NOT confuse rating/specification with quantity
-- 1000KV is a motor rating specification, NOT quantity
-- Set quantity to "" (empty, missing) so system asks for it
-- Put the rating in remarks
+CRITICAL: 1000KV is a RATING/SPECIFICATION, NOT a measurement
+- Ratings (KV, mAh, watts) go to REMARKS, not unitofMeasures
+- UOM should be "unit(s)" for countable items like motors
+- quantity: "" (empty, ask user how many motors they need)
 Global fields: deliveryDate="", state="", city="", pincode=""
 Products: [
-  {{description: "motors", quantity: "", unitofMeasures: "", brand: "", remarks: "1000KV"}}
+  {{description: "motors", quantity: "", unitofMeasures: "unit(s)", brand: "", remarks: "1000KV"}}
 ]
 
 Example 9: "100 Motors 1000KV"
-CORRECT: 100 is quantity, 1000KV is unit of measure
+CORRECT: 100 is quantity, 1000KV is a rating that goes to REMARKS
+- 1000KV is NOT a unit of measure, it's a motor specification
+- UOM is "unit(s)" for counting motors
 Global fields: deliveryDate="", state="", city="", pincode=""
 Products: [
-  {{description: "motors", quantity: 100, unitofMeasures: "1000KV", brand: "", remarks: ""}}
+  {{description: "motors", quantity: 100, unitofMeasures: "unit(s)", brand: "", remarks: "1000KV"}}
 ]
 
 Example 10: "25 meters cables, 100 quantity"
@@ -222,15 +247,27 @@ Products: [
 ]
 
 Example 12: "Batteries 5000mAh, need 200"
-CRITICAL: 5000mAh is capacity spec, NOT quantity
+CRITICAL: 5000mAh is a RATING/SPECIFICATION, NOT a measurement
 - "need 200" is the actual quantity
-- 5000mAh goes to unitofMeasures
+- 5000mAh is a capacity rating, goes to REMARKS (not UOM)
+- UOM is "unit(s)" for counting batteries
 Global fields: deliveryDate="", state="", city="", pincode=""
 Products: [
-  {{description: "batteries", quantity: 200, unitofMeasures: "5000mAh", brand: "", remarks: ""}}
+  {{description: "batteries", quantity: 200, unitofMeasures: "unit(s)", brand: "", remarks: "5000mAh"}}
 ]
 
-Example 13: "25 meters of rope, 15 mm thickness"
+Example 13: "20 200kg Steel bars, 5 50ml water bottles"
+CRITICAL: Both count AND measurement provided - count is quantity, measurement is UOM
+- "20 200kg Steel bars": 20 is the count (quantity), 200kg is the measurement (UOM)
+- "5 50ml water bottles": 5 is the count (quantity), 50ml is the measurement (UOM)
+- Measurements (kg, ml, meters) go to unitofMeasures WITH the number
+Global fields: deliveryDate="", state="", city="", pincode=""
+Products: [
+  {{description: "Steel bars", quantity: 20, unitofMeasures: "200 kg", brand: "", remarks: ""}},
+  {{description: "water bottles", quantity: 5, unitofMeasures: "50 ml", brand: "", remarks: ""}}
+]
+
+Example 14: "25 meters of rope, 15 mm thickness"
 CRITICAL: Measurement is NOT quantity - leave quantity empty to ask user
 - "25 meters of rope" means the rope measures 25 meters (unit if measure, NOT count)
 - unitofMeasures: "25 meters" (the unit)
@@ -242,7 +279,7 @@ Products: [
   {{description: "rope", quantity: "", unitofMeasures: "25 meters", brand: "", remarks: "15 mm thickness"}}
 ]
 
-Example 14: "Need 1x VANAZ Type R 4109 nitrogen gas inlet valve, stainless steel body, 2" dial, 411043, 27 Nov"
+Example 15: "Need 1x VANAZ Type R 4109 nitrogen gas inlet valve, stainless steel body, 2" dial, 411043, 27 Nov"
 CRITICAL PINCODE IDENTIFICATION: 411043 is a 6-digit number starting with 4 - this is a valid Indian pincode pattern
 - "Type R 4109" → 4109 is only 4 digits AND attached to model name "Type R" → NOT a pincode, goes to remarks
 - "411043" → standalone 6-digit number starting with 4, appears with date "27 Nov" → PINCODE
@@ -252,7 +289,7 @@ Products: [
   {{description: "nitrogen gas inlet valve", quantity: 1, unitofMeasures: "unit(s)", brand: "VANAZ", remarks: "Type R 4109, stainless steel body, 2\" dial"}}
 ]
 
-Example 15: "Need 2500 sq mtr mass loaded vinyl 7.5mm thick, 3000kg/m3 density"
+Example 16: "Need 2500 sq mtr mass loaded vinyl 7.5mm thick, 3000kg/m3 density"
 CRITICAL: "2500 sq mtr" is a MEASUREMENT (area), NOT quantity count
 - User wants vinyl that covers 2500 square meters area
 - We don't know if they want 1 roll, 5 sheets, 10 pieces, etc.

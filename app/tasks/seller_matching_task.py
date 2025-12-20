@@ -337,8 +337,9 @@ async def process_single_rfq_matching(
                 "unsubscribed_notified": unsubscribed_notified
             }
 
-        # NOTE: Per-RFQ exclusion removed - sellers can be re-notified for same RFQ
-        # already_notified_for_rfq = get_sellers_already_notified_for_rfq(rfq_uuid)
+        # Get sellers already notified for this specific RFQ (never notify again for same RFQ)
+        already_notified_for_rfq = get_sellers_already_notified_for_rfq(rfq_uuid)
+        logger.info(f"RFQ {rfq_id}: {len(already_notified_for_rfq)} sellers already notified for this RFQ (will be excluded)")
 
         # Step 1: Get all unique categories from rfq_items for this RFQ
         categories = get_rfq_item_categories(rfq_uuid)
@@ -430,23 +431,32 @@ async def process_single_rfq_matching(
             f"{len(unsubscribed_sellers)} unsubscribed"
         )
 
-        # Step 3: Apply filters - time-based exclusion only (per-RFQ exclusion removed)
+        # Step 3: Apply filters - time-based exclusion AND per-RFQ exclusion
+        # Combine both exclusion sets: 24hr global exclusion + already notified for this RFQ
+        all_excluded_ids = excluded_seller_ids | already_notified_for_rfq
+
         filtered_subscribed = {
             sid: sdata for sid, sdata in subscribed_sellers.items()
-            if sid not in excluded_seller_ids
+            if sid not in all_excluded_ids
         }
         filtered_unsubscribed = {
             sid: sdata for sid, sdata in unsubscribed_sellers.items()
-            if sid not in excluded_seller_ids
+            if sid not in all_excluded_ids
         }
 
         excluded_count = len(subscribed_sellers) + len(unsubscribed_sellers) - \
                         len(filtered_subscribed) - len(filtered_unsubscribed)
 
+        # Log breakdown of exclusions
+        time_excluded = len([sid for sid in subscribed_sellers.keys() | unsubscribed_sellers.keys()
+                            if sid in excluded_seller_ids])
+        rfq_excluded = len([sid for sid in subscribed_sellers.keys() | unsubscribed_sellers.keys()
+                           if sid in already_notified_for_rfq])
+
         logger.info(
             f"After filtering: {len(filtered_subscribed)} subscribed, "
             f"{len(filtered_unsubscribed)} unsubscribed available. "
-            f"Excluded {excluded_count} (time-based filter)"
+            f"Excluded {excluded_count} total ({time_excluded} time-based, {rfq_excluded} already notified for RFQ)"
         )
 
         # Step 4: Select only the needed count for each type
