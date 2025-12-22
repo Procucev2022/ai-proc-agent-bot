@@ -13,7 +13,7 @@ import os
 # ============================================================================
 ENABLE_AUTO_CATEGORIZATION = True
 ENABLE_VECTOR_STORE_SYNC = True
-ENABLE_SELLER_MATCHING = False
+ENABLE_SELLER_MATCHING = True
 ENABLE_DAILY_AGGREGATION = False
 ENABLE_DAILY_CATEGORY_REBUILD = True  # Daily rebuild of category_items vector store
 ENABLE_LOG_CLEANUP = True  # Daily log cleanup and archival
