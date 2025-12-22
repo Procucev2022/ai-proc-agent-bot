@@ -3535,20 +3535,43 @@ class ChatService:
         except Exception as e:
             logger.error(f"Error sending seller flow placeholder: {e}")
 
-    async def _check_bfs_availability(self, user_phone: str) -> None:
-        """Check BFS availability after successful RFQ creation."""
+    async def _check_bfs_availability(self, user: User, session: ConversationSession,
+                                       rfq_results: List[Dict]) -> None:
+        """
+        Check BFS availability after successful RFQ creation.
+
+        Note: This method delegates to the confirmation_handler's implementation.
+        For direct BFS search, use bfs_search_handler.handle_bfs_search().
+        """
         try:
+            # Extract product descriptions from RFQ results
+            product_descriptions = []
+            for result in rfq_results:
+                if result.get("success") and result.get("rfq_data"):
+                    rfq_data = result["rfq_data"]
+                    items = rfq_data.get("items", [])
+                    for item in items:
+                        description = item.get("description") or item.get("product_name", "")
+                        if description:
+                            product_descriptions.append(description)
+
+            if not product_descriptions:
+                logger.info(f"No product descriptions to search in BFS for {user.phone_number}")
+                return
+
             # Send initial checking message
-            checking_message = "Checking our inventory for immediate availability..."
-            await self.whatsapp_service.send_message(user_phone, checking_message)
+            checking_message = "🔍 Checking our inventory for immediate availability..."
+            await self.whatsapp_service.send_message(user.phone_number, checking_message, session_id=session)
 
-            # Send placeholder message
-            placeholder_message = "BFS inventory check feature is in progress."
-            await self.whatsapp_service.send_message(user_phone, placeholder_message)
+            # Use BFS search handler to search for products
+            search_message = ", ".join(product_descriptions)
+            logger.info(f"[BFS] Searching inventory for products: {search_message}")
 
-            logger.debug(f"Sent BFS availability placeholder to {user_phone}")
+            await self.bfs_search_handler.handle_bfs_search(user, session, search_message)
+
+            logger.info(f"Completed BFS availability check for {user.phone_number}")
         except Exception as e:
-            logger.error(f"Error sending BFS availability placeholder: {e}")
+            logger.error(f"Error checking BFS availability: {e}")
 
     async def _handle_rfq_status_inquiry(self, user: User, message: str, session: ConversationSession = None) -> Dict[str, Any]:
         # Help 1 : how to handle session here, like what data needs to be save in db and how to do it
