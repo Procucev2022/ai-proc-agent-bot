@@ -249,6 +249,7 @@ class Settings:
         self.workflow_timeout_enabled: bool = os.getenv("WORKFLOW_TIMEOUT_ENABLED", "true").lower() == "true"
         self.workflow_timeout_seconds: int = int(os.getenv("WORKFLOW_TIMEOUT_SECONDS", "300"))  # 5 minutes default
         self.timeout_poll_interval_seconds: int = int(os.getenv("TIMEOUT_POLL_INTERVAL_SECONDS", "30"))  # Check every 30 seconds
+        self.activity_key_ttl_seconds: int = int(os.getenv("ACTIVITY_KEY_TTL_SECONDS", "420"))  # 7 minutes default (buffer beyond timeout)
 
         # Feature Flags
         self.USE_TRACK2_RFQ_FLOW = os.getenv("USE_TRACK2_RFQ_FLOW", "false").lower() == "true"
