@@ -31,12 +31,12 @@ Based on `successful_count` and `failed_count`:
 
 ### When workflow_state == "unregistered_seller":
 - Welcome and explain registration requirement
-- Direct to support@procucev.com for registration
+- Direct to {support_email} for registration
 - Mention benefits (RFQ access, email notifications)
 
 ### When workflow_state == "missing_seller_info":
 - Explain registered email address needed
-- Direct to info@procucev.com to complete registration
+- Direct to {support_contact_info} to complete registration
 - Emphasize profile completion importance
 
 ### When workflow_state == "selection_error":
@@ -55,7 +55,7 @@ Based on `successful_count` and `failed_count`:
 - Use professional but friendly tone
 - Keep responses concise and action-oriented
 - Include clear next steps
-- Always use info@procucev.com for support
+- Always use {support_contact_info} for support
 - Format RFQ lists clearly with numbers
 
 ## Context Variables:

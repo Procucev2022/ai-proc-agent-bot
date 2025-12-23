@@ -270,7 +270,7 @@ Click the link below to pay. We've also emailed it to you.
             if not rfq_exists:
                 error_message = f""" Sorry, RFQ ID "{rfq_id}" is not valid or not found.
 
-Please check the RFQ ID and try again, or contact info@procucev.com for assistance."""
+Please check the RFQ ID and try again, or contact {self.settings.support_contact_info} for assistance."""
                 
                 await self.whatsapp_service.send_message(seller.phone_number, error_message)
                 return {"success": False, "error": "Invalid RFQ ID"}
@@ -338,7 +338,7 @@ Reply with "Basic" or "Pro" to subscribe."""
             else:
                 error_message = f"""Sorry, there was an error sending the RFQ email.
 
-Please contact info@procucev.com with RFQ ID: {rfq_id}
+Please contact {self.settings.support_contact_info} with RFQ ID: {rfq_id}
 
 We'll resolve this issue and send you the RFQ manually."""
                 
@@ -388,7 +388,7 @@ We'll resolve this issue and send you the RFQ manually."""
                     if len(pending_bids) > 3:
                         reminder_message += f"... and {len(pending_bids) - 3} more RFQs\n\n"
                     
-                    reminder_message += """We encourage you to submit bids. For help, contact@procurev.com
+                    reminder_message += f"""We encourage you to submit bids. For help, {self.settings.contact_email}
 
 Have a great day! """
                 else:
@@ -397,14 +397,14 @@ Have a great day! """
 
 You're all caught up with your RFQs. We'll notify you when new opportunities matching your categories become available.
 
-For any assistance, contact@procurev.com
+For any assistance, {self.settings.contact_email}
 
 Have a great day! """
             else:
                 # Fallback message if pending bids API fails
                 reminder_message = f"""Thanks for chatting with us!
 
-For any assistance with RFQs or your account, contact@procurev.com
+For any assistance with RFQs or your account, {self.settings.contact_email}
 
 Have a great day! 👋"""
             

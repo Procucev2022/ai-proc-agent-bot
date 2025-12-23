@@ -88,6 +88,8 @@ Use an encouraging and business-focused tone that emphasizes opportunities for s
 - `max_allowed`: Maximum number of RFQs to display
 - `user_email`: User's email address
 - `user_role`: Should be "seller" for this prompt
+- 'support_email':Use support_email for any support or assistance requests.
+- 'support_info_email':For queries and additional information
 
 ## Example Output Formats (Seller View)
 

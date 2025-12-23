@@ -13,6 +13,7 @@ import re
 from typing import Dict, Any, List
 from app.models import ConversationSession
 from app.services.helpers.authentication_helpers import AuthenticationHelpers
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ class OTPService:
         self.register_api_service = register_api_service
         self.whatsapp_service = whatsapp_service
         self.support_notification_service = support_notification_service
+        self.settings = get_settings()
     
     async def send_otp(self, user_phone: str, email: str, session: ConversationSession,is_daily_verification: bool = False) -> Dict[str, Any]:
         """Send OTP to email and initialize session state."""
@@ -151,7 +153,7 @@ class OTPService:
                 (
                     "*Maximum OTP attempts exceeded.*\n"
                     "For your security, your session has ended. "
-                    "Please contact our support team for assistance at support@procucev.com\n\n"
+                    f"Please contact our support team for assistance at {self.settings.support_email}\n\n"
                     "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
 
                 ),
@@ -180,7 +182,7 @@ class OTPService:
                 (
                     "*Maximum OTP attempts exceeded.*\n"
                     "For your security, your session has ended. "
-                    "Please contact our support team for assistance at support@procucev.com\n\n"
+                    f"Please contact our support team for assistance at {self.settings.support_email}\n\n"
                     "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
 
                 ),

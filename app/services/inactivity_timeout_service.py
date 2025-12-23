@@ -23,6 +23,7 @@ from app.redis_db import get_session_redis_service
 from app.models import WorkflowType, ConversationSession , User
 from app.services.whatsapp_service import WhatsAppService
 from app.services.helpers.session_helpers import SessionHelpers
+from app.utils.datetime_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ class InactivityTimeoutService:
         # Configuration
         self.timeout_seconds = settings.workflow_timeout_seconds  # Default: 300 (5 min)
         self.poll_interval = settings.timeout_poll_interval_seconds  # Default: 30
+        self.activity_key_ttl = settings.activity_key_ttl_seconds  # Default: 420 (7 min)
         self.enabled = settings.workflow_timeout_enabled  # Default: True
         
         # WhatsApp service for notifications
@@ -78,7 +80,7 @@ class InactivityTimeoutService:
         
         logger.debug(
             f"[TIMEOUT_SERVICE] Initialized: timeout={self.timeout_seconds}s, "
-            f"poll_interval={self.poll_interval}s, enabled={self.enabled}"
+            f"poll_interval={self.poll_interval}s, activity_ttl={self.activity_key_ttl}s, enabled={self.enabled}"
         )
 
     # ========================================================================
@@ -230,15 +232,15 @@ class InactivityTimeoutService:
                 try:
                     # Got lock - update with fresh timestamp
                     timestamp = time.time()
-                    # 7-minute TTL (buffer beyond 5-min timeout, auto-cleanup)
-                    await self.redis.setex(activity_key, 420, timestamp)
+                    # Use configured TTL (buffer beyond timeout, auto-cleanup)
+                    await self.redis.setex(activity_key, self.activity_key_ttl, timestamp)
                     logger.debug(f"[ACTIVITY] Updated for {normalized_phone} (locked)")
                 finally:
                     await lock.release()
             else:
                 # Lock busy - FORCE update anyway to prevent premature timeout
                 timestamp = time.time()
-                await self.redis.setex(activity_key, 420, timestamp)
+                await self.redis.setex(activity_key, self.activity_key_ttl, timestamp)
                 logger.debug(f"[ACTIVITY] Force-updated for {normalized_phone} (lock busy)")
         
         except Exception as e:
@@ -246,7 +248,7 @@ class InactivityTimeoutService:
             logger.warning(f"[ACTIVITY] Lock error for {normalized_phone}, forcing update: {e}")
             try:
                 timestamp = time.time()
-                await self.redis.setex(activity_key, 420, timestamp)
+                await self.redis.setex(activity_key, self.activity_key_ttl, timestamp)
             except Exception as update_error:
                 logger.error(f"[ACTIVITY] Failed to update activity for {normalized_phone}: {update_error}")
 
@@ -420,13 +422,84 @@ class InactivityTimeoutService:
                         session_data = await self.redis_session.get_session(session_id)
                         
                         if not session_data:
-                            # No session found - clean up stale activity key
-                            await self.redis.delete(activity_key)
-                            logger.debug(f"[TIMEOUT_SERVICE] Cleaned stale activity key for {user_phone}")
-                            continue
+                            # Session not in Redis - check database for recently completed sessions
+                            logger.debug(f"[TIMEOUT_SERVICE] Session not in Redis for {user_phone}, checking database")
+                            
+                            try:
+                                from app.database import DatabaseManager
+                                from datetime import timedelta
+                                
+                                db_manager = DatabaseManager()
+                                try:
+                                    db_session = db_manager.get_conversation_session(session_id)
+                                    
+                                    if not db_session:
+                                        # No session in DB either - clean up stale activity key
+                                        await self.redis.delete(activity_key)
+                                        logger.debug(f"[TIMEOUT_SERVICE] Cleaned stale activity key for {user_phone} (no session in DB)")
+                                        continue
+                                    
+                                    # Check if session was recently completed (within activity key TTL)
+                                    # Only send timeout message for sessions completed within the activity key lifetime
+                                    if db_session.completed_at:
+                                        # Convert naive datetime from DB to timezone-aware UTC
+                                        from app.utils.datetime_utils import utc_from_naive
+                                        completed_at_utc = utc_from_naive(db_session.completed_at)
+                                        time_since_completion = utc_now() - completed_at_utc
+                                        
+                                        # Use activity_key_ttl as the recency threshold
+                                        if time_since_completion > timedelta(seconds=self.activity_key_ttl):
+                                            # Too old - activity key should have expired naturally
+                                            await self.redis.delete(activity_key)
+                                            logger.debug(
+                                                f"[TIMEOUT_SERVICE] Session completed too long ago ({time_since_completion}), "
+                                                f"cleaning up activity key (TTL threshold: {self.activity_key_ttl}s)"
+                                            )
+                                            continue
+                                    
+                                    # Convert DB session to dict format for _handle_timeout
+                                    from app.services.workflow_manager import WorkflowManager
+                                    workflow_type_enum = WorkflowManager.get_workflow_type(db_session)
+                                    
+                                    session_data = {
+                                        'session_id': db_session.session_id,
+                                        'external_user_id': db_session.external_user_id,
+                                        'workflow_type': workflow_type_enum.value if workflow_type_enum else None,
+                                        'outcome': db_session.outcome.value if db_session.outcome and hasattr(db_session.outcome, 'value') else db_session.outcome,
+                                        'workflow_state': db_session.workflow_state or {},
+                                        'conversation_history': db_session.conversation_history or {},
+                                        'extracted_entities': db_session.extracted_entities or {},
+                                        'retention_date': db_session.retention_date.isoformat() if db_session.retention_date else None,
+                                        'created_at': db_session.created_at.isoformat() if db_session.created_at else None,
+                                        'last_activity_at': db_session.last_activity_at.isoformat() if db_session.last_activity_at else None,
+                                        'completed_at': db_session.completed_at.isoformat() if db_session.completed_at else None,
+                                    }
+                                    
+                                    logger.debug(
+                                        f"[TIMEOUT_SERVICE] Retrieved session from DB for {user_phone} "
+                                        f"(outcome: {session_data.get('outcome')}, completed_at: {session_data.get('completed_at')})"
+                                    )
+                                    
+                                finally:
+                                    db_manager.close()
+                                    
+                            except Exception as db_error:
+                                logger.error(f"[TIMEOUT_SERVICE] Error retrieving session from DB for {user_phone}: {db_error}")
+                                # Clean up activity key and skip
+                                await self.redis.delete(activity_key)
+                                continue
                         
                         workflow_type = session_data.get('workflow_type')
 
+                        # # Timeout ALL workflows if workflow_type is set (per requirement #4)
+                        # # Skip only if workflow_type is None or 'None' (no active workflow)
+                        # if not workflow_type or workflow_type == 'None':
+                        #     # No active workflow - skip timeout but log for debugging
+                        #     logger.debug(
+                        #         f"[TIMEOUT_SERVICE] Skipping {user_phone}: no workflow "
+                        #         f"(inactive {inactive_duration:.0f}s)"
+                        #     )
+                        #     continue
                         
                         logger.debug(
                             f"[TIMEOUT_SERVICE] Timeout detected for {user_phone}: "
@@ -471,11 +544,15 @@ class InactivityTimeoutService:
         try:
             logger.debug(f"[TIMEOUT_SERVICE] Handling timeout for {user_phone}")
             
-            # 1. Get session from Redis (need conversation history for audit trail)
+            # Initialize variables to avoid UnboundLocalError
             session_data = None
+            remainder_session = None
+            
+            # 1. Get session from Redis (need conversation history for audit trail)
             try:
                 session_data = await self.redis_session.get_session(session_id)
                 if session_data:
+                    remainder_session = session_data  # Save for seller remainder message
                     logger.debug(f"[TIMEOUT_SERVICE] Retrieved session from Redis for {user_phone}")
                 else:
                     logger.warning(f"[TIMEOUT_SERVICE] No session found in Redis for {session_id}")
@@ -635,6 +712,7 @@ class InactivityTimeoutService:
 
             # Always prefer original session snapshot for constructing reminder
             session_snapshot = remainder_session or session_data
+            timeout_session_data = session_snapshot
             logger.debug(f"[TIMEOUT_SERVICE] Using session snapshot: {bool(timeout_session_data)}")
             
             timeout_message = await self._generate_timeout_message(user_details, timeout_session_data)

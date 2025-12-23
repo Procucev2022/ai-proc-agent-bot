@@ -76,7 +76,7 @@ PINCODE IDENTIFICATION (CRITICAL):
 ITEM-SPECIFIC FIELDS (extract for each product):
 - **description**: Product type/category (e.g., "laptop", "chairs", "printers") - keep this generic
 - **quantity**: Number of units needed - ONLY extract clear quantity values. DO NOT confuse specifications/ratings with quantity! Maximum allowed quantity is 100,000 pieces/units per product.
-- **unitofMeasures**: Unit of measurement - Extract the unit of measurement along with its numeric quantity if mentioned (e.g., "25 meters", "10 kg", "5 boxes", "100 ml"). Use "unit(s)" for countable items (laptops, chairs, etc.) when no specific unit is mentioned. Use empty string ONLY if the item type is unclear.
+- **unitofMeasures**: Unit of measurement - Extract the unit of measurement along with its numeric quantity if mentioned (e.g., "25 meters", "10 kg", "5 boxes", "100 ml"). CRITICAL: DO NOT normalize units - preserve the user's exact unit. If user says "pcs" keep "pcs", if "nos" keep "nos", if "units" keep "units". Only use "unit(s)" when NO unit is explicitly mentioned by the user. Use empty string ONLY if the item type is unclear.
 - **brand**: Preferred brand name for this item (e.g., "Acer", "HP", "Dell")
 - **remarks**: Technical specifications, detailed requirements, configurations for this item (e.g., "18gb RAM, 1tb SSD", "ergonomic design", "A4 printing capacity")
 
@@ -85,9 +85,12 @@ CRITICAL EXTRACTION RULES:
 1. **UOM Categories** - There are THREE types of UOM scenarios:
 
    A. **COUNTABLE ITEMS** (laptops, chairs, printers, bottles, bags, boxes of screws):
-      - UOM is always "unit(s)"
+      - PRESERVE user's exact unit - DO NOT normalize to "unit(s)"
+      - Only use "unit(s)" when NO unit is mentioned by user
       - Examples:
-        * "10 laptops" → quantity: 10, unitofMeasures: "unit(s)"
+        * "10 laptops" → quantity: 10, unitofMeasures: "unit(s)" (no unit mentioned)
+        * "10 pcs laptops" → quantity: 10, unitofMeasures: "pcs" (preserve "pcs")
+        * "100 nos chairs" → quantity: 100, unitofMeasures: "nos" (preserve "nos")
         * "5 boxes of screws" → quantity: 5, unitofMeasures: "unit(s)", description: "boxes of screws"
         * "20 water bottles" → quantity: 20, unitofMeasures: "unit(s)"
 
@@ -125,12 +128,18 @@ CRITICAL EXTRACTION RULES:
      * "20 200kg Steel bars" → quantity: 20 (they want 20 bars, each 200kg)
 
 4. **CONTAINER DESCRIPTIONS**:
+   - CRITICAL: This rule ONLY applies when NO measurement is specified
    - Containers (boxes, bags, rolls, packs) are part of the DESCRIPTION, not UOM
-   - UOM is still "unit(s)" for counting containers
-   - Examples:
+   - UOM is "unit(s)" ONLY when counting containers WITHOUT weight/volume/length specifications
+   - **IF container has measurement specification (kg, liters, meters), use the measurement as UOM (see Rule C above)**
+   - Examples WITHOUT measurements:
      * "5 boxes of screws" → description: "boxes of screws", quantity: 5, unitofMeasures: "unit(s)"
      * "10 bags of cement" → description: "bags of cement", quantity: 10, unitofMeasures: "unit(s)"
      * "3 rolls of tape" → description: "rolls of tape", quantity: 3, unitofMeasures: "unit(s)"
+   - Examples WITH measurements (USE THE MEASUREMENT):
+     * "700 salt bags, each bag 50 KG" → description: "salt bags", quantity: 700, unitofMeasures: "50 kg"
+     * "500 laptop bags, 40 liter capacity" → description: "laptop bags", quantity: 500, unitofMeasures: "40 liter"
+     * "100 water bottles, 50ml each" → description: "water bottles", quantity: 100, unitofMeasures: "50 ml"
 
 5. **OTHER SPECIFICATIONS IN REMARKS**:
    - Technical details always go to remarks field
@@ -256,7 +265,29 @@ Products: [
   {{description: "batteries", quantity: 200, unitofMeasures: "unit(s)", brand: "", remarks: "5000mAh"}}
 ]
 
-Example 13: "20 200kg Steel bars, 5 50ml water bottles"
+Example 13: "700 - Salt - Tata - Bags - Each bag 50 KG"
+CRITICAL: Measurement takes precedence over container type
+- 700 is the quantity (how many bags)
+- "Each bag 50 KG" is a WEIGHT measurement → goes to UOM
+- DO NOT use "Bags" or "unit(s)" as UOM when weight is specified
+- "50 KG" goes to unitofMeasures, NOT to remarks
+Global fields: deliveryDate="", state="", city="", pincode=""
+Products: [
+  {{description: "salt bags", quantity: 700, unitofMeasures: "50 kg", brand: "Tata", remarks: ""}}
+]
+
+Example 13a: "40 liter capacity laptop bag's with 5 zip's company logo - 500 Bags"
+CRITICAL: Volume measurement takes precedence over container type
+- 500 is the quantity (how many bags)
+- "40 liter capacity" is a VOLUME measurement → goes to UOM
+- DO NOT use "Bags" or "unit(s)" as UOM when volume is specified
+- Features like "5 zips, company logo" go to remarks
+Global fields: deliveryDate="", state="", city="", pincode=""
+Products: [
+  {{description: "laptop bags", quantity: 500, unitofMeasures: "40 liter", brand: "", remarks: "5 zips, company logo"}}
+]
+
+Example 13b: "20 200kg Steel bars, 5 50ml water bottles"
 CRITICAL: Both count AND measurement provided - count is quantity, measurement is UOM
 - "20 200kg Steel bars": 20 is the count (quantity), 200kg is the measurement (UOM)
 - "5 50ml water bottles": 5 is the count (quantity), 50ml is the measurement (UOM)

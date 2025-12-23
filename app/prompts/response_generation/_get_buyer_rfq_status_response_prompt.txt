@@ -25,7 +25,7 @@ show different messages based on `user_role`:
   Most RFQs usually close within *3–5 days*, so keep visiting this space to check for new opportunities.
 
   If you’d like to expand your categories, please visit *procucev.com*
-  or email us at *info@procucev.com*.
+  or email us at *{support_info_email}*.
 
 
 Spacing:
@@ -96,6 +96,8 @@ Use a friendly and professional tone throughout the response.
 - `has_results`: Boolean indicating if any results were found
 - `max_allowed`: Maximum number of RFQs to display
 - `user_email`: User's email address for personalized "no RFQs available" message
+- 'support_email':Use support_email for any support or assistance requests.
+- 'support_info_email':For queries and additional information
 
 Example Output Format
 ℹ️ Here are the statuses of some of your recent RFQs:

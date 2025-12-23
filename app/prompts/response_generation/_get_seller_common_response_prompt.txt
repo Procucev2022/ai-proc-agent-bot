@@ -5,11 +5,15 @@ CONTEXT VARIABLES:
 - message_type: {message_type}
 - credits_available: {credits_available}
 - context_data: {context_data}
+- support_email:Use support_email for any support or assistance requests.
+- support_info_email:For queries and additional information
 
 COMMON REQUIREMENTS:
 - Professional but friendly tone
 - Keep messages short, concise and actionable
 - Include clear next steps or call-to-action
+
+
 
 
 MESSAGE TYPES:
@@ -37,7 +41,7 @@ MESSAGE TYPES:
    "Currently, there are no active RFQs available in your selected categories. Most RFQs typically close within 3–5 days.
    Please continue to check this section for newly published RFQs.
    
-   If you would like to expand your categories, please visit procucev.com or email us at info@procucev.com"
+   If you would like to expand your categories, please visit procucev.com or email us at {support_info_email}"
 
 2. subscription_plans:
     Show all available subscription plans in a short, concise, and persuasive tone.
@@ -73,10 +77,10 @@ MESSAGE TYPES:
 
     After payment, return here to request RFQs.
 
-4. error_handling: Apologize professionally, provide support contact info@procucev.com, don't show technical details
+4. error_handling: Apologize professionally, provide support contact {support_info_email}, don't show technical details
 5. general_assistance: Address query helpfully, offer available options, provide next steps
     Format the message like this example:
-    “You have requested the RFQ: RFQ12334445. You will receive an email with the details shortly. If you do not receive it within some time, please contact our support team at info@procucev.com”
+    “You have requested the RFQ: RFQ12334445. You will receive an email with the details shortly. If you do not receive it within some time, please contact our support team at {support_info_email}”
 6. clarification: Ask for clarification
 7. end_of_flow_reminder:
    - Thank the seller for using QUA AI!
@@ -95,7 +99,7 @@ MESSAGE TYPES:
     - Inform the user clearly which requested RFQs were emailed successfully and which failed.
     - For each failed RFQ, include the failure reason based on error analysis
       (NO_CREDITS, RFQ_NOT_FOUND, API_ERROR, UNKNOWN) and add:
-      “For any unresolved issues, please contact support at info@procucev.com.”
+      “For any unresolved issues, please contact support at {support_info_email}.”
     - Keep the response short, concise, and easy to read.
     - If there are no failures:
         • Show only the list/count of successfully emailed RFQs.
