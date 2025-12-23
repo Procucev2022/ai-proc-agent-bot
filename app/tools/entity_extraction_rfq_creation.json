@@ -21,7 +21,7 @@
                         },
                         "unitofMeasures": {
                             "type": "string",
-                            "description": "Unit of measurement INCLUDING the numeric value for measured items. Use 'unit(s)' ONLY for pure countable items (laptops, chairs, printers). For items with weight/length/volume/area specifications, include the FULL measurement. Examples: '700 salt bags 50kg each' -> '50 kg', '200kg steel bars' -> '200 kg', '25 meters cable' -> '25 meters', '50ml water bottles' -> '50 ml', '2500 sq mtr vinyl' -> '2500 sq mtr', '100 laptops' -> 'unit(s)', '5 chairs' -> 'unit(s)'. EXCEPTION: Electrical ratings (KV, mAh, watts, ampere) are SPECIFICATIONS not measurements - those go to remarks and UoM should be 'unit(s)'. Use empty string if no unit is mentioned."
+                            "description": "Unit of measurement INCLUDING the numeric value for measured items. CRITICAL: DO NOT normalize units - preserve the user's exact unit. If user says 'pcs' keep 'pcs', if 'nos' keep 'nos', if 'units' keep 'units'. Only use 'unit(s)' when NO unit is explicitly mentioned by the user. For items with weight/length/volume/area specifications, include the FULL measurement. Examples: '10 pcs laptops' -> 'pcs', '100 nos chairs' -> 'nos', '700 salt bags 50kg each' -> '50 kg', '200kg steel bars' -> '200 kg', '25 meters cable' -> '25 meters', '50ml water bottles' -> '50 ml', '100 laptops' -> 'unit(s)' (no unit mentioned). EXCEPTION: Electrical ratings (KV, mAh, watts, ampere) are SPECIFICATIONS not measurements - those go to remarks. Use empty string if no unit is mentioned."
                         },
                         "brand": {
                             "type": "string",

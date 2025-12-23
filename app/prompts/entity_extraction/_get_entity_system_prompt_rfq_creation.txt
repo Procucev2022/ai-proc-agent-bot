@@ -76,7 +76,7 @@ PINCODE IDENTIFICATION (CRITICAL):
 ITEM-SPECIFIC FIELDS (extract for each product):
 - **description**: Product type/category (e.g., "laptop", "chairs", "printers") - keep this generic
 - **quantity**: Number of units needed - ONLY extract clear quantity values. DO NOT confuse specifications/ratings with quantity! Maximum allowed quantity is 100,000 pieces/units per product.
-- **unitofMeasures**: Unit of measurement - Extract the unit of measurement along with its numeric quantity if mentioned (e.g., "25 meters", "10 kg", "5 boxes", "100 ml"). Use "unit(s)" for countable items (laptops, chairs, etc.) when no specific unit is mentioned. Use empty string ONLY if the item type is unclear.
+- **unitofMeasures**: Unit of measurement - Extract the unit of measurement along with its numeric quantity if mentioned (e.g., "25 meters", "10 kg", "5 boxes", "100 ml"). CRITICAL: DO NOT normalize units - preserve the user's exact unit. If user says "pcs" keep "pcs", if "nos" keep "nos", if "units" keep "units". Only use "unit(s)" when NO unit is explicitly mentioned by the user. Use empty string ONLY if the item type is unclear.
 - **brand**: Preferred brand name for this item (e.g., "Acer", "HP", "Dell")
 - **remarks**: Technical specifications, detailed requirements, configurations for this item (e.g., "18gb RAM, 1tb SSD", "ergonomic design", "A4 printing capacity")
 
@@ -85,9 +85,12 @@ CRITICAL EXTRACTION RULES:
 1. **UOM Categories** - There are THREE types of UOM scenarios:
 
    A. **COUNTABLE ITEMS** (laptops, chairs, printers, bottles, bags, boxes of screws):
-      - UOM is always "unit(s)"
+      - PRESERVE user's exact unit - DO NOT normalize to "unit(s)"
+      - Only use "unit(s)" when NO unit is mentioned by user
       - Examples:
-        * "10 laptops" → quantity: 10, unitofMeasures: "unit(s)"
+        * "10 laptops" → quantity: 10, unitofMeasures: "unit(s)" (no unit mentioned)
+        * "10 pcs laptops" → quantity: 10, unitofMeasures: "pcs" (preserve "pcs")
+        * "100 nos chairs" → quantity: 100, unitofMeasures: "nos" (preserve "nos")
         * "5 boxes of screws" → quantity: 5, unitofMeasures: "unit(s)", description: "boxes of screws"
         * "20 water bottles" → quantity: 20, unitofMeasures: "unit(s)"
 
