@@ -128,12 +128,18 @@ CRITICAL EXTRACTION RULES:
      * "20 200kg Steel bars" → quantity: 20 (they want 20 bars, each 200kg)
 
 4. **CONTAINER DESCRIPTIONS**:
+   - CRITICAL: This rule ONLY applies when NO measurement is specified
    - Containers (boxes, bags, rolls, packs) are part of the DESCRIPTION, not UOM
-   - UOM is still "unit(s)" for counting containers
-   - Examples:
+   - UOM is "unit(s)" ONLY when counting containers WITHOUT weight/volume/length specifications
+   - **IF container has measurement specification (kg, liters, meters), use the measurement as UOM (see Rule C above)**
+   - Examples WITHOUT measurements:
      * "5 boxes of screws" → description: "boxes of screws", quantity: 5, unitofMeasures: "unit(s)"
      * "10 bags of cement" → description: "bags of cement", quantity: 10, unitofMeasures: "unit(s)"
      * "3 rolls of tape" → description: "rolls of tape", quantity: 3, unitofMeasures: "unit(s)"
+   - Examples WITH measurements (USE THE MEASUREMENT):
+     * "700 salt bags, each bag 50 KG" → description: "salt bags", quantity: 700, unitofMeasures: "50 kg"
+     * "500 laptop bags, 40 liter capacity" → description: "laptop bags", quantity: 500, unitofMeasures: "40 liter"
+     * "100 water bottles, 50ml each" → description: "water bottles", quantity: 100, unitofMeasures: "50 ml"
 
 5. **OTHER SPECIFICATIONS IN REMARKS**:
    - Technical details always go to remarks field
@@ -259,7 +265,29 @@ Products: [
   {{description: "batteries", quantity: 200, unitofMeasures: "unit(s)", brand: "", remarks: "5000mAh"}}
 ]
 
-Example 13: "20 200kg Steel bars, 5 50ml water bottles"
+Example 13: "700 - Salt - Tata - Bags - Each bag 50 KG"
+CRITICAL: Measurement takes precedence over container type
+- 700 is the quantity (how many bags)
+- "Each bag 50 KG" is a WEIGHT measurement → goes to UOM
+- DO NOT use "Bags" or "unit(s)" as UOM when weight is specified
+- "50 KG" goes to unitofMeasures, NOT to remarks
+Global fields: deliveryDate="", state="", city="", pincode=""
+Products: [
+  {{description: "salt bags", quantity: 700, unitofMeasures: "50 kg", brand: "Tata", remarks: ""}}
+]
+
+Example 13a: "40 liter capacity laptop bag's with 5 zip's company logo - 500 Bags"
+CRITICAL: Volume measurement takes precedence over container type
+- 500 is the quantity (how many bags)
+- "40 liter capacity" is a VOLUME measurement → goes to UOM
+- DO NOT use "Bags" or "unit(s)" as UOM when volume is specified
+- Features like "5 zips, company logo" go to remarks
+Global fields: deliveryDate="", state="", city="", pincode=""
+Products: [
+  {{description: "laptop bags", quantity: 500, unitofMeasures: "40 liter", brand: "", remarks: "5 zips, company logo"}}
+]
+
+Example 13b: "20 200kg Steel bars, 5 50ml water bottles"
 CRITICAL: Both count AND measurement provided - count is quantity, measurement is UOM
 - "20 200kg Steel bars": 20 is the count (quantity), 200kg is the measurement (UOM)
 - "5 50ml water bottles": 5 is the count (quantity), 50ml is the measurement (UOM)
