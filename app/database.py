@@ -17,7 +17,7 @@ import logging
 import asyncio
 
 from .config import get_settings
-from .models import Base, ProductCategory, Vendor, ConversationSession
+from .models import Base, ProductCategory, Vendor, ConversationSession, RFQNotificationFact
 from .utils.datetime_utils import utc_now
 
 logger = logging.getLogger(__name__)

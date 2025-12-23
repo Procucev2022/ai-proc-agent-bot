@@ -159,23 +159,21 @@
     "description": "Metrics for users who did not complete registration or did not perform clear buyer/seller actions",
     "properties": {
       "unregistered_seller_initiated_chat": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 1,
-        "description": "1 if user showed seller intent but did not complete registration, else 0"
-      },
+      "type": "integer",
+      "enum": [0, 1],
+      "description": "1 if an unregistered user initiated at least one chat showing seller intent during the session, else 0"
+    },
       "unregistered_seller_requested_rfq": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 1,
-        "description": "1 if unregistered seller attempted to view or request RFQs, else 0"
-      },
-      "unregistered_buyer_started_but_dropped": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 1,
-        "description": "1 if user showed buyer intent but did not complete RFQ creation, else 0"
-      },
+      "type": "integer",
+      "enum": [0, 1],
+      "description": "1 if an unregistered user with seller intent attempted at least once to view, access, or request RFQs during the session, else 0"
+    },
+      "unregistered_buyer_bfs_only": {
+  "type": "integer",
+  "enum": [0, 1],
+  "description": "1 if an unregistered user explicitly chose not to register and continued with actions such as browsing, searching, or viewing product details without initiating RFQ creation; else 0"
+},
+
       "number_of_faq_or_general_queries": {
         "type": "integer",
         "minimum": 0,
@@ -185,7 +183,7 @@
     "required": [
       "unregistered_seller_initiated_chat",
       "unregistered_seller_requested_rfq",
-      "unregistered_buyer_started_but_dropped",
+      "unregistered_buyer_bfs_only",
       "number_of_faq_or_general_queries"
     ]
   },
@@ -210,6 +208,14 @@
                       "type": "string",
                       "description": "Taken directly from the user message timestamp when the 'I am interested' button was clicked"
 
+                    },
+                    "rfq_notified_at": {
+                      "type": "string",
+                      "description": "Timestamp when RFQ notification was sent to seller (ISO format)"
+                    },
+                    "seller_response_at": {
+                      "type": "string",
+                      "description": "Timestamp when seller clicked 'I am interested' button (ISO format)"
                     }
                   },
                   "required": ["rfq_id","seller_id","response_date"]

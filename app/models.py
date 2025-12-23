@@ -968,8 +968,36 @@ class UnknownDailyMetrics(Base):
     email = Column(String(255), nullable=True)
     confidence_score = Column(DECIMAL(5,2), nullable=True)
     ai_reasoning = Column(Text, nullable=True)
+    unregistered_seller_initiated_chat = Column(Integer, default=0)
+    unregistered_seller_requested_rfq = Column(Integer, default=0)
+    unregistered_buyer_bfs_only = Column(Integer, default=0)
+    number_of_faq_or_general_queries = Column(Integer, default=0)
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
     
     __table_args__ = (
         UniqueConstraint('date', 'session_id', 'phone_number', name='unique_unknown_daily_metrics'),
+    )
+
+class RFQNotificationFact(Base):
+    """
+    RFQ notification fact table for tracking seller notifications and responses.
+    
+    Stores comprehensive data about RFQ notifications sent to sellers including
+    notification timing, seller responses, and AI reasoning for analytics.
+    """
+    __tablename__ = "rfq_notification_fact"
+    
+    id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    date = Column(Date, nullable=False, index=True)
+    session_id = Column(String(255), nullable=False, index=True)
+    rfq_id = Column(CHAR(36), nullable=False, index=True)
+    seller_id = Column(CHAR(36), nullable=False, index=True)
+    category = Column(String(255), nullable=True, index=True)
+    rfq_notified_at = Column(TIMESTAMP, nullable=True)
+    seller_response_at = Column(TIMESTAMP, nullable=True)
+    ai_reasoning = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    
+    __table_args__ = (
+        UniqueConstraint('date', 'session_id', 'rfq_id', 'seller_id', 'category', name='unique_rfq_notification_fact'),
     )
