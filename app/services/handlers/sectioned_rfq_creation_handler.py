@@ -678,12 +678,12 @@ class SectionedRFQCreationHandler:
             # No items yet, ask user
             msg= (
                 "Please share your RFQ items in this format:\n"
-                "*Quantity – Item Details – [Brand/Specs] – [UOM] – [Other Details]*\n\n"
+                "*Qty [Number] - [Item Name] - UoM [Unit] - [Brand/Specs/Other Details]*\n\n"
                 "Examples:\n"
-                "• 15 – Laptop – HP – pieces – 10\" display, i7 processor, blue\n"
-                "• 25 – Cable – 10 m roll, 10 mm thickness\n"
-                "• 6 – Book – A4 size, 200 pages\n\n"
-                "You can leave Brand or other Details empty if you don’t have them.\n\n"
+                "• Qty 20 - Cement Bag - UoM 5Kgs - Ambuja White Cement\n"
+                "• Qty 15 - Laptop - UoM pieces - HP, 10\" display, i7 processor, blue\n"
+                "• Qty 25 - Cable - UoM meters - 10 mm thickness\n\n"
+                "You can leave Brand or other Details empty if you don't have them.\n\n"
                 "Alternatively, you may upload the item details in an Excel file with all the fields."
             )
 
@@ -1512,12 +1512,12 @@ class SectionedRFQCreationHandler:
 
             msg = (
                 "Please share your RFQ items in this format:\n"
-                "*Quantity – Item Details – [Brand/Specs] – [UOM] – [Other Details]*\n\n"
+                "*Qty [Number] - [Item Name] - UoM [Unit] - [Brand/Specs/Other Details]*\n\n"
                 "Examples:\n"
-                "• 15 – Laptop – HP – pieces – 10\" display, i7 processor, blue\n"
-                "• 25 – Cable – 10 m roll, 10 mm thickness\n"
-                "• 6 – Book – A4 size, 200 pages\n\n"
-                "You can leave Brand or other Details empty if you don’t have them.\n\n"
+                "• Qty 20 - Cement Bag - UoM 5Kgs - Ambuja White Cement\n"
+                "• Qty 15 - Laptop - UoM pieces - HP, 10\" display, i7 processor, blue\n"
+                "• Qty 25 - Cable - UoM meters - 10 mm thickness\n\n"
+                "You can leave Brand or other Details empty if you don't have them.\n\n"
                 "Alternatively, you may upload the item details in an Excel file with all the fields."
             )
 
