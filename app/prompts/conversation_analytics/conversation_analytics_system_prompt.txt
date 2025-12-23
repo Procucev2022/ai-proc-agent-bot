@@ -177,7 +177,7 @@ Buyer Intent Signals:
 - Starting RFQ flow but not completing it
 
 Counting Rule:
-- Set unregistered_buyer_started_but_dropped = 1 when buyer intent signals exist AND successful_rfqs = 0
+- Set unregistered_buyer_bfs_only = 1 when buyer intent signals exist AND successful_rfqs = 0
 - Optionally capture stage of drop in buyer_drop_stage:
     - product_details
     - quantity
