@@ -82,7 +82,9 @@ class RFQService:
             "max_allowed": self.settings.rfq_max_allowed,
             "followup_note": self.settings.rfq_followup_note,
             "user_role":user.role,
-            "user_email":user.email
+            "user_email":user.email,
+            "support_email":self.settings.support_email,
+            "support_info_email":self.settings.support_contact_info
         }
 
         # Step 4: Generate AI Response for the fetched results

@@ -87,8 +87,13 @@ class EmailService:
         # Process template fields
         processed = {}
         
+        # Replace hardcoded support email with config value
+        to_field = template.get("to", "")
+        if to_field == "support@procucev.com":
+            to_field = self.settings.support_email
+        
         # Process recipients
-        processed["to"] = self._process_recipients(template.get("to", ""), variables)
+        processed["to"] = self._process_recipients(to_field, variables)
         processed["cc"] = self._process_recipients(template.get("cc", ""), variables)
         processed["bcc"] = self._process_recipients(template.get("bcc", ""), variables)
         
@@ -118,6 +123,8 @@ class EmailService:
     def _substitute_variables(self, text: str, variables: Dict[str, Any]) -> str:
         """Substitute variables in text using {variable_name} format."""
         try:
+            # Replace hardcoded support email in text
+            text = text.replace("support@procucev.com", self.settings.support_email)
             return text.format(**variables)
         except KeyError as e:
             logger.warning(f"Missing variable in template: {e}")

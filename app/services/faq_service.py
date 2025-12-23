@@ -1,6 +1,7 @@
 import logging
 from app.services.openai_service import OpenAIService
 from app.data import faq_config
+from app.config import get_settings
 FULL_FAQ_CONTEXT = faq_config.FULL_FAQ_CONTEXT
 
 logger = logging.getLogger(__name__)
@@ -8,6 +9,7 @@ logger = logging.getLogger(__name__)
 class FAQService:
     def __init__(self):
         self.openai_service = OpenAIService()
+        self.settings = get_settings()
 
     def clean_text(self, text: str) -> str:
         """Clean text for WhatsApp: remove Markdown, bullets, and extra newlines"""
@@ -59,7 +61,7 @@ Instructions:
 - Use a professional but conversational tone suitable for WhatsApp
 - If the answer is in the FAQ, provide it clearly and briefly
 - **If the answer is NOT found in {FULL_FAQ_CONTEXT}, do NOT assume or guess. Instead respond with:**
-  "I don't have specific information about that in our FAQ. You can connect to our support team for assistance (info@procucev.com)."
+  "I don't have specific information about that in our FAQ. You can connect to our support team for assistance ({self.settings.support_contact_info})."
 - Do not add conversational fillers
 - Keep the response focused and action-oriented
 - Consider the conversation context when providing your answer

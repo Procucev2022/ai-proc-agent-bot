@@ -53,7 +53,7 @@ class GlobalErrorHandler:
         self.user_error_message = (
             "Currently, we are facing some technical issues. The team is actively working to get QUA up and running.\n"
             "We apologise for the inconvenience caused and request you to please try again after a while.\n"
-            "In case of anything urgent, feel free to reach us at info@procucev.com."
+            f"In case of anything urgent, feel free to reach us at {self.settings.support_contact_info}"
         )
     
     async def handle_error(self, error_context: ErrorContext) -> bool:

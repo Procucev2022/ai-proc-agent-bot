@@ -148,6 +148,9 @@ class ChatService:
             self.chat_summary_service, self.daily_summary_service
         )
 
+        self.settings = get_settings()
+
+
     # Lazy-loaded service properties
     @property
     def intent_service(self):
@@ -3679,7 +3682,7 @@ class ChatService:
                 logger.error(f"Error generating seller error response: {resp_err}")
                 await self.whatsapp_service.send_message(
                     user.phone_number,
-                    "I encountered an issue processing your request. Please contact info@procucev.com"
+                    f"I encountered an issue processing your request. Please contact {self.settings.support_email}"
                 )
 
             return {"status": "error", "error": str(e)}

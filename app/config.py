@@ -206,6 +206,8 @@ class Settings:
         
         # Support configuration
         self.support_contact_info = os.getenv("SUPPORT_CONTACT_INFO", "info@procucev.com")
+        self.contact_email = os.getenv("CONTACT_EMAIL", "contact@procucev.com")
+        self.support_team_email = os.getenv("SUPPORT_TEAM_EMAILS", "priya.soni@mohap.ai")
         self.support_team_email = os.getenv("SUPPORT_TEAM_EMAILS", "priya.soni@mohap.ai")
         self.support_team_numbers = os.getenv("SUPPORT_TEAM_NUMBERS", "8824242260").split(",")
 

@@ -28,6 +28,7 @@ from app.services.domain_check_service import DomainCheckService
 from app.services.otp_service import OTPService
 from app.utils.pincode_lookup import get_location_from_pincode_async
 from datetime import datetime
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class RegistrationService:
         self.session_manager = session_manager  # Set this first
         self.domain_check_service = DomainCheckService(self.openai_service, self.whatsapp_service, self.session_manager)
         self.authentication_helpers = AuthenticationHelpers()
+        self.settings = get_settings()
         self.otp_service = OTPService(self.register_api_service, self.whatsapp_service, self.support_notification_service)
         # Import here to avoid circular imports
         from app.procucev_apis.auth_apis import AuthAPIService
@@ -889,7 +891,7 @@ class RegistrationService:
                 "*Registration Unsuccessful*\n"
                 "We couldn't complete your registration at this time. Our support team will "
                 "reach out to you shortly to help finalize your onboarding.\n\n"
-                "If you need immediate assistance, please contact us at *info@procucev.com*.\n\n"
+                f"If you need immediate assistance, please contact us at *{self.settings.support_contact_info}*.\n\n"
                 "*Thank you for choosing Procucev!*"
             )
 

@@ -1,6 +1,8 @@
 # Full FAQ context for LLM fallback
+from app.config import get_settings
+settings = get_settings()
 FULL_FAQ_CONTEXT =\
-    """
+    f"""
 - Platform Overview:
     Procucev’s Get My Quote (GMT) is an AI-powered procurement and RFQ platform connecting buyers and sellers. Buyers access many vendors and receive fast, competitive quotes, while sellers gain leads, efficiency, and more business opportunities.
 - Registration & Access: 
@@ -29,7 +31,7 @@ FULL_FAQ_CONTEXT =\
 - Advanced/Additional Services:
     Explore strategic sourcing, category-specific expert support, analytics, and workflow automation. Full details are on www.procucev.com
 - Support:
-    For any issues or questions, contact info@procucev.com. If you experience technical issues, try again in a few minutes or reach out for immediate assistance.
+    For any issues or questions, contact {settings.support_contact_info}. If you experience technical issues, try again in a few minutes or reach out for immediate assistance.
 - General Policies:
     Inactive accounts may need reverification (advance notice given).
     Each RFQ viewed/downloaded by a seller deducts one credit.
@@ -50,7 +52,7 @@ FULL_FAQ_CONTEXT =\
     Procucev’s GMT platform supports delivery based on the Delivery Pincode you provide in your RFQ.
     Please share your exact Delivery Pincode (6-digit) to check delivery availability.
     If you want to check delivery in any other region, first share the Delivery Pincode so the system can verify availability.
-    For further help, contact info@procucev.com.
+    For further help, contact {settings.support_contact_info}.
 - RFQ Creation Flow (Step-by-Step Sections):
     When creating an RFQ, the bot follows a strict section-based flow. The user must complete each section and cannot go back once confirmed:
 
