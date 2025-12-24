@@ -976,6 +976,81 @@ Session IDs to process: {', '.join(session_ids)}
             logger.error(f"Error calculating total RFQ responses: {e}")
             return 0
     
+    def calculate_and_store_category_aggregates(self, target_date, db_session) -> None:
+        """Calculate category aggregates from remote database and store in category_aggregates table."""
+        try:
+            remote_db = get_remote_db_session()
+            query = """
+            SELECT
+                t.rfq_date,
+                t.category,
+                t.total_rfq_raised,
+                q.rfqs_with_quotations
+            FROM (
+                SELECT
+                    DATE(created_ts) AS rfq_date,
+                    category,
+                    COUNT(DISTINCT rfq_uuid) AS total_rfq_raised
+                FROM rfq_items
+                WHERE DATE(created_ts) = :target_date
+                GROUP BY
+                    DATE(created_ts),
+                    category
+            ) t
+            LEFT JOIN (
+                SELECT
+                    DATE(ri.created_ts) AS rfq_date,
+                    ri.category,
+                    COUNT(DISTINCT ri.rfq_uuid) AS rfqs_with_quotations
+                FROM rfq_items ri
+                JOIN rfq_vendors rv
+                    ON ri.rfq_uuid = rv.rfq_uuid
+                WHERE DATE(ri.created_ts) = :target_date
+                GROUP BY
+                    DATE(ri.created_ts),
+                    ri.category
+            ) q
+            ON t.rfq_date = q.rfq_date
+            AND t.category = q.category
+            """
+            result = remote_db.execute(text(query), {'target_date': str(target_date)})
+            rows = result.fetchall()
+
+            remote_db.close()
+
+            if not rows:
+                logger.info(f"[CONVERSATION-ANALYTICS] No category data found for {target_date}")
+                return
+
+            for row in rows:
+                category_name = row[1] if row[1] is not None else 'Unknown'
+                total_rfq_raised = int(row[2]) if row[2] is not None else 0
+                rfqs_with_quotations = int(row[3]) if row[3] is not None else 0
+                
+                existing = db_session.query(CategoryAggregates).filter(
+                    CategoryAggregates.date == target_date,
+                    CategoryAggregates.category_name == category_name
+                ).first()
+
+                if existing:
+                    existing.total_rfq_raised_category = total_rfq_raised
+                    existing.total_rfqs_with_quotations = rfqs_with_quotations
+                else:
+                    aggregate = CategoryAggregates(
+                        date=target_date,
+                        category_name=category_name,
+                        total_rfq_raised_category=total_rfq_raised,
+                        total_rfqs_with_quotations=rfqs_with_quotations
+                    )
+                    db_session.add(aggregate)
+
+            db_session.commit()
+            logger.info(f"[CONVERSATION-ANALYTICS] Stored {len(rows)} category aggregates for {target_date}")
+
+        except Exception as e:
+            logger.error(f"[CONVERSATION-ANALYTICS] Failed to calculate category aggregates: {e}")
+            db_session.rollback()
+    
    
 
     def calculate_and_store_unknown_daily_aggregates(self, target_date, db_session) -> None:
@@ -1097,13 +1172,17 @@ Session IDs to process: {', '.join(session_ids)}
                 
                 if pd.notna(row.get('rfq_notified_at')):
                     try:
-                        rfq_notified_at = pd.to_datetime(row.get('rfq_notified_at')).to_pydatetime()
+                        dt_val = pd.to_datetime(row.get('rfq_notified_at'))
+                        if not pd.isna(dt_val):
+                            rfq_notified_at = dt_val.to_pydatetime()
                     except:
                         pass
                 
                 if pd.notna(row.get('seller_response_at')):
                     try:
-                        seller_response_at = pd.to_datetime(row.get('seller_response_at')).to_pydatetime()
+                        dt_val = pd.to_datetime(row.get('seller_response_at'))
+                        if not pd.isna(dt_val):
+                            seller_response_at = dt_val.to_pydatetime()
                     except:
                         pass
                 
@@ -1174,8 +1253,9 @@ if __name__ == "__main__":
         service = ConversationAnalyticsService()
         from datetime import timedelta
         
-        end_date = datetime(2025, 12, 19).date()
-        start_date = datetime(2025, 12, 19).date()
+
+        start_date = datetime(2025, 12, 20).date()
+        end_date = datetime(2025, 12, 20).date()
         
         current_date = start_date
         while current_date <= end_date:
