@@ -563,8 +563,10 @@ def generate_items_display(products: List[Dict[str, Any]]) -> str:
             result.append(f"Item {idx}: {description}")
             result.append(f"Qty: {_format_quantity(item.get('quantity', ''))}")
 
-            # Combine brand and remarks into specification
+            # Combine UoM, brand and remarks into specification
             spec_parts = []
+            if item.get('unitofMeasures'):
+                spec_parts.append(f"UoM: {item['unitofMeasures']}")
             if item.get('brand'):
                 spec_parts.append(item['brand'])
             if item.get('remarks'):
@@ -642,15 +644,17 @@ def generate_items_display_with_missing(products: List[Dict[str, Any]], incomple
             # Quantity
             quantity = item.get('quantity', '')
             if not quantity or 'quantity' in missing_fields:
-                quantity = "[Please provide quantity]"
+                quantity = "[Please provide quantity in number]"
                 if "Quantity" not in all_missing_labels:
                     all_missing_labels.append("Quantity")
             else:
                 quantity = _format_quantity(quantity)
             result.append(f"Qty: {quantity}")
 
-            # Combine brand and remarks into specification
+            # Combine UoM, brand and remarks into specification
             spec_parts = []
+            if item.get('unitofMeasures'):
+                spec_parts.append(f"UoM: {item['unitofMeasures']}")
             if item.get('brand'):
                 spec_parts.append(item['brand'])
             if item.get('remarks'):
