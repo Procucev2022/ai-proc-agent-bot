@@ -20,6 +20,7 @@ class ResponseHelpers:
     def __init__(self, openai_service):
         """Initialize with OpenAI service dependency."""
         self.openai_service = openai_service
+        self.settings = get_settings()
     
     async def _generate_common_seller_response(self, workflow_state: str, message_type: str, context: Dict[str, Any], fallback: str) -> str:
         """Common method for generating seller responses using optimized prompt."""
@@ -27,9 +28,13 @@ class ResponseHelpers:
             # Ensure context is a dictionary
             if isinstance(context, str):
                 context = {"workflow_state": context}
-            
-            prompt = f"Context: {context}"
-            
+
+            prompt = (
+                f"Context: {context}\n\n"
+                f"For support or assistance, contact: {self.settings.support_email}\n"
+                f"For queries and additional information, contact: {self.settings.support_contact_info}"
+            )
+
             instructions = self.openai_service._load_prompt(
                 "response_generation", 
                 "_get_seller_common_response_prompt",
@@ -185,7 +190,7 @@ class ResponseHelpers:
             unknown_error_rfqs = error_categories.get("UNKNOWN", [])
             message += f"Unknown Errors ({len(unknown_error_rfqs)} RFQs):\n"
             message += f"RFQ IDs: {', '.join(unknown_error_rfqs)}\n"
-            message += "Please contact info@procucev.com for assistance.\n\n"
+            message += f"Please contact {self.settings.support_contact_info} for assistance.\n\n"
 
         if successful > 0:
             message += f"{successful} RFQ details were sent successfully to your email."
@@ -202,14 +207,14 @@ class ResponseHelpers:
         """Generate generic closing message when reminder API fails."""
         return await self._generate_common_seller_response(
             "generic_closing_message", "general_assistance", context,
-            "Thanks for chatting with us! For any assistance, contact info@procucev.com"
+            f"Thanks for chatting with us! For any assistance, contact {self.settings.support_contact_info}"
         )
 
     async def _generate_standard_closing_response(self, context: Dict[str, Any]) -> str:
         """Generate standard closing message when no open RFQs found."""
         return await self._generate_common_seller_response(
             "standard_closing_message", "general_assistance", context,
-            "Thanks for chatting with us! For help with any queries, contact info@procucev.com"
+            f"Thanks for chatting with us! For help with any queries, contact {self.settings.support_contact_info}"
         )
 
     def _get_end_of_flow_reminder_fallback(self, context: Dict[str, Any]) -> str:
@@ -218,7 +223,7 @@ class ResponseHelpers:
         total_open = context.get("total_open_rfqs", 0)
 
         if not open_rfqs:
-            return "Thanks for chatting with us! For help with any queries, contact info@procucev.com"
+            return f"Thanks for chatting with us! For help with any queries, contact {self.settings.support_contact_info}"
 
         message = f"Thanks for chatting with us! You still have {total_open} live RFQ(s) for which bids haven't been submitted:\n\n"
 
@@ -228,7 +233,7 @@ class ResponseHelpers:
             date = rfq.get("submission_date", "N/A")
             message += f"{i}. RFQ {rfq_id}\n   📍 {location}\n   📅 {date}\n\n"
 
-        message += "We encourage you to submit bids. For help, contact info@procucev.com"
+        message += f"We encourage you to submit bids. For help, contact {self.settings.support_contact_info}"
         return message
 
     async def _generate_rfq_display_response(self, context: Dict[str, Any]) -> str:
@@ -336,7 +341,7 @@ class ResponseHelpers:
         """Generate error response."""
         return await self._generate_common_seller_response(
             context.get("workflow_state", "error"), "error_handling", context,
-            "I apologize for the technical issue. Please try again or contact info@procucev.com for assistance."
+            f"I apologize for the technical issue. Please try again or contact {self.settings.support_email} for assistance."
         )
 
     async def _generate_fallback_seller_response(self, context: Dict[str, Any]) -> str:
@@ -357,7 +362,7 @@ class ResponseHelpers:
             "payment_link_generated": "Your payment link has been generated. Please complete the payment to activate your subscription.",
             "rfq_email_processing": "Processing your RFQ request. Details will be sent to your email shortly.",
             "rfq_email_status": "Your RFQ details have been processed. Please check your email.",
-            "error": "I apologize for the technical issue. Please contact info@procucev.com."
+            "error": f"I apologize for the technical issue. Please contact {self.settings.support_contact_info}"
         }
         
         default_message = fallbacks.get(workflow_state)
@@ -497,7 +502,7 @@ class ResponseHelpers:
             failed = total - successful
             return f"✅ Sent {successful} RFQ details successfully.\n❌ {failed} failed to send.\nPlease contact support if needed."
         else:
-            return "❌ Unable to send RFQ details via email. Please contact info@procucev.com for assistance."
+            return f"❌ Unable to send RFQ details via email. Please contact {self.settings.support_contact_info} for assistance."
 
     async def generate_completion_response(self, rfq_schema, context: dict) -> str:
         """Generate completion response using OpenAI."""

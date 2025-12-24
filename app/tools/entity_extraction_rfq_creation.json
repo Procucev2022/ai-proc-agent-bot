@@ -21,7 +21,7 @@
                         },
                         "unitofMeasures": {
                             "type": "string",
-                            "description": "ONLY the BASE unit of measurement for QUANTITY (how many items): m, ml, l, kg, g, unit(s) etc. CRITICAL: DO NOT put specifications like '500m', '100kg', '1000ml' in this field - those MUST go in remarks field. This field should ONLY contain the unit for counting items. Examples: '500m cable' -> 'm' (500m goes to remarks), '100kg rice' -> 'unit(s)' (100kg goes to remarks), '10 cables of 500m' -> 'm', '5 bags of 50kg rice' -> 'kg', '100 laptops' -> 'unit(s)', '1000ml bottles' -> 'ml'. Use 'unit(s)' for countable items. Use empty string if no unit is mentioned."
+                            "description": "Unit of measurement INCLUDING the numeric value for measured items. CRITICAL PRIORITY RULES: (1) If weight/volume/length measurement exists (kg, liters, meters, ml, sq mtr), ALWAYS use the measurement as UOM regardless of container type. (2) DO NOT use container names (bags, boxes, bottles) as UOM when measurements exist. (3) DO NOT normalize units - preserve exact unit. (4) Only use 'unit(s)' when NO unit or measurement is mentioned. Examples: '10 pcs laptops' -> 'pcs', '700 salt bags 50kg each' -> '50 kg' (NOT 'Bags'), '500 laptop bags 40 liter capacity' -> '40 liter' (NOT 'Bags'), '200kg steel bars' -> '200 kg', '25 meters cable' -> '25 meters', '100 water bottles 50ml each' -> '50 ml' (NOT 'unit(s)'), '100 laptops' -> 'unit(s)' (no unit mentioned), '5 boxes of screws' -> 'unit(s)' (no measurement). EXCEPTION: Electrical ratings (KV, mAh, watts, ampere) are SPECIFICATIONS not measurements - those go to remarks. Use empty string if no unit is mentioned."
                         },
                         "brand": {
                             "type": "string",
@@ -29,7 +29,7 @@
                         },
                         "remarks": {
                             "type": "string",
-                            "description": "Item-specific remarks, requirements, or specifications. CRITICAL: This field MUST contain size/length/weight/capacity specifications. Include: (1) Size/length/weight/capacity like '500m', '1000ml', '50kg', '2TB', '64GB' - THESE ARE REQUIRED; (2) Technical specifications like 'FR-LSH 4Cx10sqmm 1100V', '3Cx2.5sqmm+1Cx1.5sqmm(E)'; (3) Other requirements. Examples: '1000ml water bottles' -> '1000ml', 'Laptop 16GB RAM' -> '16GB RAM', '500m cable Polycab FR-LSH 4Cx10sqmm 1100V' -> '500m, FR-LSH 4Cx10sqmm 1100V', '100kg rice bags' -> '100kg', '100m cable Havells 3Cx2.5sqmm' -> '100m, 3Cx2.5sqmm'. Use empty string ONLY if truly not provided."
+                            "description": "Item-specific remarks, requirements, or technical specifications. Include: (1) Electrical ratings like KV, mAh, watts, ampere (e.g., '1000KV', '5000mAh'); (2) Technical specifications like 'FR-LSH 4Cx10sqmm 1100V', '3Cx2.5sqmm+1Cx1.5sqmm(E)', '16GB RAM', '2TB SSD'; (3) Physical properties like thickness, density, material; (4) Other requirements. NOTE: Weight/length/volume/area measurements (kg, meters, ml, sq mtr) go to unitofMeasures field, NOT here. Examples: 'Laptop 16GB RAM' -> '16GB RAM', 'cable FR-LSH 4Cx10sqmm 1100V' -> 'FR-LSH 4Cx10sqmm 1100V', 'motors 1000KV' -> '1000KV', 'vinyl 7.5mm thick' -> '7.5mm thick'. Use empty string if no specifications provided."
                         }
                     },
                     "required": ["description", "quantity", "unitofMeasures", "brand", "remarks"],

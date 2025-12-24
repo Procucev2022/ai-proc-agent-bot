@@ -210,7 +210,7 @@ class SellerService:
         if not rfqs or total_count == 0:
             return ("Currently, there are no active RFQs available in your selected categories. Most RFQs typically close within 3–5 days.\n"
                    "Please continue to check this section for newly published RFQs.\n\n"
-                   "If you would like to expand your categories, please visit procucev.com or email us at info@procucev.com")
+                   f"If you would like to expand your categories, please visit procucev.com or email us at {self.settings.support_contact_info}")
         
         # Case 2 & 3: RFQs available - show them with different credit messages
         message_parts = []
@@ -240,7 +240,7 @@ class SellerService:
         
         message_parts.append("")
         message_parts.append("Please reply with the RFQ ID or the number corresponding to the RFQ to request its details.")
-        message_parts.append("If you want to check the details for any RFQ, you can log in to the portal at procurev.com")
+        message_parts.append("If you want to check the details for any RFQ, you can log in to the portal at procucev.com")
         
         return "\n".join(message_parts)
 

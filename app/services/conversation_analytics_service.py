@@ -10,7 +10,7 @@ from datetime import datetime, date, timezone
 from sqlalchemy import func
 
 from app.database import get_db_session, get_remote_db_session
-from app.models import ConversationSession, BuyerDailyMetrics, SellerDailyMetrics, DailyAggregates, MetricMaster, CategoryAggregates, UnknownDailyMetrics
+from app.models import ConversationSession, BuyerDailyMetrics, SellerDailyMetrics, DailyAggregates, MetricMaster, CategoryAggregates, UnknownDailyMetrics, RFQNotificationFact
 from app.services.openai_service import OpenAIService
 from app.config import get_settings
 from app.utils.logging_utils import log_service_method
@@ -121,7 +121,11 @@ class ConversationAnalyticsService:
                     'user_type': user_type,
                     'email': email,
                     'confidence_score': confidence_score,
-                    'analysis_reasoning': session.get('analysis_reasoning', '')
+                    'analysis_reasoning': session.get('analysis_reasoning', ''),
+                    'unregistered_seller_initiated_chat': session.get('unregistered_seller_initiated_chat', 0),
+                    'unregistered_seller_requested_rfq': session.get('unregistered_seller_requested_rfq', 0),
+                    'unregistered_buyer_bfs_only': session.get('unregistered_buyer_bfs_only', 0),
+                    'number_of_faq_or_general_queries': session.get('number_of_faq_or_general_queries', 0)
                 }
                 unknown_records.append(unknown_record)
 
@@ -152,7 +156,9 @@ class ConversationAnalyticsService:
         if not unknown_df.empty:
             unknown_cols = [
                 'date', 'session_id', 'phone_number', 'user_type', 'email',
-                'confidence_score', 'analysis_reasoning'
+                'confidence_score', 'analysis_reasoning', 'unregistered_seller_initiated_chat',
+                'unregistered_seller_requested_rfq', 'unregistered_buyer_bfs_only',
+                'number_of_faq_or_general_queries'
             ]
             unknown_df = unknown_df[unknown_cols]
 
@@ -166,7 +172,6 @@ class ConversationAnalyticsService:
     def _create_seller_rfq_interest_event_df(self, sessions_data: List[Dict[str, Any]], analysis_date: str) -> pd.DataFrame:
         """Create seller RFQ interest event DataFrame from AI metrics."""
         interest_records = []
-        
         for session in sessions_data:
             seller_interest_events = session.get('seller_rfq_interest_event', [])
             if seller_interest_events:
@@ -175,7 +180,9 @@ class ConversationAnalyticsService:
                         'rfq_id': event.get('rfq_id', ''),
                         'seller_id': event.get('seller_id', ''),
                         'response_date': event.get('response_date', analysis_date),
-                        'session_id': session.get('session_id', '')
+                        'session_id': session.get('session_id', ''),
+                        'rfq_notified_at': event.get('rfq_notified_at'),
+                        'seller_response_at': event.get('seller_response_at')
                     }
                     interest_records.append(record)
         
@@ -478,11 +485,19 @@ Session IDs to process: {', '.join(session_ids)}
                 
                 # Join seller_rfq_interest_event_df with remote RFQ categories
                 if not seller_rfq_interest_event_df.empty and not remote_rfq_category_df.empty:
+                    seller_rfq_interest_event_df['response_date'] = pd.to_datetime(
+                        seller_rfq_interest_event_df['response_date']
+                    ).dt.date
+
+                    remote_rfq_category_df['date'] = pd.to_datetime(
+                        remote_rfq_category_df['date']
+                    ).dt.date
+
                     joined_seller_interest_df = seller_rfq_interest_event_df.merge(
                         remote_rfq_category_df, 
-                        left_on=['date', 'rfq_id'], 
+                        left_on=['response_date', 'rfq_id'],
                         right_on=['date', 'rfq_id'], 
-                        how='inner'
+                        how='left'
                     )
                 else:
                     joined_seller_interest_df = seller_rfq_interest_event_df
@@ -566,7 +581,11 @@ Session IDs to process: {', '.join(session_ids)}
                     self._dump_unknown_df_to_db(unknown_df, db)
                     
                     # Calculate and store unknown daily aggregates
-                    # self.calculate_and_store_unknown_daily_aggregates(target_date, db)
+                    self.calculate_and_store_unknown_daily_aggregates(target_date, db)
+                
+                # Dump joined seller interest data to RFQ notification fact table
+                if not joined_seller_interest_df.empty:
+                    self._dump_joined_seller_interest_to_fact_table(joined_seller_interest_df, db)
                 
 
                 
@@ -701,7 +720,9 @@ Session IDs to process: {', '.join(session_ids)}
                 ('buyer', 7, 'Incomplete RFQs', sum(m.buyers_started_but_not_raised_rfq for m in buyer_metrics)),
                 ('buyer', 8, 'No. of Registrations failed', sum(m.failed_registration for m in buyer_metrics)),
                 ('buyer', 9, 'Total Items in All RFQs', sum(m.total_items_in_rfqs for m in buyer_metrics)),
-                ('buyer', 10, 'Total Distinct RFQ Category Combinations', sum(m.total_distinct_categories_in_rfq for m in buyer_metrics))
+                ('buyer', 10, 'Total Distinct RFQ Category Combinations', sum(m.total_distinct_categories_in_rfq for m in buyer_metrics)),
+                ('buyer', 25, 'RFQs with At Least One Response', self._calculate_rfqs_with_response(target_date, db_session)),
+                ('buyer', 26, 'Total RFQ Responses', self._calculate_total_rfq_responses(target_date, db_session))
             ]
             
             # Insert or update aggregates
@@ -931,81 +952,76 @@ Session IDs to process: {', '.join(session_ids)}
             logger.error(f"[CONVERSATION-ANALYTICS] Failed to calculate seller daily aggregates: {e}")
             db_session.rollback()
     
+    def _calculate_rfqs_with_response(self, target_date, db_session) -> int:
+        """Calculate RFQs with at least one response from rfq_notification_fact table."""
+        try:
+            count = db_session.query(RFQNotificationFact.rfq_id).filter(
+                RFQNotificationFact.date == target_date,
+                RFQNotificationFact.seller_response_at.isnot(None)
+            ).distinct().count()
+            return count
+        except Exception as e:
+            logger.error(f"Error calculating RFQs with response: {e}")
+            return 0
+    
+    def _calculate_total_rfq_responses(self, target_date, db_session) -> int:
+        """Calculate total RFQ responses from rfq_notification_fact table."""
+        try:
+            count = db_session.query(RFQNotificationFact).filter(
+                RFQNotificationFact.date == target_date,
+                RFQNotificationFact.seller_response_at.isnot(None)
+            ).count()
+            return count
+        except Exception as e:
+            logger.error(f"Error calculating total RFQ responses: {e}")
+            return 0
+    
    
 
-    def calculate_and_store_category_aggregates(self, target_date, db_session) -> None:
-        """Calculate category aggregates from remote database and store in category_aggregates table."""
+    def calculate_and_store_unknown_daily_aggregates(self, target_date, db_session) -> None:
+        """Calculate unknown user aggregates from unknown_daily_metrics and store in daily_aggregates table."""
         try:
-            remote_db = get_remote_db_session()
-            query = """
-            SELECT
-                t.rfq_date,
-                t.category,
-                t.total_rfq_raised,
-                q.rfqs_with_quotations
-            FROM (
-                SELECT
-                    DATE(created_ts) AS rfq_date,
-                    category,
-                    COUNT(DISTINCT rfq_uuid) AS total_rfq_raised
-                FROM rfq_items
-                WHERE DATE(created_ts) = :target_date
-                GROUP BY
-                    DATE(created_ts),
-                    category
-            ) t
-            LEFT JOIN (
-                SELECT
-                    DATE(ri.created_ts) AS rfq_date,
-                    ri.category,
-                    COUNT(DISTINCT ri.rfq_uuid) AS rfqs_with_quotations
-                FROM rfq_items ri
-                JOIN rfq_vendors rv
-                    ON ri.rfq_uuid = rv.rfq_uuid
-                WHERE DATE(ri.created_ts) = :target_date
-                GROUP BY
-                    DATE(ri.created_ts),
-                    ri.category
-            ) q
-            ON t.rfq_date = q.rfq_date
-            AND t.category = q.category
-            """
-            result = remote_db.execute(text(query), {'target_date': str(target_date)})
-            rows = result.fetchall()
-
-            remote_db.close()
-
-            if not rows:
-                logger.info(f"[CONVERSATION-ANALYTICS] No category data found for {target_date}")
+            unknown_metrics = db_session.query(UnknownDailyMetrics).filter(
+                UnknownDailyMetrics.date == target_date
+            ).all()
+            
+            if not unknown_metrics:
+                logger.info(f"[CONVERSATION-ANALYTICS] No unknown metrics found for {target_date}")
                 return
-
-            for row in rows:
-                category_name = row[1] if row[1] is not None else 'Unknown'
-                total_rfq_raised = int(row[2]) if row[2] is not None else 0
-                rfqs_with_quotations = int(row[3]) if row[3] is not None else 0
-                
-                existing = db_session.query(CategoryAggregates).filter(
-                    CategoryAggregates.date == target_date,
-                    CategoryAggregates.category_name == category_name
+            
+            unknown_aggregates = [
+                ('unknown', 18, 'Unknown User Sessions', len(unknown_metrics)),
+                ('unknown', 19, 'Unique Unknown Users', len(set((m.email, m.phone_number) for m in unknown_metrics if m.email or m.phone_number))),
+                ('unknown', 20, 'Unregistered Sellers Initiated Chat But Not Registered', sum(m.unregistered_seller_initiated_chat for m in unknown_metrics)),
+                ('unknown', 21, 'Unregistered Sellers Requested for RFQ', sum(m.unregistered_seller_requested_rfq for m in unknown_metrics)),
+                ('unknown', 22, 'Unregistered Buyers Initiated Chat But Not Continued', sum(m.unregistered_buyer_bfs_only for m in unknown_metrics)),
+                ('unknown', 23, 'Number of FAQ or General Queries', sum(m.number_of_faq_or_general_queries for m in unknown_metrics))
+            ]
+            
+            for role, metric_s_no, metric_name, value in unknown_aggregates:
+                existing = db_session.query(DailyAggregates).filter(
+                    DailyAggregates.date == target_date,
+                    DailyAggregates.role == role,
+                    DailyAggregates.metric_s_no == metric_s_no
                 ).first()
-
+                
                 if existing:
-                    existing.total_rfq_raised_category = total_rfq_raised
-                    existing.total_rfqs_with_quotations = rfqs_with_quotations
+                    existing.value = value
                 else:
-                    aggregate = CategoryAggregates(
+                    aggregate = DailyAggregates(
                         date=target_date,
-                        category_name=category_name,
-                        total_rfq_raised_category=total_rfq_raised,
-                        total_rfqs_with_quotations=rfqs_with_quotations
+                        role=role,
+                        metric_s_no=metric_s_no,
+                        metric_name=metric_name,
+                        value=value
                     )
                     db_session.add(aggregate)
-
+            
             db_session.commit()
-            logger.info(f"[CONVERSATION-ANALYTICS] Stored {len(rows)} category aggregates for {target_date}")
-
+            logger.info(f"[CONVERSATION-ANALYTICS] Stored {len(unknown_aggregates)} unknown daily aggregates for {target_date}")
+            
         except Exception as e:
-            logger.error(f"[CONVERSATION-ANALYTICS] Failed to calculate category aggregates: {e}")
+            logger.error(f"[CONVERSATION-ANALYTICS] Failed to calculate unknown daily aggregates: {e}")
             db_session.rollback()
     
     def _dump_unknown_df_to_db(self, unknown_df: pd.DataFrame, db_session) -> None:
@@ -1027,7 +1043,11 @@ Session IDs to process: {', '.join(session_ids)}
                     user_type=str(row.get('user_type', 'unknown')),
                     email=str(row.get('email', '')) if pd.notna(row.get('email')) else None,
                     confidence_score=float(row.get('confidence_score', 0)) if pd.notna(row.get('confidence_score')) else None,
-                    ai_reasoning=str(row.get('analysis_reasoning', '')) if pd.notna(row.get('analysis_reasoning')) else None
+                    ai_reasoning=str(row.get('analysis_reasoning', '')) if pd.notna(row.get('analysis_reasoning')) else None,
+                    unregistered_seller_initiated_chat=int(row.get('unregistered_seller_initiated_chat', 0)) if pd.notna(row.get('unregistered_seller_initiated_chat')) else 0,
+                    unregistered_seller_requested_rfq=int(row.get('unregistered_seller_requested_rfq', 0)) if pd.notna(row.get('unregistered_seller_requested_rfq')) else 0,
+                    unregistered_buyer_bfs_only=int(row.get('unregistered_buyer_bfs_only', 0)) if pd.notna(row.get('unregistered_buyer_bfs_only')) else 0,
+                    number_of_faq_or_general_queries=int(row.get('number_of_faq_or_general_queries', 0)) if pd.notna(row.get('number_of_faq_or_general_queries')) else 0
                 )
                 
                 existing = db_session.query(UnknownDailyMetrics).filter(
@@ -1045,6 +1065,87 @@ Session IDs to process: {', '.join(session_ids)}
             
         except Exception as e:
             logger.error(f"[CONVERSATION-ANALYTICS] Failed to dump unknown DataFrame to database: {e}")
+            db_session.rollback()
+
+    def _dump_joined_seller_interest_to_fact_table(self, joined_seller_interest_df: pd.DataFrame, db_session) -> None:
+        """Dump joined seller interest DataFrame to RFQNotificationFact table."""
+        try:
+            records_inserted = 0
+            records_updated = 0
+            skipped = 0
+            
+            for _, row in joined_seller_interest_df.iterrows():
+                # Extract date from response_date or use current date
+                date_val = row.get('response_date') or row.get('date')
+                if not pd.notna(date_val):
+                    date_val = datetime.now().date()
+                else:
+                    date_val = pd.to_datetime(date_val).date()
+                
+                # Validate required fields
+                session_id = str(row.get('session_id', ''))
+                rfq_id = str(row.get('rfq_id', ''))
+                seller_id = str(row.get('seller_id', ''))
+                
+                if not all([session_id, rfq_id, seller_id]):
+                    skipped += 1
+                    continue
+                
+                # Parse timestamps
+                rfq_notified_at = None
+                seller_response_at = None
+                
+                if pd.notna(row.get('rfq_notified_at')):
+                    try:
+                        rfq_notified_at = pd.to_datetime(row.get('rfq_notified_at')).to_pydatetime()
+                    except:
+                        pass
+                
+                if pd.notna(row.get('seller_response_at')):
+                    try:
+                        seller_response_at = pd.to_datetime(row.get('seller_response_at')).to_pydatetime()
+                    except:
+                        pass
+                
+                # Check if record exists
+                existing = db_session.query(RFQNotificationFact).filter(
+                    RFQNotificationFact.date == date_val,
+                    RFQNotificationFact.session_id == session_id,
+                    RFQNotificationFact.rfq_id == rfq_id,
+                    RFQNotificationFact.seller_id == seller_id,
+                    RFQNotificationFact.category == str(row.get('category', '')) if pd.notna(row.get('category')) else None
+                ).first()
+                
+                if existing:
+                    # Update existing record
+                    existing.category = str(row.get('category', '')) if pd.notna(row.get('category')) else None
+                    existing.rfq_notified_at = rfq_notified_at
+                    existing.seller_response_at = seller_response_at
+                    existing.ai_reasoning = str(row.get('ai_reasoning', '')) if pd.notna(row.get('ai_reasoning')) else None
+                    records_updated += 1
+                else:
+                    # Create new record
+                    fact_record = RFQNotificationFact(
+                        date=date_val,
+                        session_id=session_id,
+                        rfq_id=rfq_id,
+                        seller_id=seller_id,
+                        category=str(row.get('category', '')) if pd.notna(row.get('category')) else None,
+                        rfq_notified_at=rfq_notified_at,
+                        seller_response_at=seller_response_at,
+                        ai_reasoning=str(row.get('ai_reasoning', '')) if pd.notna(row.get('ai_reasoning')) else None
+                    )
+                    db_session.add(fact_record)
+                    records_inserted += 1
+            
+            db_session.commit()
+            logger.info(
+                f"[CONVERSATION-ANALYTICS] RFQ notification fact table updated: "
+                f"{records_inserted} inserted, {records_updated} updated, {skipped} skipped"
+            )
+            
+        except Exception as e:
+            logger.error(f"[CONVERSATION-ANALYTICS] Failed to dump joined seller interest to fact table: {e}")
             db_session.rollback()
 
     async def analyze_date_range(self, start_date: date, end_date: date) -> Dict[str, Any]:

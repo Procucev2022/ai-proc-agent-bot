@@ -225,7 +225,6 @@ class CancelService:
             # Reset all session data for fresh start
             session.workflow_state = {"last_activity_at": utc_now().isoformat()}
             session.extracted_entities = {}
-            session.conversation_history = {"messages": [], "metadata": [], "openai_messages": []}
             session.workflow_type = None
             session.outcome = None
             session.completed_at = None

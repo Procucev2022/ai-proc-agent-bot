@@ -162,6 +162,12 @@ class OpenAIService:
             with open(prompt_file, 'r', encoding='utf-8') as f:
                 prompt_template = f.read()
             
+            # Add support_email to kwargs if not already provided
+            if 'support_email' not in kwargs:
+                kwargs['support_email'] = self.settings.support_email
+            if 'support_contact_info' not in kwargs:
+                kwargs['support_contact_info']= self.settings.support_contact_info
+            
             if kwargs:
                 return prompt_template.format(**kwargs)
             return prompt_template
@@ -1423,6 +1429,10 @@ Analyze their response to determine their true choice.
             with open(prompt_path, 'r', encoding='utf-8') as f:
                 template = f.read()
 
+            # Add support_email to kwargs if not already provided
+            if 'support_email' not in kwargs:
+                kwargs['support_email'] = self.settings.support_email
+
             # Format the template with provided arguments
             if kwargs:
                 return template.format(**kwargs)
@@ -1522,7 +1532,7 @@ Analyze their response to determine their true choice.
         
     def _get_fallback_response(self, context: dict, results: list) -> str:
         """Fallback response when OpenAI is unavailable."""
-        return "There seems to be a technical issue at the moment. Our team is working on it. Please try again later. For urgent requirements, contact support@procucev.com. We apologize for the inconvenience."
+        return f"There seems to be a technical issue at the moment. Our team is working on it. Please try again later. For urgent requirements, contact {self.settings.support_email}. We apologize for the inconvenience."
     
     async def generate_contextual_response(self, context: dict, base_questions: list = None, conversation_stage: str = "collecting") -> str:
         """
