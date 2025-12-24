@@ -410,15 +410,27 @@ def parse_items_format(text: str) -> Dict[str, Any]:
             if brand_match:
                 item["brand"] = brand_match.group(1).strip()
 
-            # Extract specification/remarks (optional) - stop at next item or end
-            spec_match = re.search(r'Specification\s*:\s*(.+?)(?=\s*(?:Item\s+\d+)\s*:|$)', block, re.IGNORECASE)
-            if spec_match:
-                item["remarks"] = spec_match.group(1).strip()
-
-            # Extract unit of measures (optional) - stop at next field or newline
-            uom_match = re.search(r'UoM\s*:\s*(.+?)(?=\s*(?:Item\s+\d+|Brand|Specification)\s*:|\n|$)', block, re.IGNORECASE)
+            # Extract unit of measures (optional)
+            # UoM can be on its own line OR embedded in Specification line as "Specification: UoM: value, ..."
+            # Stop at comma, next field, newline, or end
+            uom_match = re.search(r'UoM\s*:\s*(.+?)(?=\s*,|\s*(?:Item\s+\d+|Brand|Specification)\s*:|\n|$)', block, re.IGNORECASE)
             if uom_match:
                 item["unitofMeasures"] = uom_match.group(1).strip()
+
+            # Extract specification/remarks (optional) - stop at next item or end
+            spec_match = re.search(r'Specification\s*:\s*(.+?)(?=\s*(?:Item\s+\d+)\s*:|$)', block, re.IGNORECASE | re.DOTALL)
+            if spec_match:
+                spec_value = spec_match.group(1).strip()
+                # If specification starts with "UoM: X, ..." (embedded UoM), strip that part
+                # The UoM was already extracted above, so we just need the rest as remarks
+                uom_prefix_match = re.match(r'UoM\s*:\s*[^,]+\s*,\s*(.*)$', spec_value, re.IGNORECASE | re.DOTALL)
+                if uom_prefix_match:
+                    item["remarks"] = uom_prefix_match.group(1).strip()
+                elif spec_value.lower().startswith('uom'):
+                    # Specification is just "UoM: value" with nothing else - no remarks
+                    item["remarks"] = ""
+                else:
+                    item["remarks"] = spec_value
 
             # Validate required fields for this item
             missing_fields = []
