@@ -348,7 +348,7 @@ class ImageMessageProcessor:
         from app.services.handlers.confirmation_handler import ConfirmationHandler
 
         # Delegate to confirmation handler to avoid duplicating button logic
-        confirmation_handler = ConfirmationHandler(self.whatsapp_service, self.response_helpers)
+        confirmation_handler = ConfirmationHandler(self.whatsapp_service, self.response_helpers, session_manager=self.session_manager)
         result = await confirmation_handler._proceed_to_confirmation_from_optional(
             user,
             session,

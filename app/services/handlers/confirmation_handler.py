@@ -814,17 +814,16 @@ class ConfirmationHandler:
             # Don't send error to user - BFS check is a bonus feature, not critical
 
     def _extract_product_descriptions_from_rfq(self, rfq_results: List[Dict]) -> List[str]:
-        """Extract product descriptions from RFQ results for BFS search."""
-        product_descriptions = []
-
+        """Extract the first product description from RFQ results for BFS search."""
         for result in rfq_results:
             if result.get("success") and result.get("rfq_data"):
                 rfq_data = result["rfq_data"]
                 items = rfq_data.get("items", [])
 
-                for item in items:
-                    description = item.get("description") or item.get("product_name", "")
+                if items:
+                    first_item = items[0]
+                    description = first_item.get("description") or first_item.get("product_name", "")
                     if description:
-                        product_descriptions.append(description)
+                        return [description]
 
-        return product_descriptions
+        return []

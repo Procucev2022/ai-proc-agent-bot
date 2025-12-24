@@ -246,7 +246,8 @@ class ChatService:
         if self._confirmation_handler is None:
             from app.services.handlers.confirmation_handler import ConfirmationHandler
             self._confirmation_handler = ConfirmationHandler(
-                self.whatsapp_service, self.response_helpers
+                self.whatsapp_service, self.response_helpers,
+                session_manager=self.session_manager
             )
         return self._confirmation_handler
 
