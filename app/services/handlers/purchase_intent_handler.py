@@ -327,7 +327,7 @@ class PurchaseIntentHandler:
             # Send informative message
             info_message = (
                 f"I'm sorry, but the quantity for {items_text} exceeds our limit.\n\n"
-                f"Please limit quantities to 100,000 pieces/units per product. "
+                f"Please limit quantities to 1,00,00,000 pieces/units per product. "
                 f"You can adjust the quantities and try again."
             )
             await self.whatsapp_service.send_message(user.phone_number, info_message, session_id=session)

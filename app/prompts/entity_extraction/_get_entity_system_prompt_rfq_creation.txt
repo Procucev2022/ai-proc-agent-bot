@@ -75,7 +75,7 @@ PINCODE IDENTIFICATION (CRITICAL):
 
 ITEM-SPECIFIC FIELDS (extract for each product):
 - **description**: Product type/category (e.g., "laptop", "chairs", "printers") - keep this generic
-- **quantity**: Number of units needed - ONLY extract clear quantity values. DO NOT confuse specifications/ratings with quantity! Maximum allowed quantity is 100,000 pieces/units per product.
+- **quantity**: Number of units needed - ONLY extract clear quantity values. DO NOT confuse specifications/ratings with quantity! Maximum allowed quantity is 1,00,00,000 pieces/units per product.
 - **unitofMeasures**: Unit of measurement - Extract the unit of measurement along with its numeric quantity if mentioned (e.g., "25 meters", "10 kg", "5 boxes", "100 ml"). CRITICAL: DO NOT normalize units - preserve the user's exact unit. If user says "pcs" keep "pcs", if "nos" keep "nos", if "units" keep "units". Only use "unit(s)" when NO unit is explicitly mentioned by the user. Use empty string ONLY if the item type is unclear.
 - **brand**: Preferred brand name for this item (e.g., "Acer", "HP", "Dell")
 - **remarks**: Technical specifications, detailed requirements, configurations for this item (e.g., "18gb RAM, 1tb SSD", "ergonomic design", "A4 printing capacity")
