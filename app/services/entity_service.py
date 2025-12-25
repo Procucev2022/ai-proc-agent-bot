@@ -1285,12 +1285,12 @@ class EntityService:
 
     def _check_quantity_limits(self, products: list) -> list:
         """
-        Check if any product quantities exceed the maximum limit of 100,000 units.
+        Check if any product quantities exceed the maximum limit of 1,00,00,000 units.
 
         Returns list of dicts with product info for items that violate the limit,
         or empty list if all quantities are within limits.
         """
-        MAX_QUANTITY = 100000
+        MAX_QUANTITY = 10000000
         violations = []
 
         for product in products:
