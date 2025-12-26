@@ -17,6 +17,7 @@ ENABLE_SELLER_MATCHING = True
 ENABLE_DAILY_AGGREGATION = False
 ENABLE_DAILY_CATEGORY_REBUILD = True  # Daily rebuild of category_items vector store
 ENABLE_LOG_CLEANUP = True  # Daily log cleanup and archival
+ENABLE_EXPORT_EXCEL = True  # Export Excel reports every 12 hours
 ENABLE_TEST_CRON = True
 # ============================================================================
 
@@ -117,6 +118,16 @@ if ENABLE_LOG_CLEANUP:
         }
     }
 
+if ENABLE_EXPORT_EXCEL:
+    beat_schedule['export-excel-report-task'] = {
+        'task': 'app.tasks.export_excel_task.send_excel_report_to_client',
+        'schedule': crontab(minute=0, hour='7,19'),  # At 7 AM and 7 PM
+        'options': {
+            'expires': 7200,
+            'queue': 'export'
+        }
+    }
+
 if ENABLE_TEST_CRON:
     beat_schedule['test-cron-job'] = {
         'task': 'app.tasks.test_cron_task.test_cron_job',
@@ -135,6 +146,7 @@ task_routes = {
     'app.tasks.daily_aggregation_task.*': {'queue': 'aggregation'},
     'app.tasks.daily_category_vector_rebuild_task.*': {'queue': 'vector_store'},
     'app.tasks.log_cleanup_task.*': {'queue': 'maintenance'},
+    'app.tasks.export_excel_task.*': {'queue': 'export'},
     'app.tasks.test_cron_task.*': {'queue': 'default'},
 }
 

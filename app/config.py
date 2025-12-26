@@ -197,6 +197,7 @@ class Settings:
         
         # Email configuration
         self.support_email = os.getenv("SUPPORT_EMAIL", "support@procucev.com")
+        self.email_report_sender = os.getenv("EMAIL_REPORT_SENDER", "shubham@mohap.ai")
         self.email_signature = os.getenv("EMAIL_SIGNATURE", "Regards\nQUA")
         self.email_templates_path = os.getenv("EMAIL_TEMPLATES_PATH", os.path.join("app", "email_templates"))
         

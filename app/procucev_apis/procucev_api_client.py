@@ -35,10 +35,9 @@ def get_procucev_api_client() -> 'ProcucevAPIClient':
     """
     global _global_client
     if _global_client is None:
-        raise RuntimeError(
-            "ProcucevAPIClient not initialized. "
-            "Call init_procucev_api_client() during application startup."
-        )
+        # For standalone tasks, create a temporary client
+        logger.warning("Creating temporary ProcucevAPIClient for standalone task")
+        _global_client = ProcucevAPIClient()
     return _global_client
 
 async def init_procucev_api_client() -> 'ProcucevAPIClient':
@@ -226,7 +225,7 @@ class ProcucevAPIClient:
         start_time = time.time()
         
         # check session initialisation
-        if self.session is None:
+        if self.session is None or self.session.closed:
             await self.create_session()
 
         # Build full URL

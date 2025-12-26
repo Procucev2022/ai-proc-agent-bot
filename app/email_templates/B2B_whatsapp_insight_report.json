@@ -1,0 +1,11 @@
+{
+  "scenario_id": "whatsapp_insight_report",
+  "subject": "B2B WhatsApp Insights - Daily Report {parsed_Date}",
+  "to": "priyasoniy17@gmail.com",
+  "cc": "",
+  "bcc": "",
+  "body": "Dear Team,\n\nPlease find attached the daily B2B WhatsApp insights report for {parsed_Date}.\n\nThis report contains comprehensive metrics and analytics for the procurement agent activities.\n\n",
+  "signature": "Best regards,\nAI Procurement Agent\nB2B Monitoring System",
+  "supports_buyer": true,
+  "supports_seller": true
+}
