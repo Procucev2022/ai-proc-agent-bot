@@ -979,16 +979,23 @@ class SellerService:
                 if mapped_ids:
                     return mapped_ids[:self.settings.rfq_max_allowed]
 
-            # 2️⃣ Default AI extraction (RFQ ID pattern or entity extraction)
-            msg = {
-                "conversationHistory": conversation_messages,
-                "current_bot_message": message
-            }
+            context_msg = f"""Based on the user's message and the last bot response, extract the specific RFQ IDs the user is asking about.
+
+            User message: {message}
+            Last bot message: {last_bot_message.get("content", "")}
+
+            If user mentions numbers (like 1, 2, 3), map them to RFQ IDs from the bot message in order.
+            If user mentions specific RFQ IDs, extract those.
+            Return only the RFQ IDs the user specifically wants."""
+
+
 
             extraction = await self.openai_service.extract_entities(
-                message=json.dumps(msg),
+                message=context_msg,
                 workflow_type="rfq_status_check"
             )
+
+            
 
             extracted_ids = extraction.get("rfq_id") or []
             return extracted_ids[:self.settings.rfq_max_allowed]

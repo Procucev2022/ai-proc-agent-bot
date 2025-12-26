@@ -1401,6 +1401,11 @@ Analyze their response to determine their true choice.
     def _load_prompt(self, prompt_type: str, prompt_name: str, **kwargs) -> str:
         """Load and format a prompt template."""
         try:
+            # Add support_email to kwargs if not already provided
+            if 'support_email' not in kwargs:
+                kwargs['support_email'] = self.settings.support_email
+            if 'support_info_email' not in kwargs:
+                kwargs['support_info_email'] = self.settings.support_contact_info
             # Handle seller end-of-flow reminder prompts
             if prompt_name == "_get_seller_common_response_prompt":
                 workflow_state = kwargs.get("workflow_state", "")
