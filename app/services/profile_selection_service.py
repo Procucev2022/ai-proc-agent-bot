@@ -915,6 +915,11 @@ class ProfileSelectionService:
                     support_message = redirect_info.get("message", "Please contact our support team for assistance.")
                     await self.whatsapp_service.send_message(user_phone, support_message, session_id=session)
 
+                    from app.services.exit_service import ExitService
+                    exit_service = ExitService(self.whatsapp_service, None, None, None)
+                    await exit_service.handle_exit_intent(user_phone, session, show_message=False)
+
+
                     return {
                         "status": "verification_failed",
                         "reason": redirect_info.get("reason"),

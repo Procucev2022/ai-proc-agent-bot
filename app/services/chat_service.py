@@ -921,6 +921,9 @@ class ChatService:
                     await self.whatsapp_service.send_message(user_phone, verification_message, session_id=session)
 
                     await self.session_manager.save_session(session, WorkflowType.authentication)
+
+                    await self.exit_service.handle_exit_intent(user_phone, session,show_message=False)
+
                     return auth_result
                 else:
                     logger.error(f"Unexpected auth_result dict with status: {auth_status}")
