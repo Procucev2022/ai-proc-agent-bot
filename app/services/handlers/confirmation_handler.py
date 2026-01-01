@@ -244,9 +244,8 @@ class ConfirmationHandler:
         # )
         # await self.whatsapp_service.send_message(user.phone_number, seller_match)
 
-        # Check BFS availability after successful RFQ creation
-        if successful_count > 0 and self.session_manager:
-            await self._check_bfs_availability(user, session, rfq_results)
+        # Note: We no longer auto-check BFS availability immediately after RFQ creation.
+        # Instead, we offer a contextual "Search Stocks" button post-submission.
         
         # Mark session as completed
         from app.models import ConversationOutcome
@@ -572,10 +571,24 @@ class ConfirmationHandler:
 
         # Send message with interactive buttons (WhatsApp limit: 3 buttons max)
 
+        product_descriptions = self._extract_product_descriptions_from_rfq(rfq_results)
+        first_item_description = product_descriptions[0] if product_descriptions else ""
+        safe_first_item_description = (
+            first_item_description.replace("|", " ").strip()[:60]
+            if first_item_description
+            else ""
+        )
+
+        check_availability_button_id = (
+            f"check_availability_rfq|{safe_first_item_description}"
+            if safe_first_item_description
+            else "search_bfs"
+        )
+
         buttons_config = [
             {"id": "new_rfq", "title": "Create new RFQ"},
             {"id": "rfq_status", "title": "Check RFQs Status"},
-            {"id": "search_bfs", "title": "Search Stocks"}
+            {"id": check_availability_button_id, "title": "Check Availability"}
         ]
         
         await self.whatsapp_service.send_configurable_buttons(

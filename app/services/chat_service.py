@@ -3120,6 +3120,31 @@ class ChatService:
                 # This avoids wasting an API call on a synthetic message
                 return await self._activate_sectioned_rfq(user, session)
         
+        elif button_id.startswith("check_availability_rfq|"):
+            # RFQ-context BFS search: button embeds the first RFQ item description.
+            # We still run the normal BFS flow (entity extraction + categorization + API call),
+            # but suppress the "Create new RFQ" CTA if no stock is found.
+            embedded_desc = button_id.split("|", 1)[1].strip()
+
+            # Clear any pending BFS state
+            if session.workflow_state:
+                session.workflow_state.pop("bfs_search_pending", None)
+
+            if not embedded_desc:
+                await self.whatsapp_service.send_message(
+                    user.phone_number,
+                    "Item not available in BFS.",
+                    session_id=session
+                )
+                return {"status": "bfs_rfq_no_item"}
+
+            return await self.bfs_search_handler.handle_bfs_search(
+                user,
+                session,
+                embedded_desc,
+                suppress_raise_rfq_on_no_results=True,
+            )
+
         elif button_id == "search_bfs":
             # Prompt user to describe what they want to search
             await self.whatsapp_service.send_message(

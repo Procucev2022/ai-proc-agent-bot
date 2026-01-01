@@ -30,7 +30,8 @@ class BFSSearchHandler:
         self,
         user: User,
         session: ConversationSession,
-        message: str
+        message: str,
+        suppress_raise_rfq_on_no_results: bool = False,
     ) -> Dict[str, Any]:
         """
         Main entry point for BFS search.
@@ -67,7 +68,12 @@ class BFSSearchHandler:
 
         if api_response.get("success"):
             # Format and send results
-            await self._send_bfs_results(user, session, api_response.get("data"))
+            await self._send_bfs_results(
+                user,
+                session,
+                api_response.get("data"),
+                suppress_raise_rfq_on_no_results=suppress_raise_rfq_on_no_results,
+            )
             return {"status": "bfs_search_completed", "data": api_response.get("data")}
         else:
             # Handle API error
@@ -145,14 +151,23 @@ class BFSSearchHandler:
         self,
         user: User,
         session: ConversationSession,
-        data: Any
+        data: Any,
+        suppress_raise_rfq_on_no_results: bool = False,
     ) -> None:
         """Format and send BFS search results to user with action buttons."""
         try:
             if not data or (isinstance(data, list) and len(data) == 0):
+                if suppress_raise_rfq_on_no_results:
+                    await self.whatsapp_service.send_message(
+                        user.phone_number,
+                        "Item not available in BFS.",
+                        session_id=session
+                    )
+                    return
+
                 # Send message with Create new RFQ and Cancel buttons when no products found
                 no_results_message = "No items found in stock matching your search."
-                
+
                 buttons = [
                     {"id": "bfs_raise_rfq", "title": "Create new RFQ"},
                     {"id": "bfs_cancel", "title": "Cancel"}
