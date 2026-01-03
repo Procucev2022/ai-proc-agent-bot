@@ -42,27 +42,80 @@ class BFSAPIService:
         try:
             logger.info(f"[BFS API] Searching BFS items with payload: {products}")
 
-            response = await self.api_client.post(
-                endpoint=BFS_API_URL,
-                json_data=products,
-                require_auth=True,
-                api_title="BFS Search Items API"
-            )
+            # ============ MOCK DATA FOR TESTING ============
+            # TODO: Remove this mock data and uncomment actual API call below
+            mock_data = [
+                {
+                    "id": "BFS001",
+                    "description": "Dell XPS 13",
+                    "specification": "Intel i7, 16GB RAM, 512GB SSD",
+                    "availableQuantity": 5,
+                    "sellPrice": 85000,
+                    "ageOfAsset": "1"
+                },
+                {
+                    "id": "BFS002",
+                    "description": "HP Pavilion 15",
+                    "specification": "AMD Ryzen 5, 8GB RAM, 256GB SSD",
+                    "availableQuantity": 3,
+                    "sellPrice": 55000,
+                    "ageOfAsset": "2"
+                },
+                {
+                    "id": "BFS003",
+                    "description": "Lenovo ThinkPad E14",
+                    "specification": "Intel i5, 8GB RAM, 512GB SSD",
+                    "availableQuantity": 8,
+                    "sellPrice": 62000,
+                    "ageOfAsset": "1"
+                },
+                {
+                    "id": "BFS004",
+                    "description": "MacBook Air M1",
+                    "specification": "Apple M1, 8GB RAM, 256GB SSD",
+                    "availableQuantity": 2,
+                    "sellPrice": 92000,
+                    "ageOfAsset": "1"
+                },
+                {
+                    "id": "BFS005",
+                    "description": "ASUS VivoBook",
+                    "specification": "Intel i3, 4GB RAM, 1TB HDD",
+                    "availableQuantity": 10,
+                    "sellPrice": 35000,
+                    "ageOfAsset": "3"
+                }
+            ]
+            logger.info(f"[BFS API] Returning MOCK data for testing: {len(mock_data)} items")
+            return {
+                "success": True,
+                "data": mock_data,
+                "raw_response": {"mock": True}
+            }
+            # ============ END MOCK DATA ============
 
-            if response.get('success'):
-                logger.info(f"[BFS API] Search successful, found items: {response.get('data')}")
-                return {
-                    "success": True,
-                    "data": response.get('data'),
-                    "raw_response": response
-                }
-            else:
-                logger.error(f"[BFS API] Search failed: {response}")
-                return {
-                    "success": False,
-                    "error": response.get('message', 'BFS search failed'),
-                    "raw_response": response
-                }
+            # ACTUAL API CALL (commented out for testing)
+            # response = await self.api_client.post(
+            #     endpoint=BFS_API_URL,
+            #     json_data=products,
+            #     require_auth=True,
+            #     api_title="BFS Search Items API"
+            # )
+            #
+            # if response.get('success'):
+            #     logger.info(f"[BFS API] Search successful, found items: {response.get('data')}")
+            #     return {
+            #         "success": True,
+            #         "data": response.get('data'),
+            #         "raw_response": response
+            #     }
+            # else:
+            #     logger.error(f"[BFS API] Search failed: {response}")
+            #     return {
+            #         "success": False,
+            #         "error": response.get('message', 'BFS search failed'),
+            #         "raw_response": response
+            #     }
 
         except Exception as e:
             logger.error(f"[BFS API] Error searching BFS items: {e}")

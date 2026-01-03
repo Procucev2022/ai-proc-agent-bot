@@ -1480,6 +1480,16 @@ class ChatService:
                 # Route to BFS handler
                 return await self.bfs_search_handler.handle_bfs_search(user, session, message)
 
+            # Handle BFS bid format input - user is providing bid prices
+            if session.workflow_state.get("bfs_bid_stage") == "format_input":
+                logger.info(f"[BFS Bid] Processing bid format input: {message[:50]}...")
+                return await self.bfs_search_handler.handle_bid_format_input(user, session, message)
+
+            # Handle BFS bid OTP input - user is providing OTP for bid confirmation
+            if session.workflow_state.get("bfs_bid_stage") == "otp_pending":
+                logger.info(f"[BFS Bid] Processing OTP input")
+                return await self.bfs_search_handler.handle_bid_otp_input(user, session, message)
+
             # Handle Excel confirmation responses BEFORE pending confirmations
             if session.workflow_state.get("awaiting_excel_confirmation"):
                 result = await self._handle_excel_confirmation_response(user, session, message, intent_result)
@@ -3162,13 +3172,9 @@ class ChatService:
             return {"status": "bfs_awaiting_product_description"}
 
         elif button_id == "bfs_place_bid":
-            # Placeholder for BFS place bid functionality
-            await self.whatsapp_service.send_message(
-                user.phone_number,
-                "Place Bid functionality coming soon!",
-                session_id=session
-            )
-            return {"status": "bfs_place_bid_placeholder"}
+            # Initiate BFS bid flow
+            logger.info(f"[BFS] Place Bid button clicked")
+            return await self.bfs_search_handler.initiate_bid_flow(user, session)
 
         elif button_id == "bfs_raise_rfq":
             # Route to sectioned RFQ creation with original searched products
@@ -3208,6 +3214,11 @@ class ChatService:
             await self.cancel_service._send_cancellation_message(user.phone_number, user_role)
 
             return {"status": "bfs_cancelled"}
+
+        elif button_id == "bfs_bid_cancel":
+            # Cancel BFS bid flow
+            logger.info(f"[BFS] Cancelling BFS bid flow")
+            return await self.bfs_search_handler._cancel_bid_flow(user, session, "user_cancelled")
 
         elif button_id == "rfq_status" or button_id == "check_rfqs":
             # Trigger RFQ status check flow

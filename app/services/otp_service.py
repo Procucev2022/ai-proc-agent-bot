@@ -29,23 +29,34 @@ class OTPService:
         self.support_notification_service = support_notification_service
         self.settings = get_settings()
     
-    async def send_otp(self, user_phone: str, email: str, session: ConversationSession,is_daily_verification: bool = False) -> Dict[str, Any]:
-        """Send OTP to email and initialize session state."""
+    async def send_otp(self, user_phone: str, email: str, session: ConversationSession, is_daily_verification: bool = False, send_notification: bool = True) -> Dict[str, Any]:
+        """
+        Send OTP to email and initialize session state.
+
+        Args:
+            user_phone: User's phone number
+            email: Email address to send OTP to
+            session: Conversation session
+            is_daily_verification: Whether this is a daily verification OTP
+            send_notification: If True, sends default WhatsApp notification. Set to False to send custom message.
+        """
         try:
             logger.info(f"OTP_SERVICE: Sending OTP to email: {email} for phone: {user_phone}")
             response = await self.register_api_service.send_otp(email, user_phone)
             logger.info(f"OTP_SERVICE: Send OTP API response: {response}")
-            
+
             if response.get("statusCode") in ["1001", "200"] or response.get("status") == "Success":
                 session.workflow_state["otp_email"] = email
                 session.workflow_state["otp_retry_count"] = 0
 
-                if is_daily_verification:
-                    message = f"OTP sent to {email}.\nPlease provide the OTP sent to your email to complete your Email Verification.\n(Type 'Exit' anytime to end the chat)"
-                else:
-                    message = f"OTP sent to {email}. Please provide the OTP to verify your account.\n(Type 'Exit' anytime to end the chat)"
+                # Only send default notification if requested
+                if send_notification:
+                    if is_daily_verification:
+                        message = f"OTP sent to {email}.\nPlease provide the OTP sent to your email to complete your Email Verification.\n(Type 'Exit' anytime to end the chat)"
+                    else:
+                        message = f"OTP sent to {email}. Please provide the OTP to verify your account.\n(Type 'Exit' anytime to end the chat)"
 
-                await self.whatsapp_service.send_message(user_phone, message,session_id=session)
+                    await self.whatsapp_service.send_message(user_phone, message, session_id=session)
 
                 logger.info(f"OTP_SERVICE: OTP sent successfully to {email}")
                 return {"status": "otp_sent", "email": email}
