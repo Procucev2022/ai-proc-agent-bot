@@ -2435,9 +2435,18 @@ class ChatService:
             
             # Transform each product to match sectioned RFQ items format exactly
             for product in products:
+                # Parse quantity safely - handles integers, decimals, and string numbers
+                raw_quantity = product.get('quantity', 0)
+                try:
+                    parsed_quantity = float(raw_quantity) if raw_quantity else 0
+                    # Keep as float if it has decimals, otherwise convert to int for cleaner display
+                    quantity = parsed_quantity if parsed_quantity % 1 != 0 else int(parsed_quantity)
+                except (ValueError, TypeError):
+                    quantity = 0
+
                 transformed_product = {
                     'description': product.get('description', ''),
-                    'quantity': int(product.get('quantity', 0)) if product.get('quantity') and str(product.get('quantity')).isdigit() else 0,
+                    'quantity': quantity,
                     'unitofMeasures': product.get('uom', 'unit(s)'),
                     'brand': product.get('projectDesc', ''),
                     'remarks': product.get('remarks', ''),
