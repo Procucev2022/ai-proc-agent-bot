@@ -3155,70 +3155,19 @@ class ChatService:
                 suppress_raise_rfq_on_no_results=True,
             )
 
-        elif button_id == "search_bfs":
-            # Prompt user to describe what they want to search
-            await self.whatsapp_service.send_message(
-                user.phone_number,
-                "What products are you looking for?",
-                session_id=session
-            )
+        elif button_id == "search_bfs" or button_id.startswith("bfs_"):
+            # Delegate all BFS buttons to handler
+            result = await self.bfs_search_handler.handle_button(user, session, button_id)
 
-            # Set a flag so the next message triggers BFS search
-            if not session.workflow_state:
-                session.workflow_state = {}
-            session.workflow_state["bfs_search_pending"] = True
-            await self.session_manager.save_session(session, persist_to_db=False)
+            # Handle special statuses that need cross-service coordination
+            if result.get("status") == "bfs_activate_rfq":
+                return await self._activate_sectioned_rfq(user, session)
+            elif result.get("status") == "bfs_send_cancel_message":
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                await self.cancel_service._send_cancellation_message(user.phone_number, user_role)
+                return {"status": "bfs_cancelled"}
 
-            return {"status": "bfs_awaiting_product_description"}
-
-        elif button_id == "bfs_place_bid":
-            # Initiate BFS bid flow
-            logger.info(f"[BFS] Place Bid button clicked")
-            return await self.bfs_search_handler.initiate_bid_flow(user, session)
-
-        elif button_id == "bfs_raise_rfq":
-            # Route to sectioned RFQ creation with original searched products
-            logger.info(f"[BFS] Raising RFQ from BFS search")
-
-            # Get original searched products (what user was looking for)
-            searched_products = session.workflow_state.get("bfs_searched_products", []) if session.workflow_state else []
-
-            # Clear BFS state
-            if session.workflow_state:
-                session.workflow_state.pop("bfs_results", None)
-                session.workflow_state.pop("bfs_searched_products", None)
-
-            # Store for RFQ pre-population
-            if searched_products:
-                if not session.workflow_state:
-                    session.workflow_state = {}
-                session.workflow_state["bfs_rfq_products"] = searched_products
-                await self.session_manager.save_session(session, persist_to_db=False)
-
-            # Activate sectioned RFQ workflow
-            return await self._activate_sectioned_rfq(user, session)
-
-        elif button_id == "bfs_cancel":
-            # Cancel BFS workflow using cancel service pattern
-            logger.info(f"[BFS] Cancelling BFS workflow")
-
-            # Clear BFS state
-            if session.workflow_state:
-                session.workflow_state.pop("bfs_results", None)
-                session.workflow_state.pop("bfs_search_pending", None)
-                session.workflow_state.pop("bfs_searched_products", None)
-                await self.session_manager.save_session(session, persist_to_db=False)
-
-            # Use cancel service to send cancellation message with appropriate buttons
-            user_role = user.role.value if hasattr(user.role, 'value') else user.role
-            await self.cancel_service._send_cancellation_message(user.phone_number, user_role)
-
-            return {"status": "bfs_cancelled"}
-
-        elif button_id == "bfs_bid_cancel":
-            # Cancel BFS bid flow
-            logger.info(f"[BFS] Cancelling BFS bid flow")
-            return await self.bfs_search_handler._cancel_bid_flow(user, session, "user_cancelled")
+            return result
 
         elif button_id == "rfq_status" or button_id == "check_rfqs":
             # Trigger RFQ status check flow

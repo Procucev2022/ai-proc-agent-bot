@@ -32,6 +32,88 @@ class BFSSearchHandler:
         self.auto_categorization_service = get_auto_categorization_service()
         self.bfs_api_service = get_bfs_api_service()
 
+    # ==================== Button Handler ====================
+
+    async def handle_button(
+        self,
+        user: User,
+        session: ConversationSession,
+        button_id: str
+    ) -> Dict[str, Any]:
+        """
+        Handle all BFS-related button clicks.
+
+        Returns status dict. Some statuses require further handling by chat_service:
+        - "bfs_activate_rfq": chat_service should call _activate_sectioned_rfq
+        - "bfs_send_cancel_message": chat_service should call cancel_service
+        """
+        if button_id == "search_bfs":
+            # Prompt user to describe what they want to search
+            await self.whatsapp_service.send_message(
+                user.phone_number,
+                "What products are you looking for?",
+                session_id=session
+            )
+
+            if not session.workflow_state:
+                session.workflow_state = {}
+            session.workflow_state["bfs_search_pending"] = True
+            await self.session_manager.save_session(session, persist_to_db=False)
+
+            return {"status": "bfs_awaiting_product_description"}
+
+        elif button_id == "bfs_accept_price":
+            logger.info(f"[BFS] Accept Price button clicked")
+            return await self.accept_prices_flow(user, session)
+
+        elif button_id in ("bfs_negotiate", "bfs_place_bid"):
+            logger.info(f"[BFS] {button_id} button clicked")
+            return await self.initiate_bid_flow(user, session)
+
+        elif button_id == "bfs_raise_rfq":
+            logger.info(f"[BFS] Raising RFQ from BFS search")
+            # Prepare session state for RFQ
+            searched_products = session.workflow_state.get("bfs_searched_products", []) if session.workflow_state else []
+
+            if session.workflow_state:
+                session.workflow_state.pop("bfs_results", None)
+                session.workflow_state.pop("bfs_searched_products", None)
+
+            if searched_products:
+                if not session.workflow_state:
+                    session.workflow_state = {}
+                session.workflow_state["bfs_rfq_products"] = searched_products
+                await self.session_manager.save_session(session, persist_to_db=False)
+
+            # Signal chat_service to activate RFQ workflow
+            return {"status": "bfs_activate_rfq"}
+
+        elif button_id == "bfs_cancel":
+            logger.info(f"[BFS] Cancelling BFS workflow")
+
+            if session.workflow_state:
+                session.workflow_state.pop("bfs_results", None)
+                session.workflow_state.pop("bfs_search_pending", None)
+                session.workflow_state.pop("bfs_searched_products", None)
+                await self.session_manager.save_session(session, persist_to_db=False)
+
+            # Signal chat_service to send cancellation message
+            return {"status": "bfs_send_cancel_message"}
+
+        elif button_id == "bfs_bid_cancel":
+            logger.info(f"[BFS] Cancelling BFS bid flow")
+            await self._clear_bid_state(session, clear_bfs_search=True)
+            return {"status": "bfs_send_cancel_message"}
+
+        elif button_id == "bfs_restart":
+            logger.info(f"[BFS] Restart button clicked - clearing state and returning to menu")
+            await self._clear_bid_state(session, clear_bfs_search=True)
+            return {"status": "bfs_send_cancel_message"}
+
+        return {"status": "unknown_bfs_button", "button_id": button_id}
+
+    # ==================== BFS Search Methods ====================
+
     async def handle_bfs_search(
         self,
         user: User,
@@ -217,8 +299,8 @@ class BFSSearchHandler:
                         result_message += f"\n\t*₹{price:,.0f}*"
 
                 buttons = [
-                    {"id": "bfs_place_bid", "title": "Place Bid"},
-                    {"id": "bfs_raise_rfq", "title": "Raise RFQ"},
+                    {"id": "bfs_accept_price", "title": "Accept Price"},
+                    {"id": "bfs_negotiate", "title": "Negotiate"},
                     {"id": "bfs_cancel", "title": "Cancel"}
                 ]
 
@@ -281,9 +363,12 @@ class BFSSearchHandler:
 
         # Send format message with Cancel button
         message = (
-            "*Place your bids by modifying the prices below:*\n\n"
+            "*Negotiate your prices:*\n\n"
             f"{bid_format}\n\n"
-            "_Copy the format above, change prices as needed, and send back._\n"
+            "*Instructions:*\n"
+            "1. Copy the format above\n"
+            "2. Change the prices you want to negotiate\n"
+            "3. Send it back\n\n"
             "_Remove any items you don't want to bid on._"
         )
 
@@ -292,13 +377,64 @@ class BFSSearchHandler:
             user.phone_number,
             message,
             buttons,
-            header="Place Bid",
+            header="Negotiate Price",
             footer="",
             session_id=session
         )
 
         logger.info(f"[BFS Bid] Sent bid format with {len(bfs_results)} items")
         return {"status": "bfs_awaiting_bid_format"}
+
+    async def accept_prices_flow(
+        self,
+        user: User,
+        session: ConversationSession
+    ) -> Dict[str, Any]:
+        """
+        Accept original prices without negotiation - skip directly to OTP.
+        Called when user clicks "Accept Price" button.
+        """
+        logger.info(f"[BFS Bid] Accept prices flow for user {user.phone_number}")
+
+        # Get BFS results from session
+        bfs_results = session.workflow_state.get("bfs_results", []) if session.workflow_state else []
+
+        if not bfs_results:
+            await self.whatsapp_service.send_message(
+                user.phone_number,
+                "No items available. Please search again.",
+                session_id=session
+            )
+            return {"status": "bfs_no_items_to_accept"}
+
+        # Build bid items with original prices
+        bid_items = []
+        for item in bfs_results:
+            if isinstance(item, dict):
+                bid_items.append({
+                    "description": item.get("description", ""),
+                    "specification": item.get("specification", ""),
+                    "price": item.get("sellPrice", 0),
+                    "original_item": item
+                })
+
+        if not bid_items:
+            await self.whatsapp_service.send_message(
+                user.phone_number,
+                "Unable to process items. Please try again.",
+                session_id=session
+            )
+            return {"status": "bfs_accept_no_valid_items"}
+
+        # Store bid items in session and proceed to OTP
+        if not session.workflow_state:
+            session.workflow_state = {}
+        session.workflow_state["bfs_bid_items"] = bid_items
+        session.workflow_state["bfs_bid_retry_count"] = 0
+        await self.session_manager.save_session(session, persist_to_db=False)
+
+        logger.info(f"[BFS Bid] Accepting {len(bid_items)} items at original prices, proceeding to OTP")
+        return await self._send_bid_otp(user, session, bid_items)
 
     async def handle_bid_format_input(
         self,
@@ -336,15 +472,13 @@ class BFSSearchHandler:
                 # Max retries reached - cancel flow
                 return await self._cancel_bid_after_max_retries(user, session)
 
-            # Send error with retry info
+            # Send error message with Restart button
             error_msg = (
                 f"{parse_result['error']}\n\n"
-                f"Attempt {retry_count}/{MAX_BID_RETRY_ATTEMPTS}"
+                f"Attempt {retry_count}/{MAX_BID_RETRY_ATTEMPTS}\n\n"
+                "_Please copy and paste the format again with correct prices._"
             )
-            buttons = [
-                {"id": "bfs_place_bid", "title": "Start Over"},
-                {"id": "bfs_bid_cancel", "title": "Cancel"}
-            ]
+            buttons = [{"id": "bfs_restart", "title": "Restart"}]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
                 error_msg,
@@ -585,10 +719,7 @@ class BFSSearchHandler:
                 "Sorry, we couldn't place your bids at this time.\n"
                 "Please try again later or contact support."
             )
-            buttons = [
-                {"id": "bfs_place_bid", "title": "Try Again"},
-                {"id": "bfs_cancel", "title": "Cancel"}
-            ]
+            buttons = [{"id": "bfs_restart", "title": "Restart"}]
             await self.whatsapp_service.send_configurable_buttons(
                 user.phone_number,
                 error_msg,
@@ -634,33 +765,10 @@ class BFSSearchHandler:
         session: ConversationSession,
         reason: str
     ) -> Dict[str, Any]:
-        """Cancel bid flow and clear state."""
+        """Cancel bid flow and clear state. Returns signal for cancel_service."""
         logger.info(f"[BFS Bid] Cancelling bid flow: {reason}")
-        await self._clear_bid_state(session)
-
-        await self.whatsapp_service.send_message(
-            user.phone_number,
-            "Bid cancelled.",
-            session_id=session
-        )
-
-        # Show BFS options again if results still exist
-        if session.workflow_state and session.workflow_state.get("bfs_results"):
-            buttons = [
-                {"id": "bfs_place_bid", "title": "Place Bid"},
-                {"id": "bfs_raise_rfq", "title": "Raise RFQ"},
-                {"id": "bfs_cancel", "title": "Cancel"}
-            ]
-            await self.whatsapp_service.send_configurable_buttons(
-                user.phone_number,
-                "What would you like to do?",
-                buttons,
-                header="",
-                footer="",
-                session_id=session
-            )
-
-        return {"status": "bfs_bid_cancelled", "reason": reason}
+        await self._clear_bid_state(session, clear_bfs_search=True)
+        return {"status": "bfs_send_cancel_message", "reason": reason}
 
     async def _cancel_bid_after_max_retries(
         self,
@@ -673,12 +781,9 @@ class BFSSearchHandler:
 
         message = (
             f"Maximum attempts ({MAX_BID_RETRY_ATTEMPTS}) reached.\n"
-            "Please try again."
+            "Please restart to try again."
         )
-        buttons = [
-            {"id": "bfs_place_bid", "title": "Try Again"},
-            {"id": "bfs_cancel", "title": "Cancel"}
-        ]
+        buttons = [{"id": "bfs_restart", "title": "Restart"}]
         await self.whatsapp_service.send_configurable_buttons(
             user.phone_number,
             message,
