@@ -228,9 +228,11 @@ class SellerService:
         for i, rfq in enumerate(rfqs, 1):
             rfq_id = rfq.get("rfq_id", "")
             category = rfq.get("categories", "")
+            category = category[:20] + "..." if len(category) > 20 else category
             delivery_date = rfq.get("delivery_date", "")
             location = rfq.get("location", "")
             project_description = rfq.get("project_description", "")
+            project_description = project_description[:50] + "..." if len(project_description) > 50 else project_description
             
             # Format: 1. **RFQ251012730180**
             message_parts.append(f"{i}. *{rfq_id}*")
@@ -239,8 +241,7 @@ class SellerService:
             message_parts.append(f"    • {project_description}")
         
         message_parts.append("")
-        message_parts.append("Please reply with the RFQ ID or the number corresponding to the RFQ to request its details.")
-        message_parts.append("If you want to check the details for any RFQ, you can log in to the portal at procucev.com")
+        message_parts.append("For more details of the RFQ, log in to procucev.com")
         
         return "\n".join(message_parts)
 
@@ -1101,20 +1102,18 @@ class SellerService:
 
     async def _handle_invalid_rfq_selection(self, user: User, session: ConversationSession, message: str, rfq_result: Dict[str, Any]) -> Dict[str, Any]:
         """Handle invalid RFQ selection."""
-        # Use passed rfq_result instead of making another API call
         if not rfq_result.get("success"):
             return await self._handle_rfq_fetch_error(user, session)
 
         rfqs = rfq_result.get("rfqs")
-        available_rfqs = [rfq.get("rfq_id") for rfq in rfqs]
-
-        context = {
-            "workflow_state": "invalid_rfq_selection",
-            "available_rfqs": available_rfqs,
-            "user_message": message
-        }
-
-        response_message = await self.response_helpers.generate_seller_contextual_response(context)
+        total_count = rfq_result.get("total_count", 0)
+        
+        credits_result = await self._check_seller_credits(user.org_id)
+        credits_available = credits_result.get("credits_available", 0)
+        
+        # Reuse existing function with custom prefix
+        rfq_display = self._generate_hardcoded_rfq_display(rfqs, total_count, credits_available)
+        response_message = f"You have to select RFQ ID from below:\n\n{rfq_display}"
 
         return {
             "success": False,

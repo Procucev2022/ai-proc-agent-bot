@@ -79,10 +79,7 @@ class ProfileSelectionService:
                     return await self._redirect_to_buyer_registration(user_phone, session, message)
                 elif detected_type == 'seller':
                     return await self._redirect_to_seller_registration(user_phone, session, message)
-                else:
-                    # If no specific type detected, show registration options
-                    return await self._handle_no_profiles_found(user_phone, intent, session)
-
+                
             # Get user profiles from cache or API
             profiles_result = await self._get_user_profiles(user_phone, message, session)
 
