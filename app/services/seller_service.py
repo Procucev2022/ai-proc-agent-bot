@@ -203,7 +203,7 @@ class SellerService:
             logger.error(f"Error displaying RFQs to seller: {e}")
             raise
 
-    def _generate_hardcoded_rfq_display(self, rfqs: List[Dict], total_count: int, credits_available: int) -> str:
+    def _generate_hardcoded_rfq_display(self, rfqs: List[Dict], total_count: int, credits_available: int, skip_intro: bool = False) -> str:
         """Generate hardcoded RFQ display message based on credits and RFQ availability."""
         
         print("rfq", rfqs)# Case 1: No RFQs available
@@ -215,10 +215,11 @@ class SellerService:
         # Case 2 & 3: RFQs available - show them with different credit messages
         message_parts = []
         
-        if credits_available <= 0:
-            message_parts.append("You do not have enough credits to request the RFQ. In order to request more RFQs please buy credits. Use the plans to subscribe and add credits so that you can request for RFQs")
-        else:
-            message_parts.append("Here are some RFQs available for you in your selected categories. You can use your available credits to request RFQs.")
+        if not skip_intro:
+            if credits_available <= 0:
+                message_parts.append("You do not have enough credits to request the RFQ. In order to request more RFQs please buy credits. Use the plans to subscribe and add credits so that you can request for RFQs")
+            else:
+                message_parts.append("Here are some RFQs available for you in your selected categories. You can use your available credits to request RFQs.")
         
         message_parts.append(f"*Available Credit:* {credits_available}")
         message_parts.append(f"*Total RFQs Available:* {total_count}")
@@ -1111,9 +1112,9 @@ class SellerService:
         credits_result = await self._check_seller_credits(user.org_id)
         credits_available = credits_result.get("credits_available", 0)
         
-        # Reuse existing function with custom prefix
-        rfq_display = self._generate_hardcoded_rfq_display(rfqs, total_count, credits_available)
-        response_message = f"You have to select RFQ ID from below:\n\n{rfq_display}"
+        # Generate invalid RFQ message using existing function
+        rfq_display = self._generate_hardcoded_rfq_display(rfqs, total_count, credits_available, skip_intro=True)
+        response_message = f"The RFQ ID you entered is invalid or not available.\n\nPlease select from one of these available RFQs:\n\n{rfq_display}"
 
         return {
             "success": False,
