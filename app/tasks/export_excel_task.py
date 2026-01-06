@@ -175,11 +175,11 @@ async def _send_excel_to_client(excel_file_path: str, parsed_date: date) -> Dict
             file_content = f.read()
             file_base64 = base64.b64encode(file_content).decode('utf-8')
         
-        # Format attachment with metadata
+        # Format attachment with proper structure
         attachment_data = {
-            "filename": filename,
-            "content": file_base64,
-            "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "file_name": filename,
+            "file_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "file_base64": file_base64
         }
         
         logger.info(f"Attachment prepared: {filename}, size: {len(file_content)} bytes")
@@ -197,7 +197,7 @@ async def _send_excel_to_client(excel_file_path: str, parsed_date: date) -> Dict
         result = await email_service.send_email_by_template(
             template_name="B2B_whatsapp_insight_report",
             variables=template_variables,
-            attachment=attachment_data
+            attachments=[attachment_data]
         )
         
         return result

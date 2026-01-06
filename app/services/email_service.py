@@ -137,7 +137,7 @@ class EmailService:
         """Send support email using template name directly."""
         return await self.send_email_by_template(template_name, variables, user_role)
     
-    async def send_email_by_template(self, template_name: str, variables: Dict[str, Any], user_role: str = None, attachment: str = None) -> Dict[str, Any]:
+    async def send_email_by_template(self, template_name: str, variables: Dict[str, Any], user_role: str = None, attachments: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Send email using specified template."""
         try:
             # Load template
@@ -152,9 +152,9 @@ class EmailService:
             # Process template
             email_data = self._process_template(template, variables, user_role)
             
-            # Add attachment if provided
-            if attachment:
-                email_data["attachment"] = attachment
+            # Add attachments if provided
+            if attachments:
+                email_data["attachments"] = attachments
             
             # Validate email data
             if not email_data["to"]:
