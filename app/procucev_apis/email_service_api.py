@@ -50,9 +50,10 @@ class EmailServiceAPI:
                 "subject": email_data.get("subject", ""),
                 "body": email_data.get("body", "")
             }
-            # if attachement
-            if email_data.get("attachment"):
-                payload["attachment"] = email_data.get("attachment", "")
+            
+            # Add attachments if provided
+            if email_data.get("attachments"):
+                payload["attachments"] = email_data.get("attachments")
             
             logger.info(f"Sending email via GMT API to {payload['to']}")
             response = await self.api_client.post(
