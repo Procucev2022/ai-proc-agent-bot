@@ -64,7 +64,7 @@ class EmailServiceAPI:
             )
             logger.info(f"GMT API response: {response.get('success')}")
             
-            if response["status"] == "Success" and response.get("statusCode") == "200":
+            if response.get("status") == "Success" and response.get("statusCode") == "200":
                 return {
                     "statusCode": response.get("statusCode", "200"),
                     "message": response.get("message", "Email Sent Successfully"),
