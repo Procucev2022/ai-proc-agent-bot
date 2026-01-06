@@ -880,11 +880,18 @@ class SectionedRFQCreationHandler:
         )
         message = f"{missing_label} Required\n\n{copy_paste_instruction}\n{display_text}"
 
-        # Send message with Modify/Restart buttons (no Confirm since data is incomplete)
-        buttons_config = [
-            {"id": "modify_items", "title": "Modify"},
-            {"id": "restart_rfq", "title": "Restart"}
-        ]
+        # Check if data is from Excel upload
+        is_from_excel = WorkflowManager.is_sectioned_rfq_from_excel(session)
+
+        # Build buttons config - hide Modify button if data is from Excel upload
+        buttons_config = []
+
+        # Only add Modify button if data is NOT from Excel upload
+        if not is_from_excel:
+            buttons_config.append({"id": "modify_items", "title": "Modify"})
+
+        buttons_config.append({"id": "restart_rfq", "title": "Restart"})
+
         await self.whatsapp_service.send_configurable_buttons(
             user.phone_number,
             message,
