@@ -177,9 +177,9 @@ async def _send_excel_to_client(excel_file_path: str, parsed_date: date) -> Dict
         
         # Format attachment with proper structure
         attachment_data = {
-            "file_name": filename,
-            "file_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "file_base64": file_base64
+            "fileName": filename,
+            "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "fileData": file_base64
         }
         
         logger.info(f"Attachment prepared: {filename}, size: {len(file_content)} bytes")
