@@ -579,9 +579,9 @@ class EnhancedAutoCategorizationService:
                     # Store learning taxonomy info for later logging
                     learning_taxonomy_data = {
                         "learning_item_id": existing_result.get("learning_category_id"),
-                        "level_1_category": existing_result.get("level_1"),
-                        "level_2_category": existing_result.get("level_2"),
-                        "level_3_category": existing_result.get("level_3"),
+                        "level_1_category": existing_result.get("level_1_category"),
+                        "level_2_category": existing_result.get("level_2_category"),
+                        "level_3_category": existing_result.get("level_3_category"),
                         "category_path": existing_result.get("category_path"),
                         "match_level": "existing",
                         "learning_confidence": existing_result.get("confidence_score", 0.8)
@@ -608,14 +608,16 @@ class EnhancedAutoCategorizationService:
                         self.openai_service.close_sync()
 
                         # Store learning taxonomy info for later logging
+                        # Note: create_3_level_category returns level data nested under "learning_category"
+                        learning_category = create_result.get("learning_category", {})
                         learning_taxonomy_data = {
-                            "learning_item_id": create_result.get("learning_category_id"),
-                            "level_1_category": create_result.get("level_1"),
-                            "level_2_category": create_result.get("level_2"),
-                            "level_3_category": create_result.get("level_3"),
+                            "learning_item_id": create_result.get("learning_item_id"),
+                            "level_1_category": learning_category.get("level_1_category"),
+                            "level_2_category": learning_category.get("level_2_category"),
+                            "level_3_category": learning_category.get("level_3_category"),
                             "category_path": create_result.get("category_path"),
                             "match_level": "new",
-                            "learning_confidence": create_result.get("ai_confidence", 0.7)
+                            "learning_confidence": learning_category.get("confidence_score", 0.7)
                         }
 
                         # Continue to fallback service to get client category
