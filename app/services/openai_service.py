@@ -47,11 +47,8 @@ class OpenAIService:
     def __init__(self):
         """Initialize OpenAI service with configuration."""
         self.settings = get_settings()
-        self.client = AsyncOpenAI(
-            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-            base_url=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            default_query={"api-version": "preview"},
-        )
+        self._client = None  # Lazy initialization
+        self._client_closed = False  # Track if client was explicitly closed
         self.default_model = self.settings.openai_model_default
         self.advanced_model = self.settings.openai_model_advanced
         self.tools_dir = Path(__file__).parent.parent / "tools"
@@ -64,16 +61,39 @@ class OpenAIService:
         # OpenAI call tracking for performance monitoring
         self.call_counts = {}
 
+    @property
+    def client(self) -> AsyncOpenAI:
+        """
+        Get OpenAI client with lazy initialization.
+
+        Automatically recreates the client if it was previously closed.
+        This ensures resilience when close_sync() is called between requests.
+        """
+        if self._client is None or self._client_closed:
+            self._client = AsyncOpenAI(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                base_url=os.getenv("AZURE_OPENAI_ENDPOINT"),
+                default_query={"api-version": "preview"},
+            )
+            self._client_closed = False
+            logger.debug("OpenAI client (re)initialized")
+        return self._client
+
     async def close(self):
         """Close the OpenAI client and cleanup resources."""
         try:
-            await self.client.close()
-            logger.debug("OpenAI client closed successfully")
+            if self._client is not None:
+                await self._client.close()
+                self._client_closed = True
+                logger.debug("OpenAI client closed successfully")
         except Exception as e:
             logger.warning(f"Error closing OpenAI client: {e}")
     
     def close_sync(self):
         """Synchronous close for Celery tasks to prevent event loop errors."""
+        if self._client is None:
+            return  # Nothing to close
+
         try:
             import asyncio
             try:
@@ -81,14 +101,16 @@ class OpenAIService:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     # If loop is running, schedule close as task
-                    asyncio.create_task(self.client.close())
+                    asyncio.create_task(self._client.close())
                 else:
                     # If loop exists but not running, run close
-                    loop.run_until_complete(self.client.close())
+                    loop.run_until_complete(self._client.close())
             except RuntimeError:
                 # No event loop exists, create new one
-                asyncio.run(self.client.close())
-            logger.debug("OpenAI client closed synchronously")
+                asyncio.run(self._client.close())
+
+            self._client_closed = True
+            logger.debug("OpenAI client closed synchronously (will auto-reinitialize on next use)")
         except Exception as e:
             logger.warning(f"Error closing OpenAI client synchronously: {e}")
 
