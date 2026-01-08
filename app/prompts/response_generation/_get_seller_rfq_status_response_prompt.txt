@@ -53,17 +53,17 @@ If you are looking for the status of any specific RFQ please provide the RFQID a
 
 ## Status Formatting Rules (Seller Perspective)
 
-Convert API status values to seller-friendly formats:
-- `InProgress` → `Open for Quotes`
-- `PendingApproval` → `Under Review`
+Convert API status values to user-friendly formats:
+- `InProgress` → `In Progress`
+- `PendingApproval` → `Pending Approval`
 - `UnderReview` → `Under Review`
-- `AwaitingQuotes` → `Open for Quotes`
-- `QuotesReceived` → `Quotes Submitted`
-- `InEvaluation` → `Under Evaluation`
+- `AwaitingQuotes` → `Awaiting Quotes`
+- `QuotesReceived` → `Quotes Received`
+- `InEvaluation` → `In Evaluation`
 - `OrderPlaced` → `Order Placed`
 - `Completed` → `Completed`
 - `Cancelled` → `Cancelled`
-- `Rejected` → `Closed`
+- `Rejected` → `Rejected`
 - `OnHold` → `On Hold`
 - 'Not found'-> 'Not Found'
 
