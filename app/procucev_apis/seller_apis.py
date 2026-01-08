@@ -247,7 +247,7 @@ class SellerAPIService:
             endpoint = "/rest/gmt/getOpenRfqs"
             
             payload = {
-                "seller_id": seller_id
+                "id": seller_id
             }
 
             response = await self.api_client.post(
