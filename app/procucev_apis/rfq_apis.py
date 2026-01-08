@@ -197,7 +197,7 @@ class RFQAPIService:
             # Multiple items case - create rfq_item for each
             for i, item in enumerate(items):
                 rfq_item = {
-                    "brand": item.get("brand", rfq_data.get("preferred_brand", "Generic")),
+                    "brand": item.get("brand") or "",  # Use item's own brand only, don't fallback to preferred_brand
                     "unitofMeasures": item.get("unit_of_measures") or "unit(s)",  # Default to unit(s) if not provided
                     "quantity": str(item.get("quantity", 1)),
                     "description": item.get("description", f"Item {i+1}"),

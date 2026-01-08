@@ -1285,12 +1285,12 @@ class EntityService:
 
     def _check_quantity_limits(self, products: list) -> list:
         """
-        Check if any product quantities exceed the maximum limit of 100,000 units.
+        Check if any product quantities exceed the maximum limit of 1,00,00,000 units.
 
         Returns list of dicts with product info for items that violate the limit,
         or empty list if all quantities are within limits.
         """
-        MAX_QUANTITY = 100000
+        MAX_QUANTITY = 10000000
         violations = []
 
         for product in products:
@@ -1378,50 +1378,53 @@ class EntityService:
         User-provided city/state values are OVERRIDDEN by pincode lookup results
         to ensure data accuracy (e.g., user says "Mumbai 411005" but 411005 is Pune).
 
+        Pincode is a global field (one per RFQ), so we fetch location once
+        and apply to all products.
+
         Args:
             products: List of product entities
 
         Returns:
             Updated products list with city and state filled from pincode lookup
         """
-        updated_products = []
+        if not products:
+            return products
 
+        # Get pincode from first product (pincode is global - same for all products)
+        pincode = next((p.get("pincode") for p in products if p.get("pincode")), None)
+        if not pincode:
+            return products
+
+        # Fetch location data once (outside the loop)
+        clean_pincode = str(pincode).strip()
+        location_data = None
+        validation_error = None
+
+        if not clean_pincode.isdigit() or len(clean_pincode) != 6:
+            validation_error = f"Invalid pincode format: {pincode}. Please enter a valid 6-digit pincode."
+        else:
+            try:
+                location_data = await get_location_from_pincode_async(clean_pincode)
+                if not location_data:
+                    validation_error = f"Could not find location for pincode {pincode}. Please enter valid pincode"
+            except Exception as e:
+                logger.error(f"Error fetching location for pincode {pincode}: {e}")
+
+        # Apply to all products
+        updated_products = []
         for product in products:
             updated_product = product.copy()
-            pincode = product.get("pincode")
 
-            # Always lookup if pincode exists - pincode is authoritative source for city/state
-            if pincode:
-                try:
-                    # Validate pincode format first
-                    clean_pincode = str(pincode).strip()
-                    if not clean_pincode.isdigit() or len(clean_pincode) != 6:
-                        updated_product["pincode_validation_error"] = f"Invalid pincode format: {pincode}. Please enter a valid 6-digit pincode."
-                        updated_product["pincode"] = None
-                        updated_product["city"] = None
-                        updated_product["state"] = None
-                        updated_products.append(updated_product)
-                        continue
-
-                    location_data = await get_location_from_pincode_async(clean_pincode)
-                    if location_data:
-                        city = location_data.get("city", "")
-                        state = location_data.get("state", "")
-
-                        # Always override city/state with pincode lookup results (pincode is authoritative)
-                        if city:
-                            updated_product["city"] = city
-
-                        if state:
-                            updated_product["state"] = state
-                    else:
-                        # Set pincode, city, and state to None when no location found
-                        updated_product["pincode"] = None
-                        updated_product["city"] = None
-                        updated_product["state"] = None
-                        updated_product["pincode_validation_error"] = f"Could not find location for pincode {pincode}. Please enter valid pincode"
-                except Exception as e:
-                    logger.error(f"Error fetching location for pincode {pincode}: {e}")
+            if location_data:
+                if location_data.get("city"):
+                    updated_product["city"] = location_data["city"]
+                if location_data.get("state"):
+                    updated_product["state"] = location_data["state"]
+            elif validation_error:
+                updated_product["pincode"] = None
+                updated_product["city"] = None
+                updated_product["state"] = None
+                updated_product["pincode_validation_error"] = validation_error
 
             updated_products.append(updated_product)
 

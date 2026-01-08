@@ -845,6 +845,7 @@ class BuyerDailyMetrics(Base):
     total_rfq_raised = Column(Integer, default=0)
     total_items_in_rfqs = Column(Integer, default=0)
     total_distinct_categories_in_rfq = Column(Integer, default=0)
+    total_incomplete_rfq = Column(Integer, default=0)
     buyers_started_but_not_raised_rfq = Column(Integer, default=0)
     failed_registration = Column(Integer, default=0)
     successfully_registered = Column(Integer, default=0)
@@ -945,6 +946,7 @@ class CategoryAggregates(Base):
     category_name = Column(String(255), nullable=False, index=True)
     total_rfq_raised_category = Column(Integer, default=0)
     total_rfqs_with_quotations = Column(Integer, default=0)
+    total_rfqs_intimated = Column(Integer, default=0)
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
     
     __table_args__ = (

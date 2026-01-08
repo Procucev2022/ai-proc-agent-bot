@@ -218,6 +218,7 @@ class SectionedRFQCreationHandler:
             }
 
             # Validate and normalize delivery date if provided
+            date_error = None
             if delivery_data.get("deliveryDate"):
                 date_validation = await self._validate_delivery_date(delivery_data["deliveryDate"])
                 if date_validation.get("is_valid"):
@@ -225,13 +226,19 @@ class SectionedRFQCreationHandler:
                     delivery_data["deliveryDate"] = date_validation.get("normalized_date", delivery_data["deliveryDate"])
                 else:
                     # Invalid date - clear it and store error to show user
-                    date_validation_error = date_validation.get("error", "Invalid delivery date")
-                    logger.warning(f"[SECTIONED_RFQ] Invalid delivery date during extraction: {date_validation_error}")
+                    date_error = date_validation.get("error", "Invalid delivery date")
+                    logger.warning(f"[SECTIONED_RFQ] Invalid delivery date during extraction: {date_error}")
                     delivery_data["deliveryDate"] = ""
 
             # Auto-fill city/state from pincode - pincode is authoritative source
+            pincode_error = None
             if delivery_data.get("pincode"):
-                delivery_data = await self._autofill_location_from_pincode(delivery_data)
+                autofill_result = await self._autofill_location_from_pincode(delivery_data)
+                delivery_data = autofill_result["delivery_data"]
+                # Check if pincode validation failed
+                if not autofill_result["is_valid"]:
+                    pincode_error = autofill_result["error"]
+                    logger.warning(f"[SECTIONED_RFQ] Pincode validation failed during extraction: {pincode_error}")
 
             # Store extracted delivery data
             WorkflowManager.update_section_data(session, "date_location", delivery_data)
@@ -246,11 +253,13 @@ class SectionedRFQCreationHandler:
         # Reload delivery_data from session to ensure we have the latest stored data
         delivery_data = WorkflowManager.get_section_data(session, "date_location")
 
-        # Auto-fill city/state from pincode - pincode is authoritative source
-        if delivery_data and delivery_data.get("pincode"):
-            delivery_data = await self._autofill_location_from_pincode(delivery_data)
-            WorkflowManager.update_section_data(session, "date_location", delivery_data)
-            await self.session_manager.save_session(session, persist_to_db=False)
+        # Check if we have any validation errors - show them together
+        if date_error or pincode_error:
+            return await self._display_delivery_validation_error(
+                user, session, delivery_data,
+                date_error=date_error,
+                pincode_error=pincode_error
+            )
 
         # Check if we have basics (date + pincode) - city/state will be auto-filled
         if not self._has_delivery_basics(delivery_data):
@@ -345,18 +354,24 @@ class SectionedRFQCreationHandler:
                     }
 
                     # Validate date if provided
-                    date_validation_error = None
+                    date_error = None
                     if delivery_data.get("deliveryDate"):
                         date_validation = await self._validate_delivery_date(delivery_data["deliveryDate"])
                         if date_validation.get("is_valid"):
                             delivery_data["deliveryDate"] = date_validation.get("normalized_date", delivery_data["deliveryDate"])
                         else:
-                            date_validation_error = date_validation.get("error", "Invalid delivery date")
+                            date_error = date_validation.get("error", "Invalid delivery date")
                             delivery_data["deliveryDate"] = ""
 
                     # Auto-fill city/state from pincode - pincode is authoritative source
+                    pincode_error = None
                     if delivery_data.get("pincode"):
-                        delivery_data = await self._autofill_location_from_pincode(delivery_data)
+                        autofill_result = await self._autofill_location_from_pincode(delivery_data)
+                        delivery_data = autofill_result["delivery_data"]
+                        # Check if pincode validation failed
+                        if not autofill_result["is_valid"]:
+                            pincode_error = autofill_result["error"]
+                            logger.warning(f"[SECTIONED_RFQ] Pincode validation failed during modification: {pincode_error}")
 
                     WorkflowManager.update_section_data(session, "date_location", delivery_data)
 
@@ -366,8 +381,16 @@ class SectionedRFQCreationHandler:
 
                     await self.session_manager.save_session(session, persist_to_db=False)
 
+                    # Check if we have any validation errors - show them together
+                    if date_error or pincode_error:
+                        return await self._display_delivery_validation_error(
+                            user, session, delivery_data,
+                            date_error=date_error,
+                            pincode_error=pincode_error
+                        )
+
                     # Check if we have complete delivery data now
-                    if self._has_delivery_basics(delivery_data) and self._is_delivery_complete(delivery_data):
+                    if self._is_delivery_complete(delivery_data):
                         return await self._display_delivery_confirmation(user, session, delivery_data)
                     elif self._has_delivery_basics(delivery_data):
                         # We have date+pincode but city/state lookup failed - pincode is invalid
@@ -424,46 +447,38 @@ class SectionedRFQCreationHandler:
         delivery_date = parsed_result["deliveryDate"]
         pincode = parsed_result["pincode"]
 
-        # Step 3a: Validate delivery date (check if not in the past)
+        # Validate both date and pincode before showing errors
         date_validation = await self._validate_delivery_date(delivery_date)
-        if not date_validation["is_valid"]:
-            retry_count = WorkflowManager.increment_section_retry(session, "date_location")
-            if retry_count >= MAX_RETRY_ATTEMPTS:
-                return await self._cancel_after_max_retries(user, session, "date_location")
-
-            error_msg = f"{date_validation['error']}\n\n"
-            error_msg += f"Please copy paste the format and provide a valid delivery date.\n"
-            error_msg += f"Attempt {retry_count}/{MAX_RETRY_ATTEMPTS}"
-
-            buttons_config = [
-                {"id": "restart_rfq", "title": "Restart"}
-            ]
-            await self.whatsapp_service.send_configurable_buttons(
-                user.phone_number,
-                error_msg,
-                buttons_config,
-                "Invalid Date",
-                footer="",
-                session_id=session
-            )
-            await self.session_manager.save_session(session, persist_to_db=False)
-
-            return {"status": "date_validation_error", "retry_count": retry_count}
-
-        # Use normalized date from validation
-        normalized_date = date_validation.get("normalized_date", delivery_date)
-
-        # Step 3b: Validate pincode and get location
         pincode_validation = await self._validate_pincode_and_get_location(pincode)
-        if not pincode_validation["is_valid"]:
+
+        date_is_valid = date_validation["is_valid"]
+        pincode_is_valid = pincode_validation["is_valid"]
+
+        # Step 3a: Handle validation errors - show both if both are invalid
+        if not date_is_valid or not pincode_is_valid:
             retry_count = WorkflowManager.increment_section_retry(session, "date_location")
 
             if retry_count >= MAX_RETRY_ATTEMPTS:
                 return await self._cancel_after_max_retries(user, session, "date_location")
 
-            error_msg = f"{pincode_validation['error']}\n\n"
-            error_msg += f"Please copy paste the format and provide a valid 6-digit pincode.\n"
-            error_msg += f"Attempt {retry_count}/{MAX_RETRY_ATTEMPTS}"
+            # Build error message with both errors if both are invalid
+            if not date_is_valid and not pincode_is_valid:
+                error_msg = f"{date_validation['error']}\n\n{pincode_validation['error']}\n\n"
+                error_msg += f"Please copy paste the format and provide a valid delivery date and 6-digit pincode.\n"
+                error_msg += f"Attempt {retry_count}/{MAX_RETRY_ATTEMPTS}"
+                header = "Invalid Details"
+            elif not date_is_valid:
+                # Only date is invalid
+                error_msg = f"{date_validation['error']}\n\n"
+                error_msg += f"Please copy paste the format and provide a valid delivery date.\n"
+                error_msg += f"Attempt {retry_count}/{MAX_RETRY_ATTEMPTS}"
+                header = "Invalid Date"
+            else:
+                # Only pincode is invalid
+                error_msg = f"{pincode_validation['error']}\n\n"
+                error_msg += f"Please copy paste the format and provide a valid 6-digit pincode.\n"
+                error_msg += f"Attempt {retry_count}/{MAX_RETRY_ATTEMPTS}"
+                header = "Invalid Pincode"
 
             buttons_config = [
                 {"id": "restart_rfq", "title": "Restart"}
@@ -472,20 +487,21 @@ class SectionedRFQCreationHandler:
                 user.phone_number,
                 error_msg,
                 buttons_config,
-                "Invalid Pincode",
+                header,
                 footer="",
                 session_id=session
             )
             await self.session_manager.save_session(session, persist_to_db=False)
 
-            return {"status": "pincode_validation_error", "retry_count": retry_count}
+            return {"status": "validation_error", "retry_count": retry_count}
 
-        # Step 4: All validations passed - update delivery data with validated values
+        # All validations passed - update delivery data with validated values
+        normalized_date = date_validation.get("normalized_date", delivery_date)
         delivery_data = {
             "deliveryDate": normalized_date,
             "pincode": pincode,
-            "city": pincode_validation.get("city", parsed_result["city"]),
-            "state": pincode_validation.get("state", parsed_result["state"])
+            "city": pincode_validation.get("city", ""),
+            "state": pincode_validation.get("state", "")
         }
 
 
@@ -567,16 +583,47 @@ class SectionedRFQCreationHandler:
 
         return {"status": "awaiting_delivery_details"}
 
-    async def _display_invalid_pincode_message(self, user: User, session: ConversationSession,
-                                                delivery_data: Dict, pincode: str) -> Dict[str, Any]:
-        """Display message when pincode lookup fails (pincode doesn't exist)."""
+    async def _display_delivery_validation_error(self, user: User, session: ConversationSession,
+                                          delivery_data: Dict,
+                                          date_error: str = None,
+                                          pincode_error: str = None) -> Dict[str, Any]:
+        """
+        Display delivery validation errors (date, pincode, or both).
+
+        Args:
+            user: User object
+            session: Conversation session
+            delivery_data: Delivery data dictionary
+            date_error: Optional date validation error message
+            pincode_error: Optional pincode validation error message
+
+        Returns:
+            Dict with status
+        """
         display_text = generate_delivery_display_with_invalid_pincode(delivery_data)
 
         copy_paste_instruction = (
-            "In order to update, please copy and paste the text provided below this line and correct the pincode.\n\n"
+            "In order to update, please copy and paste the text provided below this line and correct the details.\n\n"
             "————————————————————————"
         )
-        message = f"Could not find location for pincode {pincode}. Please provide a valid Indian pincode.\n\n{copy_paste_instruction}\n{display_text}"
+
+        # Build error message based on what's invalid
+        if date_error and pincode_error:
+            # Both date and pincode are invalid
+            message = f"{date_error}\n\n{pincode_error}\n\n{copy_paste_instruction}\n{display_text}"
+            header = "Invalid Details"
+        elif date_error:
+            # Only date is invalid
+            message = f"{date_error}\n\n{copy_paste_instruction}\n{display_text}"
+            header = "Invalid Date"
+        elif pincode_error:
+            # Only pincode is invalid
+            message = f"{pincode_error}\n\n{copy_paste_instruction}\n{display_text}"
+            header = "Invalid Pincode"
+        else:
+            # No errors - this shouldn't happen, but handle gracefully
+            logger.warning("[SECTIONED_RFQ] _display_delivery_validation_error called with no errors")
+            return await self._display_delivery_confirmation(user, session, delivery_data)
 
         # Send message with Modify/Restart buttons
         buttons_config = [
@@ -587,18 +634,18 @@ class SectionedRFQCreationHandler:
             user.phone_number,
             message,
             buttons_config,
-            "Invalid Pincode",
+            header,
             footer="",
             session_id=session
         )
 
-        # Set awaiting modification so user can correct the pincode
+        # Set awaiting modification so user can correct the errors
         WorkflowManager.set_awaiting_section_modification(session, "date_location", True)
 
         # Save session
         await self.session_manager.save_session(session, persist_to_db=False)
 
-        return {"status": "invalid_pincode"}
+        return {"status": "validation_error"}
 
     # ========================================================================
     # ITEMS SECTION
@@ -833,11 +880,18 @@ class SectionedRFQCreationHandler:
         )
         message = f"{missing_label} Required\n\n{copy_paste_instruction}\n{display_text}"
 
-        # Send message with Modify/Restart buttons (no Confirm since data is incomplete)
-        buttons_config = [
-            {"id": "modify_items", "title": "Modify"},
-            {"id": "restart_rfq", "title": "Restart"}
-        ]
+        # Check if data is from Excel upload
+        is_from_excel = WorkflowManager.is_sectioned_rfq_from_excel(session)
+
+        # Build buttons config - hide Modify button if data is from Excel upload
+        buttons_config = []
+
+        # Only add Modify button if data is NOT from Excel upload
+        if not is_from_excel:
+            buttons_config.append({"id": "modify_items", "title": "Modify"})
+
+        buttons_config.append({"id": "restart_rfq", "title": "Restart"})
+
         await self.whatsapp_service.send_configurable_buttons(
             user.phone_number,
             message,
@@ -1303,24 +1357,38 @@ class SectionedRFQCreationHandler:
                 return False
         return True
 
-    async def _autofill_location_from_pincode(self, delivery_data: Dict) -> Dict:
+    async def _autofill_location_from_pincode(self, delivery_data: Dict) -> Dict[str, Any]:
         """
         Auto-fill city and state from pincode using existing pincode lookup.
 
         IMPORTANT: Pincode is the authoritative source for city/state.
         User-provided city/state values are OVERRIDDEN by pincode lookup results
         to ensure data accuracy (e.g., user says "Mumbai 411005" but 411005 is Pune).
+
+        Returns:
+            Dict with:
+            - delivery_data: The updated delivery data (may have empty city/state if invalid)
+            - is_valid: Boolean indicating if pincode is valid
+            - error: Error message if invalid, None otherwise
         """
         pincode = delivery_data.get("pincode")
         if not pincode:
-            return delivery_data
+            return {
+                "delivery_data": delivery_data,
+                "is_valid": True,  # No pincode provided is not an error here
+                "error": None
+            }
 
         try:
             # Validate pincode format
             clean_pincode = str(pincode).strip()
             if not clean_pincode.isdigit() or len(clean_pincode) != 6:
                 logger.warning(f"[SECTIONED_RFQ] Invalid pincode format: {pincode}")
-                return delivery_data
+                return {
+                    "delivery_data": delivery_data,
+                    "is_valid": False,
+                    "error": f"Invalid pincode format: {pincode}. Please provide a valid 6-digit pincode."
+                }
 
             # Lookup location
             location_data = await get_location_from_pincode_async(clean_pincode)
@@ -1331,13 +1399,27 @@ class SectionedRFQCreationHandler:
 
                 if location_data.get("state"):
                     delivery_data["state"] = location_data["state"]
+
+                return {
+                    "delivery_data": delivery_data,
+                    "is_valid": True,
+                    "error": None
+                }
             else:
                 logger.warning(f"[SECTIONED_RFQ] No location data found for pincode: {pincode}")
+                return {
+                    "delivery_data": delivery_data,
+                    "is_valid": False,
+                    "error": f"Could not find location for pincode {pincode}. Please provide a valid Indian pincode."
+                }
 
         except Exception as e:
             logger.error(f"[SECTIONED_RFQ] Error auto-filling location from pincode: {e}")
-
-        return delivery_data
+            return {
+                "delivery_data": delivery_data,
+                "is_valid": False,
+                "error": f"Error validating pincode {pincode}. Please try again."
+            }
 
     async def _validate_delivery_date(self, date_str: str) -> Dict[str, Any]:
         """

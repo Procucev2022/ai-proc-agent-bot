@@ -36,8 +36,8 @@ class RFQItemSchema(BaseModel):
                 raise ValueError('Quantity must be a valid number')
         if v <= 0:
             raise ValueError('Quantity must be greater than 0')
-        if v > 100000:
-            raise ValueError('Please limit quantity to 100,000 pieces/units')
+        if v > 10000000:
+            raise ValueError('Please limit quantity to 1,00,00,000 pieces/units')
         return v
     
     @validator('unit_of_measures')

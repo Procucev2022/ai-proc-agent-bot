@@ -73,6 +73,35 @@ class EnhancedAutoCategorizationService:
         # Initialize OpenAI service
         self.openai_service = OpenAIService()
 
+    def _build_enhanced_description(self, item_description: str, hierarchy: Dict[str, Any]) -> str:
+        """
+        Build enhanced description for fallback search with deduplication.
+
+        Combines item description with hierarchy levels (L3, L2) for better
+        similarity matching, avoiding duplicate terms.
+
+        Args:
+            item_description: Original item description (e.g., "Batteries")
+            hierarchy: Dict with level_1_category, level_2_category, level_3_category
+
+        Returns:
+            Enhanced description string (e.g., "Batteries Power Systems")
+        """
+        # Start with the original item description
+        parts = [item_description.strip()]
+        item_lower = item_description.lower().strip()
+
+        # Use "or ''" to handle cases where key exists but value is None
+        l3 = (hierarchy.get("level_3_category") or "").strip()
+        if l3 and l3.lower() != item_lower:
+            parts.append(l3)
+
+        l2 = (hierarchy.get("level_2_category") or "").strip()
+        if l2 and l2.lower() != item_lower and l2.lower() != l3.lower():
+            parts.append(l2)
+        # Join all parts with spaces and return
+        return " ".join(parts)
+
     def _search_hierarchical_levels(
         self,
         item_description: str,
@@ -331,8 +360,18 @@ class EnhancedAutoCategorizationService:
                     if selected_category == "Other":
                         logger.info("OpenAI selected 'Other', trying fallback AutoCategorizationService")
                         try:
+                            # Step 1: Create a hierarchy dict from best_match:
+                            hierarchy = {
+                                "level_1_category": best_match.get("level_1_category", ""),
+                                "level_2_category": best_match.get("level_2_category", ""),
+                                "level_3_category": best_match.get("level_3_category", "")
+                                }
+                            # Step 2: Call self._build_enhanced_description(item_description, hierarchy)
+                            description = self._build_enhanced_description(item_description =  item_description, hierarchy = hierarchy)
+                            # Step 3: Replace item_description below with your enhanced_description variable
+
                             fallback_result = await self.fallback_service.categorize_item(
-                                item_description=item_description,
+                                item_description=description,  
                                 user_id=user_id,
                                 session_id=session_id
                             )
@@ -425,8 +464,21 @@ class EnhancedAutoCategorizationService:
                     if fallback_category is None or fallback_category == "Other":
                         logger.info("All vector matches are 'Other', trying fallback AutoCategorizationService")
                         try:
+                            # TODO(human) CHANGE 3: Build enhanced description using best_match hierarchy
+                            # Same pattern as CHANGE 2:
+                            # Step 1: Create hierarchy dict from best_match
+                            hierarchy = {
+                                "level_1_category": best_match.get("level_1_category", ""),
+                                "level_2_category": best_match.get("level_2_category", ""),
+                                "level_3_category": best_match.get("level_3_category", "")
+                                }
+                            
+                            # Step 2: Call self._build_enhanced_description(item_description, hierarchy)
+                            description = self._build_enhanced_description(item_description=item_description, hierarchy = hierarchy)
+                            # Step 3: Replace item_description below with enhanced_description
+
                             fallback_service_result = await self.fallback_service.categorize_item(
-                                item_description=item_description,
+                                item_description=description,  
                                 user_id=user_id,
                                 session_id=session_id
                             )
@@ -527,9 +579,9 @@ class EnhancedAutoCategorizationService:
                     # Store learning taxonomy info for later logging
                     learning_taxonomy_data = {
                         "learning_item_id": existing_result.get("learning_category_id"),
-                        "level_1_category": existing_result.get("level_1"),
-                        "level_2_category": existing_result.get("level_2"),
-                        "level_3_category": existing_result.get("level_3"),
+                        "level_1_category": existing_result.get("level_1_category"),
+                        "level_2_category": existing_result.get("level_2_category"),
+                        "level_3_category": existing_result.get("level_3_category"),
                         "category_path": existing_result.get("category_path"),
                         "match_level": "existing",
                         "learning_confidence": existing_result.get("confidence_score", 0.8)
@@ -556,14 +608,16 @@ class EnhancedAutoCategorizationService:
                         self.openai_service.close_sync()
 
                         # Store learning taxonomy info for later logging
+                        # Note: create_3_level_category returns level data nested under "learning_category"
+                        learning_category = create_result.get("learning_category", {})
                         learning_taxonomy_data = {
-                            "learning_item_id": create_result.get("learning_category_id"),
-                            "level_1_category": create_result.get("level_1"),
-                            "level_2_category": create_result.get("level_2"),
-                            "level_3_category": create_result.get("level_3"),
+                            "learning_item_id": create_result.get("learning_item_id"),
+                            "level_1_category": learning_category.get("level_1_category"),
+                            "level_2_category": learning_category.get("level_2_category"),
+                            "level_3_category": learning_category.get("level_3_category"),
                             "category_path": create_result.get("category_path"),
                             "match_level": "new",
-                            "learning_confidence": create_result.get("ai_confidence", 0.7)
+                            "learning_confidence": learning_category.get("confidence_score", 0.7)
                         }
 
                         # Continue to fallback service to get client category
@@ -578,12 +632,25 @@ class EnhancedAutoCategorizationService:
 
             # Step 3: Fallback to existing auto-categorization service
             logger.info("Using fallback auto-categorization service")
+
+            if learning_taxonomy_data:
+           
+                hierarchy = {
+                    "level_1_category": learning_taxonomy_data.get("level_1_category", ""),
+                    "level_2_category": learning_taxonomy_data.get("level_2_category", ""),
+                    "level_3_category": learning_taxonomy_data.get("level_3_category", "")
+                }
+                description = self._build_enhanced_description(item_description, hierarchy)
+            
+            else:
+                description = item_description
+            
             fallback_result = await self.fallback_service.categorize_with_learning(
-                item_description=item_description,
+                item_description=description,  
                 user_id=user_id,
                 session_id=session_id
             )
-            
+
             if fallback_result.get("success"):
                 processing_time = int((time.time() - start_time) * 1000)
                 fallback_reason = hierarchical_result.get("reason", "No matches found in hierarchical taxonomy search")

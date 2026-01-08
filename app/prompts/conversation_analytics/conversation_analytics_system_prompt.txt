@@ -107,8 +107,7 @@ Populate ONLY based on seller actions:
     - Seller RFQ request does NOT mean RFQ creation
     - Seller RFQ request means seller-side demand for RFQs
 - Seller RFQ Responded
-    event MUST be counted when the seller performs ANY of the following actions:
-    → Seller receives an RFQ notification message
+    event MUST be counted when the seller performs the following actions
     → Seller clicks "I am interested" button
 
     IMPORTANT:

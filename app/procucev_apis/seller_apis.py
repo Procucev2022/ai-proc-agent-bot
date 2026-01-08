@@ -114,6 +114,28 @@ class SellerAPIService:
             logger.error(f"Error checking seller credits: {e}")
             return {"success": False, "error": str(e)}
 
+    async def check_seller_rfq_status(self, seller_id: str,rfq_ids: List[str] = None) -> Dict[str, Any]:
+        """Check seller's RFQ request credit balance."""
+        try:
+            endpoint = "/rest/gmt/rfqSellerStatus"
+            data = {"clientId": seller_id}
+
+            response = await self.api_client.post(
+                endpoint=endpoint,
+                json_data=data,
+                require_auth=True,
+                api_title="check_seller_rfq_status"
+            )
+
+            if response.get('success'):
+                return {"success": True, "data": response.get('data')}
+            else:
+                return {"success": False, "error": response.get('message', 'Failed to get RFQ status for seller')}
+
+        except Exception as e:
+            logger.error(f"Error checking seller rfq status : {e}")
+            return {"success": False, "error": str(e)}
+
     async def send_rfq_email(self, rfq_ids: List[str], seller_email: str, seller_id: str) -> Dict[str, Any]:
         """Send RFQ details to seller via email."""
         try:
@@ -225,7 +247,7 @@ class SellerAPIService:
             endpoint = "/rest/gmt/getOpenRfqs"
             
             payload = {
-                "seller_id": seller_id
+                "id": seller_id
             }
 
             response = await self.api_client.post(

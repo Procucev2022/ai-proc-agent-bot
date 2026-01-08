@@ -79,10 +79,7 @@ class ProfileSelectionService:
                     return await self._redirect_to_buyer_registration(user_phone, session, message)
                 elif detected_type == 'seller':
                     return await self._redirect_to_seller_registration(user_phone, session, message)
-                else:
-                    # If no specific type detected, show registration options
-                    return await self._handle_no_profiles_found(user_phone, intent, session)
-
+                
             # Get user profiles from cache or API
             profiles_result = await self._get_user_profiles(user_phone, message, session)
 
@@ -914,6 +911,11 @@ class ProfileSelectionService:
                     # Redirect to support
                     support_message = redirect_info.get("message", "Please contact our support team for assistance.")
                     await self.whatsapp_service.send_message(user_phone, support_message, session_id=session)
+
+                    from app.services.exit_service import ExitService
+                    exit_service = ExitService(self.whatsapp_service, None, None, None)
+                    await exit_service.handle_exit_intent(user_phone, session, show_message=False)
+
 
                     return {
                         "status": "verification_failed",

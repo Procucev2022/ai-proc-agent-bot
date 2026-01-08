@@ -25,6 +25,7 @@ from app.schemas.rfq import RFQCreateRequestSchema, RFQValidationSchema
 from app.services.openai_service import OpenAIService
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.procucev_apis.rfq_apis import RFQAPIService
+from app.procucev_apis.seller_apis import SellerAPIService
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ class RFQService:
     def __init__(self):
         self.settings = get_settings()
         self.rfq_service = RFQAPIService()
+        self.seller_service=SellerAPIService()
 
         self.openai_service = OpenAIService()
 
@@ -65,7 +67,13 @@ class RFQService:
 
         # Step 2: Fetch from GMT API
         rfq_service = RFQAPIService()
-        result = await rfq_service.get_rfq_status(client_id=user.id, rfq_ids=rfq_ids)
+        seller_service = SellerAPIService()
+
+        if user.role == "buyer":
+            result = await rfq_service.get_rfq_status(client_id=user.id, rfq_ids=rfq_ids)
+        elif user.role == "seller":
+            result = await seller_service.check_seller_rfq_status(seller_id=user.id, rfq_ids=rfq_ids)
+
 
         # Handle case where data might be a list or dict
         data = result.get("data", {})
