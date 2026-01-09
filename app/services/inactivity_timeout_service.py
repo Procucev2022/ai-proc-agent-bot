@@ -490,16 +490,27 @@ class InactivityTimeoutService:
                                 continue
                         
                         workflow_type = session_data.get('workflow_type')
+                        outcome = session_data.get('outcome')
 
-                        # # Timeout ALL workflows if workflow_type is set (per requirement #4)
-                        # # Skip only if workflow_type is None or 'None' (no active workflow)
-                        # if not workflow_type or workflow_type == 'None':
-                        #     # No active workflow - skip timeout but log for debugging
-                        #     logger.debug(
-                        #         f"[TIMEOUT_SERVICE] Skipping {user_phone}: no workflow "
-                        #         f"(inactive {inactive_duration:.0f}s)"
-                        #     )
-                        #     continue
+                        # Skip if session already has a completed outcome (exit, abandoned, etc.)
+                        if outcome and outcome not in ['None', None]:
+                            logger.debug(
+                                f"[TIMEOUT_SERVICE] Skipping {user_phone}: session already completed "
+                                f"(outcome: {outcome}, inactive {inactive_duration:.0f}s)"
+                            )
+                            # Clean up orphaned activity key
+                            await self.redis.delete(activity_key)
+                            continue
+
+                        # Timeout ALL workflows if workflow_type is set (per requirement #4)
+                        # Skip only if workflow_type is None or 'None' (no active workflow)
+                        if not workflow_type or workflow_type == 'None':
+                            # No active workflow - skip timeout but log for debugging
+                            logger.debug(
+                                f"[TIMEOUT_SERVICE] Skipping {user_phone}: no workflow "
+                                f"(inactive {inactive_duration:.0f}s)"
+                            )
+                            continue
                         
                         logger.debug(
                             f"[TIMEOUT_SERVICE] Timeout detected for {user_phone}: "
