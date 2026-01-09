@@ -70,7 +70,7 @@ def normalize_phone_number(phone: str, default_country_code: str = "91") -> str:
 
 class BuyerRegistrationSchema(BaseModel):
     name: str = Field(..., description="Full name")
-    companyName: str = Field(..., description="Company name")
+    companyName: str = Field(..., description="Organization Full Name( with Pvt Ltd./Ltd./LLP)")
     email: str = Field(..., description="Organization email")
     zipCode: str = Field(..., description="Pincode")
     organizationPhonenumber: Optional[str] = Field(None, description="Phone number")
