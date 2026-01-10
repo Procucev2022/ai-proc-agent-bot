@@ -228,8 +228,6 @@ class SellerService:
         # Display RFQs with sequence numbers
         for i, rfq in enumerate(rfqs, 1):
             rfq_id = rfq.get("rfq_id", "")
-            category = rfq.get("categories", "")
-            category = category[:20] + "..." if len(category) > 20 else category
             delivery_date = rfq.get("delivery_date", "")
             location = rfq.get("location", "")
             project_description = rfq.get("project_description", "")
@@ -237,7 +235,6 @@ class SellerService:
             
             # Format: 1. **RFQ251012730180**
             message_parts.append(f"{i}. *{rfq_id}*")
-            message_parts.append(f"    • {category}")
             message_parts.append(f"    • {delivery_date}, {location}")
             message_parts.append(f"    • {project_description}")
         
@@ -654,6 +651,7 @@ class SellerService:
             ack_context = {
                 "workflow_state": "rfq_email_processing",
                 "selected_rfq_ids": selected_rfq_ids,
+                "user details":user
             }
 
             ack_message = await self.response_helpers.generate_seller_contextual_response(ack_context)
@@ -744,7 +742,8 @@ class SellerService:
                 "email_results": email_results,
                 "total_requested": len(selected_rfq_ids),
                 "successful_emails": successful_emails,
-                "error_analysis": error_analysis
+                "error_analysis": error_analysis,
+                "user details":user
             }
             logger.info(f"status context:{status_context}")
 
