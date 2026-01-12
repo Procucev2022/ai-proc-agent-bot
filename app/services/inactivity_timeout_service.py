@@ -697,9 +697,8 @@ class InactivityTimeoutService:
             
             # 7. Send worker timeout notification (system-side error message)
             worker_timeout_message = (
-                "Sorry, your request is taking longer than expected. "
-                "Please try sending your message again. "
-                "If the issue persists, please contact support."
+                "Sorry, your request is taking longer than expected due to high traffic. "
+                "Please try sending your message again in some time."
             )
             
             try:
