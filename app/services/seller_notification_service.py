@@ -417,29 +417,22 @@ class SellerNotificationService:
         Args:
             bid_data: Dictionary containing bid information:
                 - item_description: Item name/description
-                - category: Item category
                 - buy_price: Seller's listed price
                 - ask_price: Buyer's bid/offer price
                 - quantity: Quantity requested
-                - buyer_name: Buyer organization name (optional)
 
         Returns:
             Formatted message string
         """
         item_description = bid_data.get('item_description', 'N/A')
-        category = bid_data.get('category', '')
         buy_price = bid_data.get('buy_price', 0)
         ask_price = bid_data.get('ask_price', 0)
         quantity = bid_data.get('quantity', 1)
-        buyer_name = bid_data.get('buyer_name', '')
 
         lines = []
 
         # Item details
         lines.append(f"*Item:* {item_description}")
-
-        if category:
-            lines.append(f"*Category:* {category}")
 
         # Price details
         if buy_price:
@@ -447,9 +440,6 @@ class SellerNotificationService:
         lines.append(f"*Buyer's Offer:* ₹{ask_price:,.0f}")
 
         lines.append(f"*Quantity:* {quantity}")
-
-        if buyer_name:
-            lines.append(f"*Buyer:* {buyer_name}")
 
         return "\n".join(lines)
 
