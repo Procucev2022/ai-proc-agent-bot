@@ -142,7 +142,7 @@ if ENABLE_TEST_CRON:
 if ENABLE_BFS_NOTIFICATION:
     beat_schedule['bfs-notification-task'] = {
         'task': 'app.tasks.bfs_notification_task.process_bfs_seller_notifications',
-        'schedule': crontab(minute='*/5'),  # Every 5 minutes
+        'schedule': crontab(minute='*/30'),  # Every 30 minutes
         'options': {
             'expires': 300,
             'queue': 'bfs_notification'
