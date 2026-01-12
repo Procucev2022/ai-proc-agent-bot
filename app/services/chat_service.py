@@ -1961,7 +1961,8 @@ class ChatService:
             # Send processing message after validation checks pass
             await self.whatsapp_service.send_message(
                 user.phone_number,
-                "Please wait, the file is processing…"
+                "Please wait, the file is processing…",
+                clear_pending_reply=False  # Don't clear flag for acknowledgment
             )
             logger.info(f"[EXCEL-UPLOAD] Sent 'Please wait' message to {user.phone_number}")
 

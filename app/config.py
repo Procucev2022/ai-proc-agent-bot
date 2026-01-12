@@ -244,7 +244,7 @@ class Settings:
 
         # Queue Configuration
         self.batch_window_seconds: int = int(os.getenv("BATCH_WINDOW_SECONDS", "3"))
-        self.please_wait_threshold_seconds: int = int(os.getenv("PLEASE_WAIT_THRESHOLD_SECONDS", "15"))
+        self.please_wait_threshold_seconds: int = int(os.getenv("PLEASE_WAIT_THRESHOLD_SECONDS", "30"))
         self.max_please_wait_count: int = int(os.getenv("MAX_PLEASE_WAIT_COUNT", "3"))
         self.monitoring_poll_interval_seconds: int = int(os.getenv("MONITORING_POLL_INTERVAL_SECONDS", "2"))
         
@@ -253,6 +253,10 @@ class Settings:
         self.workflow_timeout_seconds: int = int(os.getenv("WORKFLOW_TIMEOUT_SECONDS", "300"))  # 5 minutes default
         self.timeout_poll_interval_seconds: int = int(os.getenv("TIMEOUT_POLL_INTERVAL_SECONDS", "30"))  # Check every 30 seconds
         self.activity_key_ttl_seconds: int = int(os.getenv("ACTIVITY_KEY_TTL_SECONDS", "420"))  # 7 minutes default (buffer beyond timeout)
+        
+        # Worker timeout detection configuration
+        self.pending_reply_ttl_seconds: int = int(os.getenv("PENDING_REPLY_TTL_SECONDS", "180"))  # 3 minutes default (longer than worker timeout)
+        self.worker_timeout_threshold_seconds: int = int(os.getenv("WORKER_TIMEOUT_THRESHOLD_SECONDS", "135"))  # 2m15s default (2min gunicorn timeout + 15s buffer)
 
         # Feature Flags
         self.USE_TRACK2_RFQ_FLOW = os.getenv("USE_TRACK2_RFQ_FLOW", "false").lower() == "true"

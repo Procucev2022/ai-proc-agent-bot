@@ -439,6 +439,17 @@ async def enqueue_message_async(webhook_data: Dict[str, Any]):
         # Update activity timestamp FIRST (for timeout tracking)
         if from_number:
             await timeout_service.update_user_activity(from_number)
+            
+            # Set pending_reply flag to track that user is waiting for a response
+            redis_service = get_redis_service()
+            settings = get_settings()
+            normalized_phone = from_number.lstrip('+') if from_number.startswith('+') else from_number
+            await redis_service.set(
+                f"{normalized_phone}:pending_reply",
+                "1",
+                ex=settings.pending_reply_ttl_seconds
+            )
+            logger.debug(f"[WORKER_TIMEOUT] Set pending_reply flag for {normalized_phone}")
         
         logger.info(f"Enqueueing text message: {webhook_data}")
 
@@ -482,6 +493,17 @@ async def process_message_async(webhook_data: Dict[str, Any]):
         # Update activity timestamp FIRST (for timeout tracking)
         if from_number:
             await timeout_service.update_user_activity(from_number)
+            
+            # Set pending_reply flag to track that user is waiting for a response
+            redis_service = get_redis_service()
+            settings = get_settings()
+            normalized_phone = from_number.lstrip('+') if from_number.startswith('+') else from_number
+            await redis_service.set(
+                f"{normalized_phone}:pending_reply",
+                "1",
+                ex=settings.pending_reply_ttl_seconds
+            )
+            logger.debug(f"[WORKER_TIMEOUT] Set pending_reply flag for {normalized_phone} (non-text)")
         
         processing_start_time = datetime.now()
         logger.info(f"Processing non-text message directly: {webhook_data}")
