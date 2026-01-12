@@ -120,6 +120,17 @@ class SellerAPIService:
             endpoint = "/rest/gmt/rfqSellerStatus"
             data = {"clientId": seller_id}
 
+            if rfq_ids and any(rfq_id is not None for rfq_id in rfq_ids):
+                valid_rfq_ids = [
+                    f"RFQ{rfq_id}" if not str(rfq_id).upper().startswith('RFQ') else rfq_id
+                    for rfq_id in rfq_ids
+                    if rfq_id is not None
+                ]
+
+                if valid_rfq_ids:
+                    data["rfqIds"] = valid_rfq_ids
+
+
             response = await self.api_client.post(
                 endpoint=endpoint,
                 json_data=data,
