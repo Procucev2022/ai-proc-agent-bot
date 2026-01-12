@@ -527,6 +527,39 @@ class ChatService:
                     )
                     return await handler.handle_request_rfq_click(user_phone, rfq_id, seller_id, session)
 
+                # Handle BFS seller Accept/Reject bid buttons
+                if button_id.startswith("bfs_seller_accept") or button_id.startswith("bfs_seller_reject"):
+                    is_accept = button_id.startswith("bfs_seller_accept")
+                    action_name = "Accept" if is_accept else "Reject"
+                    logger.info(f"BFS {action_name} Bid button detected: {button_id}")
+
+                    from app.services.handlers.bfs_seller_bid_handler import BFSSellerBidHandler
+
+                    # Parse button_id: bfs_seller_accept_{bfs_user_uuid}_{seller_id}
+                    # or bfs_seller_reject_{bfs_user_uuid}_{seller_id}
+                    prefix = "bfs_seller_accept_" if is_accept else "bfs_seller_reject_"
+                    suffix = button_id[len(prefix):]
+                    parts = suffix.rsplit("_", 1)  # Split from right, max 1 split
+                    bfs_user_uuid = parts[0] if parts else None
+                    seller_id = parts[1] if len(parts) > 1 else None
+
+                    # Track button click in conversation history
+                    self.session_manager.add_message_to_history(
+                        session, "user", f"[Button: {action_name} Bid] BFS: {bfs_user_uuid} SellerID:{seller_id}", "interactive"
+                    )
+
+                    handler = BFSSellerBidHandler(
+                        whatsapp_service=self.whatsapp_service,
+                        authentication_service=self.authentication_service,
+                        session_manager=self.session_manager,
+                        otp_service=self.authentication_service.otp_service if self.authentication_service else None
+                    )
+
+                    if is_accept:
+                        return await handler.handle_accept_bid_click(user_phone, bfs_user_uuid, seller_id, session)
+                    else:
+                        return await handler.handle_reject_bid_click(user_phone, bfs_user_uuid, seller_id, session)
+
                 if button_id.startswith("confirm_exit") or button_id.startswith("decline_exit"):
                     logger.info(f"Exit buttons clicked in auth workflow  - handling immediately to prevent loop")
                     exit_result = await self.exit_service.handle_exit_intent(user_phone, session,message=message_content)
@@ -595,6 +628,67 @@ class ChatService:
                             return {"status": "otp_invalid", "retry": True}
                     else:
                         logger.error("No OTP service available for seller_rfq_intimation OTP verification")
+                        await self.whatsapp_service.send_message(user_phone, "Sorry, there was an error verifying your code. Please try again.")
+                        return {"status": "error", "message": "OTP service not available"}
+
+            # CRITICAL: Handle bfs_seller_bid workflow BEFORE intent classification
+            # This workflow has stages: switch_prompt, otp - both need dedicated handling
+            # Reuses the same pattern as seller_rfq_intimation
+            if workflow_type_value == "bfs_seller_bid":
+                auth_stage = session.workflow_state.get("auth_stage") if session.workflow_state else None
+                logger.debug(f"bfs_seller_bid workflow detected, auth_stage={auth_stage}")
+
+                from app.services.handlers.bfs_seller_bid_handler import BFSSellerBidHandler
+
+                handler = BFSSellerBidHandler(
+                    whatsapp_service=self.whatsapp_service,
+                    authentication_service=self.authentication_service,
+                    session_manager=self.session_manager,
+                    otp_service=self.authentication_service.otp_service if self.authentication_service else None
+                )
+
+                if auth_stage == "switch_prompt":
+                    # Handle user's response to account switch prompt
+                    logger.info(f"Handling switch response for bfs_seller_bid")
+                    return await handler.handle_switch_response(user_phone, session, message_content)
+
+                elif auth_stage == "otp":
+                    # Handle OTP input for seller authentication
+                    logger.info(f"Handling OTP for bfs_seller_bid, OTP input: {message_content}")
+                    # Use the OTP service to validate
+                    if self.authentication_service and self.authentication_service.otp_service:
+                        otp_result = await self.authentication_service.otp_service.validate_otp(
+                            user_phone, session, message_content
+                        )
+                        logger.info(f"OTP verification result: {otp_result}")
+
+                        if otp_result.get("status") == "otp_valid":
+                            # OTP verified - now authenticate as the seller and execute bid action
+                            target_seller_email = session.workflow_state.get("target_seller_email")
+                            target_seller_id = session.workflow_state.get("target_seller_id")
+                            target_seller_user = session.workflow_state.get("target_seller_user")
+                            logger.info(f"OTP verified, authenticating as seller: {target_seller_email}, seller_id: {target_seller_id}")
+
+                            # Authenticate the user as the seller account
+                            if self.authentication_service and target_seller_user:
+                                auth_result = await self.authentication_service.store_user_session_with_email(
+                                    user_phone, [target_seller_user], target_seller_email
+                                )
+                                logger.debug(f"Seller authentication result: {auth_result}")
+
+                            # Execute the bid action after successful auth
+                            return await handler.handle_otp_validated(user_phone, session)
+                        elif otp_result.get("status") == "max_otp_exceeded":
+                            # Max OTP attempts exceeded - clear workflow
+                            session.workflow_type = None
+                            session.workflow_state = {}
+                            await self.session_manager.save_session(session)
+                            return {"status": "max_otp_exceeded", "message": "Maximum OTP attempts exceeded"}
+                        else:
+                            # OTP verification failed - keep in OTP stage for retry
+                            return {"status": "otp_invalid", "retry": True}
+                    else:
+                        logger.error("No OTP service available for bfs_seller_bid OTP verification")
                         await self.whatsapp_service.send_message(user_phone, "Sorry, there was an error verifying your code. Please try again.")
                         return {"status": "error", "message": "OTP service not available"}
 

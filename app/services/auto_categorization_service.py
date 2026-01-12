@@ -390,8 +390,8 @@ class AutoCategorizationService:
                     int((time.time() - start_time) * 1000)
                 )
 
-            # HIGH CONFIDENCE SHORTCUT: If top match similarity >= 0.85 and category is not "Other", skip LLM call
-            HIGH_SIMILARITY_THRESHOLD = 0.85
+            # HIGH CONFIDENCE SHORTCUT: If top match similarity >= 0.9 and category is not "Other", skip LLM call
+            HIGH_SIMILARITY_THRESHOLD = 0.9
             top_match = similar_items[0]
             if top_match["similarity_score"] >= HIGH_SIMILARITY_THRESHOLD and top_match["category"] != "Other":
                 processing_time = int((time.time() - start_time) * 1000)

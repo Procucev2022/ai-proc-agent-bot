@@ -19,6 +19,7 @@ ENABLE_DAILY_CATEGORY_REBUILD = True  # Daily rebuild of category_items vector s
 ENABLE_LOG_CLEANUP = True  # Daily log cleanup and archival
 ENABLE_EXPORT_EXCEL = True  # Export Excel reports every 12 hours
 ENABLE_TEST_CRON = True
+ENABLE_BFS_NOTIFICATION = True  # BFS seller bid notifications
 # ============================================================================
 
 # Basic Celery configuration
@@ -138,6 +139,16 @@ if ENABLE_TEST_CRON:
         }
     }
 
+if ENABLE_BFS_NOTIFICATION:
+    beat_schedule['bfs-notification-task'] = {
+        'task': 'app.tasks.bfs_notification_task.process_bfs_seller_notifications',
+        'schedule': crontab(minute='*/5'),  # Every 5 minutes
+        'options': {
+            'expires': 300,
+            'queue': 'bfs_notification'
+        }
+    }
+
 # Task routing - distribute tasks across different queues
 task_routes = {
     'app.tasks.auto_categorization_task.*': {'queue': 'categorization'},
@@ -148,6 +159,7 @@ task_routes = {
     'app.tasks.log_cleanup_task.*': {'queue': 'maintenance'},
     'app.tasks.export_excel_task.*': {'queue': 'export'},
     'app.tasks.test_cron_task.*': {'queue': 'default'},
+    'app.tasks.bfs_notification_task.*': {'queue': 'bfs_notification'},
 }
 
 # Queue configuration

@@ -144,21 +144,21 @@ def _build_item_key(item: Dict) -> str:
 def generate_bid_format(bfs_items: List[Dict]) -> str:
     """
     Generate editable bid format from BFS search results.
-    Format: Description - Specification : Price (no indices)
+    Format: Number. Description - Specification : Price
 
     Args:
         bfs_items: List of BFS items with description, specification, sellPrice
 
     Returns:
         Formatted string like:
-        Dell XPS 13 - Intel i7, 16GB RAM : 85000
-        HP Pavilion - AMD Ryzen : 70000
+        1. Dell XPS 13 - Intel i7, 16GB RAM : 85000
+        2. HP Pavilion - AMD Ryzen : 70000
     """
     lines = []
-    for item in bfs_items:
+    for idx, item in enumerate(bfs_items, start=1):
         key = _build_item_key(item)
         price = int(item.get("sellPrice") or 0)
-        lines.append(f"{key} : {price}")
+        lines.append(f"{idx}. {key} : {price}")
     return "\n".join(lines)
 
 
@@ -194,8 +194,10 @@ def parse_bid_format(text: str, original_items: List[Dict]) -> Dict[str, Any]:
         key = _build_item_key(item).lower()
         original_lookup[key] = item
 
-    # Parse each line: "Name - Spec : Price"
+    # Parse each line: "Number. Name - Spec : Price" or "Name - Spec : Price"
     pattern = r'^(.+?)\s*:\s*([\d,]+(?:\.\d+)?)\s*$'
+    # Pattern to strip leading number prefix like "1. " or "2. "
+    number_prefix_pattern = r'^\d+\.\s*'
     bids = []
 
     for line in text.split('\n'):
@@ -208,6 +210,8 @@ def parse_bid_format(text: str, original_items: List[Dict]) -> Dict[str, Any]:
             return {"error": f"Invalid format: '{line}'\nExpected: Product Name - Spec : Price"}
 
         item_key = match.group(1).strip()
+        # Strip leading number prefix (e.g., "1. " or "2. ") for matching
+        item_key = re.sub(number_prefix_pattern, '', item_key).strip()
         price_str = match.group(2).replace(',', '')
 
         # Validate item exists in original list

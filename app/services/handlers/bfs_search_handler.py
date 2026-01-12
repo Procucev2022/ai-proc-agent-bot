@@ -62,10 +62,6 @@ class BFSSearchHandler:
 
             return {"status": "bfs_awaiting_product_description"}
 
-        elif button_id == "bfs_accept_price":
-            logger.info(f"[BFS] Accept Price button clicked")
-            return await self.accept_prices_flow(user, session)
-
         elif button_id in ("bfs_negotiate", "bfs_place_bid"):
             logger.info(f"[BFS] {button_id} button clicked")
             return await self.initiate_bid_flow(user, session)
@@ -299,8 +295,7 @@ class BFSSearchHandler:
                         result_message += f"\n\t*₹{price:,.0f}*"
 
                 buttons = [
-                    {"id": "bfs_accept_price", "title": "Accept Price"},
-                    {"id": "bfs_negotiate", "title": "Negotiate"},
+                    {"id": "bfs_negotiate", "title": "Place Bid"},
                     {"id": "bfs_cancel", "title": "Cancel"}
                 ]
 
@@ -363,13 +358,12 @@ class BFSSearchHandler:
 
         # Send format message with Cancel button
         message = (
-            "*Negotiate your prices:*\n\n"
             f"{bid_format}\n\n"
             "*Instructions:*\n"
             "1. Copy the format above\n"
-            "2. Change the prices you want to negotiate\n"
-            "3. Send it back\n\n"
-            "_Remove any items you don't want to bid on._"
+            "2. Edit the prices you want to offer\n"
+            "3. Keep only the products you wish to bid on\n"
+            "4. Send it back"
         )
 
         buttons = [{"id": "bfs_bid_cancel", "title": "Cancel"}]
@@ -377,64 +371,13 @@ class BFSSearchHandler:
             user.phone_number,
             message,
             buttons,
-            header="Negotiate Price",
-            footer="",
+            header="Place Your Bid",
+            footer="Edit prices below, then send",
             session_id=session
         )
 
         logger.info(f"[BFS Bid] Sent bid format with {len(bfs_results)} items")
         return {"status": "bfs_awaiting_bid_format"}
-
-    async def accept_prices_flow(
-        self,
-        user: User,
-        session: ConversationSession
-    ) -> Dict[str, Any]:
-        """
-        Accept original prices without negotiation - skip directly to OTP.
-        Called when user clicks "Accept Price" button.
-        """
-        logger.info(f"[BFS Bid] Accept prices flow for user {user.phone_number}")
-
-        # Get BFS results from session
-        bfs_results = session.workflow_state.get("bfs_results", []) if session.workflow_state else []
-
-        if not bfs_results:
-            await self.whatsapp_service.send_message(
-                user.phone_number,
-                "No items available. Please search again.",
-                session_id=session
-            )
-            return {"status": "bfs_no_items_to_accept"}
-
-        # Build bid items with original prices
-        bid_items = []
-        for item in bfs_results:
-            if isinstance(item, dict):
-                bid_items.append({
-                    "description": item.get("description", ""),
-                    "specification": item.get("specification", ""),
-                    "price": item.get("sellPrice", 0),
-                    "original_item": item
-                })
-
-        if not bid_items:
-            await self.whatsapp_service.send_message(
-                user.phone_number,
-                "Unable to process items. Please try again.",
-                session_id=session
-            )
-            return {"status": "bfs_accept_no_valid_items"}
-
-        # Store bid items in session and proceed to OTP
-        if not session.workflow_state:
-            session.workflow_state = {}
-        session.workflow_state["bfs_bid_items"] = bid_items
-        session.workflow_state["bfs_bid_retry_count"] = 0
-        await self.session_manager.save_session(session, persist_to_db=False)
-
-        logger.info(f"[BFS Bid] Accepting {len(bid_items)} items at original prices, proceeding to OTP")
-        return await self._send_bid_otp(user, session, bid_items)
 
     async def handle_bid_format_input(
         self,
@@ -634,8 +577,10 @@ class BFSSearchHandler:
     ) -> Dict[str, Any]:
         """
         Submit bids to the backend API.
-        API endpoint to be provided later - currently placeholder.
+        Calls the BFS request item API for each bid.
         """
+        from app.redis_db import get_auth_redis_service
+
         logger.info(f"[BFS Bid] Submitting bids to API")
 
         # Get bid items from session
@@ -651,26 +596,65 @@ class BFSSearchHandler:
             await self._clear_bid_state(session)
             return {"status": "bfs_bid_no_items"}
 
-        # Prepare bid payloads
-        bid_payloads = []
+        # Get user data from Redis for org_id and user_id
+        auth_redis = get_auth_redis_service()
+        normalized_phone = user.phone_number.lstrip('+')
+        user_data = await auth_redis.retrieve(normalized_phone)
+
+        if not user_data or not user_data.org_id or not user_data.id:
+            logger.error(f"[BFS Bid] Missing user data for {user.phone_number}")
+            await self.whatsapp_service.send_message(
+                user.phone_number,
+                "Unable to verify your account. Please contact support.",
+                session_id=session
+            )
+            await self._clear_bid_state(session)
+            return {"status": "bfs_bid_missing_user_data"}
+
+        org_id = user_data.org_id
+        user_id = user_data.id
+        buyer_phone = user.phone_number
+
+        # Submit each bid to the API
+        successful_bids = []
+        failed_bids = []
+
         for bid in bid_items:
             original_item = bid.get("original_item", {})
-            payload = {
-                "itemId": original_item.get("id"),
-                "itemDescription": original_item.get("description"),
-                "specification": original_item.get("specification"),
-                "bidPrice": bid["price"],
-                "originalPrice": original_item.get("sellPrice"),
-                "availableQuantity": original_item.get("availableQuantity"),
-            }
-            bid_payloads.append(payload)
+            item_id = original_item.get("id")
+            buy_price = original_item.get("sellPrice", 0)
+            ask_price = bid.get("price", 0)
+            quantity = 1  # Default quantity per bid
 
-        logger.info(f"[BFS Bid] Bid payloads: {bid_payloads}")
+            if not item_id:
+                logger.warning(f"[BFS Bid] Skipping bid with missing item_id: {bid}")
+                failed_bids.append({"bid": bid, "error": "Missing item ID"})
+                continue
 
-        # TODO: Call actual bid API when endpoint is available
-        # For now, simulate success
-        # api_result = await self.bfs_api_service.submit_bids(bid_payloads)
-        api_result = {"success": True}  # Placeholder
+            logger.info(f"[BFS Bid] Submitting bid for item {item_id}: ask_price={ask_price}, buy_price={buy_price}")
+
+            api_result = await self.bfs_api_service.request_bfs_item(
+                item_id=item_id,
+                buy_price=buy_price,
+                ask_price=ask_price,
+                quantity=quantity,
+                org_id=org_id,
+                user_id=user_id,
+                buyer_phone=buyer_phone
+            )
+
+            if api_result.get("success"):
+                successful_bids.append({"bid": bid, "response": api_result})
+                logger.info(f"[BFS Bid] Successfully submitted bid for item {item_id}")
+            else:
+                failed_bids.append({"bid": bid, "error": api_result.get("error")})
+                logger.error(f"[BFS Bid] Failed to submit bid for item {item_id}: {api_result.get('error')}")
+
+        # Determine overall result
+        if successful_bids:
+            api_result = {"success": True, "successful_count": len(successful_bids), "failed_count": len(failed_bids)}
+        else:
+            api_result = {"success": False, "error": "All bids failed"}
 
         if api_result.get("success"):
             # Generate success summary

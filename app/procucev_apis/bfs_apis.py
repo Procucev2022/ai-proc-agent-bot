@@ -12,8 +12,11 @@ from app.procucev_apis.procucev_api_client import get_procucev_api_client
 
 logger = logging.getLogger(__name__)
 
-# BFS API endpoint
-BFS_API_URL = "https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net/rest/bfs/getBfsItemsByCategory"
+# BFS API endpoints
+BFS_SEARCH_URL = "https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net/rest/bfs/getBfsItemsByCategory"
+BFS_REQUEST_ITEM_URL = "https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net/rest/bfs/requestBfsItem"
+BFS_ACCEPT_BID_URL = "https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net/rest/bfs/acceptBfsItemBySeller"
+BFS_REJECT_BID_URL = "https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net/rest/bfs/rejectBfsItemBySeller"
 
 
 class BFSAPIService:
@@ -42,85 +45,205 @@ class BFSAPIService:
         try:
             logger.info(f"[BFS API] Searching BFS items with payload: {products}")
 
-            # ============ MOCK DATA FOR TESTING ============
-            # TODO: Remove this mock data and uncomment actual API call below
-            mock_data = [
-                {
-                    "id": "BFS001",
-                    "description": "Dell XPS 13",
-                    "specification": "Intel i7, 16GB RAM, 512GB SSD",
-                    "availableQuantity": 5,
-                    "sellPrice": 85000,
-                    "ageOfAsset": "1"
-                },
-                {
-                    "id": "BFS002",
-                    "description": "HP Pavilion 15",
-                    "specification": "AMD Ryzen 5, 8GB RAM, 256GB SSD",
-                    "availableQuantity": 3,
-                    "sellPrice": 55000,
-                    "ageOfAsset": "2"
-                },
-                {
-                    "id": "BFS003",
-                    "description": "Lenovo ThinkPad E14",
-                    "specification": "Intel i5, 8GB RAM, 512GB SSD",
-                    "availableQuantity": 8,
-                    "sellPrice": 62000,
-                    "ageOfAsset": "1"
-                },
-                {
-                    "id": "BFS004",
-                    "description": "MacBook Air M1",
-                    "specification": "Apple M1, 8GB RAM, 256GB SSD",
-                    "availableQuantity": 2,
-                    "sellPrice": 92000,
-                    "ageOfAsset": "1"
-                },
-                {
-                    "id": "BFS005",
-                    "description": "ASUS VivoBook",
-                    "specification": "Intel i3, 4GB RAM, 1TB HDD",
-                    "availableQuantity": 10,
-                    "sellPrice": 35000,
-                    "ageOfAsset": "3"
-                }
-            ]
-            logger.info(f"[BFS API] Returning MOCK data for testing: {len(mock_data)} items")
-            return {
-                "success": True,
-                "data": mock_data,
-                "raw_response": {"mock": True}
-            }
-            # ============ END MOCK DATA ============
+            response = await self.api_client.post(
+                endpoint=BFS_SEARCH_URL,
+                json_data=products,
+                require_auth=True,
+                api_title="BFS Search Items API"
+            )
 
-            # ACTUAL API CALL (commented out for testing)
-            # response = await self.api_client.post(
-            #     endpoint=BFS_API_URL,
-            #     json_data=products,
-            #     require_auth=True,
-            #     api_title="BFS Search Items API"
-            # )
-            #
-            # if response.get('success'):
-            #     logger.info(f"[BFS API] Search successful, found items: {response.get('data')}")
-            #     return {
-            #         "success": True,
-            #         "data": response.get('data'),
-            #         "raw_response": response
-            #     }
-            # else:
-            #     logger.error(f"[BFS API] Search failed: {response}")
-            #     return {
-            #         "success": False,
-            #         "error": response.get('message', 'BFS search failed'),
-            #         "raw_response": response
-            #     }
+            if response.get('success'):
+                logger.info(f"[BFS API] Search successful, found items: {response.get('data')}")
+                return {
+                    "success": True,
+                    "data": response.get('data'),
+                    "raw_response": response
+                }
+            else:
+                logger.error(f"[BFS API] Search failed: {response}")
+                return {
+                    "success": False,
+                    "error": response.get('message', 'BFS search failed'),
+                    "raw_response": response
+                }
 
         except Exception as e:
             logger.error(f"[BFS API] Error searching BFS items: {e}")
             return {
                 "success": False,
+                "error": str(e)
+            }
+
+    async def request_bfs_item(
+        self,
+        item_id: str,
+        buy_price: float,
+        ask_price: float,
+        quantity: int,
+        org_id: str,
+        user_id: str,
+        buyer_phone: str
+    ) -> Dict[str, Any]:
+        """
+        Request/bid on a BFS item.
+
+        Args:
+            item_id: The ID of the BFS item to request (from search results).
+            buy_price: The seller's listed price for the item.
+            ask_price: The buyer's bid/offer amount.
+            quantity: Number of items to request.
+            org_id: The buyer's organization ID.
+            user_id: The buyer's user ID.
+            buyer_phone: The buyer's phone number.
+
+        Returns:
+            API response with request confirmation or error.
+        """
+        try:
+            payload = {
+                "buyPrice": buy_price,
+                "quantity": quantity,
+                "askPrice": ask_price,
+                "org": {
+                    "id": org_id
+                },
+                "items": {
+                    "id": item_id
+                },
+                "user": {
+                    "id": user_id
+                },
+                "buyerPhone": buyer_phone
+            }
+
+            logger.info(f"[BFS API] Requesting BFS item with payload: {payload}")
+
+            response = await self.api_client.post(
+                endpoint=BFS_REQUEST_ITEM_URL,
+                json_data=payload,
+                require_auth=True,
+                api_title="BFS Request Item API"
+            )
+
+            if response.get('success'):
+                logger.info(f"[BFS API] BFS item request successful: {response.get('data')}")
+                return {
+                    "success": True,
+                    "data": response.get('data'),
+                    "raw_response": response
+                }
+            else:
+                logger.error(f"[BFS API] BFS item request failed: {response}")
+                return {
+                    "success": False,
+                    "error": response.get('message', 'BFS item request failed'),
+                    "raw_response": response
+                }
+
+        except Exception as e:
+            logger.error(f"[BFS API] Error requesting BFS item: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    async def accept_bid_by_seller(self, bfs_user_id: str) -> Dict[str, Any]:
+        """
+        Accept a BFS bid as a seller.
+
+        Called when seller clicks "Accept Bid" button on the notification.
+        This confirms the seller agrees to the buyer's offered price.
+
+        Args:
+            bfs_user_id: The bfs_users record UUID (from button callback)
+
+        Returns:
+            API response with acceptance confirmation or error
+        """
+        try:
+            payload = {"id": bfs_user_id}
+
+            logger.info(f"[BFS API] Seller accepting bid: {bfs_user_id}")
+
+            response = await self.api_client.post(
+                endpoint=BFS_ACCEPT_BID_URL,
+                json_data=payload,
+                require_auth=True,
+                api_title="BFS Accept Bid API"
+            )
+
+            if response.get('success'):
+                logger.info(f"[BFS API] Bid accepted successfully: {bfs_user_id}")
+                return {
+                    "success": True,
+                    "bfs_user_id": bfs_user_id,
+                    "data": response.get('data'),
+                    "raw_response": response
+                }
+            else:
+                logger.error(f"[BFS API] Bid acceptance failed: {response}")
+                return {
+                    "success": False,
+                    "bfs_user_id": bfs_user_id,
+                    "error": response.get('message', 'Bid acceptance failed'),
+                    "raw_response": response
+                }
+
+        except Exception as e:
+            logger.error(f"[BFS API] Error accepting bid {bfs_user_id}: {e}")
+            return {
+                "success": False,
+                "bfs_user_id": bfs_user_id,
+                "error": str(e)
+            }
+
+    async def reject_bid_by_seller(self, bfs_user_id: str) -> Dict[str, Any]:
+        """
+        Reject a BFS bid as a seller.
+
+        Called when seller clicks "Reject Bid" button on the notification.
+        This declines the buyer's offered price.
+
+        Args:
+            bfs_user_id: The bfs_users record UUID (from button callback)
+
+        Returns:
+            API response with rejection confirmation or error
+        """
+        try:
+            payload = {"id": bfs_user_id}
+
+            logger.info(f"[BFS API] Seller rejecting bid: {bfs_user_id}")
+
+            response = await self.api_client.post(
+                endpoint=BFS_REJECT_BID_URL,
+                json_data=payload,
+                require_auth=True,
+                api_title="BFS Reject Bid API"
+            )
+
+            if response.get('success'):
+                logger.info(f"[BFS API] Bid rejected successfully: {bfs_user_id}")
+                return {
+                    "success": True,
+                    "bfs_user_id": bfs_user_id,
+                    "data": response.get('data'),
+                    "raw_response": response
+                }
+            else:
+                logger.error(f"[BFS API] Bid rejection failed: {response}")
+                return {
+                    "success": False,
+                    "bfs_user_id": bfs_user_id,
+                    "error": response.get('message', 'Bid rejection failed'),
+                    "raw_response": response
+                }
+
+        except Exception as e:
+            logger.error(f"[BFS API] Error rejecting bid {bfs_user_id}: {e}")
+            return {
+                "success": False,
+                "bfs_user_id": bfs_user_id,
                 "error": str(e)
             }
 
