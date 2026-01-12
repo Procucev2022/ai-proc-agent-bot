@@ -253,6 +253,11 @@ class Settings:
         self.workflow_timeout_seconds: int = int(os.getenv("WORKFLOW_TIMEOUT_SECONDS", "300"))  # 5 minutes default
         self.timeout_poll_interval_seconds: int = int(os.getenv("TIMEOUT_POLL_INTERVAL_SECONDS", "30"))  # Check every 30 seconds
         self.activity_key_ttl_seconds: int = int(os.getenv("ACTIVITY_KEY_TTL_SECONDS", "420"))  # 7 minutes default (buffer beyond timeout)
+        
+        # Worker timeout detection configuration
+        # Threshold to detect if a worker has timed out (worker timeout + buffer for batching delays)
+        # Default: 135s = 120s worker timeout (from gunicorn_config.py) + 15s buffer
+        self.worker_timeout_threshold_seconds: int = int(os.getenv("WORKER_TIMEOUT_THRESHOLD_SECONDS", "135"))
 
         # Feature Flags
         self.USE_TRACK2_RFQ_FLOW = os.getenv("USE_TRACK2_RFQ_FLOW", "false").lower() == "true"

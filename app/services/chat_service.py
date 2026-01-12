@@ -608,6 +608,12 @@ class ChatService:
                 self.session_manager.add_message_to_history(session, "user", message_content, message_type)
                 message_intent_result = {"intent": "greeting", "confidence": 0}
 
+            # CRITICAL: Save session to Redis immediately after adding user message to history
+            # This ensures inactivity timeout service can see the updated conversation history
+            # when polling for worker timeout detection
+            await self.session_manager.save_session(session, session.workflow_type)
+            logger.debug(f"Saved session to Redis after adding user message to history")
+
             # Track meaningful messages during auth/registration flows for later processing
             self._track_meaningful_message_during_auth_flow(session, message_intent_result.get('relevant_message') or message_content, message_intent_result)
 

@@ -71,6 +71,7 @@ class InactivityTimeoutService:
         self.poll_interval = settings.timeout_poll_interval_seconds  # Default: 30
         self.activity_key_ttl = settings.activity_key_ttl_seconds  # Default: 420 (7 min)
         self.enabled = settings.workflow_timeout_enabled  # Default: True
+        self.worker_timeout_threshold = settings.worker_timeout_threshold_seconds  # Default: 135 (2m15s)
         
         # WhatsApp service for notifications
         self.whatsapp_service = WhatsAppService()
@@ -80,12 +81,160 @@ class InactivityTimeoutService:
         
         logger.debug(
             f"[TIMEOUT_SERVICE] Initialized: timeout={self.timeout_seconds}s, "
-            f"poll_interval={self.poll_interval}s, activity_ttl={self.activity_key_ttl}s, enabled={self.enabled}"
+            f"poll_interval={self.poll_interval}s, activity_ttl={self.activity_key_ttl}s, "
+            f"worker_timeout_threshold={self.worker_timeout_threshold}s, enabled={self.enabled}"
         )
 
     # ========================================================================
     # Helper Methods
     # ========================================================================
+
+    async def _get_last_message_sender(self, session_id: str) -> Optional[str]:
+        """
+        Get the role of the last message sender from conversation history.
+        
+        Handles edge cases:
+        - Session doesn't exist
+        - conversation_history is None or not a dict
+        - messages array is empty
+        - message doesn't have 'role' field
+        
+        Args:
+            session_id: Redis session ID
+            
+        Returns:
+            'user' if last message from user
+            'assistant' if last message from system/assistant
+            None if cannot determine (empty history or errors)
+        """
+        try:
+            # Get session from Redis
+            session_data = await self.redis_session.get_session(session_id)
+            
+            if not session_data:
+                logger.debug(f"[LAST_SENDER] No session data found for {session_id}")
+                return None
+            
+            # Get conversation_history
+            conversation_history = session_data.get('conversation_history')
+            
+            if not conversation_history or not isinstance(conversation_history, dict):
+                logger.debug(f"[LAST_SENDER] No valid conversation_history for {session_id}")
+                return None
+            
+            # Get messages array
+            messages = conversation_history.get('messages', [])
+            
+            if not messages:
+                logger.debug(f"[LAST_SENDER] Empty messages array for {session_id}")
+                return None
+            
+            # Get last message
+            last_message = messages[-1]
+            last_sender = last_message.get('role')
+            
+            if not last_sender:
+                logger.debug(f"[LAST_SENDER] No 'role' field in last message for {session_id}")
+                return None
+            
+            return last_sender
+            
+        except Exception as e:
+            logger.error(f"[LAST_SENDER] Error getting last sender for {session_id}: {e}", exc_info=True)
+            return None
+
+    async def _handle_worker_timeout(self, user_phone: str, session_id: str, inactive_duration: float) -> None:
+        """
+        Handle worker timeout by notifying user and cleaning up session.
+        
+        This is triggered when:
+        - User sent a message (last_sender == 'user')
+        - Worker processing has exceeded 135s (120s worker timeout + 15s buffer)
+        - User inactivity timeout (300s) not yet reached
+        
+        Args:
+            user_phone: User's phone number
+            session_id: Redis session ID
+            inactive_duration: How long user has been inactive (seconds)
+        """
+        try:
+            logger.info(
+                f"[WORKER_TIMEOUT] Handling worker timeout for {user_phone} "
+                f"(inactive for {inactive_duration:.1f}s)"
+            )
+            
+            # Get session data
+            session_data = await self.redis_session.get_session(session_id)
+            
+            if not session_data:
+                logger.warning(f"[WORKER_TIMEOUT] No session found for {user_phone}, cannot handle timeout")
+                return
+            
+            # Convert session data to ConversationSession object
+            # Use the same conversion method as inactivity timeout handling
+            from app.services.session_management_service import SessionManagementService
+            from app.services.chat_summary_service import ChatSummaryService
+            from app.services.daily_summary_service import DailySummaryService
+            from app.database import DatabaseManager
+            
+            db_manager = DatabaseManager()
+            chat_summary_service = ChatSummaryService(db_manager)
+            daily_summary_service = DailySummaryService(db_manager)
+            
+            session_manager = SessionManagementService(
+                db_manager, self.whatsapp_service, chat_summary_service, daily_summary_service
+            )
+            
+            session = session_manager._dict_to_session(session_data)
+            
+            # Send timeout notification message
+            timeout_message = (
+                "Your request has timed out due to high server load. "
+                "Please try again. If this persists, please contact support.\\n\\n"
+                "Your session has been cleared."
+            )
+            
+            try:
+                await self.whatsapp_service.send_message(user_phone, timeout_message)
+                logger.info(f"[WORKER_TIMEOUT] Sent timeout notification to {user_phone}")
+            except Exception as send_error:
+                logger.error(f"[WORKER_TIMEOUT] Failed to send timeout message to {user_phone}: {send_error}")
+            
+            # Perform same cleanup as user inactivity timeout
+            # Mark session as timed out and persist to database
+            from app.models import ConversationOutcome
+            session.outcome = ConversationOutcome.timeout
+            
+            # Save to database for audit trail
+            await session_manager.save_session(session, session.workflow_type, persist_to_db=True)
+            logger.info(f"[WORKER_TIMEOUT] Persisted timed-out session to database for {user_phone}")
+            
+            # Clear Redis session (same as inactivity timeout cleanup)
+            await self.redis_session.delete_session(session_id)
+            logger.info(f"[WORKER_TIMEOUT] Cleared Redis session for {user_phone}")
+            
+            # Clear activity key to prevent repeated timeout handling
+            activity_key = f"{user_phone}:last_activity"
+            await self.redis.delete(activity_key)
+            logger.info(f"[WORKER_TIMEOUT] Cleared activity key for {user_phone}")
+            
+            # Clear incoming/outgoing queues
+            incoming_key = f"{user_phone}:incoming_queue"
+            outgoing_key = f"{user_phone}:outgoing_queue"
+            await self.redis.delete(incoming_key)
+            await self.redis.delete(outgoing_key)
+            logger.info(f"[WORKER_TIMEOUT] Cleared message queues for {user_phone}")
+            
+            logger.info(
+                f"[WORKER_TIMEOUT] Successfully handled worker timeout for {user_phone} "
+                f"after {inactive_duration:.1f}s of inactivity"
+            )
+            
+        except Exception as e:
+            logger.error(
+                f"[WORKER_TIMEOUT] Error handling worker timeout for {user_phone}: {e}",
+                exc_info=True
+            )
 
     async def _generate_timeout_message(self, user_details: User, session_data: ConversationSession) -> str:
         """
@@ -415,10 +564,25 @@ class InactivityTimeoutService:
                     last_activity_timestamp = float(last_activity)
                     inactive_duration = now - last_activity_timestamp
                     
+                    # Get session to check workflow type
+                    session_id = SessionHelpers.generate_session_id(user_phone, "daily")
+                    
+                    # WORKER TIMEOUT DETECTION:
+                    # Detect when worker times out (120s) before user inactivity timeout (300s)
+                    # Check last message sender to determine if user is waiting for a response
+                    # Worker timeout threshold is 135s (120s worker timeout + 15s buffer)
+                    if self.worker_timeout_threshold <= inactive_duration < self.timeout_seconds:
+                        last_sender = await self._get_last_message_sender(session_id)
+                        if last_sender == 'user':
+                            logger.warning(
+                                f"[WORKER_TIMEOUT] Detected worker timeout for {user_phone}: "
+                                f"inactive_duration={inactive_duration:.1f}s, last_sender={last_sender}"
+                            )
+                            await self._handle_worker_timeout(user_phone, session_id, inactive_duration)
+                            continue  # Skip to next user - timeout already handled
+                    
                     # Check if timed out
                     if inactive_duration >= self.timeout_seconds:
-                        # Get session to check workflow type
-                        session_id = SessionHelpers.generate_session_id(user_phone, "daily")
                         session_data = await self.redis_session.get_session(session_id)
                         
                         if not session_data:
