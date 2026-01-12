@@ -77,6 +77,7 @@ def _extract_bid_format_section(text: str) -> Tuple[str, str]:
     # Pattern to detect header/instruction lines that should be skipped
     header_patterns = [
         r'^\s*\*?place\s+your\s+bids',
+        r'^\s*\*?place\s+bid\*?\s*$',  # Matches "*Place Bid*" header
         r'^\s*\*?modify\s+the\s+prices',
         r'^\s*_?copy\s+the\s+format',
         r'^\s*_?remove\s+any\s+items',

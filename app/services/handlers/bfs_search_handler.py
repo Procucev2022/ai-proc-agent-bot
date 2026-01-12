@@ -358,12 +358,9 @@ class BFSSearchHandler:
 
         # Send format message with Cancel button
         message = (
-            f"{bid_format}\n\n"
-            "*Instructions:*\n"
-            "1. Copy the format above\n"
-            "2. Edit the prices you want to offer\n"
-            "3. Keep only the products you wish to bid on\n"
-            "4. Send it back"
+            "*Place Bid*\n\n"
+            "Copy the format below, modify the prices, and remove items you don't want to bid on:\n\n"
+            f"{bid_format}"
         )
 
         buttons = [{"id": "bfs_bid_cancel", "title": "Cancel"}]
