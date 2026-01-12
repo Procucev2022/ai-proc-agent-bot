@@ -1057,7 +1057,7 @@ class MessageQueueService:
                 
                 await self.whatsapp_service.send_message(
                     recipient_id=recipient_id,
-                    message="We are working on your request. Please wait while we process it.",
+                    message="Got it. Please wait while we process your request, we will be back shortly.",
                     clear_pending_reply=False  # Don't clear flag - this is not the final response
                 )
                 
