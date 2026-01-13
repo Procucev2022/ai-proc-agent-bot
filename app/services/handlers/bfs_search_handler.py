@@ -447,18 +447,27 @@ class BFSSearchHandler:
     ) -> Dict[str, Any]:
         """
         Send OTP to user's email for bid confirmation.
+        Skips OTP if user has validated within the last 30 minutes.
         """
         from app.services.otp_service import OTPService
         from app.procucev_apis.register_apis import RegisterAPIService
         from app.services.support_notification_service import SupportNotificationService
         from app.redis_db import get_auth_redis_service
+        import time
 
-        logger.info(f"[BFS Bid] Sending OTP for {len(bid_items)} bid items")
-
-        # Get user email from Redis
+        # Get user data from Redis
         auth_redis = get_auth_redis_service()
         normalized_phone = user.phone_number.lstrip('+')
         user_data = await auth_redis.retrieve(normalized_phone)
+
+        # Check if OTP was validated recently (within 30 minutes) - skip OTP if so
+        if user_data and user_data.otp_validated_at:
+            elapsed_time = time.time() - user_data.otp_validated_at
+            if elapsed_time < 1800:  # 30 minutes
+                logger.info(f"[BFS Bid] OTP validated {elapsed_time:.0f}s ago, skipping OTP for {len(bid_items)} bids")
+                return await self._submit_bids_to_api(user, session)
+
+        logger.info(f"[BFS Bid] Sending OTP for {len(bid_items)} bid items")
 
         if not user_data or not user_data.email:
             logger.error(f"[BFS Bid] No email found for user {user.phone_number}")
@@ -532,6 +541,8 @@ class BFSSearchHandler:
         from app.services.otp_service import OTPService
         from app.procucev_apis.register_apis import RegisterAPIService
         from app.services.support_notification_service import SupportNotificationService
+        from datetime import datetime, timedelta
+        import time
 
         logger.info(f"[BFS Bid] Processing OTP input")
 
@@ -548,10 +559,33 @@ class BFSSearchHandler:
             if email:
                 return await otp_service.send_otp(user.phone_number, email, session)
 
+        # Check if OTP has been validated in the last 30 min
+        from app.redis_db import get_auth_redis_service
+        auth_redis_service = get_auth_redis_service()
+
+        normalized_phone = user.phone_number.lstrip('+')
+        stored_user = await auth_redis_service.retrieve(normalized_phone)
+
+        if stored_user and stored_user.otp_validated_at:
+            elapsed_time = time.time() - stored_user.otp_validated_at
+
+            if elapsed_time < 1800:
+                return await self._submit_bids_to_api(user, session)
+
         # Validate OTP
         otp_result = await otp_service.validate_otp(user.phone_number, session, message)
 
         if otp_result.get("status") == "otp_valid":
+            # Store OTP validation timestamp in Redis
+            current_time = time.time()
+            stored_user = await auth_redis_service.retrieve(normalized_phone)
+
+            if stored_user is None:
+                logger.warning(f"[BFS Bid] No existing user data found for {normalized_phone}, skipping OTP timestamp storage")
+            else:
+                stored_user.otp_validated_at = current_time
+                await auth_redis_service.store(normalized_phone, stored_user.model_dump())
+            
             # OTP validated - submit bids
             logger.info(f"[BFS Bid] OTP validated, submitting bids")
             return await self._submit_bids_to_api(user, session)

@@ -208,6 +208,7 @@ class User(BaseModel):
     org_id: Optional[str] = None
     verification_status: Optional[str] = None
     approved: Optional[bool] = None
+    otp_validated_at: Optional[float] = None  # Unix timestamp of last OTP validation
 
     @classmethod
     def from_api_response(cls, api_data: dict) -> "User":
