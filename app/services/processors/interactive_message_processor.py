@@ -60,6 +60,9 @@ class InteractiveMessageProcessor:
         if button_id.startswith(SellerNotificationService.BUTTON_INTERESTED):
             return await self._handle_rfq_interested(user, button_id, session)
 
+        # Note: BFS bid Accept/Reject buttons are handled in chat_service.py
+        # before intent classification, similar to RFQ buttons
+
         return {"status": "button_handled", "button_id": button_id}
 
     async def _handle_rfq_interested(self, user: User, button_id: str,

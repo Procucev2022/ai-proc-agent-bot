@@ -626,6 +626,13 @@ class WhatsAppService:
     def _handle_api_response(self, response: requests.Response) -> MessageResponse:
         """Handle WhatsApp API response and extract relevant information."""
         try:
+            # DEBUG: Log raw API response for troubleshooting
+            logger.info(f"[WHATSAPP_API] Response status: {response.status_code}")
+            try:
+                logger.info(f"[WHATSAPP_API] Response body: {response.text[:500]}")
+            except Exception:
+                pass
+
             if response.status_code == 200:
                 data = response.json()
                 

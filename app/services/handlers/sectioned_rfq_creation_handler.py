@@ -1586,6 +1586,27 @@ class SectionedRFQCreationHandler:
         if next_section == "items":
             # Check if items were already provided in the initial message
             items_data = WorkflowManager.get_section_data(session, "items")
+
+            # Check for BFS pre-populated products (from BFS -> Raise RFQ flow)
+            if not items_data or len(items_data) == 0:
+                bfs_products = session.workflow_state.get("bfs_rfq_products", []) if session.workflow_state else []
+                if bfs_products:
+                    logger.info(f"[SECTIONED_RFQ] Pre-populating items from BFS search: {bfs_products}")
+                    # Convert BFS product descriptions to items format
+                    items_data = []
+                    for product in bfs_products:
+                        items_data.append({
+                            "description": product,
+                            "quantity": 1,  # Default quantity, user can modify
+                            "brand": "",
+                            "unit_of_measures": "unit(s)"
+                        })
+                    # Store in section data
+                    WorkflowManager.update_section_data(session, "items", items_data)
+                    # Clear BFS products from workflow state
+                    session.workflow_state.pop("bfs_rfq_products", None)
+                    await self.session_manager.save_session(session, persist_to_db=False)
+
             if items_data and len(items_data) > 0:
                 logger.info(f"[SECTIONED_RFQ] Items already exist from initial message ({len(items_data)} items), displaying confirmation")
                 # Items already exist, go directly to items section handler which will display confirmation

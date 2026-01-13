@@ -1,7 +1,10 @@
 """
 Seller Notification Service
 
-Handles sending RFQ notifications to matched sellers via WhatsApp.
+Handles sending notifications to sellers via WhatsApp:
+1. RFQ notifications - When buyers create RFQs matching seller categories
+2. BFS bid notifications - When buyers place bids on seller's stock items
+
 Includes workflow state checking to avoid interrupting active seller conversations.
 Sellers in active workflows are skipped and will be reconsidered in the next task run.
 
@@ -36,11 +39,15 @@ class SellerNotificationService:
     - Sellers active in last 15 minutes are skipped (will be reconsidered next task run)
     """
 
-    # Button IDs for handling responses
+    # Button IDs for RFQ responses
     BUTTON_INTERESTED = "rfq_interested"
     # Intermediate step buttons (shown after clicking "I'm Interested")
     BUTTON_CHECK_DETAILS = "rfq_check_details"
     BUTTON_REQUEST_RFQ = "rfq_request"
+
+    # Button IDs for BFS bid responses
+    BUTTON_BFS_ACCEPT = "bfs_seller_accept"
+    BUTTON_BFS_REJECT = "bfs_seller_reject"
 
     def __init__(self):
         self.whatsapp_service = WhatsAppService()
@@ -395,6 +402,238 @@ class SellerNotificationService:
             "success": failed_count == 0,
             "rfq_id": rfq_id,
             "total": len(sellers),
+            "sent": sent_count,
+            "failed": failed_count,
+            "skipped": skipped_count,
+            "results": results
+        }
+
+    # ==================== BFS Bid Notification Methods ====================
+
+    def format_bfs_bid_message(self, bid_data: Dict[str, Any]) -> str:
+        """
+        Format BFS bid data into a WhatsApp message for sellers.
+
+        Args:
+            bid_data: Dictionary containing bid information:
+                - item_description: Item name/description
+                - buy_price: Seller's listed price
+                - ask_price: Buyer's bid/offer price
+                - quantity: Quantity requested
+
+        Returns:
+            Formatted message string
+        """
+        item_description = bid_data.get('item_description', 'N/A')
+        buy_price = bid_data.get('buy_price', 0)
+        ask_price = bid_data.get('ask_price', 0)
+        quantity = bid_data.get('quantity', 1)
+
+        lines = []
+
+        # Item details
+        lines.append(f"*Item:* {item_description}")
+
+        # Price details
+        if buy_price:
+            lines.append(f"*Your Listed Price:* ₹{buy_price:,.0f}")
+        lines.append(f"*Buyer's Offer:* ₹{ask_price:,.0f}")
+
+        lines.append(f"*Quantity:* {quantity}")
+
+        return "\n".join(lines)
+
+    def _get_bfs_buttons(self, bfs_user_uuid: str, seller_id: str) -> List[Dict[str, str]]:
+        """
+        Get button configuration for BFS bid notification.
+
+        Args:
+            bfs_user_uuid: The bfs_users record UUID for Accept/Reject API calls
+            seller_id: The seller's organization UUID for account verification
+
+        Returns:
+            List of button configurations with Accept and Reject options
+
+        Note:
+            Button ID format: {button_type}_{bfs_user_uuid}_{seller_id}
+            This allows the handler to verify seller account and call correct API.
+        """
+        return [
+            {
+                "id": f"{self.BUTTON_BFS_ACCEPT}_{bfs_user_uuid}_{seller_id}",
+                "title": "Accept Bid"
+            },
+            {
+                "id": f"{self.BUTTON_BFS_REJECT}_{bfs_user_uuid}_{seller_id}",
+                "title": "Reject Bid"
+            }
+        ]
+
+    async def send_bfs_bid_notification(
+        self,
+        seller_phone: str,
+        bid_data: Dict[str, Any],
+        bfs_user_uuid: str,
+        seller_id: str,
+        skip_workflow_check: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Send a BFS bid notification to a seller.
+
+        Args:
+            seller_phone: Seller's phone number
+            bid_data: Bid information dictionary
+            bfs_user_uuid: The bfs_users UUID for button callbacks
+            seller_id: The seller's organization UUID for account verification
+            skip_workflow_check: If True, skip workflow checking
+
+        Returns:
+            Dictionary with success status and notification details
+        """
+        if not seller_phone:
+            return {
+                "success": False,
+                "bfs_user_uuid": bfs_user_uuid,
+                "error": "No phone number provided"
+            }
+
+        if not seller_id:
+            return {
+                "success": False,
+                "bfs_user_uuid": bfs_user_uuid,
+                "error": "No seller ID provided"
+            }
+
+        # Check if seller is in an active workflow
+        if not skip_workflow_check:
+            is_active, workflow_type, minutes_inactive = self.check_seller_workflow_status(
+                seller_phone
+            )
+            if is_active:
+                logger.info(
+                    f"[BFS_NOTIFY] Skipping {seller_phone}: Active {minutes_inactive}min ago"
+                )
+                return {
+                    "success": False,
+                    "bfs_user_uuid": bfs_user_uuid,
+                    "seller_phone": seller_phone,
+                    "skipped": True,
+                    "reason": f"Active {minutes_inactive}min ago",
+                    "workflow_type": workflow_type
+                }
+
+        try:
+            # Format the message
+            message_body = self.format_bfs_bid_message(bid_data)
+            buttons = self._get_bfs_buttons(bfs_user_uuid, seller_id)
+
+            logger.info(
+                f"[BFS_NOTIFY] Sending bid notification to {seller_phone} "
+                f"for item: {bid_data.get('item_description', 'N/A')}"
+            )
+
+            # Send message with interactive buttons
+            response: MessageResponse = await self.whatsapp_service.send_configurable_buttons(
+                recipient_id=seller_phone,
+                body=message_body,
+                buttons_config=buttons,
+                header="New Bid Received",
+                footer="Tap to respond"
+            )
+
+            if response.success:
+                logger.info(
+                    f"[BFS_NOTIFY] Successfully sent bid notification to {seller_phone}"
+                )
+                return {
+                    "success": True,
+                    "seller_phone": seller_phone,
+                    "bfs_user_uuid": bfs_user_uuid,
+                    "message_id": response.message_id
+                }
+            else:
+                logger.error(
+                    f"[BFS_NOTIFY] Failed to send to {seller_phone}: {response.error}"
+                )
+                return {
+                    "success": False,
+                    "seller_phone": seller_phone,
+                    "bfs_user_uuid": bfs_user_uuid,
+                    "error": response.error
+                }
+
+        except Exception as e:
+            logger.error(f"[BFS_NOTIFY] Exception sending to {seller_phone}: {e}")
+            return {
+                "success": False,
+                "seller_phone": seller_phone,
+                "bfs_user_uuid": bfs_user_uuid,
+                "error": str(e)
+            }
+
+    async def send_bfs_bid_notifications_batch(
+        self,
+        notifications: List[Dict[str, Any]],
+        skip_workflow_check: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Send BFS bid notifications to multiple sellers.
+
+        Args:
+            notifications: List of notification dictionaries, each containing:
+                - seller_phone: Seller's phone number
+                - bid_data: Bid information (item_description, ask_price, etc.)
+                - bfs_user_uuid: Record UUID for button callbacks
+                - seller_id: Seller's organization UUID for account verification
+            skip_workflow_check: If True, skip workflow checking for all
+
+        Returns:
+            Dictionary with batch results summary
+        """
+        if not notifications:
+            logger.warning("[BFS_NOTIFY] No notifications to send")
+            return {
+                "success": True,
+                "total": 0,
+                "sent": 0,
+                "failed": 0,
+                "skipped": 0,
+                "results": []
+            }
+
+        logger.info(f"[BFS_NOTIFY] Sending {len(notifications)} bid notifications")
+
+        results = []
+        sent_count = 0
+        failed_count = 0
+        skipped_count = 0
+
+        for notification in notifications:
+            result = await self.send_bfs_bid_notification(
+                seller_phone=notification['seller_phone'],
+                bid_data=notification['bid_data'],
+                bfs_user_uuid=notification['bfs_user_uuid'],
+                seller_id=notification['seller_id'],
+                skip_workflow_check=skip_workflow_check
+            )
+
+            results.append(result)
+
+            if result.get('success'):
+                sent_count += 1
+            elif result.get('skipped'):
+                skipped_count += 1
+            else:
+                failed_count += 1
+
+        logger.info(
+            f"[BFS_NOTIFY] Batch complete: {sent_count} sent, "
+            f"{failed_count} failed, {skipped_count} skipped"
+        )
+
+        return {
+            "success": failed_count == 0,
+            "total": len(notifications),
             "sent": sent_count,
             "failed": failed_count,
             "skipped": skipped_count,

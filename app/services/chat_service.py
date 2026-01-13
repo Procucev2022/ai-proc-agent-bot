@@ -133,6 +133,7 @@ class ChatService:
         self._seller_service = None
         self._rfq_status_service = None
         self._format_modification_handler = None
+        self._bfs_search_handler = None
 
         # Initialize only lightweight services that need database sessions
         self.chat_summary_service = ChatSummaryService(db_session=db_session)
@@ -245,7 +246,8 @@ class ChatService:
         if self._confirmation_handler is None:
             from app.services.handlers.confirmation_handler import ConfirmationHandler
             self._confirmation_handler = ConfirmationHandler(
-                self.whatsapp_service, self.response_helpers
+                self.whatsapp_service, self.response_helpers,
+                session_manager=self.session_manager
             )
         return self._confirmation_handler
 
@@ -341,6 +343,17 @@ class ChatService:
                 db_session=self.db_session
             )
         return self._rfq_status_service
+
+    @property
+    def bfs_search_handler(self):
+        """Lazy-load BFSSearchHandler only when needed."""
+        if self._bfs_search_handler is None:
+            from app.services.handlers.bfs_search_handler import BFSSearchHandler
+            self._bfs_search_handler = BFSSearchHandler(
+                whatsapp_service=self.whatsapp_service,
+                session_manager=self.session_manager
+            )
+        return self._bfs_search_handler
 
     async def cleanup(self):
         """Cleanup resources - close OpenAI client to prevent connection leaks."""
@@ -514,6 +527,39 @@ class ChatService:
                     )
                     return await handler.handle_request_rfq_click(user_phone, rfq_id, seller_id, session)
 
+                # Handle BFS seller Accept/Reject bid buttons
+                if button_id.startswith("bfs_seller_accept") or button_id.startswith("bfs_seller_reject"):
+                    is_accept = button_id.startswith("bfs_seller_accept")
+                    action_name = "Accept" if is_accept else "Reject"
+                    logger.info(f"BFS {action_name} Bid button detected: {button_id}")
+
+                    from app.services.handlers.bfs_seller_bid_handler import BFSSellerBidHandler
+
+                    # Parse button_id: bfs_seller_accept_{bfs_user_uuid}_{seller_id}
+                    # or bfs_seller_reject_{bfs_user_uuid}_{seller_id}
+                    prefix = "bfs_seller_accept_" if is_accept else "bfs_seller_reject_"
+                    suffix = button_id[len(prefix):]
+                    parts = suffix.rsplit("_", 1)  # Split from right, max 1 split
+                    bfs_user_uuid = parts[0] if parts else None
+                    seller_id = parts[1] if len(parts) > 1 else None
+
+                    # Track button click in conversation history
+                    self.session_manager.add_message_to_history(
+                        session, "user", f"[Button: {action_name} Bid] BFS: {bfs_user_uuid} SellerID:{seller_id}", "interactive"
+                    )
+
+                    handler = BFSSellerBidHandler(
+                        whatsapp_service=self.whatsapp_service,
+                        authentication_service=self.authentication_service,
+                        session_manager=self.session_manager,
+                        otp_service=self.authentication_service.otp_service if self.authentication_service else None
+                    )
+
+                    if is_accept:
+                        return await handler.handle_accept_bid_click(user_phone, bfs_user_uuid, seller_id, session)
+                    else:
+                        return await handler.handle_reject_bid_click(user_phone, bfs_user_uuid, seller_id, session)
+
                 if button_id.startswith("confirm_exit") or button_id.startswith("decline_exit"):
                     logger.info(f"Exit buttons clicked in auth workflow  - handling immediately to prevent loop")
                     exit_result = await self.exit_service.handle_exit_intent(user_phone, session,message=message_content)
@@ -582,6 +628,67 @@ class ChatService:
                             return {"status": "otp_invalid", "retry": True}
                     else:
                         logger.error("No OTP service available for seller_rfq_intimation OTP verification")
+                        await self.whatsapp_service.send_message(user_phone, "Sorry, there was an error verifying your code. Please try again.")
+                        return {"status": "error", "message": "OTP service not available"}
+
+            # CRITICAL: Handle bfs_seller_bid workflow BEFORE intent classification
+            # This workflow has stages: switch_prompt, otp - both need dedicated handling
+            # Reuses the same pattern as seller_rfq_intimation
+            if workflow_type_value == "bfs_seller_bid":
+                auth_stage = session.workflow_state.get("auth_stage") if session.workflow_state else None
+                logger.debug(f"bfs_seller_bid workflow detected, auth_stage={auth_stage}")
+
+                from app.services.handlers.bfs_seller_bid_handler import BFSSellerBidHandler
+
+                handler = BFSSellerBidHandler(
+                    whatsapp_service=self.whatsapp_service,
+                    authentication_service=self.authentication_service,
+                    session_manager=self.session_manager,
+                    otp_service=self.authentication_service.otp_service if self.authentication_service else None
+                )
+
+                if auth_stage == "switch_prompt":
+                    # Handle user's response to account switch prompt
+                    logger.info(f"Handling switch response for bfs_seller_bid")
+                    return await handler.handle_switch_response(user_phone, session, message_content)
+
+                elif auth_stage == "otp":
+                    # Handle OTP input for seller authentication
+                    logger.info(f"Handling OTP for bfs_seller_bid, OTP input: {message_content}")
+                    # Use the OTP service to validate
+                    if self.authentication_service and self.authentication_service.otp_service:
+                        otp_result = await self.authentication_service.otp_service.validate_otp(
+                            user_phone, session, message_content
+                        )
+                        logger.info(f"OTP verification result: {otp_result}")
+
+                        if otp_result.get("status") == "otp_valid":
+                            # OTP verified - now authenticate as the seller and execute bid action
+                            target_seller_email = session.workflow_state.get("target_seller_email")
+                            target_seller_id = session.workflow_state.get("target_seller_id")
+                            target_seller_user = session.workflow_state.get("target_seller_user")
+                            logger.info(f"OTP verified, authenticating as seller: {target_seller_email}, seller_id: {target_seller_id}")
+
+                            # Authenticate the user as the seller account
+                            if self.authentication_service and target_seller_user:
+                                auth_result = await self.authentication_service.store_user_session_with_email(
+                                    user_phone, [target_seller_user], target_seller_email
+                                )
+                                logger.debug(f"Seller authentication result: {auth_result}")
+
+                            # Execute the bid action after successful auth
+                            return await handler.handle_otp_validated(user_phone, session)
+                        elif otp_result.get("status") == "max_otp_exceeded":
+                            # Max OTP attempts exceeded - clear workflow
+                            session.workflow_type = None
+                            session.workflow_state = {}
+                            await self.session_manager.save_session(session)
+                            return {"status": "max_otp_exceeded", "message": "Maximum OTP attempts exceeded"}
+                        else:
+                            # OTP verification failed - keep in OTP stage for retry
+                            return {"status": "otp_invalid", "retry": True}
+                    else:
+                        logger.error("No OTP service available for bfs_seller_bid OTP verification")
                         await self.whatsapp_service.send_message(user_phone, "Sorry, there was an error verifying your code. Please try again.")
                         return {"status": "error", "message": "OTP service not available"}
 
@@ -1461,6 +1568,25 @@ class ChatService:
                     await self.session_manager.save_session(session, WorkflowType.rfq_creation)
                     return result
 
+            # Handle BFS search pending - user clicked search_bfs button and now providing product description
+            if session.workflow_state.get("bfs_search_pending"):
+                logger.info(f"[BFS] Processing pending BFS search with message: {message[:50]}...")
+                # Clear the pending flag
+                session.workflow_state.pop("bfs_search_pending", None)
+                await self.session_manager.save_session(session, persist_to_db=False)
+                # Route to BFS handler
+                return await self.bfs_search_handler.handle_bfs_search(user, session, message)
+
+            # Handle BFS bid format input - user is providing bid prices
+            if session.workflow_state.get("bfs_bid_stage") == "format_input":
+                logger.info(f"[BFS Bid] Processing bid format input: {message[:50]}...")
+                return await self.bfs_search_handler.handle_bid_format_input(user, session, message)
+
+            # Handle BFS bid OTP input - user is providing OTP for bid confirmation
+            if session.workflow_state.get("bfs_bid_stage") == "otp_pending":
+                logger.info(f"[BFS Bid] Processing OTP input")
+                return await self.bfs_search_handler.handle_bid_otp_input(user, session, message)
+
             # Handle Excel confirmation responses BEFORE pending confirmations
             if session.workflow_state.get("awaiting_excel_confirmation"):
                 result = await self._handle_excel_confirmation_response(user, session, message, intent_result)
@@ -1752,33 +1878,9 @@ class ChatService:
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, intent_result,
                                                                                  self._should_use_summary_aware_extraction)
             elif intent == "bfs_search" and confidence > 0.7:
-                # Handle BFS search intent with profile selection message
-                user_role = user.role.value if hasattr(user.role, 'value') else user.role
-                user_email = getattr(user, 'email', 'your profile')
-                
-                # Create the profile selection message
-                profile_message = f"Got it, you're looking to check if items are available in stock.\nLet's continue with your {user_role.title()} profile ({user_email}).\n\nBFS Search coming soon!\nPlease confirm what you'd like to do next:"
-                
-                if user_role == "buyer":
-                    buttons_config = [
-                        {"id": "create_rfq", "title": "Create new RFQ"},
-                        {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "get_support", "title": "Get Support Info"}
-                    ]
-                else:  # seller or other roles
-                    buttons_config = [
-                        {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "get_support", "title": "Get Support Info"}
-                    ]
-                
-                await self.whatsapp_service.send_configurable_buttons(
-                    user.phone_number,
-                    profile_message,
-                    buttons_config,
-                    session_id=session
-                )
-                
-                return {"status": "bfs_search_handled"}
+                # Handle BFS search intent
+                logger.info(f"BFS search intent detected")
+                return await self.bfs_search_handler.handle_bfs_search(user, session, message)
             elif intent == "sell_something" and confidence > 0.7:
                 # Normal sell_something flow - user wants to sell with current account
                 return await self._handle_seller_flow(user, session, message, intent_result)
@@ -3135,38 +3237,45 @@ class ChatService:
                 # This avoids wasting an API call on a synthetic message
                 return await self._activate_sectioned_rfq(user, session)
         
-        elif button_id == "search_bfs":
-            # Handle BFS search coming soon with profile selection message
-            user_role = user.role.value if hasattr(user.role, 'value') else user.role
-            user_email = getattr(user, 'email', 'your profile')
-            
-            # Create the profile selection message
-            profile_message = (
-                "Got it! You’re looking to check if items are available in stock.\n\n"
-                "🔍 *BFS Search coming soon!*"
+        elif button_id.startswith("check_availability_rfq|"):
+            # RFQ-context BFS search: button embeds the first RFQ item description.
+            # We still run the normal BFS flow (entity extraction + categorization + API call),
+            # but suppress the "Create new RFQ" CTA if no stock is found.
+            embedded_desc = button_id.split("|", 1)[1].strip()
+
+            # Clear any pending BFS state
+            if session.workflow_state:
+                session.workflow_state.pop("bfs_search_pending", None)
+
+            if not embedded_desc:
+                await self.whatsapp_service.send_message(
+                    user.phone_number,
+                    "Item not available in BFS.",
+                    session_id=session
+                )
+                return {"status": "bfs_rfq_no_item"}
+
+            return await self.bfs_search_handler.handle_bfs_search(
+                user,
+                session,
+                embedded_desc,
+                suppress_raise_rfq_on_no_results=True,
             )
 
-            if user_role == "buyer":
-                buttons_config = [
-                    {"id": "create_rfq", "title": "Create new RFQ"},
-                    {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "get_support", "title": "Get Support Info"}
-                ]
-            else:  # seller or other roles
-                buttons_config = [
-                    {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "get_support", "title": "Get Support Info"}
-                ]
-            
-            await self.whatsapp_service.send_configurable_buttons(
-                user.phone_number,
-                profile_message,
-                buttons_config,
-                session_id=session
-            )
-            
-            return {"status": "bfs_coming_soon_handled"}
-        
+        elif button_id == "search_bfs" or button_id.startswith("bfs_"):
+            # Delegate all BFS buttons to handler
+            result = await self.bfs_search_handler.handle_button(user, session, button_id)
+
+            # Handle special statuses that need cross-service coordination
+            if result.get("status") == "bfs_activate_rfq":
+                return await self._activate_sectioned_rfq(user, session)
+            elif result.get("status") == "bfs_send_cancel_message":
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                await self.cancel_service._send_cancellation_message(user.phone_number, user_role)
+                return {"status": "bfs_cancelled"}
+
+            return result
+
         elif button_id == "rfq_status" or button_id == "check_rfqs":
             # Trigger RFQ status check flow
             return await self._handle_rfq_status_inquiry(user, "Check my RFQ status", session)
@@ -3522,20 +3631,43 @@ class ChatService:
         except Exception as e:
             logger.error(f"Error sending seller flow placeholder: {e}")
 
-    async def _check_bfs_availability(self, user_phone: str) -> None:
-        """Check BFS availability after successful RFQ creation."""
+    async def _check_bfs_availability(self, user: User, session: ConversationSession,
+                                       rfq_results: List[Dict]) -> None:
+        """
+        Check BFS availability after successful RFQ creation.
+
+        Note: This method delegates to the confirmation_handler's implementation.
+        For direct BFS search, use bfs_search_handler.handle_bfs_search().
+        """
         try:
+            # Extract product descriptions from RFQ results
+            product_descriptions = []
+            for result in rfq_results:
+                if result.get("success") and result.get("rfq_data"):
+                    rfq_data = result["rfq_data"]
+                    items = rfq_data.get("items", [])
+                    for item in items:
+                        description = item.get("description") or item.get("product_name", "")
+                        if description:
+                            product_descriptions.append(description)
+
+            if not product_descriptions:
+                logger.info(f"No product descriptions to search in BFS for {user.phone_number}")
+                return
+
             # Send initial checking message
-            checking_message = "Checking our inventory for immediate availability..."
-            await self.whatsapp_service.send_message(user_phone, checking_message)
+            checking_message = "🔍 Checking our inventory for immediate availability..."
+            await self.whatsapp_service.send_message(user.phone_number, checking_message, session_id=session)
 
-            # Send placeholder message
-            placeholder_message = "BFS inventory check feature is in progress."
-            await self.whatsapp_service.send_message(user_phone, placeholder_message)
+            # Use BFS search handler to search for products
+            search_message = ", ".join(product_descriptions)
+            logger.info(f"[BFS] Searching inventory for products: {search_message}")
 
-            logger.debug(f"Sent BFS availability placeholder to {user_phone}")
+            await self.bfs_search_handler.handle_bfs_search(user, session, search_message)
+
+            logger.info(f"Completed BFS availability check for {user.phone_number}")
         except Exception as e:
-            logger.error(f"Error sending BFS availability placeholder: {e}")
+            logger.error(f"Error checking BFS availability: {e}")
 
     async def _handle_rfq_status_inquiry(self, user: User, message: str, session: ConversationSession = None) -> Dict[str, Any]:
         # Help 1 : how to handle session here, like what data needs to be save in db and how to do it

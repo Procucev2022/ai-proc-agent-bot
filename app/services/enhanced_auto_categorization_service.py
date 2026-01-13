@@ -255,8 +255,8 @@ class EnhancedAutoCategorizationService:
                 # Proceed with match found
                 level_matches = hierarchical_result.get("all_level_matches", [])
 
-                # HIGH CONFIDENCE SHORTCUT: If similarity >= 0.85 and category is not "Other", skip LLM call
-                HIGH_SIMILARITY_THRESHOLD = 0.85
+                # HIGH CONFIDENCE SHORTCUT: If similarity >= 0.9 and category is not "Other", skip LLM call
+                HIGH_SIMILARITY_THRESHOLD = 0.9
                 if similarity_score >= HIGH_SIMILARITY_THRESHOLD and best_match["client_category_name"] != "Other":
                     processing_time = int((time.time() - start_time) * 1000)
                     selected_category = best_match["client_category_name"]

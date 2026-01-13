@@ -1,0 +1,34 @@
+{
+    "type": "function",
+    "name": "extract_entities",
+    "description": "Extract product descriptions from user message for BFS stock search",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "products": {
+                "type": "array",
+                "description": "Array of products to search",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "description": {
+                            "type": "string",
+                            "description": "Product name or description"
+                        }
+                    },
+                    "required": ["description"],
+                    "additionalProperties": false
+                }
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Confidence in extraction accuracy"
+            }
+        },
+        "required": ["products", "confidence"],
+        "additionalProperties": false
+    },
+    "strict": true
+}
