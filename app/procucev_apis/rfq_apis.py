@@ -6,6 +6,8 @@ and bulk upload operations with the GMT Procucev backend.
 """
 
 import logging
+import base64
+import json
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
@@ -187,7 +189,7 @@ class RFQAPIService:
 
     def _transform_rfq_to_gmt_format(self, rfq_data: Dict[str, Any], user_id: str = None, org_id: str = None) -> Dict[str, Any]:
         """Transform our internal RFQ format to GMT API format."""
-        logger.info(f"transform_rfq_to_gmt_format: {rfq_data}")
+        logger.info(f"Transforming RFQ data with {len(rfq_data.get('items', []))} items")
         
         # Handle multiple items from schema (combined RFQ)
         rfq_items = []
@@ -256,12 +258,15 @@ class RFQAPIService:
         
         for i, attachment in enumerate(attachments):
             if attachment.get("file_content") and attachment.get("file_name"):
+                # Ensure file content is base64 encoded
+                file_content = attachment["file_content"]
+                if not self._is_base64(file_content):
+                    # If not already base64, encode it
+                    file_content = base64.b64encode(file_content.encode('utf-8')).decode('utf-8')
+                
                 attachment_payload = {
                     "fileName": attachment["file_name"],
-                    "fileType": attachment.get("file_type", "image/jpeg"),
-                    "fileContent": attachment["file_content"],
-                    "documentType": "specification",
-                    "uploadedAt": attachment.get("uploaded_at", datetime.now().strftime('%Y-%m-%dT%H:%M:%S.000Z'))
+                    "file": file_content  # Use 'file' key as shown in your example
                 }
                 rfq_documents.append(attachment_payload)
 
@@ -329,3 +334,14 @@ class RFQAPIService:
             return project_desc
         else:
             return f"RFQ_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    
+    def _is_base64(self, s: str) -> bool:
+        """Check if a string is valid base64."""
+        try:
+            if isinstance(s, str):
+                # Check if string is valid base64
+                base64.b64decode(s, validate=True)
+                return True
+        except Exception:
+            pass
+        return False

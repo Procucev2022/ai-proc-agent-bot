@@ -221,6 +221,17 @@ class CancelService:
                 return True
 
             from app.utils.datetime_utils import utc_now
+            from app.redis_db import get_redis_service
+
+            # Clear pending_reply flag (user confirmed cancel, no reply owed)
+            try:
+                redis_service = get_redis_service()
+                normalized_phone = session.external_user_id.lstrip('+') if session.external_user_id else None
+                if normalized_phone:
+                    await redis_service.delete(f"{normalized_phone}:pending_reply")
+                    logger.debug(f"Cleared pending_reply flag for {normalized_phone} (cancel confirmed)")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to clear pending_reply flag: {cleanup_error}")
 
             # Reset all session data for fresh start
             session.workflow_state = {"last_activity_at": utc_now().isoformat()}

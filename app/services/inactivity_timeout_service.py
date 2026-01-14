@@ -72,6 +72,10 @@ class InactivityTimeoutService:
         self.activity_key_ttl = settings.activity_key_ttl_seconds  # Default: 420 (7 min)
         self.enabled = settings.workflow_timeout_enabled  # Default: True
         
+        # Worker timeout detection configuration
+        self.worker_timeout_threshold = settings.worker_timeout_threshold_seconds  # Default: 135 (2m15s)
+        self.pending_reply_ttl = settings.pending_reply_ttl_seconds  # Default: 180 (3 min)
+        
         # WhatsApp service for notifications
         self.whatsapp_service = WhatsAppService()
         
@@ -80,7 +84,8 @@ class InactivityTimeoutService:
         
         logger.debug(
             f"[TIMEOUT_SERVICE] Initialized: timeout={self.timeout_seconds}s, "
-            f"poll_interval={self.poll_interval}s, activity_ttl={self.activity_key_ttl}s, enabled={self.enabled}"
+            f"poll_interval={self.poll_interval}s, activity_ttl={self.activity_key_ttl}s, enabled={self.enabled}, "
+            f"worker_timeout_threshold={self.worker_timeout_threshold}s"
         )
 
     # ========================================================================
@@ -397,10 +402,11 @@ class InactivityTimeoutService:
                 logger.debug("[TIMEOUT_SERVICE] No activity keys found")
                 return
             
-            logger.debug(f"[TIMEOUT_SERVICE] Checking {len(activity_keys)} users for inactivity")
+            logger.debug(f"[WORKER_TIMEOUT] Checking {len(activity_keys)} users for inactivity/worker timeout")
             
             now = time.time()
-            timeout_count = 0
+            worker_timeout_count = 0
+            user_inactivity_timeout_count = 0
             
             for activity_key in activity_keys:
                 try:
@@ -415,7 +421,40 @@ class InactivityTimeoutService:
                     last_activity_timestamp = float(last_activity)
                     inactive_duration = now - last_activity_timestamp
                     
-                    # Check if timed out
+                    # PRIORITY 1: Check for WORKER TIMEOUT (2m15s threshold by default)
+                    # This takes priority over user inactivity timeout
+                    if inactive_duration >= self.worker_timeout_threshold:
+                        # Check if pending_reply flag still exists
+                        pending_reply_key = f"{user_phone}:pending_reply"
+                        pending_reply_exists = await self.redis.exists(pending_reply_key)
+                        
+                        logger.debug(
+                            f"[WORKER_TIMEOUT] Checking {user_phone}: "
+                            f"inactive={inactive_duration:.0f}s, threshold={self.worker_timeout_threshold}s, "
+                            f"flag={pending_reply_exists}"
+                        )
+                        
+                        if pending_reply_exists:
+                            # WORKER TIMEOUT DETECTED: System hasn't replied within timeout window
+                            logger.warning(
+                                f"[WORKER_TIMEOUT] DETECTED for {user_phone}: "
+                                f"{inactive_duration:.0f}s since last activity with pending_reply flag set"
+                            )
+                            
+                            # Get session to check workflow type
+                            session_id = SessionHelpers.generate_session_id(user_phone, "daily")
+                            
+                            # Handle as worker timeout (different message than user inactivity)
+                            await self._handle_worker_timeout(user_phone, session_id, activity_key, pending_reply_key)
+                            worker_timeout_count += 1
+                            continue  # Skip further checks for this user
+                        else:
+                            logger.debug(
+                                f"[WORKER_TIMEOUT] No timeout for {user_phone} (flag cleared)"
+                            )
+                    
+                    # PRIORITY 2: Check for USER INACTIVITY TIMEOUT (5 min threshold by default)
+                    # Only checked if worker timeout not detected
                     if inactive_duration >= self.timeout_seconds:
                         # Get session to check workflow type
                         session_id = SessionHelpers.generate_session_id(user_phone, "daily")
@@ -519,7 +558,7 @@ class InactivityTimeoutService:
                         
                         # Cancel workflow due to timeout
                         await self._handle_timeout(user_phone, session_id, activity_key)
-                        timeout_count += 1
+                        user_inactivity_timeout_count += 1
                 
                 except Exception as e:
                     logger.error(
@@ -527,11 +566,152 @@ class InactivityTimeoutService:
                         exc_info=True
                     )
             
-            if timeout_count > 0:
+            if worker_timeout_count > 0:
+                logger.info(f"[TIMEOUT_SERVICE] Processed {worker_timeout_count} worker timeout(s)")
+            
+            if user_inactivity_timeout_count > 0:
+                logger.info(f"[TIMEOUT_SERVICE] Processed {user_inactivity_timeout_count} user inactivity timeout(s)")
                 logger.debug(f"[TIMEOUT_SERVICE] Processed {timeout_count} timeouts in this cycle")
         
         except Exception as e:
             logger.error(f"[TIMEOUT_SERVICE] Error in _check_inactive_users: {e}", exc_info=True)
+
+    async def _handle_worker_timeout(
+        self,
+        user_phone: str,
+        session_id: str,
+        activity_key: str,
+        pending_reply_key: str
+    ) -> None:
+        """
+        Handle a worker timeout (system failed to reply within worker timeout window).
+        
+        Similar to user inactivity timeout but with a different message indicating
+        a system-side issue rather than user inactivity.
+        
+        Steps:
+        1. Get session from Redis (preserve conversation history)
+        2. Set outcome = ConversationOutcome.abandoned (system error)
+        3. Persist to database (audit trail)
+        4. Clear all message queues
+        5. Reset session in Redis (preserves auth)
+        6. Clean up activity and pending_reply keys
+        7. Send worker timeout notification
+        
+        Args:
+            user_phone: User's phone number
+            session_id: Session ID
+            activity_key: Redis key for activity tracking
+            pending_reply_key: Redis key for pending reply flag
+        """
+        try:
+            logger.debug(f"[WORKER_TIMEOUT] Handling timeout for {user_phone}")
+            
+            # 1. Get session from Redis (need conversation history for audit trail)
+            try:
+                session_data = await self.redis_session.get_session(session_id)
+                if session_data:
+                    logger.debug(f"[WORKER_TIMEOUT] Retrieved session from Redis for {user_phone}")
+                else:
+                    logger.debug(f"[WORKER_TIMEOUT] No session in Redis for {user_phone}")
+            except Exception as redis_error:
+                logger.error(f"[WORKER_TIMEOUT] Error retrieving session from Redis: {redis_error}")
+                session_data = None
+            
+            # 2-3. Set outcome and persist to database (if session exists)
+            if session_data:
+                try:
+                    from app.database import DatabaseManager
+                    from app.models import ConversationOutcome
+                    
+                    # Mark as abandoned (system-side error)
+                    session_data['outcome'] = ConversationOutcome.abandoned.value
+                    session_data['completed_at'] = utc_now().isoformat()
+                    
+                    # Persist to database
+                    db_manager = DatabaseManager()
+                    try:
+                        # Convert dict back to ConversationSession object
+                        from app.models import ConversationSession
+                        session_obj = ConversationSession(**{
+                            k: v for k, v in session_data.items()
+                            if k in [
+                                'session_id', 'external_user_id', 'workflow_type',
+                                'outcome', 'workflow_state', 'conversation_history',
+                                'extracted_entities', 'retention_date', 'created_at',
+                                'last_activity_at', 'completed_at'
+                            ]
+                        })
+                        
+                        db_manager.save_conversation_session(session_obj)
+                        logger.debug(f"[WORKER_TIMEOUT] Persisted session to DB (outcome: abandoned)")
+                        
+                    except Exception as db_error:
+                        logger.error(f"[WORKER_TIMEOUT] Error persisting to DB: {db_error}")
+                    finally:
+                        db_manager.close()
+                        
+                except Exception as persist_error:
+                    logger.error(f"[WORKER_TIMEOUT] Error in persist flow: {persist_error}")
+            
+            # 4. Clear all message queue keys
+            normalized_phone = user_phone.lstrip('+')
+            queue_keys = [
+                f"{normalized_phone}:incoming",
+                f"{normalized_phone}:outgoing",
+                f"{normalized_phone}:processing",
+                f"{normalized_phone}:session",
+                f"{normalized_phone}:batch_trigger",
+                f"{normalized_phone}:response_ready",
+                f"{normalized_phone}:ack_sent",
+            ]
+            
+            deleted_count = await self.redis.delete(*queue_keys)
+            logger.debug(f"[WORKER_TIMEOUT] Cleared {deleted_count} queue keys")
+            
+            # 5. Reset session in Redis (preserves auth, like CancelService)
+            if session_data:
+                try:
+                    # Reset workflow_state but keep auth token
+                    session_data['workflow_type'] = None
+                    session_data['workflow_state'] = {}
+                    session_data['extracted_entities'] = {}
+                    session_data['outcome'] = None
+                    
+                    # Save reset session back to Redis
+                    await self.redis_session.save_session(session_data)
+                    logger.debug(f"[WORKER_TIMEOUT] Reset session in Redis")
+                    
+                except Exception as reset_error:
+                    logger.error(f"[WORKER_TIMEOUT] Error resetting session: {reset_error}")
+            else:
+                logger.debug(f"[WORKER_TIMEOUT] No session to reset")
+            
+            # 6. Clean up activity and pending_reply keys
+            try:
+                await self.redis.delete(activity_key)
+                await self.redis.delete(pending_reply_key)
+                logger.debug(f"[WORKER_TIMEOUT] Cleaned up activity and pending_reply keys")
+            except Exception as cleanup_error:
+                logger.error(f"[WORKER_TIMEOUT] Error cleaning up keys: {cleanup_error}")
+            
+            # 7. Send worker timeout notification (system-side error message)
+            worker_timeout_message = (
+                "Sorry, your request is taking longer than expected due to high traffic. "
+                "Please try sending your message again in some time."
+            )
+            
+            try:
+                await self.whatsapp_service.send_message(
+                    recipient_id=user_phone,
+                    message=worker_timeout_message
+                )
+                logger.info(f"[WORKER_TIMEOUT] Sent timeout notification to {user_phone}")
+            except Exception as send_error:
+                logger.error(f"[WORKER_TIMEOUT] Error sending timeout notification: {send_error}")
+        
+        except Exception as e:
+            logger.error(f"[WORKER_TIMEOUT] Error in _handle_worker_timeout for {user_phone}: {e}", exc_info=True)
 
     async def _handle_timeout(
         self,

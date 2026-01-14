@@ -1645,6 +1645,7 @@ class ChatService:
 
                 return {"status": "bfs_awaiting_button_click"}
 
+
             # Handle Excel confirmation responses BEFORE pending confirmations
             if session.workflow_state.get("awaiting_excel_confirmation"):
                 result = await self._handle_excel_confirmation_response(user, session, message, intent_result)
@@ -2121,7 +2122,8 @@ class ChatService:
             # Send processing message after validation checks pass
             await self.whatsapp_service.send_message(
                 user.phone_number,
-                "Please wait, the file is processing…"
+                "Please wait, the file is processing…",
+                clear_pending_reply=False  # Don't clear flag for acknowledgment
             )
             logger.info(f"[EXCEL-UPLOAD] Sent 'Please wait' message to {user.phone_number}")
 
