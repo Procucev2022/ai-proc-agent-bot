@@ -1587,6 +1587,65 @@ class ChatService:
                 logger.info(f"[BFS Bid] Processing OTP input")
                 return await self.bfs_search_handler.handle_bid_otp_input(user, session, message)
 
+            # Handle BFS results viewing state - user is viewing stock results but hasn't clicked buttons
+            # This prevents incorrectly routing to RFQ workflow when user types instead of clicking
+            if session.workflow_state.get("bfs_results"):
+                logger.info(f"[BFS] User viewing BFS results but sent message instead of clicking buttons")
+
+                # Re-display the stock results with buttons and reminder
+                bfs_results = session.workflow_state.get("bfs_results")
+
+                # Format results compactly (same as _send_bfs_results)
+                if isinstance(bfs_results, list) and len(bfs_results) > 0:
+                    result_message = f"*{len(bfs_results)} item(s) in stock:*\n"
+
+                    for idx, item in enumerate(bfs_results[:5], 1):
+                        if isinstance(item, dict):
+                            desc = (item.get("description") or "N/A")[:25]
+                            spec = item.get("specification")
+                            qty = int(item.get("availableQuantity") or 0)
+                            age = item.get("ageOfAsset")
+                            price = item.get("sellPrice") or 0
+
+                            result_message += f"\n{idx}. *{desc}*"
+                            if spec:
+                                result_message += f"\n\t{spec[:15]}"
+                            result_message += f"\n\t*Qty:* {qty}"
+                            if age:
+                                result_message += f"\n\tAge: {age}yr"
+                            result_message += f"\n\t*₹{price:,.0f}*"
+
+                    # Add reminder message
+                    result_message += "\n\n_Please use the buttons below to proceed._"
+
+                    buttons = [
+                        {"id": "bfs_negotiate", "title": "Place Bid"},
+                        {"id": "bfs_cancel", "title": "Cancel"}
+                    ]
+
+                    await self.whatsapp_service.send_configurable_buttons(
+                        user.phone_number,
+                        result_message,
+                        buttons,
+                        header="Stock Available",
+                        footer="",
+                        session_id=session
+                    )
+                else:
+                    # Fallback if results format is unexpected
+                    await self.whatsapp_service.send_message(
+                        user.phone_number,
+                        "Please use the buttons to proceed with your stock search, or type a new request.",
+                        session_id=session
+                    )
+                    # Clear BFS state
+                    session.workflow_state.pop("bfs_results", None)
+                    session.workflow_state.pop("bfs_searched_products", None)
+                    await self.session_manager.save_session(session, persist_to_db=False)
+
+                return {"status": "bfs_awaiting_button_click"}
+
+
             # Handle Excel confirmation responses BEFORE pending confirmations
             if session.workflow_state.get("awaiting_excel_confirmation"):
                 result = await self._handle_excel_confirmation_response(user, session, message, intent_result)
