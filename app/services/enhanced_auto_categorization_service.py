@@ -61,9 +61,15 @@ class EnhancedAutoCategorizationService:
                 f"Start the server with: chroma run --host 0.0.0.0 --port {settings.chroma_port} --path ./chroma_db"
             ) from e
 
-        # Get or create collection
+        # Get or create collections
         self.collection = self.chroma_client.get_or_create_collection(
             name="learning_taxonomy",
+            embedding_function=self.embedding_function
+        )
+
+        # Category names collection for hybrid search
+        self.category_collection = self.chroma_client.get_or_create_collection(
+            name="category_names",
             embedding_function=self.embedding_function
         )
 
@@ -101,6 +107,247 @@ class EnhancedAutoCategorizationService:
             parts.append(l2)
         # Join all parts with spaces and return
         return " ".join(parts)
+
+    def _cross_validate_with_fallback(
+        self,
+        item_description: str,
+        learning_category: str,
+        learning_similarity: float
+    ) -> Dict[str, Any]:
+        """
+        Cross-validate learning taxonomy result with fallback service.
+
+        When learning_taxonomy returns a medium-confidence match, verify it against
+        the fallback service (category_items collection) which has complete coverage.
+
+        Args:
+            item_description: Original item description
+            learning_category: Category predicted by learning_taxonomy
+            learning_similarity: Similarity score from learning_taxonomy
+
+        Returns:
+            Dict with validation result and recommended category
+        """
+        try:
+            # Query fallback service's collection directly for quick validation
+            fallback_results = self.fallback_service.collection.query(
+                query_texts=[item_description],
+                n_results=1,
+                include=['metadatas', 'distances']
+            )
+
+            if not fallback_results['metadatas'][0]:
+                return {
+                    "validated": True,
+                    "use_learning": True,
+                    "reason": "No fallback results available"
+                }
+
+            fallback_meta = fallback_results['metadatas'][0][0]
+            fallback_category = fallback_meta.get("category", "")
+            fallback_distance = fallback_results['distances'][0][0]
+            fallback_similarity = max(0.0, min(1.0, 1.0 - fallback_distance))
+
+            # Compare categories (case-insensitive)
+            categories_match = learning_category.lower() == fallback_category.lower()
+
+            if categories_match:
+                return {
+                    "validated": True,
+                    "use_learning": True,
+                    "reason": "Both services agree",
+                    "fallback_category": fallback_category,
+                    "fallback_similarity": fallback_similarity
+                }
+            else:
+                # Categories disagree - prefer fallback if it has higher similarity
+                # or if learning similarity is below trust threshold
+                TRUST_THRESHOLD = 0.85
+                prefer_fallback = (
+                    learning_similarity < TRUST_THRESHOLD or
+                    fallback_similarity > learning_similarity
+                )
+
+                logger.warning(
+                    f"Cross-validation disagreement: learning='{learning_category}' "
+                    f"(sim={learning_similarity:.3f}), fallback='{fallback_category}' "
+                    f"(sim={fallback_similarity:.3f}). Prefer fallback: {prefer_fallback}"
+                )
+
+                return {
+                    "validated": False,
+                    "use_learning": not prefer_fallback,
+                    "reason": f"Disagreement: learning={learning_category}, fallback={fallback_category}",
+                    "fallback_category": fallback_category,
+                    "fallback_similarity": fallback_similarity,
+                    "recommended_category": fallback_category if prefer_fallback else learning_category
+                }
+
+        except Exception as e:
+            logger.warning(f"Cross-validation failed: {e}")
+            return {
+                "validated": True,
+                "use_learning": True,
+                "reason": f"Cross-validation error: {str(e)}"
+            }
+
+    def _search_by_category_name(
+        self,
+        item_description: str,
+        top_k: int = 5
+    ) -> Dict[str, Any]:
+        """
+        Search for matching categories by comparing item description directly to category names.
+
+        This provides a complementary signal to item-based search:
+        - Item-based: "What existing items are similar to this description?"
+        - Category-based: "What category names are semantically similar to this description?"
+
+        Args:
+            item_description: Description to search for
+            top_k: Number of category results to return
+
+        Returns:
+            Dict with category matches and similarity scores
+        """
+        try:
+            # Check if category collection has data
+            category_count = self.category_collection.count()
+            if category_count == 0:
+                logger.warning("Category names collection is empty - hybrid search unavailable")
+                return {"success": False, "reason": "Category collection empty", "matches": []}
+
+            # Query category names directly
+            results = self.category_collection.query(
+                query_texts=[item_description],
+                n_results=top_k,
+                include=['documents', 'metadatas', 'distances']
+            )
+
+            if not results['documents'][0]:
+                return {"success": False, "reason": "No category matches found", "matches": []}
+
+            matches = []
+            for doc, meta, dist in zip(
+                results['documents'][0],
+                results['metadatas'][0],
+                results['distances'][0]
+            ):
+                similarity = max(0.0, min(1.0, 1.0 - dist))
+                matches.append({
+                    "category_name": doc,
+                    "similarity": similarity,
+                    "item_count": meta.get("item_count", 0)
+                })
+
+            logger.info(f"Category-based search found {len(matches)} matches, "
+                       f"best: '{matches[0]['category_name']}' (sim={matches[0]['similarity']:.3f})")
+
+            return {
+                "success": True,
+                "matches": matches,
+                "best_match": matches[0] if matches else None
+            }
+
+        except Exception as e:
+            logger.warning(f"Category-based search failed: {e}")
+            return {"success": False, "reason": str(e), "matches": []}
+
+    def _hybrid_category_selection(
+        self,
+        item_based_category: str,
+        item_based_similarity: float,
+        category_based_results: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Combine item-based and category-based search results for final category selection.
+
+        Strategy:
+        1. If both agree on top category -> high confidence
+        2. If item-based has high similarity (>0.85) -> trust item-based
+        3. If category-based has significantly higher similarity -> consider override
+        4. Use voting/weighting for borderline cases
+
+        Args:
+            item_based_category: Category from item-based search
+            item_based_similarity: Similarity score from item-based search
+            category_based_results: Results from category-based search
+
+        Returns:
+            Dict with final category selection and reasoning
+        """
+        result = {
+            "final_category": item_based_category,
+            "confidence_boost": 0.0,
+            "method": "item_based_only",
+            "agreement": False,
+            "reasoning": ""
+        }
+
+        if not category_based_results.get("success") or not category_based_results.get("matches"):
+            result["reasoning"] = "Category-based search unavailable, using item-based result"
+            return result
+
+        category_matches = category_based_results["matches"]
+        best_category_match = category_matches[0]
+        category_based_name = best_category_match["category_name"]
+        category_based_similarity = best_category_match["similarity"]
+
+        # Check if categories agree (case-insensitive)
+        categories_agree = item_based_category.lower() == category_based_name.lower()
+
+        if categories_agree:
+            # Both methods agree - boost confidence
+            result["agreement"] = True
+            result["confidence_boost"] = 0.1  # Add 10% confidence
+            result["method"] = "hybrid_agreement"
+            result["reasoning"] = f"Both item-based and category-based search agree on '{item_based_category}'"
+            logger.info(f"Hybrid agreement: both methods selected '{item_based_category}'")
+            return result
+
+        # Categories disagree - analyze which to trust
+        ITEM_TRUST_THRESHOLD = 0.85
+        CATEGORY_OVERRIDE_THRESHOLD = 0.6
+
+        if item_based_similarity >= ITEM_TRUST_THRESHOLD:
+            # High item-based similarity - trust it
+            result["method"] = "hybrid_item_trusted"
+            result["reasoning"] = (
+                f"Item-based similarity ({item_based_similarity:.3f}) >= {ITEM_TRUST_THRESHOLD}, "
+                f"trusting '{item_based_category}' over category-based '{category_based_name}'"
+            )
+            return result
+
+        # Check if category-based match is strong enough to consider
+        if category_based_similarity >= CATEGORY_OVERRIDE_THRESHOLD:
+            # Category-based has reasonable match - check if it's in top item-based results
+            # For now, we'll log the disagreement but still use item-based
+            # (This could be enhanced to do more sophisticated voting)
+
+            # Check if category-based best match appears in top 3 item results
+            category_in_item_results = any(
+                m["category_name"].lower() == item_based_category.lower()
+                for m in category_matches[:3]
+            )
+
+            if not category_in_item_results and category_based_similarity > item_based_similarity:
+                # Category-based has higher similarity and item-based category not in top category matches
+                # This might indicate item-based matched a wrong item
+                result["final_category"] = category_based_name
+                result["method"] = "hybrid_category_override"
+                result["reasoning"] = (
+                    f"Category-based '{category_based_name}' (sim={category_based_similarity:.3f}) "
+                    f"overrode item-based '{item_based_category}' (sim={item_based_similarity:.3f})"
+                )
+                logger.info(f"Hybrid override: category-based '{category_based_name}' over item-based '{item_based_category}'")
+                return result
+
+        result["method"] = "hybrid_item_preferred"
+        result["reasoning"] = (
+            f"Item-based '{item_based_category}' (sim={item_based_similarity:.3f}) preferred over "
+            f"category-based '{category_based_name}' (sim={category_based_similarity:.3f})"
+        )
+        return result
 
     def _search_hierarchical_levels(
         self,
@@ -255,12 +502,84 @@ class EnhancedAutoCategorizationService:
                 # Proceed with match found
                 level_matches = hierarchical_result.get("all_level_matches", [])
 
+                # HYBRID SEARCH: Also run category-based search for additional signal
+                category_search_results = self._search_by_category_name(item_description, top_k=5)
+                hybrid_result = self._hybrid_category_selection(
+                    item_based_category=best_match["client_category_name"],
+                    item_based_similarity=similarity_score,
+                    category_based_results=category_search_results
+                )
+
+                # Apply hybrid selection if it suggests a different category
+                original_category = best_match["client_category_name"]
+                if hybrid_result["method"] == "hybrid_category_override":
+                    # Category-based search suggests a different category
+                    best_match["client_category_name"] = hybrid_result["final_category"]
+                    logger.info(f"Hybrid override applied: '{original_category}' -> '{hybrid_result['final_category']}'")
+
+                # CROSS-VALIDATION: For medium-confidence matches, verify with fallback
+                # This prevents incorrect categorization when item doesn't exist in learning_taxonomy
+                CROSS_VALIDATION_THRESHOLD = 0.85
+                if similarity_score < CROSS_VALIDATION_THRESHOLD:
+                    cross_validation = self._cross_validate_with_fallback(
+                        item_description,
+                        best_match["client_category_name"],
+                        similarity_score
+                    )
+
+                    if not cross_validation.get("use_learning", True):
+                        # Fallback disagrees and has better/more reliable result
+                        fallback_category = cross_validation.get("fallback_category")
+                        fallback_similarity = cross_validation.get("fallback_similarity", 0.0)
+                        processing_time = int((time.time() - start_time) * 1000)
+
+                        logger.info(
+                            f"Cross-validation override: using fallback category '{fallback_category}' "
+                            f"instead of learning taxonomy '{best_match['client_category_name']}'"
+                        )
+
+                        # LEARNING FEEDBACK: Add this item to learning_taxonomy with correct category
+                        # This makes the system self-improving - next time this item won't need cross-validation
+                        learning_updated = False
+                        try:
+                            learning_updated = await self._update_learning_taxonomy(
+                                item_description=item_description,
+                                client_category=fallback_category,
+                                user_id=user_id
+                            )
+                            if learning_updated:
+                                logger.info(f"Learning feedback: added '{item_description[:50]}...' with category '{fallback_category}' to learning_taxonomy")
+                        except Exception as e:
+                            logger.warning(f"Learning feedback failed (non-critical): {e}")
+
+                        self._log_categorization(
+                            item_description, user_id, session_id, rfq_id,
+                            fallback_category,
+                            0.85, fallback_similarity,
+                            "enhanced_cross_validated_fallback", processing_time,
+                            None  # No learning match since we're using fallback
+                        )
+
+                        return {
+                            "success": True,
+                            "method": "enhanced_cross_validated_fallback",
+                            "client_category": fallback_category,
+                            "confidence_score": 0.85,
+                            "similarity_score": fallback_similarity,
+                            "processing_time_ms": processing_time,
+                            "reasoning": f"Cross-validation: fallback preferred over learning taxonomy (learning={best_match['client_category_name']}, similarity={similarity_score:.3f})",
+                            "cross_validation_details": cross_validation,
+                            "learning_feedback_applied": learning_updated
+                        }
+
                 # HIGH CONFIDENCE SHORTCUT: If similarity >= 0.9 and category is not "Other", skip LLM call
                 HIGH_SIMILARITY_THRESHOLD = 0.9
-                if similarity_score >= HIGH_SIMILARITY_THRESHOLD and best_match["client_category_name"] != "Other":
+                # Boost threshold if hybrid search agrees (more confident)
+                effective_threshold = HIGH_SIMILARITY_THRESHOLD - (hybrid_result.get("confidence_boost", 0.0) * 0.5)
+                if similarity_score >= effective_threshold and best_match["client_category_name"] != "Other":
                     processing_time = int((time.time() - start_time) * 1000)
                     selected_category = best_match["client_category_name"]
-                    logger.info(f"High similarity ({similarity_score:.3f} >= {HIGH_SIMILARITY_THRESHOLD}), skipping LLM call. Using category: '{selected_category}'")
+                    logger.info(f"High similarity ({similarity_score:.3f} >= {effective_threshold:.3f}), skipping LLM call. Using category: '{selected_category}'")
 
                     # Check if best match has learning taxonomy data
                     learning_match = None
@@ -284,15 +603,25 @@ class EnhancedAutoCategorizationService:
                         learning_match
                     )
 
+                    # Apply confidence boost from hybrid agreement
+                    base_confidence = 0.95
+                    final_confidence = min(0.99, base_confidence + hybrid_result.get("confidence_boost", 0.0))
+
                     result = {
                         "success": True,
                         "method": "enhanced_vector_high_similarity",
                         "client_category": selected_category,
-                        "confidence_score": 0.95,
+                        "confidence_score": final_confidence,
                         "similarity_score": similarity_score,
                         "processing_time_ms": processing_time,
                         "reasoning": f"High similarity match ({similarity_score:.3f}), LLM call skipped",
                         "matched_taxonomy_level": matched_level,
+                        "hybrid_search": {
+                            "method": hybrid_result.get("method"),
+                            "agreement": hybrid_result.get("agreement", False),
+                            "category_based_top": category_search_results.get("best_match", {}).get("category_name") if category_search_results.get("success") else None,
+                            "reasoning": hybrid_result.get("reasoning")
+                        },
                         "all_matches": [
                             {
                                 "client_category": match_info["metadata"]["client_category_name"],
@@ -404,16 +733,26 @@ class EnhancedAutoCategorizationService:
                         learning_match
                     )
 
+                    # Apply confidence boost from hybrid agreement
+                    base_confidence = openai_result.get("confidence", 0.8)
+                    final_confidence = min(0.99, base_confidence + hybrid_result.get("confidence_boost", 0.0))
+
                     result = {
                         "success": True,
                         "method": method_used,
                         "client_category": selected_category,
-                        "confidence_score": openai_result.get("confidence", 0.8),
+                        "confidence_score": final_confidence,
                         "similarity_score": similarity_score,
                         "processing_time_ms": processing_time,
                         "reasoning": openai_result.get("reasoning", f"OpenAI selection from {len(top_matches)} similar items at {matched_level}"),
                         "openai_reasoning": openai_result.get("reasoning", ""),
                         "matched_taxonomy_level": matched_level,
+                        "hybrid_search": {
+                            "method": hybrid_result.get("method"),
+                            "agreement": hybrid_result.get("agreement", False),
+                            "category_based_top": category_search_results.get("best_match", {}).get("category_name") if category_search_results.get("success") else None,
+                            "reasoning": hybrid_result.get("reasoning")
+                        },
                         "all_matches": [
                             {
                                 "client_category": match_info["metadata"]["client_category_name"],
