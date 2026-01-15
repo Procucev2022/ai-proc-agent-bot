@@ -792,7 +792,7 @@ class RegistrationService:
                     # Send success message without buttons
                     name = entities.get('name', 'there').split()[0].title()
                     success_message = (
-                        f"Hi {name}! Your OTP has been verified successfully.\n\n"
+                        f"Hi {name}! Your OTP has been verified successfully. Please update your profile and categories.\n\n"
                         f"Got it, you'd like to sell items!\n"
                         f"Let's continue with your Seller profile ({entities.get('email', 'your profile')}).\n"
                     )
