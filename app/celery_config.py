@@ -16,6 +16,7 @@ ENABLE_VECTOR_STORE_SYNC = True
 ENABLE_SELLER_MATCHING = False
 ENABLE_DAILY_AGGREGATION = False
 ENABLE_DAILY_CATEGORY_REBUILD = True  # Daily rebuild of category_items vector store
+ENABLE_CATEGORY_NAME_SYNC = True  # Daily sync of category_names collection from remote DB
 ENABLE_LOG_CLEANUP = True  # Daily log cleanup and archival
 ENABLE_EXPORT_EXCEL = True  # Export Excel reports every 12 hours
 ENABLE_TEST_CRON = True
@@ -109,6 +110,16 @@ if ENABLE_DAILY_CATEGORY_REBUILD:
         }
     }
 
+if ENABLE_CATEGORY_NAME_SYNC:
+    beat_schedule['category-name-sync-task'] = {
+        'task': 'app.tasks.category_name_sync_task.sync_category_names',
+        'schedule': crontab(minute=0, hour=3),  # Daily at 3:00 AM (after category rebuild)
+        'options': {
+            'expires': 7200,
+            'queue': 'vector_store'
+        }
+    }
+
 if ENABLE_LOG_CLEANUP:
     beat_schedule['log-cleanup-task'] = {
         'task': 'app.tasks.log_cleanup_task.cleanup_logs',
@@ -156,6 +167,7 @@ task_routes = {
     'app.tasks.seller_matching_task.*': {'queue': 'seller_matching'},
     'app.tasks.daily_aggregation_task.*': {'queue': 'aggregation'},
     'app.tasks.daily_category_vector_rebuild_task.*': {'queue': 'vector_store'},
+    'app.tasks.category_name_sync_task.*': {'queue': 'vector_store'},
     'app.tasks.log_cleanup_task.*': {'queue': 'maintenance'},
     'app.tasks.export_excel_task.*': {'queue': 'export'},
     'app.tasks.test_cron_task.*': {'queue': 'default'},
