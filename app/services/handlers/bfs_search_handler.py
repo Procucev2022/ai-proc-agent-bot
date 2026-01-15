@@ -213,11 +213,13 @@ class BFSSearchHandler:
                 )
                 logger.info(f"[BFS] Categorization result for '{description}': {cat_result}")
                 if cat_result.get("success"):
-                    # Add category as synonym
+                    # Add category as synonym (skip "Other" - use description only)
                     category = cat_result.get("category", "")
-                    if category and category.lower() != description.lower():
+                    if category and category.lower() != "other" and category.lower() != description.lower():
                         description_array.append(category)
                         logger.info(f"[BFS] Added category '{category}' to description array")
+                    elif category.lower() == "other":
+                        logger.info(f"[BFS] Category is 'Other', using description only without category")
                     else:
                         logger.info(f"[BFS] Category '{category}' same as description or empty, not added")
                 else:
