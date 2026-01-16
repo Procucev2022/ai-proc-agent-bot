@@ -176,6 +176,8 @@ class ExitService:
                     f"outgoing_messages:{normalized_phone}*",  # Message queue outgoing
                     f"processing:*:{normalized_phone}",  # Processing locks
                     f"*:{session.session_id}*",  # Any session-related keys
+                    f"{normalized_phone}:last_activity",  # Activity tracking key (prevents timeout message after exit)
+                    f"{normalized_phone}:pending_reply",  # Worker timeout detection flag
                 ]
 
                 total_deleted = 0

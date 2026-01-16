@@ -551,9 +551,10 @@ class OpenAIService:
             # Map workflow types to tool files
             workflow_mapping = {
                 "buy_something": "rfq_creation",
-                "rfq_creation": "rfq_creation", 
+                "rfq_creation": "rfq_creation",
                 "modification_request": "modification",  # Use dedicated modification extraction tool
                 "product_search": "product_search",
+                "bfs": "bfs",  # BFS stock search
                 "rfq_status_check": "rfq_status",
                 "registration_buyer": "registration_buyer",
                 "registration_seller": "registration_seller"

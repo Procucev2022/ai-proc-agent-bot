@@ -208,8 +208,10 @@ class AttachmentHelpers:
             if "pending_attachments" not in session.workflow_state:
                 session.workflow_state["pending_attachments"] = []
 
-            # Count total attachments (pending + already approved)
-            pending_count = len(session.workflow_state["pending_attachments"])
+            # Count total attachments (pending non-rejected + already approved)
+            pending_attachments = session.workflow_state["pending_attachments"]
+            # Only count pending attachments that are not rejected
+            pending_count = len([att for att in pending_attachments if att.get("status") != "rejected"])
 
             # Count approved attachments
             approved_count = 0
@@ -296,11 +298,16 @@ class AttachmentHelpers:
             if "attachments" not in session.workflow_state["extracted_entities"][0]:
                 session.workflow_state["extracted_entities"][0]["attachments"] = []
             
-            # Add approved attachments
+            # Add approved attachments (with limit check)
             approved_count = 0
+            current_attachments = session.workflow_state["extracted_entities"][0]["attachments"]
             for attachment in pending_attachments:
                 if attachment.get("status") == "approved":
-                    session.workflow_state["extracted_entities"][0]["attachments"].append(attachment)
+                    # Safety check: don't exceed max attachments
+                    if len(current_attachments) >= AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ:
+                        logger.warning(f"Skipping attachment '{attachment.get('file_name')}' - limit of {AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ} already reached")
+                        continue
+                    current_attachments.append(attachment)
                     approved_count += 1
 
             # Clear pending_attachments after moving them to approved

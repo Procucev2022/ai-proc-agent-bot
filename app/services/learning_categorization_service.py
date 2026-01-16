@@ -72,8 +72,20 @@ class LearningCategorizationService:
             # First check if we already have a learning category for this item
             existing_category = self.check_existing_learning_category(item_description)
             if existing_category:
-                # Update usage frequency and return existing category
+                # Update usage frequency
                 self.update_usage_frequency(existing_category["learning_category_id"])
+
+                # Backfill client_category if current value is empty/"Other" and better value provided
+                existing_client_cat = existing_category.get("client_category_name", "")
+                if client_category and client_category != "Other":
+                    if not existing_client_cat or existing_client_cat == "Other" or existing_client_cat == "":
+                        learning_item_id = existing_category.get("learning_item_id")
+                        if learning_item_id:
+                            updated = self.update_client_category(learning_item_id, client_category)
+                            if updated:
+                                existing_category["client_category_name"] = client_category
+                                logger.info(f"Backfilled client_category '{client_category}' for existing learning item")
+
                 return {
                     "success": True,
                     "existing": True,
@@ -150,8 +162,9 @@ class LearningCategorizationService:
             )
             db.add(learning_item)
             db.flush()
-            
+
             # Create cross-reference to client category if available
+            client_mapping = None  # Initialize to avoid UnboundLocalError when client_category is empty
             if client_category:
                 # Create cross-reference tracking directly (since we're now using item_category as primary source)
                 category_path = f"{categorization['level_1']} > {categorization['level_2']} > {categorization['level_3']}"
@@ -291,6 +304,53 @@ class LearningCategorizationService:
         except Exception as e:
             db.rollback()
             logger.error(f"Error updating usage frequency: {str(e)}")
+            return False
+        finally:
+            db.close()
+
+    def update_client_category(self, learning_item_id: str, new_client_category: str) -> bool:
+        """
+        Update client_category_name for an existing learning item.
+
+        This is used to backfill client categories when a better value is discovered
+        (e.g., from fallback categorization after initial creation with "Other").
+
+        Args:
+            learning_item_id: ID of the LearningCategoryItem to update
+            new_client_category: The new client category to set
+
+        Returns:
+            True if updated successfully, False otherwise
+        """
+        if not new_client_category or new_client_category == "Other":
+            return False  # Don't update with empty or "Other"
+
+        db = get_db_session()
+        try:
+            learning_item = db.query(LearningCategoryItem).filter(
+                LearningCategoryItem.id == learning_item_id
+            ).first()
+
+            if not learning_item:
+                logger.warning(f"Learning item {learning_item_id} not found for client category update")
+                return False
+
+            old_category = learning_item.client_category_name
+
+            # Only update if current value is empty or "Other"
+            if old_category and old_category != "Other" and old_category != "":
+                logger.info(f"Learning item already has valid client_category: {old_category}, skipping update")
+                return False
+
+            learning_item.client_category_name = new_client_category
+            db.commit()
+
+            logger.info(f"Updated client_category_name from '{old_category}' to '{new_client_category}' for item {learning_item_id}")
+            return True
+
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error updating client category: {str(e)}")
             return False
         finally:
             db.close()

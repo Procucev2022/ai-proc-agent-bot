@@ -114,6 +114,39 @@ class SellerAPIService:
             logger.error(f"Error checking seller credits: {e}")
             return {"success": False, "error": str(e)}
 
+    async def check_seller_rfq_status(self, seller_id: str,rfq_ids: List[str] = None) -> Dict[str, Any]:
+        """Check seller's RFQ request credit balance."""
+        try:
+            endpoint = "/rest/gmt/getSellerRfqStatus"
+            data = {"clientId": seller_id}
+
+            if rfq_ids and any(rfq_id is not None for rfq_id in rfq_ids):
+                valid_rfq_ids = [
+                    f"RFQ{rfq_id}" if not str(rfq_id).upper().startswith('RFQ') else rfq_id
+                    for rfq_id in rfq_ids
+                    if rfq_id is not None
+                ]
+
+                if valid_rfq_ids:
+                    data["rfqIds"] = valid_rfq_ids
+
+
+            response = await self.api_client.post(
+                endpoint=endpoint,
+                json_data=data,
+                require_auth=True,
+                api_title="check_seller_rfq_status"
+            )
+
+            if response.get('success'):
+                return {"success": True, "data": response.get('data')}
+            else:
+                return {"success": False, "error": response.get('message', 'Failed to get RFQ status for seller')}
+
+        except Exception as e:
+            logger.error(f"Error checking seller rfq status : {e}")
+            return {"success": False, "error": str(e)}
+
     async def send_rfq_email(self, rfq_ids: List[str], seller_email: str, seller_id: str) -> Dict[str, Any]:
         """Send RFQ details to seller via email."""
         try:
@@ -225,7 +258,7 @@ class SellerAPIService:
             endpoint = "/rest/gmt/getOpenRfqs"
             
             payload = {
-                "seller_id": seller_id
+                "id": seller_id
             }
 
             response = await self.api_client.post(

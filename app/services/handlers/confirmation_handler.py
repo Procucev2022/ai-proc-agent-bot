@@ -36,11 +36,23 @@ class ConfirmationHandler:
         self.session_manager = session_manager
 
         # Initialize confirmation service
-
-
         openai_service = OpenAIService()
         confirmation_tool = ConfirmationTool(openai_service)
         self.confirmation_service = ConfirmationService(confirmation_tool)
+
+        # Lazy-loaded BFS search handler
+        self._bfs_search_handler = None
+
+    @property
+    def bfs_search_handler(self):
+        """Lazy-load BFSSearchHandler only when needed."""
+        if self._bfs_search_handler is None:
+            from app.services.handlers.bfs_search_handler import BFSSearchHandler
+            self._bfs_search_handler = BFSSearchHandler(
+                self.whatsapp_service,
+                self.session_manager
+            )
+        return self._bfs_search_handler
     
     async def handle_confirmation_button(self, user: User, session: ConversationSession, 
                                        button_id: str) -> Dict[str, Any]:
@@ -226,14 +238,14 @@ class ConfirmationHandler:
         
         # # Run seller recommendation for each successful RFQ (offline process)
         # seller_match = await run_seller_recommendation_for_rfqs(
-        #     rfq_results, 
+        #     rfq_results,
         #     self.seller_recommendation_service,
         #     self.enhanced_seller_matching_service
         # )
         # await self.whatsapp_service.send_message(user.phone_number, seller_match)
 
-        # # Check BFS availability after successful RFQ creation
-        # await self._check_bfs_availability(user.phone_number)
+        # Note: We no longer auto-check BFS availability immediately after RFQ creation.
+        # Instead, we offer a contextual "Search Stocks" button post-submission.
         
         # Mark session as completed
         from app.models import ConversationOutcome
@@ -354,7 +366,17 @@ class ConfirmationHandler:
                 "user_message": message,
                 "extracted_entities": product_info["entities"]
             }, chat_summaries)
-            
+
+            # Add remaining attachments message if user has uploaded some
+            from app.services.helpers.attachment_helpers import AttachmentHelpers
+            current_attachments = session.workflow_state.get("extracted_entities", [{}])[0].get("attachments", [])
+            attachment_count = len(current_attachments)
+            if attachment_count > 0:
+                remaining_slots = AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ - attachment_count
+                if remaining_slots > 0:
+                    attachment_word = "document" if remaining_slots == 1 else "documents"
+                    summary_response += f"\n\nYou can still upload {remaining_slots} more {attachment_word} if needed."
+
             # Send confirmation message with buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
@@ -405,7 +427,17 @@ class ConfirmationHandler:
                 },
                 chat_summaries
             )
-            
+
+            # Add remaining attachments message if user has uploaded some
+            from app.services.helpers.attachment_helpers import AttachmentHelpers
+            current_attachments = session.workflow_state.get("extracted_entities", [{}])[0].get("attachments", [])
+            attachment_count = len(current_attachments)
+            if attachment_count > 0:
+                remaining_slots = AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ - attachment_count
+                if remaining_slots > 0:
+                    attachment_word = "document" if remaining_slots == 1 else "documents"
+                    summary_response += f"\n\nYou can still upload {remaining_slots} more {attachment_word} if needed."
+
             # Send confirmation message with buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
@@ -559,10 +591,24 @@ class ConfirmationHandler:
 
         # Send message with interactive buttons (WhatsApp limit: 3 buttons max)
 
+        product_descriptions = self._extract_product_descriptions_from_rfq(rfq_results)
+        first_item_description = product_descriptions[0] if product_descriptions else ""
+        safe_first_item_description = (
+            first_item_description.replace("|", " ").strip()[:60]
+            if first_item_description
+            else ""
+        )
+
+        check_availability_button_id = (
+            f"check_availability_rfq|{safe_first_item_description}"
+            if safe_first_item_description
+            else "search_bfs"
+        )
+
         buttons_config = [
             {"id": "new_rfq", "title": "Create new RFQ"},
             {"id": "rfq_status", "title": "Check RFQs Status"},
-            {"id": "search_bfs", "title": "Search Stocks"}
+            {"id": check_availability_button_id, "title": "Check Availability"}
         ]
         
         await self.whatsapp_service.send_configurable_buttons(
@@ -769,17 +815,48 @@ class ConfirmationHandler:
 
         return cancel_result
 
-    # async def _check_bfs_availability(self, user_phone: str) -> None:
-    #     """Check BFS availability after successful RFQ creation."""
-    #     try:
-    #         # Send initial checking message
-    #         checking_message = "Checking our inventory for immediate availability..."
-    #         await self.whatsapp_service.send_message(user_phone, checking_message)
-            
-    #         # Send placeholder message
-    #         placeholder_message = "BFS inventory check feature is in progress."
-    #         await self.whatsapp_service.send_message(user_phone, placeholder_message)
-            
-    #         logger.info(f"Sent BFS availability placeholder to {user_phone}")
-    #     except Exception as e:
-    #         logger.error(f"Error sending BFS availability placeholder: {e}")
+    async def _check_bfs_availability(self, user: User, session: ConversationSession,
+                                       rfq_results: List[Dict]) -> None:
+        """
+        Check BFS availability after successful RFQ creation.
+
+        Extracts product descriptions from the RFQ and searches BFS inventory.
+        """
+        try:
+            # Extract product descriptions from RFQ results
+            product_descriptions = self._extract_product_descriptions_from_rfq(rfq_results)
+
+            if not product_descriptions:
+                logger.info(f"No product descriptions to search in BFS for {user.phone_number}")
+                return
+
+            # Send initial checking message
+            checking_message = "🔍 Checking our inventory for immediate availability..."
+            await self.whatsapp_service.send_message(user.phone_number, checking_message, session_id=session)
+
+            # Use BFS search handler to search for products
+            # Combine product descriptions into a single search message
+            search_message = ", ".join(product_descriptions)
+            logger.info(f"[BFS] Searching inventory for products: {search_message}")
+
+            await self.bfs_search_handler.handle_bfs_search(user, session, search_message)
+
+            logger.info(f"Completed BFS availability check for {user.phone_number}")
+        except Exception as e:
+            logger.error(f"Error checking BFS availability: {e}")
+            # Don't send error to user - BFS check is a bonus feature, not critical
+
+    def _extract_product_descriptions_from_rfq(self, rfq_results: List[Dict]) -> List[str]:
+        """Extract the first product description from RFQ results for BFS search."""
+        for result in rfq_results:
+            if result.get("success") and result.get("rfq_data"):
+                rfq_data = result["rfq_data"]
+                items = rfq_data.get("items", [])
+
+                if items:
+                    first_item = items[0]
+                    description = first_item.get("description") or first_item.get("product_name", "")
+                    if description:
+                        return [description]
+
+        return []

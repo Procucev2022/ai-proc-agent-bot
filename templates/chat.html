@@ -384,7 +384,7 @@
 
                     <!-- RFQ Notification Simulator Section -->
                     <div class="file-upload-section" style="border-color: #ff9800;">
-                        <div class="file-upload-title" style="color: #ff9800;">🧪 Simulate RFQ Notification (Test Auth Flow)</div>
+                        <div class="file-upload-title" style="color: #ff9800;">Simulate RFQ Notification (Test Auth Flow)</div>
                         <form class="file-upload-form" id="rfqNotificationForm">
                             <input
                                 type="text"
@@ -409,6 +409,57 @@
                         <div style="font-size: 11px; color: #666; margin-top: 8px;">
                             This simulates a seller receiving an RFQ notification.<br>
                             Click "I'm Interested" to test the Post-Recommendation Auth flow.
+                        </div>
+                    </div>
+
+                    <!-- BFS Bid Notification Simulator Section -->
+                    <div class="file-upload-section" style="border-color: #2196f3;">
+                        <div class="file-upload-title" style="color: #2196f3;">Simulate BFS Bid Notification (Test Accept/Reject)</div>
+                        <form class="file-upload-form" id="bfsNotificationForm">
+                            <input
+                                type="text"
+                                class="file-input"
+                                id="testBfsUserUuid"
+                                placeholder="BFS User UUID"
+                                value="test-bfs-user-uuid-001"
+                                required
+                            >
+                            <input
+                                type="text"
+                                class="file-input"
+                                id="testBfsSellerId"
+                                placeholder="Seller ID (Organization UUID)"
+                                value="01c92642-52b0-4bd8-a86e-dd087df271e5"
+                                required
+                            >
+                            <input
+                                type="text"
+                                class="file-input"
+                                id="testBfsItemName"
+                                placeholder="Item Name"
+                                value="Steel Pipes 2 inch"
+                            >
+                            <input
+                                type="number"
+                                class="file-input"
+                                id="testBfsBuyPrice"
+                                placeholder="Listed Price"
+                                value="50000"
+                            >
+                            <input
+                                type="number"
+                                class="file-input"
+                                id="testBfsAskPrice"
+                                placeholder="Buyer's Offer"
+                                value="45000"
+                            >
+                            <button type="submit" class="upload-button" style="background: #2196f3;" id="simulateBfsButton">
+                                Simulate BFS Bid Notification
+                            </button>
+                        </form>
+                        <div style="font-size: 11px; color: #666; margin-top: 8px;">
+                            This simulates a seller receiving a BFS bid notification.<br>
+                            Click "Accept Bid" or "Reject Bid" to test the seller auth + response flow.
                         </div>
                     </div>
 
@@ -716,9 +767,46 @@
                 ];
 
                 // Add the notification message to chat
-                addMessage(`📩 [SIMULATED RFQ NOTIFICATION]\n\n${mockNotificationMessage}`, false, false, null, mockButtons);
+                addMessage(`[SIMULATED RFQ NOTIFICATION]\n\n${mockNotificationMessage}`, false, false, null, mockButtons);
 
                 console.log('Simulated RFQ notification with buttons:', mockButtons);
+            }
+        });
+
+        // BFS Bid Notification Simulator
+        const bfsNotificationForm = document.getElementById('bfsNotificationForm');
+        const testBfsUserUuidInput = document.getElementById('testBfsUserUuid');
+        const testBfsSellerIdInput = document.getElementById('testBfsSellerId');
+        const testBfsItemNameInput = document.getElementById('testBfsItemName');
+        const testBfsBuyPriceInput = document.getElementById('testBfsBuyPrice');
+        const testBfsAskPriceInput = document.getElementById('testBfsAskPrice');
+
+        bfsNotificationForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const bfsUserUuid = testBfsUserUuidInput.value.trim();
+            const sellerId = testBfsSellerIdInput.value.trim();
+            const itemName = testBfsItemNameInput.value.trim() || 'Test Item';
+            const buyPrice = parseFloat(testBfsBuyPriceInput.value) || 50000;
+            const askPrice = parseFloat(testBfsAskPriceInput.value) || 45000;
+
+            if (bfsUserUuid && sellerId) {
+                // Create mock BFS bid notification message
+                const mockNotificationMessage =
+                    `*Item:* ${itemName}\n` +
+                    `*Your Listed Price:* Rs.${buyPrice.toLocaleString()}\n` +
+                    `*Buyer's Offer:* Rs.${askPrice.toLocaleString()}\n` +
+                    `*Quantity:* 1`;
+
+                // Create buttons with proper IDs (matching format: bfs_seller_accept_{bfs_user_uuid}_{seller_id})
+                const mockButtons = [
+                    { id: `bfs_seller_accept_${bfsUserUuid}_${sellerId}`, title: 'Accept Bid' },
+                    { id: `bfs_seller_reject_${bfsUserUuid}_${sellerId}`, title: 'Reject Bid' }
+                ];
+
+                // Add the notification message to chat
+                addMessage(`[SIMULATED BFS BID NOTIFICATION]\n\n${mockNotificationMessage}`, false, false, null, mockButtons);
+
+                console.log('Simulated BFS notification with buttons:', mockButtons);
             }
         });
 

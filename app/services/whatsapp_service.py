@@ -59,7 +59,31 @@ class WhatsAppService:
         self.retry_service.max_retries = settings.retry_max_attempts
         self.retry_service.initial_delay = settings.retry_initial_delay
 
-    async def send_message(self, recipient_id: str, message: str, session_id: str = None) -> MessageResponse:
+    async def _clear_pending_reply_flag(self, recipient_id: str) -> None:
+        """
+        Clear the pending_reply flag after successfully sending a message.
+        
+        This flag tracks whether the user is waiting for a reply. It should only
+        be cleared when a message is successfully delivered to the user.
+        
+        Args:
+            recipient_id: User's phone number (will be normalized)
+        """
+        try:
+            redis_service = get_redis_service()
+            normalized_phone = recipient_id.lstrip('+') if recipient_id.startswith('+') else recipient_id
+            pending_reply_key = f"{normalized_phone}:pending_reply"
+            
+            deleted = await redis_service.delete(pending_reply_key)
+            if deleted:
+                logger.debug(f"[WORKER_TIMEOUT] Cleared pending_reply flag for {normalized_phone}")
+            else:
+                logger.debug(f"[WORKER_TIMEOUT] No pending_reply flag to clear for {normalized_phone}")
+        except Exception as e:
+            # Don't fail the send if flag cleanup fails - just log
+            logger.warning(f"[PENDING_REPLY] Failed to clear flag for {recipient_id}: {e}")
+
+    async def send_message(self, recipient_id: str, message: str, session_id: str = None, clear_pending_reply: bool = True) -> MessageResponse:
 
         """
         Send text message to WhatsApp user with retry mechanism.
@@ -71,6 +95,7 @@ class WhatsAppService:
             recipient_id: WhatsApp number to send to
             message: Message content to send
             session_id: Optional session ID for tracking message in conversation history
+            clear_pending_reply: Whether to clear pending_reply flag (False for acknowledgment messages)
 
         """
 
@@ -135,6 +160,11 @@ class WhatsAppService:
             await self._track_message_in_history(session_id, message)
 
         if retry_result["success"]:
+            # Clear pending_reply flag only for actual responses (not acknowledgments)
+            if clear_pending_reply:
+                await self._clear_pending_reply_flag(recipient_id)
+            else:
+                logger.debug(f"[WORKER_TIMEOUT] Skipped clearing pending_reply flag for {recipient_id} (acknowledgment)")
             return retry_result["result"]
         else:
             logger.error(f"Failed to send message after {retry_result['attempts']} attempts: {retry_result['error']}")
@@ -225,6 +255,8 @@ class WhatsAppService:
         retry_result = await self.retry_service.retry_with_backoff(send_whatsapp_template)
         
         if retry_result["success"]:
+            # Clear pending_reply flag on successful send
+            await self._clear_pending_reply_flag(recipient_id)
             return retry_result["result"]
         else:
             logger.error(f"Failed to send template message after {retry_result['attempts']} attempts: {retry_result['error']}")
@@ -277,7 +309,13 @@ class WhatsAppService:
                 timeout=30
             )
             
-            return self._handle_api_response(response)
+            result = self._handle_api_response(response)
+            
+            # Clear pending_reply flag on successful send
+            if result.success:
+                await self._clear_pending_reply_flag(recipient_id)
+            
+            return result
             
         except Exception as e:
             logger.error(f"Error sending interactive message: {e}")
@@ -588,6 +626,13 @@ class WhatsAppService:
     def _handle_api_response(self, response: requests.Response) -> MessageResponse:
         """Handle WhatsApp API response and extract relevant information."""
         try:
+            # DEBUG: Log raw API response for troubleshooting
+            logger.info(f"[WHATSAPP_API] Response status: {response.status_code}")
+            try:
+                logger.info(f"[WHATSAPP_API] Response body: {response.text[:500]}")
+            except Exception:
+                pass
+
             if response.status_code == 200:
                 data = response.json()
                 

@@ -84,6 +84,11 @@ MESSAGE TYPES:
 6. clarification: Ask for clarification
 7. end_of_flow_reminder:
    - Thank the seller for using QUA AI!
+   - Inform them about the number of open RFQs they have not yet bid on.
+   - List each open RFQ clearly with:
+        - RFQ ID
+        - Location (do mention “Not specified” if unavailable)
+        - Submission date (do mention “Not specified” if unavailable)
    - Show open RFQs they haven't bid on
    - Encourage them to submit their bids and mention that You can resume viewing RFQs or managing bids anytime by saying 'Hi'.
 
@@ -110,9 +115,13 @@ MESSAGE TYPES:
         • Respond with ONLY a success confirmation.
         • Mention the RFQ ID(s) or count.
         • Use a short confirmation message such as:
-            “Your requested RFQ(s) have been emailed successfully.”
+            “RFQ has been shared to your registered Mail ID (seller registered mail id). Please reply to the mail without changing the subject. (If not received, check the Junk/Spam Folder)”
         • DO NOT mention delays, errors, retries, or support contact.
         • DO NOT include error analysis or conditional statements.
+
+
+IMPORTANT:
+ 1. keeping the generated content within 1020 characters ONLY
 
 
 FORMAT: avoid greetings and provide Direct WhatsApp message appropriate for the message_type.

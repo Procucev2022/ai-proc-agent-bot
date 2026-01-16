@@ -13,12 +13,14 @@ import os
 # ============================================================================
 ENABLE_AUTO_CATEGORIZATION = True
 ENABLE_VECTOR_STORE_SYNC = True
-ENABLE_SELLER_MATCHING = True
+ENABLE_SELLER_MATCHING = False
 ENABLE_DAILY_AGGREGATION = False
 ENABLE_DAILY_CATEGORY_REBUILD = True  # Daily rebuild of category_items vector store
+ENABLE_CATEGORY_NAME_SYNC = True  # Daily sync of category_names collection from remote DB
 ENABLE_LOG_CLEANUP = True  # Daily log cleanup and archival
 ENABLE_EXPORT_EXCEL = True  # Export Excel reports every 12 hours
 ENABLE_TEST_CRON = True
+ENABLE_BFS_NOTIFICATION = True  # BFS seller bid notifications
 # ============================================================================
 
 # Basic Celery configuration
@@ -108,6 +110,16 @@ if ENABLE_DAILY_CATEGORY_REBUILD:
         }
     }
 
+if ENABLE_CATEGORY_NAME_SYNC:
+    beat_schedule['category-name-sync-task'] = {
+        'task': 'app.tasks.category_name_sync_task.sync_category_names',
+        'schedule': crontab(minute=0, hour=3),  # Daily at 3:00 AM (after category rebuild)
+        'options': {
+            'expires': 7200,
+            'queue': 'vector_store'
+        }
+    }
+
 if ENABLE_LOG_CLEANUP:
     beat_schedule['log-cleanup-task'] = {
         'task': 'app.tasks.log_cleanup_task.cleanup_logs',
@@ -138,6 +150,16 @@ if ENABLE_TEST_CRON:
         }
     }
 
+if ENABLE_BFS_NOTIFICATION:
+    beat_schedule['bfs-notification-task'] = {
+        'task': 'app.tasks.bfs_notification_task.process_bfs_seller_notifications',
+        'schedule': crontab(minute='*/5'),  # TODO: Change to run every 30 minutes
+        'options': {
+            'expires': 300,
+            'queue': 'bfs_notification'
+        }
+    }
+
 # Task routing - distribute tasks across different queues
 task_routes = {
     'app.tasks.auto_categorization_task.*': {'queue': 'categorization'},
@@ -145,9 +167,11 @@ task_routes = {
     'app.tasks.seller_matching_task.*': {'queue': 'seller_matching'},
     'app.tasks.daily_aggregation_task.*': {'queue': 'aggregation'},
     'app.tasks.daily_category_vector_rebuild_task.*': {'queue': 'vector_store'},
+    'app.tasks.category_name_sync_task.*': {'queue': 'vector_store'},
     'app.tasks.log_cleanup_task.*': {'queue': 'maintenance'},
     'app.tasks.export_excel_task.*': {'queue': 'export'},
     'app.tasks.test_cron_task.*': {'queue': 'default'},
+    'app.tasks.bfs_notification_task.*': {'queue': 'bfs_notification'},
 }
 
 # Queue configuration

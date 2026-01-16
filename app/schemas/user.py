@@ -70,7 +70,7 @@ def normalize_phone_number(phone: str, default_country_code: str = "91") -> str:
 
 class BuyerRegistrationSchema(BaseModel):
     name: str = Field(..., description="Full name")
-    companyName: str = Field(..., description="Company name")
+    companyName: str = Field(..., description="Organization Full Name( with Pvt Ltd./Ltd./LLP)")
     email: str = Field(..., description="Organization email")
     zipCode: str = Field(..., description="Pincode")
     organizationPhonenumber: Optional[str] = Field(None, description="Phone number")
@@ -208,6 +208,7 @@ class User(BaseModel):
     org_id: Optional[str] = None
     verification_status: Optional[str] = None
     approved: Optional[bool] = None
+    otp_validated_at: Optional[float] = None  # Unix timestamp of last OTP validation
 
     @classmethod
     def from_api_response(cls, api_data: dict) -> "User":
