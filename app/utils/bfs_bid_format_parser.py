@@ -25,7 +25,7 @@ def _normalize_bid_text_newlines(text: str) -> str:
     "Dell XPS 13 - Intel i7 : 85000 HP Pavilion - AMD Ryzen : 55000"
 
     This function detects boundaries (price followed by product name) and inserts newlines.
-    Pattern: number followed by space and capital letter (start of next product)
+    Pattern: ": price" followed by space and capital letter (start of next product)
 
     Args:
         text: Input text that may have stripped newlines
@@ -33,11 +33,11 @@ def _normalize_bid_text_newlines(text: str) -> str:
     Returns:
         Text with newlines inserted at item boundaries
     """
-    # Pattern: digit(s) followed by space(s) and then a capital letter
-    # This indicates: end of price, start of next product name
-    # Replace with: digit + newline + capital letter
+    # Pattern: colon + price (digits with optional commas/decimals) + space(s) + capital letter
+    # This ensures we only split AFTER a complete price, not inside product names like "V9024 RTS"
+    # Replace with: colon + price + newline + capital letter
     normalized = re.sub(
-        r'(\d)\s+([A-Z])',
+        r'(:\s*[\d,]+(?:\.\d+)?)\s+([A-Z])',
         r'\1\n\2',
         text
     )
@@ -158,7 +158,7 @@ def generate_bid_format(bfs_items: List[Dict]) -> str:
     lines = []
     for idx, item in enumerate(bfs_items, start=1):
         key = _build_item_key(item)
-        price = int(item.get("sellPrice") or 0)
+        price = round(item.get("sellPrice") or 0)
         lines.append(f"{idx}. {key} : {price}")
     return "\n".join(lines)
 

@@ -298,7 +298,8 @@ class BFSSearchHandler:
 
                 buttons = [
                     {"id": "bfs_negotiate", "title": "Place Bid"},
-                    {"id": "bfs_cancel", "title": "Cancel"}
+                    {"id": "bfs_raise_rfq", "title": "Raise RFQ"},
+                    {"id": "bfs_cancel", "title": "Restart"}
                 ]
 
                 await self.whatsapp_service.send_configurable_buttons(
