@@ -366,7 +366,17 @@ class ConfirmationHandler:
                 "user_message": message,
                 "extracted_entities": product_info["entities"]
             }, chat_summaries)
-            
+
+            # Add remaining attachments message if user has uploaded some
+            from app.services.helpers.attachment_helpers import AttachmentHelpers
+            current_attachments = session.workflow_state.get("extracted_entities", [{}])[0].get("attachments", [])
+            attachment_count = len(current_attachments)
+            if attachment_count > 0:
+                remaining_slots = AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ - attachment_count
+                if remaining_slots > 0:
+                    attachment_word = "document" if remaining_slots == 1 else "documents"
+                    summary_response += f"\n\nYou can still upload {remaining_slots} more {attachment_word} if needed."
+
             # Send confirmation message with buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
@@ -417,7 +427,17 @@ class ConfirmationHandler:
                 },
                 chat_summaries
             )
-            
+
+            # Add remaining attachments message if user has uploaded some
+            from app.services.helpers.attachment_helpers import AttachmentHelpers
+            current_attachments = session.workflow_state.get("extracted_entities", [{}])[0].get("attachments", [])
+            attachment_count = len(current_attachments)
+            if attachment_count > 0:
+                remaining_slots = AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ - attachment_count
+                if remaining_slots > 0:
+                    attachment_word = "document" if remaining_slots == 1 else "documents"
+                    summary_response += f"\n\nYou can still upload {remaining_slots} more {attachment_word} if needed."
+
             # Send confirmation message with buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},

@@ -1050,8 +1050,36 @@ class ChatService:
                 # Save session immediately after Excel processing to persist the excel_file_processed flag
                 await self.session_manager.save_session(session, WorkflowType.rfq_creation)
             elif message_type == "image" or message_type == "document":
-                result = await self.image_processor.process_image_message(user, session, message_content)
-                await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+                # Acquire upload lock to prevent simultaneous attachment uploads
+                from redis.asyncio import Redis
+                from app.config import get_settings
+                settings = get_settings()
+                redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+                normalized_phone = user.phone_number.lstrip('+')
+                lock_key = f"{normalized_phone}:attachment_upload_lock"
+                upload_lock = redis_client.lock(lock_key, timeout=120)  # 2 minutes for processing
+
+                acquired = await upload_lock.acquire(blocking=False)
+                if not acquired:
+                    logger.info(f"[ATTACHMENT-UPLOAD] Upload already in progress for {user.phone_number}")
+                    await self.whatsapp_service.send_message(
+                        user.phone_number,
+                        "Please upload one file at a time. Your previous file is still being processed."
+                    )
+                    return {"status": "handled", "response": "upload_in_progress"}
+
+                logger.info(f"[ATTACHMENT-UPLOAD] Upload lock acquired for {user.phone_number}")
+
+                try:
+                    result = await self.image_processor.process_image_message(user, session, message_content)
+                    await self.session_manager.save_session(session, WorkflowType.rfq_creation)
+                finally:
+                    # Always release the lock after processing
+                    try:
+                        await upload_lock.release()
+                        logger.info(f"[ATTACHMENT-UPLOAD] Upload lock released for {user.phone_number}")
+                    except Exception as lock_error:
+                        logger.warning(f"[ATTACHMENT-UPLOAD] Failed to release lock for {user.phone_number}: {lock_error}")
             else:
                 result = {"status": "error", "error": f"Unknown message type: {message_type}"}
 

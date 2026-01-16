@@ -119,6 +119,18 @@ class ImageMessageProcessor:
             # Check if limit was exceeded or other error occurred
             if not add_result["success"]:
                 error_message = add_result.get("error", "Failed to add attachment")
+
+                # If max limit reached and user is in confirmation phase, show confirmation with error
+                is_max_limit_error = "Maximum" in error_message and "attachments" in error_message
+                has_pending_confirmation = (
+                    session.workflow_state.get("pending_rfq") or
+                    session.workflow_state.get("pending_combined_rfq")
+                )
+
+                if is_max_limit_error and has_pending_confirmation:
+                    # Regenerate confirmation with error message included
+                    return await self._regenerate_confirmation_with_error(user, session, error_message)
+
                 await self.whatsapp_service.send_message(user.phone_number, error_message)
                 return {"status": "error", "response": "attachment_add_failed"}
 
@@ -280,6 +292,15 @@ class ImageMessageProcessor:
                 []
             )
 
+            # Add remaining attachments message if user has uploaded some
+            current_attachments = session.workflow_state.get("extracted_entities", [{}])[0].get("attachments", [])
+            attachment_count = len(current_attachments)
+            if attachment_count > 0:
+                remaining_slots = AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ - attachment_count
+                if remaining_slots > 0:
+                    attachment_word = "document" if remaining_slots == 1 else "documents"
+                    summary_response += f"\n\nYou can still upload {remaining_slots} more {attachment_word} if needed."
+
             # Send confirmation message with buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
@@ -326,6 +347,15 @@ class ImageMessageProcessor:
                 []
             )
 
+            # Add remaining attachments message if user has uploaded some
+            current_attachments = session.workflow_state.get("extracted_entities", [{}])[0].get("attachments", [])
+            attachment_count = len(current_attachments)
+            if attachment_count > 0:
+                remaining_slots = AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ - attachment_count
+                if remaining_slots > 0:
+                    attachment_word = "document" if remaining_slots == 1 else "documents"
+                    summary_response += f"\n\nYou can still upload {remaining_slots} more {attachment_word} if needed."
+
             # Send confirmation message with buttons
             buttons_config = [
                 {"id": "confirm_rfq", "title": "Confirm"},
@@ -356,3 +386,81 @@ class ImageMessageProcessor:
         )
 
         return {"status": "handled", "response": "attachment_added_proceeded_to_confirmation"}
+
+    async def _regenerate_confirmation_with_error(self, user: User, session: ConversationSession, error_message: str) -> Dict[str, Any]:
+        """Regenerate confirmation message with error when max attachments reached."""
+        from app.services.helpers.chat_service_helpers import ChatServiceHelpers
+
+        if session.workflow_state.get("pending_rfq"):
+            # Handle single RFQ case
+            product_info = session.workflow_state["pending_rfq"]
+            entities = product_info["entities"]
+
+            # Rebuild RFQ schema
+            rfq_schema = ChatServiceHelpers.create_rfq_schema_from_entities(entities, None)
+
+            # Generate confirmation message
+            summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(
+                rfq_schema,
+                {
+                    "user_message": "User attempted to add attachment but limit reached",
+                    "extracted_entities": entities
+                },
+                []
+            )
+
+            # Add error message at the end
+            summary_response += f"\n\n{error_message}"
+
+            # Send confirmation message with buttons
+            buttons_config = [
+                {"id": "confirm_rfq", "title": "Confirm"},
+                {"id": "no_rfq", "title": "Add or Modify"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                summary_response,
+                buttons_config,
+                "Confirmation Required",
+                session_id=session
+            )
+
+            return {"status": "handled", "response": "confirmation_with_error"}
+
+        elif session.workflow_state.get("pending_combined_rfq"):
+            # Handle combined RFQ case
+            combined_data = session.workflow_state["pending_combined_rfq"]
+            combined_schema = RFQValidationSchema(**combined_data["combined_schema"])
+
+            # Generate confirmation message
+            summary_response = await self.response_helpers.generate_rfq_summary_and_confirmation(
+                combined_schema,
+                {
+                    "user_message": "User attempted to add attachment but limit reached",
+                    "extracted_entities": [prod["entities"] for prod in combined_data["products"]],
+                    "total_products": len(combined_data["products"])
+                },
+                []
+            )
+
+            # Add error message at the end
+            summary_response += f"\n\n{error_message}"
+
+            # Send confirmation message with buttons
+            buttons_config = [
+                {"id": "confirm_rfq", "title": "Confirm"},
+                {"id": "no_rfq", "title": "Add or Modify"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                user.phone_number,
+                summary_response,
+                buttons_config,
+                "Confirmation Required",
+                session_id=session
+            )
+
+            return {"status": "handled", "response": "confirmation_with_error"}
+
+        # Fallback - just send error message
+        await self.whatsapp_service.send_message(user.phone_number, error_message)
+        return {"status": "error", "response": "no_pending_confirmation_found"}

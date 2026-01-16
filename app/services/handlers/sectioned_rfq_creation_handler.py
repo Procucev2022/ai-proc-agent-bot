@@ -967,6 +967,7 @@ class SectionedRFQCreationHandler:
                 "You may upload files in the following formats: *JPEG, PNG, PDF, Excel, DOCX, or CSV*\n"
                 "• *Maximum 4 attachments*\n"
                 "• *Each file up to 1 MB*\n\n"
+                "Please upload one file at a time.\n\n"
                 "If yes, please upload the files now — or click *Continue* to skip this step and proceed.\n\n"
             )
 
