@@ -87,6 +87,9 @@ class ConversationAnalyticsService:
                     'number_of_buyer_chats': buyer_metrics.get('number_of_buyer_chats', 0),
                     'successful_registration': registration_metrics.get('buyer_successful_registration', 0),
                     'failed_registration': registration_metrics.get('buyer_failed_registration', 0),
+                    'bfs_searches' : buyer_metrics.get('bfs_searches', 0),
+                    'products_bid_for' : buyer_metrics.get('products_bid_for', 0),
+                    'no_of_products_searched': buyer_metrics.get('no_of_products_searched', 0),
                     'confidence_score': confidence_score,
                     'analysis_reasoning':analysis_reasoning
                 }
@@ -107,6 +110,7 @@ class ConversationAnalyticsService:
                     'number_of_seller_chats': seller_metrics.get('number_of_seller_chats', 0),
                     'successful_registration': registration_metrics.get('seller_successful_registration', 0),
                     'failed_registration': registration_metrics.get('seller_failed_registration', 0),
+                    'bids_accepted_ai':seller_metrics.get('bids_accepted_ai', 0),
                     'confidence_score': confidence_score,
                     'analysis_reasoning': analysis_reasoning
                 }
@@ -139,7 +143,7 @@ class ConversationAnalyticsService:
             buyer_cols = [
                 'date', 'session_id', 'phone_number', 'user_type', 'buyer_email',
                 'successful_rfqs_ai', 'incomplete_rfq', 'buyers_started_but_not_raised_rfq',
-                'number_of_buyer_chats', 'successful_registration', 'failed_registration',
+                'number_of_buyer_chats', 'successful_registration', 'failed_registration','bfs_searches','products_bid_for','no_of_products_searched',
                 'confidence_score','analysis_reasoning'
             ]
             buyer_df = buyer_df[buyer_cols]
@@ -148,7 +152,7 @@ class ConversationAnalyticsService:
             seller_cols = [
                 'date', 'session_id', 'phone_number', 'user_type', 'seller_email','requested_rfq_ai','rfq_response_ai',
                 'subscription_plans_requested', 'zero_credit_rfq_attempt',
-                'number_of_seller_chats', 'successful_registration', 'failed_registration',
+                'number_of_seller_chats', 'successful_registration', 'failed_registration','bids_accepted_ai',
                 'confidence_score','analysis_reasoning'
             ]
             seller_df = seller_df[seller_cols]
@@ -515,9 +519,10 @@ Session IDs to process: {', '.join(session_ids)}
                     relevant_cols = [
                         'date', 'phone_number', 'buyer_email','session_id', 'confidence_score',
                         'successful_rfqs_ai', 'incomplete_rfqs', 'buyers_started_but_not_raised_rfq',
-                        'username', 'org_uuid', 'user_uuid', 'total_rfqs_raised', 
+                        'username', 'org_uuid', 'user_uuid', 'total_rfqs_raised', 'rfqs_with_seller_responses',
                         'total_items_in_rfqs', 'total_distinct_rfq_category','number_of_buyer_chats',
-                        'successful_registration','failed_registration','analysis_reasoning'
+                        'successful_registration','failed_registration','bfs_searches','products_bid_for','no_of_products_searched',
+                        'analysis_reasoning'
                     ]
                     joined_buyer_df = joined_buyer_df[[col for col in relevant_cols if col in joined_buyer_df.columns]]
                     
@@ -553,9 +558,9 @@ Session IDs to process: {', '.join(session_ids)}
                     
                     # Keep only relevant columns
                     seller_relevant_cols = [
-                        'date', 'phone_number', 'seller_email','session_id', 'confidence_score',
+                        'date', 'phone_number','phone_clean', 'seller_email','session_id', 'confidence_score',
                         'requested_rfq_ai', 'rfq_response_ai','subscription_plans_requested', 'zero_credit_rfq_attempt',
-                        'number_of_seller_chats', 'successful_registration', 'failed_registration',
+                        'number_of_seller_chats', 'successful_registration', 'failed_registration','bids_accepted_ai',
                         'username', 'org_uuid', 'user_uuid', 'total_rfq_responsed', 'analysis_reasoning'
                     ]
                     joined_seller_df = joined_seller_df[[col for col in seller_relevant_cols if col in joined_seller_df.columns]]
@@ -669,21 +674,51 @@ Session IDs to process: {', '.join(session_ids)}
                     successful_rfqs_ai=int(row.get('successful_rfqs_ai', 0)) if pd.notna(row.get('successful_rfqs_ai')) else 0,
                     avg_products_per_rfq=float(row.get('total_items_in_rfqs', 0) / row.get('total_rfqs_raised', 1)) if pd.notna(row.get('total_rfqs_raised')) and row.get('total_rfqs_raised', 0) > 0 else None,
                     avg_categories_per_rfq=float(row.get('total_distinct_rfq_category', 0) / row.get('total_rfqs_raised', 1)) if pd.notna(row.get('total_rfqs_raised')) and row.get('total_rfqs_raised', 0) > 0 else None,
+                    bfs_searches=int(row.get('bfs_searches', 0)) if pd.notna(
+                        row.get('bfs_searches')) else 0,
+                    products_bid_for=int(row.get('products_bid_for', 0)) if pd.notna(
+                        row.get('products_bid_for')) else 0,
+                    rfq_response_count=int(row.get('rfqs_with_seller_responses', 0)) if pd.notna(
+                        row.get('rfqs_with_seller_responses')) else 0,
+                    no_of_products_searched=int(row.get('no_of_products_searched', 0)) if pd.notna(
+                        row.get('no_of_products_searched')) else 0,
                     org_id=str(row.get('org_uuid', '')) if pd.notna(row.get('org_uuid')) else None,
                     uuid=str(row.get('user_uuid', '')) if pd.notna(row.get('user_uuid')) else None,
                     ai_reasoning=str(row.get('analysis_reasoning', '')) if pd.notna(row.get('analysis_reasoning')) else None
                 )
                 
-                # Use merge to handle unique constraint
+                # Upsert logic - update if exists, insert if not
                 existing = db_session.query(BuyerDailyMetrics).filter(
                     BuyerDailyMetrics.date == buyer_metric.date,
                     BuyerDailyMetrics.email == buyer_metric.email,
                     BuyerDailyMetrics.phone_number == buyer_metric.phone_number
                 ).first()
                 
-                if not existing:
+                if existing:
+                    # Update existing record
+                    existing.session_id = buyer_metric.session_id
+                    existing.total_rfq_raised = buyer_metric.total_rfq_raised
+                    existing.total_items_in_rfqs = buyer_metric.total_items_in_rfqs
+                    existing.total_distinct_categories_in_rfq = buyer_metric.total_distinct_categories_in_rfq
+                    existing.total_incomplete_rfq = buyer_metric.total_incomplete_rfq
+                    existing.buyers_started_but_not_raised_rfq = buyer_metric.buyers_started_but_not_raised_rfq
+                    existing.failed_registration = buyer_metric.failed_registration
+                    existing.successfully_registered = buyer_metric.successfully_registered
+                    existing.number_of_chats = buyer_metric.number_of_chats
+                    existing.successful_rfqs_ai = buyer_metric.successful_rfqs_ai
+                    existing.avg_products_per_rfq = buyer_metric.avg_products_per_rfq
+                    existing.avg_categories_per_rfq = buyer_metric.avg_categories_per_rfq
+                    existing.bfs_searches = buyer_metric.bfs_searches
+                    existing.products_bid_for = buyer_metric.products_bid_for
+                    existing.rfq_response_count = buyer_metric.rfq_response_count
+                    existing.no_of_products_searched = buyer_metric.no_of_products_searched
+
+                    existing.org_id = buyer_metric.org_id
+                    existing.uuid = buyer_metric.uuid
+                    existing.ai_reasoning = buyer_metric.ai_reasoning
+                else:
                     db_session.add(buyer_metric)
-                    records_inserted += 1
+                records_inserted += 1
             
             db_session.commit()
             logger.info(f"[CONVERSATION-ANALYTICS] Inserted {records_inserted} records into BuyerDailyMetrics table (skipped {skipped} rows without date)")
@@ -724,7 +759,10 @@ Session IDs to process: {', '.join(session_ids)}
                 ('buyer', 10, 'Total Distinct RFQ Category Combinations', sum(m.total_distinct_categories_in_rfq for m in buyer_metrics)),
                 ('buyer', 25, 'RFQs with At Least One Response', self._calculate_rfqs_with_response(target_date, db_session)),
                 ('buyer', 26, 'Total RFQ Responses', self._calculate_total_rfq_responses(target_date, db_session)),
-                ('buyer', 27, 'No of Buyers Started But Not Raised RFQ', sum(m.buyers_started_but_not_raised_rfq for m in buyer_metrics))
+                ('buyer', 27, 'No of Buyers Started But Not Raised RFQ', sum(m.buyers_started_but_not_raised_rfq for m in buyer_metrics)),
+                ('buyer', 28, 'No of Products Searched by Buyers', sum(m.no_of_products_searched for m in buyer_metrics)),
+                ('buyer', 29, 'No of Unique Buyers searched for BFS Items', len(set((m.email, m.phone_number) for m in buyer_metrics if m.bfs_searches > 0 and (m.email or m.phone_number)))),
+                ('buyer', 30, 'No of Unique buyers participated in Bidding', len(set((m.email, m.phone_number) for m in buyer_metrics if m.products_bid_for > 0 and (m.email or m.phone_number))))
             ]
             
             # Insert or update aggregates
@@ -760,32 +798,36 @@ Session IDs to process: {', '.join(session_ids)}
             remote_db = get_remote_db_session()
             query = """
             SELECT
-                DATE(rfh.created_ts) AS date,
-                u.username,
-                u.phone,
-                u.org_uuid,
-                u.uuid AS user_uuid,
-                COUNT(DISTINCT rfh.rfq_id) AS total_rfqs_raised,
-                COUNT(ri.uuid) AS total_items_in_rfqs,
-                COUNT(DISTINCT CONCAT(rfh.rfq_id, '_', ri.category)) AS total_distinct_rfq_category,
-                u.org_uuid AS org_id
-            FROM user u
-            JOIN rfq_header rfh 
-                ON u.uuid = rfh.user
-            LEFT JOIN rfq_items ri 
-                ON ri.rfq_uuid = rfh.uuid
-            WHERE 
-                DATE(rfh.created_ts) = :target_date
-                AND u.self_client = 1
-                AND rfh.source_type = 'W'
-            GROUP BY 
-                DATE(rfh.created_ts),
-                u.username,
-                u.phone,
-                u.org_uuid,
-                u.uuid
-            ORDER BY 
-                u.username
+    DATE(rfh.created_ts) AS date,
+    u.username,
+    u.phone,
+    u.org_uuid,
+    u.uuid AS user_uuid,
+    COUNT(DISTINCT rfh.rfq_id) AS total_rfqs_raised,
+    COUNT(ri.uuid) AS total_items_in_rfqs,
+    COUNT(DISTINCT CONCAT(rfh.rfq_id, '_', ri.category)) AS total_distinct_rfq_category,
+    COUNT(DISTINCT grv.rfq_uuid) AS rfqs_with_seller_responses,
+    u.org_uuid AS org_id
+FROM user u
+JOIN rfq_header rfh 
+    ON u.uuid = rfh.user
+LEFT JOIN rfq_items ri 
+    ON ri.rfq_uuid = rfh.uuid
+LEFT JOIN development_gmtbfs.gmt_rfq_vendors grv
+    ON grv.rfq_uuid = rfh.uuid
+WHERE 
+    DATE(rfh.created_ts) = :target_date
+    AND u.is_active = 1
+    AND u.self_client = 1
+    AND rfh.source_type = 'W'
+GROUP BY 
+    DATE(rfh.created_ts),
+    u.username,
+    u.phone,
+    u.org_uuid,
+    u.uuid
+ORDER BY 
+    u.username
             """
             result = remote_db.execute(text(query), {'target_date': str(target_date)})
             rfq_data = [dict(row._mapping) for row in result]
@@ -807,12 +849,12 @@ Session IDs to process: {', '.join(session_ids)}
                 u.uuid,
                 u.org_uuid,
                 u.username,
-                u.phone,
-                COUNT(DISTINCT rfqv.rfq_id) AS total_rfq_responsed
-            FROM development_gmtbfs.rfq_vendors rfqv
-            JOIN user u 
-                ON u.org_uuid = rfqv.organization_uuid
-            WHERE u.self_client=0 
+                u.phone ,
+                COUNT(DISTINCT rfqv.rfq_uuid) AS total_rfq_responsed
+            FROM development_gmtbfs.gmt_rfq_vendors rfqv
+            LEFT JOIN user u 
+                ON u.org_uuid = rfqv.vendor_uuid
+            WHERE u.self_client=0 AND u.is_active=1 and u.source_type='W'
               AND DATE(rfqv.created_ts) = :target_date
             GROUP BY DATE(rfqv.created_ts), u.uuid
             """
@@ -879,23 +921,40 @@ Session IDs to process: {', '.join(session_ids)}
                     seller_successful_registration=int(row.get('successful_registration', 0)) if pd.notna(row.get('successful_registration')) else 0,
                     ai_reasoning=str(row.get('analysis_reasoning', '')) if pd.notna(row.get('analysis_reasoning')) else None,
                     rfq_requested_ai=int(row.get('requested_rfq_ai', 0)) if pd.notna(row.get('requested_rfq_ai')) else 0,
+                    rfq_response_ai=int(row.get('rfq_response_ai', 0)) if pd.notna(row.get('rfq_response_ai')) else 0,
                     subscription_plans_requested=int(row.get('subscription_plans_requested', 0)) if pd.notna(row.get('subscription_plans_requested')) else 0,
                     zero_credit_rfq_attempt=int(row.get('zero_credit_rfq_attempt', 0)) if pd.notna(row.get('zero_credit_rfq_attempt')) else 0,
                     org_id=str(row.get('org_uuid', '')) if pd.notna(row.get('org_uuid')) else None,
                     uuid=str(row.get('user_uuid', '')) if pd.notna(row.get('user_uuid')) else None,
-                    total_rfqs_requested_with_quotation=int(row.get('total_rfqs_requested', 0)) if pd.notna(row.get('total_rfqs_requested')) else 0
+                    total_rfqs_requested=int(row.get('total_rfq_responsed', 0)) if pd.notna(row.get('total_rfq_responsed')) else 0,
+                    bids_accepted_ai=int(row.get('bids_accepted_ai', 0)) if pd.notna(row.get('bids_accepted_ai')) else 0
                 )
                 
-                # Use merge to handle unique constraint
+                # Upsert logic - update if exists, insert if not bids_accepted_ai
                 existing = db_session.query(SellerDailyMetrics).filter(
                     SellerDailyMetrics.date == seller_metric.date,
                     SellerDailyMetrics.email == seller_metric.email,
                     SellerDailyMetrics.phone_number == seller_metric.phone_number
                 ).first()
                 
-                if not existing:
+                if existing:
+                    # Update existing record
+                    existing.session_id = seller_metric.session_id
+                    existing.number_of_chats = seller_metric.number_of_chats
+                    existing.seller_failed_registration = seller_metric.seller_failed_registration
+                    existing.seller_successful_registration = seller_metric.seller_successful_registration
+                    existing.ai_reasoning = seller_metric.ai_reasoning
+                    existing.rfq_requested_ai = seller_metric.rfq_requested_ai
+                    existing.rfq_response_ai = seller_metric.rfq_response_ai
+                    existing.subscription_plans_requested = seller_metric.subscription_plans_requested
+                    existing.zero_credit_rfq_attempt = seller_metric.zero_credit_rfq_attempt
+                    existing.org_id = seller_metric.org_id
+                    existing.uuid = seller_metric.uuid
+                    existing.total_rfqs_requested = seller_metric.total_rfqs_requested
+                    existing.bids_accepted_ai = seller_metric.bids_accepted_ai
+                else:
                     db_session.add(seller_metric)
-                    records_inserted += 1
+                records_inserted += 1
             
             db_session.commit()
             logger.info(f"[CONVERSATION-ANALYTICS] Inserted {records_inserted} records into SellerDailyMetrics table (skipped {skipped} rows without date)")
@@ -920,7 +979,7 @@ Session IDs to process: {', '.join(session_ids)}
             seller_aggregates = [
                 ('seller', 11, 'Seller Chats Initiated', sum(m.number_of_chats for m in seller_metrics)),
                 ('seller', 12, 'Unique Sellers', len(set((m.email, m.phone_number) for m in seller_metrics if m.email or m.phone_number))),
-                ('seller', 13, 'Total RFQs Requested', sum(m.total_rfqs_requested_with_quotation for m in seller_metrics)),
+                ('seller', 13, 'Total RFQs Requested', sum(m.total_rfqs_requested for m in seller_metrics)),
                 ('seller', 14, 'Subscription Plans Requested', sum(m.subscription_plans_requested for m in seller_metrics)),
                 ('seller', 15, 'Seller Registration Failed', sum(m.seller_failed_registration for m in seller_metrics)),
                 ('seller', 16, 'Seller Successful Registration', sum(m.seller_successful_registration for m in seller_metrics)),
@@ -984,40 +1043,64 @@ Session IDs to process: {', '.join(session_ids)}
             remote_db = get_remote_db_session()
             query = """
             SELECT
-    t.rfq_date,
-    t.category,
-    t.total_rfq_raised,
-    q.rfqs_with_quotations
-FROM (
-    SELECT
-        DATE(ri.created_ts) AS rfq_date,
-        ri.category,
-        COUNT(DISTINCT ri.rfq_uuid) AS total_rfq_raised
-    FROM rfq_items ri
-    JOIN rfq_header rh
-        ON ri.rfq_uuid = rh.uuid
-    WHERE DATE(ri.created_ts) = :target_date
-      AND rh.source_type = 'W'
-    GROUP BY DATE(ri.created_ts), ri.category
-) t
-LEFT JOIN (
-    SELECT
-        DATE(ri.created_ts) AS rfq_date,
-        ri.category,
-        COUNT(DISTINCT ri.rfq_uuid) AS rfqs_with_quotations
-    FROM rfq_items ri
-    JOIN rfq_header rh
-        ON ri.rfq_uuid = rh.uuid
-    JOIN rfq_vendors rv
-        ON ri.rfq_uuid = rv.rfq_uuid
-    WHERE DATE(ri.created_ts) = :target_date
-      AND rh.source_type = 'W'
-    GROUP BY DATE(ri.created_ts), ri.category
-) q
-    ON t.rfq_date = q.rfq_date
-   AND t.category = q.category;
-
+                t.rfq_date,
+                t.category,
+                t.total_rfq_raised,
+                q.rfqs_with_quotations AS rfqs_with_quotations,
+                b.bids_requested AS bids_requested,
+                b.bids_accepted AS bids_accepted
+            FROM (
+                /* RFQs Raised */
+                SELECT
+                    DATE(ri.created_ts) AS rfq_date,
+                    ri.category,
+                    COUNT(DISTINCT ri.rfq_uuid) AS total_rfq_raised
+                FROM rfq_items ri
+                JOIN rfq_header rh
+                    ON ri.rfq_uuid = rh.uuid
+                WHERE DATE(ri.created_ts) = :target_date
+                  AND rh.source_type = 'W'
+                GROUP BY DATE(ri.created_ts), ri.category
+            ) t
+            LEFT JOIN (
+                /* RFQs With Quotations */
+                SELECT
+                    DATE(rfqv.created_ts) AS rfq_date,
+                    ri.category,
+                    COUNT(DISTINCT rfqv.rfq_uuid) AS rfqs_with_quotations
+                FROM development_gmtbfs.gmt_rfq_vendors rfqv
+                JOIN rfq_items ri
+                    ON rfqv.rfq_uuid = ri.rfq_uuid
+                JOIN rfq_header rh
+                    ON ri.rfq_uuid = rh.uuid
+                JOIN user u
+                    ON u.org_uuid = rfqv.vendor_uuid
+                WHERE DATE(rfqv.created_ts) = :target_date
+                  AND rh.source_type = 'W'
+                  AND u.self_client = 0
+                  AND u.is_active = 1
+                  AND u.source_type = 'W'
+                GROUP BY DATE(rfqv.created_ts), ri.category
+            ) q
+                ON t.rfq_date = q.rfq_date
+               AND t.category = q.category
+            LEFT JOIN (
+                /* Bids Requested & Accepted */
+                SELECT
+                    DATE(bu.created_ts) AS rfq_date,
+                    bi.category,
+                    COUNT(CASE WHEN bu.status_uuid = 115 THEN 1 END) AS bids_requested,
+                    COUNT(CASE WHEN bu.status_uuid = 118 THEN 1 END) AS bids_accepted
+                FROM development_gmtbfs.bfs_users bu
+                JOIN development_gmtbfs.bfs_items bi
+                    ON bu.items_uuid = bi.uuid
+                WHERE DATE(bu.created_ts) = :target_date
+                GROUP BY DATE(bu.created_ts), bi.category
+            ) b
+                ON t.rfq_date = b.rfq_date
+               AND t.category = b.category;
             """
+
             result = remote_db.execute(text(query), {'target_date': str(target_date)})
             rows = result.fetchall()
 
@@ -1044,6 +1127,8 @@ LEFT JOIN (
                 category_name = row[1] if row[1] is not None else 'Unknown'
                 total_rfq_raised = int(row[2]) if row[2] is not None else 0
                 rfqs_with_quotations = int(row[3]) if row[3] is not None else 0
+                bids_requested = int(row[4]) if row[4] is not None else 0
+                bids_accepted = int(row[5]) if row[5] is not None else 0
                 total_rfqs_intimated = intimated_dict.get(category_name, 0)
                 
                 existing = db_session.query(CategoryAggregates).filter(
@@ -1055,13 +1140,18 @@ LEFT JOIN (
                     existing.total_rfq_raised_category = total_rfq_raised
                     existing.total_rfqs_with_quotations = rfqs_with_quotations
                     existing.total_rfqs_intimated = total_rfqs_intimated
+                    existing.bids_requested = bids_requested
+                    existing.bids_accepted = bids_accepted
                 else:
                     aggregate = CategoryAggregates(
                         date=target_date,
                         category_name=category_name,
                         total_rfq_raised_category=total_rfq_raised,
                         total_rfqs_with_quotations=rfqs_with_quotations,
-                        total_rfqs_intimated=total_rfqs_intimated
+                        total_rfqs_intimated=total_rfqs_intimated,
+                        bids_requested=bids_requested,
+                        bids_accepted=bids_accepted
+
                     )
                     db_session.add(aggregate)
 
@@ -1146,15 +1236,26 @@ LEFT JOIN (
                     number_of_faq_or_general_queries=int(row.get('number_of_faq_or_general_queries', 0)) if pd.notna(row.get('number_of_faq_or_general_queries')) else 0
                 )
                 
+                # Upsert logic - update if exists, insert if not
                 existing = db_session.query(UnknownDailyMetrics).filter(
                     UnknownDailyMetrics.date == unknown_metric.date,
                     UnknownDailyMetrics.session_id == unknown_metric.session_id,
                     UnknownDailyMetrics.phone_number == unknown_metric.phone_number
                 ).first()
                 
-                if not existing:
+                if existing:
+                    # Update existing record
+                    existing.user_type = unknown_metric.user_type
+                    existing.email = unknown_metric.email
+                    existing.confidence_score = unknown_metric.confidence_score
+                    existing.ai_reasoning = unknown_metric.ai_reasoning
+                    existing.unregistered_seller_initiated_chat = unknown_metric.unregistered_seller_initiated_chat
+                    existing.unregistered_seller_requested_rfq = unknown_metric.unregistered_seller_requested_rfq
+                    existing.unregistered_buyer_bfs_only = unknown_metric.unregistered_buyer_bfs_only
+                    existing.number_of_faq_or_general_queries = unknown_metric.number_of_faq_or_general_queries
+                else:
                     db_session.add(unknown_metric)
-                    records_inserted += 1
+                records_inserted += 1
             
             db_session.commit()
             logger.info(f"[CONVERSATION-ANALYTICS] Inserted {records_inserted} records into UnknownDailyMetrics table (skipped {skipped} rows without date)")
@@ -1275,8 +1376,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2025, 12, 21).date()
-        end_date = datetime(2025, 12, 21).date()
+        start_date = datetime(2026, 1, 13).date()
+        end_date = datetime(2026, 1, 16).date()
         
         current_date = start_date
         while current_date <= end_date:

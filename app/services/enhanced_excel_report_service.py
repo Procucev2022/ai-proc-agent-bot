@@ -115,7 +115,11 @@ class EnhancedExcelReportService:
                         number_of_chats as "Chat Initiated",
                         total_rfq_raised as "RFQ Raised",
                         avg_products_per_rfq as "Avg Products per RFQ", 
-                        avg_categories_per_rfq as "Avg Categories per RFQ"
+                        avg_categories_per_rfq as "Avg Categories per RFQ",
+                        bfs_searches as "BFS Searches",
+                        products_bid_for as "Products Bid For",
+                        rfq_response_count as "RFQs w/ Response",
+                        total_incomplete_rfq as "RFQ Started But not Submitted"
                     FROM buyer_daily_metrics 
                     WHERE date BETWEEN :start_date AND :target_date
                     ORDER BY date DESC, email
@@ -127,7 +131,7 @@ class EnhancedExcelReportService:
                 })
                 
                 # Convert to DataFrame
-                columns = ["date", "email", "phone_number", "Chat Initiated", "RFQ Raised", "Avg Products per RFQ", "Avg Categories per RFQ"]
+                columns = ["date", "email", "phone_number", "Chat Initiated", "RFQ Raised", "Avg Products per RFQ", "Avg Categories per RFQ","BFS Searches","Products Bid For","RFQs w/ Response","RFQ Started But not Submitted"]
                 data = []
                 
                 for row in result:
@@ -138,7 +142,11 @@ class EnhancedExcelReportService:
                         row[3],  # Chat Initiated
                         row[4],  # RFQ Raised
                         round(float(row[5]) if row[5] else 0, 2),  # Avg Products per RFQ
-                        round(float(row[6]) if row[6] else 0, 2)   # Avg Categories per RFQ
+                        round(float(row[6]) if row[6] else 0, 2),  # Avg Categories per RFQ
+                        row[7],
+                        row[8],
+                        row[9],
+                        row[10]
                     ])
                 
                 df = pd.DataFrame(data, columns=columns)
@@ -209,8 +217,9 @@ class EnhancedExcelReportService:
                         email,
                         phone_number,
                         number_of_chats as "Chats Initiated",
-                        total_rfqs_requested_with_quotation as "Requested RFQs",
-                        rfq_response_ai as "RFQs Responded"
+                        total_rfqs_requested as "Requested RFQs",
+                        rfq_response_ai as "RFQs Responded",
+                        bids_accepted_ai as "Bids Accepted"
                     FROM seller_daily_metrics 
                     WHERE date BETWEEN :start_date AND :target_date
                     ORDER BY date DESC, email
@@ -222,7 +231,7 @@ class EnhancedExcelReportService:
                 })
                 
                 # Convert to DataFrame
-                columns = ["date", "email", "phone_number", "Chats Initiated", "Requested RFQs", "RFQs Responded"]
+                columns = ["date", "email", "phone_number", "Chats Initiated", "Requested RFQs", "RFQs Responded","Bids Accepted"]
                 data = []
                 
                 for row in result:
@@ -232,7 +241,8 @@ class EnhancedExcelReportService:
                         row[2],  # phone_number
                         row[3],  # Chats Initiated
                         row[4],  # Requested RFQs
-                        row[5]   # RFQs Responded
+                        row[5],   # RFQs Responded
+                        row[6]
                     ])
                 
                 df = pd.DataFrame(data, columns=columns)
@@ -300,7 +310,9 @@ class EnhancedExcelReportService:
                         date,
                         category_name as "Category",
                         total_rfq_raised_category as "RFQs Raised",
-                        total_rfqs_intimated as "RFQs w/ Response"
+                        total_rfqs_intimated as "RFQs w/ Response",
+                        bids_requested as "Bids Made",
+                        bids_accepted as "Offers Accepted"
                     FROM category_aggregates 
                     WHERE date BETWEEN :start_date AND :target_date
                     ORDER BY date DESC, category_name
@@ -312,7 +324,7 @@ class EnhancedExcelReportService:
                 })
                 
                 # Convert to DataFrame
-                columns = ["date", "Category", "RFQs Raised", "RFQs w/ Response"]
+                columns = ["date", "Category", "RFQs Raised", "RFQs w/ Response","Bids Made","Offers Accepted"]
                 data = []
                 
                 for row in result:
@@ -320,7 +332,9 @@ class EnhancedExcelReportService:
                         row[0],  # date
                         row[1],  # Category
                         row[2],  # RFQs Raised
-                        row[3]   # RFQs w/ Response
+                        row[3],   # RFQs w/ Response
+                        row[4],
+                        row[5]
                     ])
                 
                 df = pd.DataFrame(data, columns=columns)
@@ -421,7 +435,10 @@ class EnhancedExcelReportService:
             "Incomplete RFQs",
             "No. of Registrations failed",
             "Unregistered Buyers initiated chat but not continued along with details",
-            "User Not Identified"
+            "User Not Identified",
+            "No of Products Searched by Buyers",
+            "No of Unique Buyers searched for BFS Items",
+            "No of Unique buyers participated in Bidding"
         ]
         
         # Create the summary table
@@ -683,7 +700,10 @@ class EnhancedExcelReportService:
                     'incomplete_rfqs': int(metrics_dict.get('Incomplete RFQs', 0)),
                     'registrations_failed': int(metrics_dict.get('No. of Registrations failed', 0)),
                     'unregistered_abandoned': int(metrics_dict.get('unregistered_abandoned', 0)),
-                    'user_not_identified': int(metrics_dict.get('user_not_identified', 0))
+                    'user_not_identified': int(metrics_dict.get('user_not_identified', 0)),
+                    'no_of_products_searched': int(metrics_dict.get('No of Products Searched by Buyers', 0)),
+                    'unique_bfs_searchers': int(metrics_dict.get('No of Unique Buyers searched for BFS Items', 0)),
+                    'unique_bidders': int(metrics_dict.get('No of Unique buyers participated in Bidding', 0))
                 }
                 
         except Exception as e:
@@ -764,7 +784,10 @@ class EnhancedExcelReportService:
             "Incomplete RFQs": period_data.get('incomplete_rfqs', 0),
             "No. of Registrations failed": period_data.get('registrations_failed', 0),
             "Unregistered Buyers initiated chat but not continued along with details": period_data.get('unregistered_abandoned', 0),
-            "User Not Identified": period_data.get('user_not_identified', 0)
+            "User Not Identified": period_data.get('user_not_identified', 0),
+            "No of Products Searched by Buyers": period_data.get('no_of_products_searched', 0),
+            "No of Unique Buyers searched for BFS Items": period_data.get('unique_bfs_searchers', 0),
+            "No of Unique buyers participated in Bidding": period_data.get('unique_bidders', 0)
         }
         return mapping.get(metric_name, 0)
     
@@ -783,7 +806,10 @@ class EnhancedExcelReportService:
             'incomplete_rfqs': 0,
             'registrations_failed': 0,
             'unregistered_abandoned': 0,
-            'user_not_identified': 0
+            'user_not_identified': 0,
+            'no_of_products_searched': 0,
+            'unique_bfs_searchers': 0,
+            'unique_bidders': 0
         }
     
     def _format_excel_sheets(self, writer: pd.ExcelWriter):

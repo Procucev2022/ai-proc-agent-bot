@@ -28,6 +28,8 @@ A user is considered a **buyer** when they perform ANY of the following actions:
 - Confirming RFQ items or delivery details
 - Checking RFQ status using a buyer profile
 - Explicitly switching to buyer mode (e.g., "Switch to buyer")
+- Searching for products in stock (BFS - Buy From Stock)
+- Placing bids on available stock items
 
 A user is considered a **seller** when they perform ANY of the following actions:
 - Viewing available RFQs
@@ -36,6 +38,7 @@ A user is considered a **seller** when they perform ANY of the following actions
 - Attempting seller registration
 - Checking RFQ status using a seller profile
 - Accessing RFQs as a seller
+- Accepting bids from buyers
 
 If both buyer and seller actions are present:
 - The session MUST be treated as **buyer + seller (hybrid)**.
@@ -81,21 +84,33 @@ Populate ONLY based on buyer actions:
 - `number_of_buyer_chats`
   → Count of messages where the user acted as a buyer
 - `successful_rfqs`
-  → RFQ confirmed and created successfully
+  → Count of distinct RFQs successfully created by buyer. ONLY count RFQs that have a confirmation message with format '✅ *RFQ created successfully!* *ID:* RFQ[ID]'. Each unique RFQ ID should be counted exactly once. Do not count RFQs that were started but not confirmed.
 - `incomplete_rfqs`
-  → RFQ flow started but not confirmed
+  → Count of distinct RFQ creation attempts that were started (user provided delivery details and/or items) but were NOT successfully completed. Do not count if the same RFQ attempt was restarted and eventually completed. Look for attempts that ended with 'Exit', 'Restart', or abandonment without a success confirmation.
 - `buyers_started_but_not_raised_rfq`
-  → 1 if buyer intent shown but no RFQ created, else 0
+  → Indicates if buyer showed intent to create RFQ but never successfully completed ANY RFQ.
+    Value is 1 if: (a) user selected 'Buy' or 'Create new RFQ' option, AND (b) zero successful RFQs were created (no '✅ RFQ created successfully!' messages found).
+    Value is 0 if: (a) user never started RFQ creation process, OR (b) user successfully created at least one RFQ. This is a session-level flag, not a count of incomplete attempts."
+- `bfs_searches`
+  → Total number of BFS (Buy From Stock) searches performed by the buyer. Count each time the user searches for products in stock, regardless of whether items were found or not. Look for:
+    - User messages with intent 'bfs_search'
+    - Messages like "Do you have [product] in stock"
+    - User clicking "Search Stocks" button
+  Each distinct search query counts as one search, even if no results are returned.
+
+- `products_bid_for`
+  → Total number of distinct products the buyer has successfully placed bids on. Count products only from messages showing '*Bids Placed Successfully!*' confirmation. Each product line item in a successful bid confirmation should be counted once. Do not count products from cancelled or unconfirmed bids.
+
 
 ### Seller Metrics
 Populate ONLY based on seller actions:
 
 - `number_of_seller_chats`
-  → Count of messages where the user acted as a seller
+  → Total count of chat conversations where the user explicitly acted in the role of a seller (selling products, services, or responding to buyer inquiries)
 - `subscription_plans_requested`
-  → Seller asked about plans, pricing, or subscriptions
+  → Count of times the user asked about, inquired about, or requested information regarding subscription plans, pricing tiers, or membership options
 - `zero_credit_rfq_attempt`
-  → Seller attempted RFQ access with zero credits (must be explicitly stated)
+  → Seller attempted to access or view RFQs (Request for Quotations) when they had zero credits remaining. Set to 1 if this occurred, 0 otherwise
 - Seller RFQ Requested
     event MUST be counted when the seller performs ANY of the following actions:
     → Clicks "Request Active RFQs" or similar seller RFQ listing
@@ -108,11 +123,16 @@ Populate ONLY based on seller actions:
     - Seller RFQ request means seller-side demand for RFQs
 - Seller RFQ Responded
     event MUST be counted when the seller performs the following actions
-    → Seller clicks "I am interested" button
+
+     → Count of RFQs that the seller responded to by expressing interest during this session. Increment by 1 each time the seller clicks 'I am interested' button or explicitly responds positively to an RFQ notification
 
     IMPORTANT:
     - Seller RFQ response means explicit intent to participate
     - Simply viewing RFQs does NOT count as a response
+
+- `bids_accepted`
+  → Total number of bids that were accepted by the seller from buyers. This metric tracks when a SELLER accepts a bid that a BUYER placed.
+
 
 ### Registration Metrics
 Apply to BOTH buyer and seller registrations:

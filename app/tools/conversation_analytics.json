@@ -66,60 +66,89 @@
                 "successful_rfqs_ai": {
                   "type": "integer",
                   "minimum": 0,
-                  "description": "RFQs successfully created by buyer"
+                  "description": "Count of distinct RFQs successfully created by buyer. ONLY count RFQs that have a confirmation message with format '✅ *RFQ created successfully!* *ID:* RFQ[ID]'. Each unique RFQ ID should be counted exactly once. Do not count RFQs that were started but not confirmed."
+
                 },
                 "incomplete_rfqs": {
                   "type": "integer",
                   "minimum": 0,
-                  "description": "RFQs started but not completed"
+                  "description": "Count of distinct RFQ creation attempts that were started (user provided delivery details and/or items) but were NOT successfully completed. Do not count if the same RFQ attempt was restarted and eventually completed. Look for attempts that ended with 'Exit', 'Restart', or abandonment without a success confirmation."
+
                 },
                 "buyers_started_but_not_raised_rfq": {
                   "type": "integer",
                   "minimum": 0,
-                  "description": "Buyer intent shown but RFQ not raised (0 or 1)"
-                }
-              },
+                  "description": "Indicates if buyer showed intent to create RFQ but never successfully completed ANY RFQ. Value is 1 if: (a) user selected 'Buy' or 'Create new RFQ' option, AND (b) zero successful RFQs were created (no '✅ RFQ created successfully!' messages found). Value is 0 if: (a) user never started RFQ creation process, OR (b) user successfully created at least one RFQ. This is a session-level flag, not a count of incomplete attempts."
+
+                },
+                "bfs_searches": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Total number of BFS (Buy From Stock) searches performed by the buyer. Count each time the user searches for products in stock, regardless of whether items were found or not. Look for user messages with intent 'bfs_search' or messages like 'Do you have [product] in stock'."
+                },
+                "products_bid_for": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Total number of distinct products the buyer has successfully placed bids on. Count products only from messages showing '*Bids Placed Successfully!*' confirmation. Each product line item in a successful bid confirmation should be counted once. Do not count products from cancelled or unconfirmed bids."
+                },
+
+                "no_of_products_searched": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Total count of distinct product keywords or product terms that buyer searched for in BFS. Extract product names from search queries and count unique products. Same product searched multiple times counts as 1. Examples: 'lenovo laptops', 'chemicals', 'air dryer' would count as 3 distinct products."
+
+              }
+                },
+
               "required": [
-                "successful_rfqs_ai", "incomplete_rfqs", "buyers_started_but_not_raised_rfq", "number_of_buyer_chats"
+                "successful_rfqs_ai", "incomplete_rfqs", "buyers_started_but_not_raised_rfq", "number_of_buyer_chats","bfs_searches", "products_bid_for","no_of_products_searched"
               ]
             },
 
             "seller_metrics": {
-              "type": "object",
-              "description": "Seller-specific metrics (set all to 0 if not a seller)",
-              "properties": {
-                "number_of_seller_chats": {
-                "type": "integer",
-                "minimum": 0,
-                "description": "Number of chats where the user acted as a seller"
-              },
-
-                "subscription_plans_requested": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "description": "Number of subscription or plan inquiries"
-                },
-                "zero_credit_rfq_attempt": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "description": "Seller tried to access RFQs with zero credits (0 or 1)"
-                },
-                "rfq_requested_ai": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "description": "Number of RFQs requested or accessed by the seller during this session"
-                },
-                "rfq_response_ai": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "description": "Number of RFQs responded to by the seller in this session (counted when the seller clicks 'I am interested' after receiving an RFQ notification)"
-                  }
-
-              },
-              "required": [
-                "subscription_plans_requested", "zero_credit_rfq_attempt","number_of_seller_chats","rfq_requested_ai","rfq_response_ai"
-              ]
-            },
+  "type": "object",
+  "description": "Metrics tracking seller behavior and interactions. Set all values to 0 if the user is not acting as a seller in this conversation.",
+  "properties": {
+    "number_of_seller_chats": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total count of chat conversations where the user explicitly acted in the role of a seller (selling products, services, or responding to buyer inquiries)"
+    },
+    "subscription_plans_requested": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of times the user explicitly asked about subscription plans, pricing, credits, or membership options. Look for: (1) direct questions about plans/pricing, (2) messages asking 'how to buy credits' or 'subscription options', (3) clicks on 'View Plans' or similar buttons. Do NOT count automated system messages about credits - only count user-initiated inquiries."
+    },
+    "zero_credit_rfq_attempt": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Binary flag (0 or 1). Set to 1 if ANY of these conditions occur: (1) System displays message 'You do not have enough credits to request the RFQ' with 'Available Credit: 0', (2) User attempts to view/request RFQs and receives zero-credit warning, (3) User clicks 'Request Active RFQs' or 'View RFQs' button and sees credit insufficiency message. Set to 0 if seller never encounters credit limitations."
+    },
+    "rfq_requested_ai": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of RFQ request attempts by the seller. Increment by 1 for each: (1) Click on 'Request Active RFQs' or 'View RFQs' button (button_reply.id='view_rfqs'), (2) Click on '[Button: Request RFQ]' for a specific RFQ, (3) Any action attempting to access RFQ details. Count all attempts regardless of success or credit availability."
+    },
+    "rfq_response_ai": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of RFQs where seller expressed interest. Increment by 1 for each: (1) Click on \"I'm Interested\" button (look for content like '[Button: I'm Interested] RFQ: RFQ[ID]'), (2) Messages with button_reply containing 'interested' or 'interest', (3) Explicit text responses expressing interest in specific RFQs. Look for patterns: '[Button: I'm Interested] RFQ: RFQ[number]' or interactive messages with interest confirmation."
+    },
+    "bids_accepted_ai": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of bids that were accepted by the seller. Count each time the seller accepts a bid from a buyer, typically indicated by clicking 'Accept Bid' button or similar confirmation action. Look for messages with '[Button: Accept Bid]' or acceptance confirmation messages."
+    }
+  },
+  "required": [
+    "number_of_seller_chats",
+    "subscription_plans_requested",
+    "zero_credit_rfq_attempt",
+    "rfq_requested_ai",
+    "rfq_response_ai",
+    "bids_accepted_ai"
+  ]
+},
 
             "registration_metrics": {
               "type": "object",
@@ -138,12 +167,14 @@
                 "seller_successful_registration": {
                   "type": "integer",
                   "minimum": 0,
-                  "description": "Successful seller registration count"
+                  "description": "Count of successful NEW seller account registrations only. Increment by 1 when: (1) User selects 'Register a new Seller account' option (NOT selecting numbered existing sellers profiles), (2) System asks for and user provides NEW seller registration details including: seller name, email address, GST number, products offered or product categories, business information,  (4) System confirms new seller account creation. CRITICAL EXCLUSION: If user selects existing seller profile from numbered list (e.g., '1. priyasoniy17@gmail.com — Seller') and then receives 'OTP sent to priyasoniy17@gmail.com', this is AUTHENTICATION for existing account, NOT registration. Only count when user explicitly registers NEW seller account with new business details."
+
                 },
                 "seller_failed_registration": {
                   "type": "integer",
                   "minimum": 0,
-                  "description": "Failed seller registration attempts"
+                  "description": "Count of failed NEW seller registration attempts only. Increment by 1 when: (1) User selects 'Register a new Seller account' and starts providing NEW seller details (name, email, GST, products/categories) but fails to register, (2) User provides incomplete NEW seller registration information and cannot proceed, (3) NEW registration is rejected (duplicate GST, invalid email format, etc.), (4) User abandons NEW seller registration after starting to provide business details, CRITICAL EXCLUSION: If user selects existing seller profile (e.g., '1. priyasoniy17@gmail.com') and then OTP fails (message: 'Invalid OTP. You have X attempts remaining'), this is failed AUTHENTICATION/LOGIN, NOT failed registration. Only count failures during flows where user is creating entirely new seller account."
+
                 }
               },
               "required": [
@@ -190,7 +221,7 @@
 
             "seller_rfq_interest_event": {
                 "type": "array",
-                "description": "Captured ONLY from user messages contains [Button: I'm Interested] ",
+                "description": "Captured from user messages contains [Button: I'm Interested] ",
 
                 "items": {
                   "type": "object",
