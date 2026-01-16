@@ -117,7 +117,7 @@ class SellerAPIService:
     async def check_seller_rfq_status(self, seller_id: str,rfq_ids: List[str] = None) -> Dict[str, Any]:
         """Check seller's RFQ request credit balance."""
         try:
-            endpoint = "/rest/gmt/rfqSellerStatus"
+            endpoint = "/rest/gmt/getSellerRfqStatus"
             data = {"clientId": seller_id}
 
             if rfq_ids and any(rfq_id is not None for rfq_id in rfq_ids):

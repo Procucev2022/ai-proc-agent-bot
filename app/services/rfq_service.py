@@ -72,7 +72,7 @@ class RFQService:
         if user.role == "buyer":
             result = await rfq_service.get_rfq_status(client_id=user.id, rfq_ids=rfq_ids)
         elif user.role == "seller":
-            result = await seller_service.check_seller_rfq_status(seller_id=user.id, rfq_ids=rfq_ids)
+            result = await seller_service.check_seller_rfq_status(seller_id=user.org_id, rfq_ids=rfq_ids)
 
 
         # Handle case where data might be a list or dict
