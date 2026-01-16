@@ -27,7 +27,7 @@ from app.config import get_settings
 # Template definitions
 TEMPLATES = {
     "rfq_notification": {
-        "name": "new_rfq_opportunity",
+        "name": "procucev_new_rfq_opportunity",
         "language": "en",
         "category": "UTILITY",
         "structure": {
@@ -59,7 +59,7 @@ TEMPLATES = {
         }
     },
     "bfs_bid_notification": {
-        "name": "new_bid_received",
+        "name": "procucev_new_bid_received",
         "language": "en",
         "category": "UTILITY",
         "structure": {
