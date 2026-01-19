@@ -2786,6 +2786,7 @@ Determine the best category for the input item based on the similar items and th
             MAX_SPEC_LENGTH = 70  # Max chars for brand/remarks fields
             items = clean_rfq_data.get("items", [])
             total_items = len(items)
+            logger.info(f"total items:{total_items}")
             if total_items > MAX_DISPLAY_ITEMS:
                 clean_rfq_data["items"] = items[:MAX_DISPLAY_ITEMS]
                 clean_rfq_data["items_truncated"] = True
@@ -2847,11 +2848,14 @@ Determine the best category for the input item based on the similar items and th
                 tools=[confirmation_tool],
                 tool_choice={"type": "function", "name": "generate_rfq_confirmation"}
             )
+
+            logger.info(f"resposne:{response}")
             
             processing_time = time.time() - start_time
             
             # Parse function call response
             if response.output and len(response.output) > 0:
+                logger.info(f"resoosne outout:{response.output}")
                 function_call = response.output[0]
                 if function_call.type == "function_call":
                     args = json.loads(function_call.arguments)
