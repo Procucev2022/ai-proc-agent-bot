@@ -27,7 +27,7 @@ from app.config import get_settings
 # Template definitions
 TEMPLATES = {
     "rfq_notification": {
-        "name": "procucev_new_rfq_opportunity",
+        "name": "qua_seller_rfq_notification",
         "language": "en",
         "category": "UTILITY",
         "structure": {
@@ -36,18 +36,20 @@ TEMPLATES = {
                 "text": "New RFQ Opportunity"
             },
             "body": (
+                "A new Request For Quotation (RFQ) is available on QUA AI that matches your business profile.\n\n"
                 "*RFQ ID:* {{1}}\n"
-                "*Category:* {{2}}\n"
-                "*Delivery Date:* {{3}}\n"
-                "*Delivery Location:* {{4}}\n"
-                "*Project Description:* {{5}}"
+                "*Delivery Date:* {{2}}\n"
+                "*Delivery Location:* {{3}}\n"
+                "*Description:* {{4}}\n"
+                "*Quantity:* {{5}}\n\n"
+                "Click on \"I'm interested\" if you would like to submit a quote."
             ),
             "body_example": [
                 "RFQ-2024-001",
-                "Steel, Construction Materials",
                 "15-Feb-2024",
                 "Mumbai, Maharashtra",
-                "Requirement for structural steel beams for commercial building project"
+                "Requirement for structural steel beams for commercial building project",
+                "50 Tons"
             ],
             "footer": "Select an option to proceed",
             "buttons": [
@@ -59,7 +61,7 @@ TEMPLATES = {
         }
     },
     "bfs_bid_notification": {
-        "name": "procucev_new_bid_received",
+        "name": "qua_seller_bfs_bid_notification",
         "language": "en",
         "category": "UTILITY",
         "structure": {
@@ -68,10 +70,12 @@ TEMPLATES = {
                 "text": "New Bid Received"
             },
             "body": (
+                "A buyer has placed a bid on your listed item on QUA AI.\n\n"
                 "*Item:* {{1}}\n"
-                "*Your Listed Price:* ₹{{2}}\n"
-                "*Buyer's Offer:* ₹{{3}}\n"
-                "*Quantity:* {{4}}"
+                "*Your Price:* {{2}}\n"
+                "*Buyer Offer:* {{3}}\n"
+                "*Buyer's Required Quantity:* {{4}}\n\n"
+                "Please review and respond to this bid by clicking on the buttons below."
             ),
             "body_example": [
                 "TMT Steel Bars 12mm",
