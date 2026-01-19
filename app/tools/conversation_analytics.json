@@ -97,11 +97,24 @@
                   "minimum": 0,
                   "description": "Total count of distinct product keywords or product terms that buyer searched for in BFS. Extract product names from search queries and count unique products. Same product searched multiple times counts as 1. Examples: 'lenovo laptops', 'chemicals', 'air dryer' would count as 3 distinct products."
 
-              }
+              },
+                "bfs_stock_products_bid_placed_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Count of products from BFS stock searches where user placed bids. CRITICAL SEQUENCE: (1) User creates RFQ, (2) User clicks 'Check Availability' button, (3) System shows BFS stock results, (4) User clicks 'Place Bid' button (id='bfs_negotiate'), (5) User successfully places bid (confirmation message appears). Count each product in the successful bid confirmation. Do NOT count if user viewed stock but didn't bid, or if sequence was broken."
                 },
+                "bfs_products_searched_list": {
+                  "type": "array",
+                  "description": "List of product descriptions extracted from BFS search results shown to registered buyers. Extract from assistant messages with format '*X item(s) in stock:*' followed by numbered listings. NEW FORMAT: Product description is the text BEFORE the first '--' separator. Example: '1. GASKET -- MOBL CRNE SPR;SPARES -- Age: 70:' extracts 'GASKET'. Pattern: [number]. [PRODUCT_DESCRIPTION] -- [details]. Trim whitespace.",
+                  "items": {
+                    "type": "string",
+                    "description": "Product description before first '--' (e.g., 'GASKET', 'O RING GASKET', 'Dell Laptops')"
+                  }
+                }
+              },
 
               "required": [
-                "successful_rfqs_ai", "incomplete_rfqs", "buyers_started_but_not_raised_rfq", "number_of_buyer_chats","bfs_searches", "products_bid_for","no_of_products_searched"
+                "successful_rfqs_ai", "incomplete_rfqs", "buyers_started_but_not_raised_rfq", "number_of_buyer_chats","bfs_searches", "products_bid_for","no_of_products_searched","bfs_stock_products_bid_placed_count","bfs_products_searched_list"
               ]
             },
 
@@ -209,13 +222,22 @@
         "type": "integer",
         "minimum": 0,
         "description": "Number of FAQ or general query messages from the user in this session"
-      }
+      },
+      "bfs_products_searched_by_unregistered": {
+                  "type": "array",
+                  "description": "List of product descriptions extracted from BFS search results shown to UNREGISTERED users (users with NO buyer profiles who are just browsing/searching). Extract from assistant messages with format '*X item(s) in stock:*'. NEW FORMAT: Product description is the text BEFORE the first '--' separator. Example: '1. GASKET -- MOBL CRNE SPR;SPARES -- Age: 70:' extracts 'GASKET'. Pattern: [number]. [PRODUCT_DESCRIPTION] -- [details]. Trim whitespace. ONLY populate when user has NO buyer profile at time of search. Remove duplicates.",
+                  "items": {
+                    "type": "string",
+                    "description": "Product description before first '--' (e.g., 'GASKET', 'O RING GASKET', 'Chemicals')"
+                  }
+                }
     },
     "required": [
       "unregistered_seller_initiated_chat",
       "unregistered_seller_requested_rfq",
       "unregistered_buyer_bfs_only",
-      "number_of_faq_or_general_queries"
+      "number_of_faq_or_general_queries",
+      "bfs_products_searched_by_unregistered"
     ]
   },
 

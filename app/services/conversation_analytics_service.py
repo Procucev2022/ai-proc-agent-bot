@@ -90,6 +90,8 @@ class ConversationAnalyticsService:
                     'bfs_searches' : buyer_metrics.get('bfs_searches', 0),
                     'products_bid_for' : buyer_metrics.get('products_bid_for', 0),
                     'no_of_products_searched': buyer_metrics.get('no_of_products_searched', 0),
+                    'bfs_stock_products_bid_placed_count': buyer_metrics.get('bfs_stock_products_bid_placed_count', 0),
+                    'bfs_products_searched_list': buyer_metrics.get('bfs_products_searched_list', 0),
                     'confidence_score': confidence_score,
                     'analysis_reasoning':analysis_reasoning
                 }
@@ -129,7 +131,8 @@ class ConversationAnalyticsService:
                     'unregistered_seller_initiated_chat': session.get('unregistered_seller_initiated_chat', 0),
                     'unregistered_seller_requested_rfq': session.get('unregistered_seller_requested_rfq', 0),
                     'unregistered_buyer_bfs_only': session.get('unregistered_buyer_bfs_only', 0),
-                    'number_of_faq_or_general_queries': session.get('number_of_faq_or_general_queries', 0)
+                    'number_of_faq_or_general_queries': session.get('number_of_faq_or_general_queries', 0),
+                    'bfs_products_searched_by_unregistered': session.get('bfs_products_searched_by_unregistered', 0)
                 }
                 unknown_records.append(unknown_record)
 
@@ -144,6 +147,7 @@ class ConversationAnalyticsService:
                 'date', 'session_id', 'phone_number', 'user_type', 'buyer_email',
                 'successful_rfqs_ai', 'incomplete_rfq', 'buyers_started_but_not_raised_rfq',
                 'number_of_buyer_chats', 'successful_registration', 'failed_registration','bfs_searches','products_bid_for','no_of_products_searched',
+                'bfs_stock_products_bid_placed_count', 'bfs_products_searched_list',
                 'confidence_score','analysis_reasoning'
             ]
             buyer_df = buyer_df[buyer_cols]
@@ -162,7 +166,7 @@ class ConversationAnalyticsService:
                 'date', 'session_id', 'phone_number', 'user_type', 'email',
                 'confidence_score', 'analysis_reasoning', 'unregistered_seller_initiated_chat',
                 'unregistered_seller_requested_rfq', 'unregistered_buyer_bfs_only',
-                'number_of_faq_or_general_queries'
+                'number_of_faq_or_general_queries','bfs_products_searched_by_unregistered'
             ]
             unknown_df = unknown_df[unknown_cols]
 
@@ -522,6 +526,7 @@ Session IDs to process: {', '.join(session_ids)}
                         'username', 'org_uuid', 'user_uuid', 'total_rfqs_raised', 'rfqs_with_seller_responses',
                         'total_items_in_rfqs', 'total_distinct_rfq_category','number_of_buyer_chats',
                         'successful_registration','failed_registration','bfs_searches','products_bid_for','no_of_products_searched',
+                        'bfs_stock_products_bid_placed_count', 'bfs_products_searched_list',
                         'analysis_reasoning'
                     ]
                     joined_buyer_df = joined_buyer_df[[col for col in relevant_cols if col in joined_buyer_df.columns]]
@@ -682,6 +687,9 @@ Session IDs to process: {', '.join(session_ids)}
                         row.get('rfqs_with_seller_responses')) else 0,
                     no_of_products_searched=int(row.get('no_of_products_searched', 0)) if pd.notna(
                         row.get('no_of_products_searched')) else 0,
+                    bfs_stock_products_bid_placed_count=int(row.get('bfs_stock_products_bid_placed_count', 0)) if pd.notna(
+                        row.get('bfs_stock_products_bid_placed_count')) else 0,
+                    bfs_products_searched_list=row.get('bfs_products_searched_list'),
                     org_id=str(row.get('org_uuid', '')) if pd.notna(row.get('org_uuid')) else None,
                     uuid=str(row.get('user_uuid', '')) if pd.notna(row.get('user_uuid')) else None,
                     ai_reasoning=str(row.get('analysis_reasoning', '')) if pd.notna(row.get('analysis_reasoning')) else None
@@ -712,6 +720,8 @@ Session IDs to process: {', '.join(session_ids)}
                     existing.products_bid_for = buyer_metric.products_bid_for
                     existing.rfq_response_count = buyer_metric.rfq_response_count
                     existing.no_of_products_searched = buyer_metric.no_of_products_searched
+                    existing.bfs_stock_products_bid_placed_count = buyer_metric.bfs_stock_products_bid_placed_count
+                    existing.bfs_products_searched_list = buyer_metric.bfs_products_searched_list
 
                     existing.org_id = buyer_metric.org_id
                     existing.uuid = buyer_metric.uuid
@@ -762,7 +772,8 @@ Session IDs to process: {', '.join(session_ids)}
                 ('buyer', 27, 'No of Buyers Started But Not Raised RFQ', sum(m.buyers_started_but_not_raised_rfq for m in buyer_metrics)),
                 ('buyer', 28, 'No of Products Searched by Buyers', sum(m.no_of_products_searched for m in buyer_metrics)),
                 ('buyer', 29, 'No of Unique Buyers searched for BFS Items', len(set((m.email, m.phone_number) for m in buyer_metrics if m.bfs_searches > 0 and (m.email or m.phone_number)))),
-                ('buyer', 30, 'No of Unique buyers participated in Bidding', len(set((m.email, m.phone_number) for m in buyer_metrics if m.products_bid_for > 0 and (m.email or m.phone_number))))
+                ('buyer', 30, 'No of Unique buyers participated in Bidding', len(set((m.email, m.phone_number) for m in buyer_metrics if m.products_bid_for > 0 and (m.email or m.phone_number)))),
+                ('buyer', 31, 'BFS Products Bids Count', sum(m.bfs_stock_products_bid_placed_count for m in buyer_metrics))
             ]
             
             # Insert or update aggregates
@@ -1120,9 +1131,12 @@ ORDER BY
                 GROUP BY category
             """)
             intimated_result = db_session.execute(intimated_query, {'target_date': target_date})
-            print("initomates result",intimated_result)
             intimated_dict = {row[0]: int(row[1]) for row in intimated_result}
 
+            # Get BFS product categories from buyer daily metrics
+            bfs_category_counts, unregistered_bfs_category_counts = self._get_bfs_category_counts_combined(target_date, db_session)
+
+            # Process RFQ categories
             for row in rows:
                 category_name = row[1] if row[1] is not None else 'Unknown'
                 total_rfq_raised = int(row[2]) if row[2] is not None else 0
@@ -1142,6 +1156,8 @@ ORDER BY
                     existing.total_rfqs_intimated = total_rfqs_intimated
                     existing.bids_requested = bids_requested
                     existing.bids_accepted = bids_accepted
+                    existing.bfs_products_searched_count = bfs_category_counts.get(category_name, 0)
+                    existing.bfs_products_searched_by_unregistered_count = unregistered_bfs_category_counts.get(category_name, 0)
                 else:
                     aggregate = CategoryAggregates(
                         date=target_date,
@@ -1150,17 +1166,146 @@ ORDER BY
                         total_rfqs_with_quotations=rfqs_with_quotations,
                         total_rfqs_intimated=total_rfqs_intimated,
                         bids_requested=bids_requested,
-                        bids_accepted=bids_accepted
-
+                        bids_accepted=bids_accepted,
+                        bfs_products_searched_count=bfs_category_counts.get(category_name, 0),
+                        bfs_products_searched_by_unregistered_count=unregistered_bfs_category_counts.get(category_name, 0)
                     )
                     db_session.add(aggregate)
 
+            # Process BFS-only categories
+            all_bfs_categories = set(bfs_category_counts.keys()) | set(unregistered_bfs_category_counts.keys())
+            for category_name in all_bfs_categories:
+                if not any(row[1] == category_name for row in rows if row[1]):
+                    existing = db_session.query(CategoryAggregates).filter(
+                        CategoryAggregates.date == target_date,
+                        CategoryAggregates.category_name == category_name
+                    ).first()
+                    
+                    if not existing:
+                        aggregate = CategoryAggregates(
+                            date=target_date,
+                            category_name=category_name,
+                            total_rfq_raised_category=0,
+                            total_rfqs_with_quotations=0,
+                            total_rfqs_intimated=intimated_dict.get(category_name, 0),
+                            bids_requested=0,
+                            bids_accepted=0,
+                            bfs_products_searched_count=bfs_category_counts.get(category_name, 0),
+                            bfs_products_searched_by_unregistered_count=unregistered_bfs_category_counts.get(category_name, 0)
+                        )
+                        db_session.add(aggregate)
+
             db_session.commit()
-            logger.info(f"[CONVERSATION-ANALYTICS] Stored {len(rows)} category aggregates for {target_date}")
+            logger.info(f"[CONVERSATION-ANALYTICS] Stored category aggregates for {target_date}")
 
         except Exception as e:
             logger.error(f"[CONVERSATION-ANALYTICS] Failed to calculate category aggregates: {e}")
             db_session.rollback()
+
+    def _get_bfs_category_counts_combined(self, target_date, db_session) -> tuple:
+        """Get BFS product category counts from both buyer and unknown daily metrics using pandas."""
+        try:
+            # Get buyer metrics data
+            buyer_query = db_session.query(BuyerDailyMetrics.bfs_products_searched_list).filter(
+                BuyerDailyMetrics.date == target_date,
+                BuyerDailyMetrics.bfs_products_searched_list.isnot(None)
+            )
+            buyer_df = pd.read_sql(buyer_query.statement, db_session.bind)
+            
+            # Get unknown metrics data
+            unknown_query = db_session.query(UnknownDailyMetrics.bfs_products_searched_by_unregistered).filter(
+                UnknownDailyMetrics.date == target_date,
+                UnknownDailyMetrics.bfs_products_searched_by_unregistered.isnot(None)
+            )
+            unknown_df = pd.read_sql(unknown_query.statement, db_session.bind)
+            
+            # Extract all unique products
+            all_products = set()
+            
+            # From buyer data
+            if not buyer_df.empty:
+                buyer_products = buyer_df['bfs_products_searched_list'].dropna().apply(
+                    lambda x: x if isinstance(x, list) else []
+                ).explode().dropna().unique()
+                all_products.update(buyer_products)
+            
+            # From unknown data
+            if not unknown_df.empty:
+                unknown_products = unknown_df['bfs_products_searched_by_unregistered'].dropna().apply(
+                    lambda x: x if isinstance(x, list) else []
+                ).explode().dropna().unique()
+                all_products.update(unknown_products)
+            
+            if not all_products:
+                return {}, {}
+            
+            # Get product-category mapping from BFS database
+            product_category_map = self._get_product_category_mapping(list(all_products))
+            
+            # Count categories for buyer data
+            buyer_category_counts = self._count_categories_from_df(
+                buyer_df, 'bfs_products_searched_list', product_category_map
+            )
+            
+            # Count categories for unknown data
+            unknown_category_counts = self._count_categories_from_df(
+                unknown_df, 'bfs_products_searched_by_unregistered', product_category_map
+            )
+            
+            return buyer_category_counts, unknown_category_counts
+            
+        except Exception as e:
+            logger.error(f"Failed to get BFS category counts: {e}")
+            return {}, {}
+    
+    def _get_product_category_mapping(self, products: list) -> dict:
+        """Get product to category mapping from BFS database."""
+        try:
+            remote_db = get_remote_db_session()
+            placeholders = ','.join([f':product{i}' for i in range(len(products))])
+            like_conditions = ' OR '.join([f'description LIKE :like{i}' for i in range(len(products))])
+            
+            query = text(f"""
+                SELECT DISTINCT category, description 
+                FROM development_gmtbfs.bfs_items 
+                WHERE description IN ({placeholders}) OR {like_conditions}
+            """)
+            
+            params = {}
+            for i, product in enumerate(products):
+                params[f'product{i}'] = product
+                params[f'like{i}'] = f"{product}%"
+            
+            result = remote_db.execute(query, params)
+            mapping = {row[1]: row[0] for row in result.fetchall()}
+            remote_db.close()
+            
+            return mapping
+            
+        except Exception as e:
+            logger.error(f"Failed to get product category mapping: {e}")
+            return {}
+    
+    def _count_categories_from_df(self, df: pd.DataFrame, column_name: str, product_category_map: dict) -> dict:
+        """Count categories from DataFrame using pandas operations."""
+        if df.empty:
+            return {}
+        
+        # Explode products and map to categories
+        products_series = df[column_name].dropna().apply(
+            lambda x: x if isinstance(x, list) else []
+        ).explode().dropna()
+        
+        # Map products to categories
+        category_series = products_series.map(
+            lambda product: next(
+                (cat for desc, cat in product_category_map.items() 
+                 if desc == product or desc.startswith(product)), None
+            )
+        ).dropna()
+        
+        # Count categories
+        return category_series.value_counts().to_dict()
     
    
 
@@ -1376,8 +1521,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2026, 1, 13).date()
-        end_date = datetime(2026, 1, 16).date()
+        start_date = datetime(2026, 1, 17).date()
+        end_date = datetime(2026, 1, 19).date()
         
         current_date = start_date
         while current_date <= end_date:

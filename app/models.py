@@ -859,6 +859,8 @@ class BuyerDailyMetrics(Base):
     products_bid_for= Column(Integer, default=0)
     no_of_products_searched= Column(Integer, default=0)
     rfq_response_count= Column(Integer,default=0)
+    bfs_stock_products_bid_placed_count= Column(Integer,default=0)
+    bfs_products_searched_list = Column(JSON,nullable=True)
     org_id = Column(String(255), nullable=True)
     uuid = Column(String(255), nullable=True)
     ai_reasoning = Column(Text, nullable=True)
@@ -957,6 +959,8 @@ class CategoryAggregates(Base):
     total_rfqs_intimated = Column(Integer, default=0)
     bids_requested = Column(Integer, default=0)
     bids_accepted = Column(Integer, default=0)
+    bfs_products_searched_count = Column(Integer, default=0)
+    bfs_products_searched_by_unregistered_count = Column(Integer, default=0)
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
     
     __table_args__ = (
@@ -984,6 +988,7 @@ class UnknownDailyMetrics(Base):
     unregistered_seller_requested_rfq = Column(Integer, default=0)
     unregistered_buyer_bfs_only = Column(Integer, default=0)
     number_of_faq_or_general_queries = Column(Integer, default=0)
+    bfs_products_searched_by_unregistered = Column(JSON,nullable=True)
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
     
     __table_args__ = (
