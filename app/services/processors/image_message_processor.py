@@ -293,7 +293,8 @@ class ImageMessageProcessor:
             )
 
             # Add remaining attachments message if user has uploaded some
-            current_attachments = session.workflow_state.get("extracted_entities", [{}])[0].get("attachments", [])
+            extracted_entities = session.workflow_state.get("extracted_entities", [])
+            current_attachments = extracted_entities[0].get("attachments", []) if extracted_entities else []
             attachment_count = len(current_attachments)
             if attachment_count > 0:
                 remaining_slots = AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ - attachment_count
@@ -348,7 +349,8 @@ class ImageMessageProcessor:
             )
 
             # Add remaining attachments message if user has uploaded some
-            current_attachments = session.workflow_state.get("extracted_entities", [{}])[0].get("attachments", [])
+            extracted_entities = session.workflow_state.get("extracted_entities", [])
+            current_attachments = extracted_entities[0].get("attachments", []) if extracted_entities else []
             attachment_count = len(current_attachments)
             if attachment_count > 0:
                 remaining_slots = AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ - attachment_count

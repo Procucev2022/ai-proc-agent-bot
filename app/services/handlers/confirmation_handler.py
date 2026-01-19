@@ -369,7 +369,8 @@ class ConfirmationHandler:
 
             # Add remaining attachments message if user has uploaded some
             from app.services.helpers.attachment_helpers import AttachmentHelpers
-            current_attachments = session.workflow_state.get("extracted_entities", [{}])[0].get("attachments", [])
+            extracted_entities = session.workflow_state.get("extracted_entities", [])
+            current_attachments = extracted_entities[0].get("attachments", []) if extracted_entities else []
             attachment_count = len(current_attachments)
             if attachment_count > 0:
                 remaining_slots = AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ - attachment_count
@@ -430,7 +431,8 @@ class ConfirmationHandler:
 
             # Add remaining attachments message if user has uploaded some
             from app.services.helpers.attachment_helpers import AttachmentHelpers
-            current_attachments = session.workflow_state.get("extracted_entities", [{}])[0].get("attachments", [])
+            extracted_entities = session.workflow_state.get("extracted_entities", [])
+            current_attachments = extracted_entities[0].get("attachments", []) if extracted_entities else []
             attachment_count = len(current_attachments)
             if attachment_count > 0:
                 remaining_slots = AttachmentHelpers.MAX_ATTACHMENTS_PER_RFQ - attachment_count
