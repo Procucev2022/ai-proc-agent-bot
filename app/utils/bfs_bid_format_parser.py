@@ -22,24 +22,44 @@ def _normalize_bid_text_newlines(text: str) -> str:
     Normalize text by inserting newlines where WhatsApp may have stripped them.
 
     WhatsApp sometimes strips newlines when copy-pasting, resulting in:
-    "Dell XPS 13 - Intel i7 : 85000 HP Pavilion - AMD Ryzen : 55000"
+    "1. Laptop -- Age: 2:    a. Price: 6000    b. Qty: 10  2. Dell Laptops..."
 
-    This function detects boundaries (price followed by product name) and inserts newlines.
-    Pattern: ": price" followed by space and capital letter (start of next product)
+    This function detects boundaries and inserts newlines:
+    - Before "a. Price:"
+    - Before "b. Qty:"
+    - Before item numbers like "2.", "3.", etc.
 
     Args:
         text: Input text that may have stripped newlines
 
     Returns:
-        Text with newlines inserted at item boundaries
+        Text with newlines inserted at proper boundaries
     """
-    # Pattern: colon + price (digits with optional commas/decimals) + space(s) + capital letter
-    # This ensures we only split AFTER a complete price, not inside product names like "V9024 RTS"
-    # Replace with: colon + price + newline + capital letter
+    normalized = text
+
+    # Insert newline before "a. Price:" (with optional spaces)
     normalized = re.sub(
-        r'(:\s*[\d,]+(?:\.\d+)?)\s+([A-Z])',
-        r'\1\n\2',
-        text
+        r'\s+(a\.\s*Price:)',
+        r'\n   \1',
+        normalized,
+        flags=re.IGNORECASE
+    )
+
+    # Insert newline before "b. Qty:" (with optional spaces)
+    normalized = re.sub(
+        r'\s+(b\.\s*Qty:)',
+        r'\n   \1',
+        normalized,
+        flags=re.IGNORECASE
+    )
+
+    # Insert newline before item numbers (2., 3., 4., etc.) that follow a quantity
+    # Pattern: "Qty: <number>" followed by spaces and a new item number
+    normalized = re.sub(
+        r'(Qty:\s*\d+)\s+(\d+\.)',
+        r'\1\n\n\2',
+        normalized,
+        flags=re.IGNORECASE
     )
 
     if normalized != text:
@@ -127,67 +147,97 @@ def _extract_bid_format_section(text: str) -> Tuple[str, str]:
 
 def _build_item_key(item: Dict) -> str:
     """
-    Build unique key from description + specification.
+    Build unique key from description + specification (truncated for display/matching).
 
     Args:
         item: BFS item dictionary with description and specification
 
     Returns:
-        Combined key like "Dell XPS 13 - Intel i7" or just "Dell XPS 13" if no spec
+        Combined key like "Dell XPS 13 -- Intel i7" or just "Dell XPS 13" if no spec
     """
-    desc = (item.get("description") or "").strip()
-    spec = (item.get("specification") or "").strip()
+    # Same limits as generate_bid_format() for consistent matching
+    DESC_LIMIT = 50
+    SPEC_LIMIT = 20
+
+    desc = (item.get("description") or "")[:DESC_LIMIT].strip()
+    spec = (item.get("specification") or "")[:SPEC_LIMIT].strip()
     if spec:
-        return f"{desc} - {spec}"
+        return f"{desc} -- {spec}"
     return desc
 
 
 def generate_bid_format(bfs_items: List[Dict]) -> str:
     """
     Generate editable bid format from BFS search results.
-    Format: Number. Description - Specification : Price
+    Multi-line format with description, specification, age, price, and quantity.
 
     Args:
-        bfs_items: List of BFS items with description, specification, sellPrice
+        bfs_items: List of BFS items with description, specification, sellPrice,
+                   ageOfAsset, availableQuantity
 
     Returns:
         Formatted string like:
-        1. Dell XPS 13 - Intel i7, 16GB RAM : 85000
-        2. HP Pavilion - AMD Ryzen : 70000
+        1. Dell XPS 13 -- Intel i7 -- Age: 2yr:
+           a. Price: 85000
+           b. Qty: 10
+
+        2. HP Pavilion -- AMD Ryzen -- Age: 1yr:
+           a. Price: 70000
+           b. Qty: 5
     """
-    lines = []
+    # Character limits for display
+    DESC_LIMIT = 50
+    SPEC_LIMIT = 20
+    AGE_LIMIT = 30
+
+    blocks = []
     for idx, item in enumerate(bfs_items, start=1):
-        key = _build_item_key(item)
+        desc = (item.get("description") or "")[:DESC_LIMIT].strip()
+        spec = (item.get("specification") or "")[:SPEC_LIMIT].strip()
+        age = (item.get("ageOfAsset") or "-")[:AGE_LIMIT].strip()
         price = round(item.get("sellPrice") or 0)
-        lines.append(f"{idx}. {key} : {price}")
-    return "\n".join(lines)
+        qty = int(item.get("availableQuantity") or 1)
+
+        # Build key with truncated values
+        if spec:
+            key = f"{desc} -- {spec}"
+        else:
+            key = desc
+
+        block = (
+            f"{idx}. {key} -- Age: {age}:\n"
+            f"   a. Price: {price}\n"
+            f"   b. Qty: {qty}"
+        )
+        blocks.append(block)
+    return "\n\n".join(blocks)
 
 
 def parse_bid_format(text: str, original_items: List[Dict]) -> Dict[str, Any]:
     """
-    Parse user's bid response and validate against original items.
-    Match by "Description - Specification" (case-insensitive).
+    Parse user's bid response in multi-line format and validate against original items.
+    Match by "Description -- Specification" (case-insensitive).
+
+    Expected format:
+        1. Dell XPS 13 -- Intel i7 -- Age: 2yr:
+           a. Price: 85000
+           b. Qty: 10
 
     Args:
         text: User's message with bid format
         original_items: Original BFS items for validation
 
     Returns:
-        Success: {"bids": [{"key": "...", "price": 4800, "original_item": {...}}, ...]}
+        Success: {"bids": [{"key": "...", "price": 4800, "quantity": 10, "original_item": {...}}, ...]}
         Failure: {"error": "Error message"}
     """
     text = text.strip()
     if not text:
-        return {"error": "No bid items provided. Please copy the format and modify prices."}
+        return {"error": "No bid items provided. Please copy the format and modify prices/quantities."}
 
     # Normalize newlines (handles WhatsApp stripping newlines on copy-paste)
     text = _normalize_bid_text_newlines(text)
-
-    # Extract only the bid format section (handles copy-paste with extra text)
-    text, additional_text = _extract_bid_format_section(text)
-    logger.debug(f"Extracted bid format text: {text[:100]}...")
-    if additional_text:
-        logger.debug(f"Additional text after format: {additional_text[:50]}...")
+    logger.debug(f"Normalized bid text: {text[:200]}...")
 
     # Build lookup for original items by key (case-insensitive)
     original_lookup = {}
@@ -195,43 +245,100 @@ def parse_bid_format(text: str, original_items: List[Dict]) -> Dict[str, Any]:
         key = _build_item_key(item).lower()
         original_lookup[key] = item
 
-    # Parse each line: "Number. Name - Spec : Price" or "Name - Spec : Price"
-    pattern = r'^(.+?)\s*:\s*([\d,]+(?:\.\d+)?)\s*$'
-    # Pattern to strip leading number prefix like "1. " or "2. "
-    number_prefix_pattern = r'^\d+\.\s*'
+    # Split into blocks (separated by double newlines or by numbered items)
+    blocks = re.split(r'\n(?=\d+\.)', text)
+    blocks = [b.strip() for b in blocks if b.strip()]
+
+    if not blocks:
+        return {"error": "No bid items found. Please use the provided format."}
+
     bids = []
 
-    for line in text.split('\n'):
-        line = line.strip()
-        if not line:
+    # Patterns for parsing
+    # Header: "1. Description -- Specification -- Age: 2yr:" or "1. Description -- Age: 2yr:"
+    header_pattern = r'^(\d+)\.\s*(.+?)\s*--\s*Age:\s*[^:]*:\s*$'
+    # Price line: "a. Price: 85000" or "a.Price:85000"
+    price_pattern = r'^\s*a\.\s*Price:\s*([\d,]+(?:\.\d+)?)\s*$'
+    # Qty line: "b. Qty: 10" or "b.Qty:10"
+    qty_pattern = r'^\s*b\.\s*Qty:\s*(\d+)\s*$'
+
+    for block in blocks:
+        lines = block.strip().split('\n')
+        if not lines:
             continue
 
-        match = re.match(pattern, line)
-        if not match:
-            return {"error": f"Invalid format: '{line}'\nExpected: Product Name - Spec : Price"}
+        # Parse header line
+        header_line = lines[0].strip()
+        header_match = re.match(header_pattern, header_line, re.IGNORECASE)
 
-        item_key = match.group(1).strip()
-        # Strip leading number prefix (e.g., "1. " or "2. ") for matching
-        item_key = re.sub(number_prefix_pattern, '', item_key).strip()
-        price_str = match.group(2).replace(',', '')
+        if not header_match:
+            # Try alternative: maybe age is on same line differently
+            # Pattern: "1. Description -- Spec -- Age: 2yr:"
+            alt_pattern = r'^(\d+)\.\s*(.+?)(?:\s*--\s*Age:[^:]*)?:\s*$'
+            header_match = re.match(alt_pattern, header_line, re.IGNORECASE)
+            if not header_match:
+                return {"error": f"Invalid header format: '{header_line}'\nExpected: 1. Product -- Spec -- Age: Xyr:"}
+
+        item_key_with_age = header_match.group(2).strip()
+        # Remove the "-- Age: ..." part to get the item key
+        item_key = re.sub(r'\s*--\s*Age:.*$', '', item_key_with_age, flags=re.IGNORECASE).strip()
+
+        # Find price and qty lines
+        price = None
+        quantity = None
+
+        for line in lines[1:]:
+            line = line.strip()
+            if not line:
+                continue
+
+            price_match = re.match(price_pattern, line, re.IGNORECASE)
+            if price_match:
+                price_str = price_match.group(1).replace(',', '')
+                try:
+                    price = float(price_str)
+                except ValueError:
+                    return {"error": f"Invalid price '{price_str}' for '{item_key}'."}
+                continue
+
+            qty_match = re.match(qty_pattern, line, re.IGNORECASE)
+            if qty_match:
+                try:
+                    quantity = int(qty_match.group(1))
+                except ValueError:
+                    return {"error": f"Invalid quantity for '{item_key}'."}
+                continue
+
+        # Validate required fields
+        if price is None:
+            return {"error": f"Missing price for '{item_key}'.\nExpected: a. Price: <amount>"}
+
+        if quantity is None:
+            return {"error": f"Missing quantity for '{item_key}'.\nExpected: b. Qty: <number>"}
+
+        if price <= 0:
+            return {"error": f"Invalid price for '{item_key}'. Price must be greater than 0."}
+
+        if quantity <= 0:
+            return {"error": f"Invalid quantity for '{item_key}'. Quantity must be greater than 0."}
 
         # Validate item exists in original list
         lookup_key = item_key.lower()
         if lookup_key not in original_lookup:
             return {"error": f"Item '{item_key}' not found in original list.\nPlease use the exact name from the format."}
 
-        # Validate price
-        try:
-            price = float(price_str)
-            if price <= 0:
-                return {"error": f"Invalid price for '{item_key}'. Price must be greater than 0."}
-        except ValueError:
-            return {"error": f"Invalid price '{price_str}' for '{item_key}'."}
+        original_item = original_lookup[lookup_key]
+
+        # Validate quantity doesn't exceed available
+        available_qty = int(original_item.get("availableQuantity") or 1)
+        if quantity > available_qty:
+            return {"error": f"Quantity {quantity} exceeds available stock ({available_qty}) for '{item_key}'."}
 
         bids.append({
             "key": item_key,
             "price": price,
-            "original_item": original_lookup[lookup_key]
+            "quantity": quantity,
+            "original_item": original_item
         })
 
     if not bids:
@@ -244,16 +351,32 @@ def parse_bid_format(text: str, original_items: List[Dict]) -> Dict[str, Any]:
 def generate_bid_summary(bid_items: List[Dict]) -> str:
     """
     Generate bid summary for OTP message.
+    Uses same format as bid input for consistency.
 
     Args:
-        bid_items: List of parsed bid items with price and original_item
+        bid_items: List of parsed bid items with price, quantity, and original_item
 
     Returns:
-        Formatted summary string
+        Formatted summary string matching bid format
     """
-    lines = []
-    for bid in bid_items:
-        key = bid["key"][:40]
-        new_price = bid["price"]
-        lines.append(f"{key} : ₹{new_price:,.0f}")
-    return "\n".join(lines)
+    # Same limits as generate_bid_format()
+    AGE_LIMIT = 30
+
+    blocks = []
+    for idx, bid in enumerate(bid_items, start=1):
+        key = bid["key"]
+        price = bid["price"]
+        qty = bid.get("quantity")
+        if not qty:
+            logger.warning(f"[BFS Bid] Missing quantity for bid: {key}")
+            continue
+        original_item = bid.get("original_item", {})
+        age = (original_item.get("ageOfAsset") or "-")[:AGE_LIMIT].strip()
+
+        block = (
+            f"{idx}. {key} -- Age: {age}:\n"
+            f"   a. Price: ₹{price:,.0f}\n"
+            f"   b. Qty: {qty}"
+        )
+        blocks.append(block)
+    return "\n\n".join(blocks)
