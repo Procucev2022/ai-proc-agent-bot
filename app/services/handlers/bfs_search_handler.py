@@ -275,26 +275,29 @@ class BFSSearchHandler:
             session.workflow_state["bfs_results"] = data
             await self.session_manager.save_session(session, persist_to_db=False)
 
-            # Format results compactly (max 1024 chars)
+            # Format results using same structure as bid format
+            # Character limits: desc=50, spec=20, age=30
             if isinstance(data, list):
-                result_message = f"*{len(data)} item(s) in stock:*\n"
+                result_message = f"*{len(data)} item(s) in stock:*"
 
                 for idx, item in enumerate(data[:5], 1):
                     if isinstance(item, dict):
-                        desc = (item.get("description") or "N/A")[:25]
-                        spec = item.get("specification")
+                        desc = (item.get("description") or "N/A")[:50].strip()
+                        spec = (item.get("specification") or "")[:20].strip()
+                        age = (item.get("ageOfAsset") or "-")[:30].strip()
                         qty = int(item.get("availableQuantity") or 0)
-                        age = item.get("ageOfAsset")
                         price = item.get("sellPrice") or 0
 
-                        # Build details with available info (tab indented)
-                        result_message += f"\n{idx}. *{desc}*"
+                        # Build key: description -- specification (if exists)
                         if spec:
-                            result_message += f"\n\t{spec[:15]}"
-                        result_message += f"\n\t*Qty:* {qty}"
-                        if age:
-                            result_message += f"\n\tAge: {age}yr"
-                        result_message += f"\n\t*₹{price:,.0f}*"
+                            key = f"{desc} -- {spec}"
+                        else:
+                            key = desc
+
+                        # Format matching bid format structure
+                        result_message += f"\n\n{idx}. {key} -- Age: {age}:\n"
+                        result_message += f"   a. Price: ₹{price:,.0f}\n"
+                        result_message += f"   b. Qty: {qty}"
 
                 buttons = [
                     {"id": "bfs_negotiate", "title": "Place Bid"},
@@ -658,7 +661,11 @@ class BFSSearchHandler:
             item_id = original_item.get("id")
             buy_price = original_item.get("sellPrice", 0)
             ask_price = bid.get("price", 0)
-            quantity = 1  # Default quantity per bid
+            quantity = bid.get("quantity")
+            if not quantity:
+                logger.warning(f"[BFS Bid] Skipping bid with missing quantity: {bid}")
+                failed_bids.append({"bid": bid, "error": "Missing quantity"})
+                continue
 
             if not item_id:
                 logger.warning(f"[BFS Bid] Skipping bid with missing item_id: {bid}")
