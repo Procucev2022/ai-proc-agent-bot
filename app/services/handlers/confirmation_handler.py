@@ -369,7 +369,6 @@ class ConfirmationHandler:
 
             # Add remaining attachments message if user has uploaded some
             from app.services.helpers.attachment_helpers import AttachmentHelpers
-            logger.info(f"extracted entiies :{session.workflow_state.get("extracted_entities", [{}])}")
             current_attachments = session.workflow_state.get("extracted_entities", [{}])[0].get("attachments", [])
             attachment_count = len(current_attachments)
             if attachment_count > 0:
