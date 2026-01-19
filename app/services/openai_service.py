@@ -2847,6 +2847,7 @@ Determine the best category for the input item based on the similar items and th
                 tools=[confirmation_tool],
                 tool_choice={"type": "function", "name": "generate_rfq_confirmation"}
             )
+
             
             processing_time = time.time() - start_time
             

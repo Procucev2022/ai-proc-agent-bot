@@ -1113,7 +1113,7 @@ class SellerService:
         
         # Generate invalid RFQ message using existing function
         rfq_display = self._generate_hardcoded_rfq_display(rfqs, total_count, credits_available, skip_intro=True)
-        response_message = f"The RFQ ID you entered is invalid.\n\nPlease select from these available RFQs:\n\n{rfq_display}"
+        response_message = f"Please select a valid RFQ ID from the list.\n\n{rfq_display}"
 
         return {
             "success": False,
