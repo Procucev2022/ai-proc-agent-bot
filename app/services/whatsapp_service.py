@@ -83,7 +83,7 @@ class WhatsAppService:
             # Don't fail the send if flag cleanup fails - just log
             logger.warning(f"[PENDING_REPLY] Failed to clear flag for {recipient_id}: {e}")
 
-    async def send_message(self, recipient_id: str, message: str, session_id: str = None, clear_pending_reply: bool = True) -> MessageResponse:
+    async def send_message(self, recipient_id: str, message: str, session_id: str = None, clear_pending_reply: bool = True, skip_concatenation: bool = False) -> MessageResponse:
 
         """
         Send text message to WhatsApp user with retry mechanism.
@@ -96,6 +96,7 @@ class WhatsAppService:
             message: Message content to send
             session_id: Optional session ID for tracking message in conversation history
             clear_pending_reply: Whether to clear pending_reply flag (False for acknowledgment messages)
+            skip_concatenation: Whether to skip prepending irrelevant_response (True for system/maintenance messages)
 
         """
 
@@ -114,17 +115,20 @@ class WhatsAppService:
 
             # Prepare message
             combined_message = message  # default
-            # Access the saved irrelevant response from user cache
-            redis_service = get_redis_service()
-            cache_key = f"user_cache:{formatted_recipient}"
-            cache_data = await redis_service.get(cache_key, as_json=True)
-            if cache_data and cache_data.get("irrelevant_response"):
-                irrelevant_response = cache_data["irrelevant_response"].get("user_message")
-                if irrelevant_response:
-                    combined_message = f"{irrelevant_response}\n\n{message}"
-                    # Clear the irrelevant response after using it
-                    cache_data.pop("irrelevant_response", None)
-                    await redis_service.set(cache_key, cache_data, ex=43200)
+            
+            # Skip concatenation for system/maintenance messages
+            if not skip_concatenation:
+                # Access the saved irrelevant response from user cache
+                redis_service = get_redis_service()
+                cache_key = f"user_cache:{formatted_recipient}"
+                cache_data = await redis_service.get(cache_key, as_json=True)
+                if cache_data and cache_data.get("irrelevant_response"):
+                    irrelevant_response = cache_data["irrelevant_response"].get("user_message")
+                    if irrelevant_response:
+                        combined_message = f"{irrelevant_response}\n\n{message}"
+                        # Clear the irrelevant response after using it
+                        cache_data.pop("irrelevant_response", None)
+                        await redis_service.set(cache_key, cache_data, ex=43200)
             payload = {
                 "user": self.username,
                 "pass": self.password,
@@ -428,7 +432,8 @@ class WhatsAppService:
                                       buttons_config: List[Dict[str, str]],
                                       header: Optional[str] = None,
                                       footer: str = "(Type 'Exit' anytime to end the chat)",
-                                      session_id: str = None) -> MessageResponse:
+                                      session_id: str = None,
+                                      skip_concatenation: bool = False) -> MessageResponse:
 
         """
         Send fully configurable button message that can be used anywhere with any button configuration.
@@ -440,6 +445,7 @@ class WhatsAppService:
             buttons_config: List of button configurations with 'id', 'title', and optional 'action'
             footer: Footer text (optional)
             session_id: Optional session ID for tracking message in conversation history
+            skip_concatenation: Whether to skip prepending irrelevant_response (True for system/maintenance messages)
 
         """
         try:
@@ -456,19 +462,23 @@ class WhatsAppService:
                 logger.error(f"Invalid phone number format: {recipient_id}")
                 return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}")
 
-            # Access the saved irrelevant response from user cache
-            redis_service = get_redis_service()
-            cache_key = f"user_cache:{formatted_recipient}"
-            cache_data = await redis_service.get(cache_key, as_json=True)
+            # Prepare body text
             combined_body = body  # default
-            if cache_data and cache_data.get("irrelevant_response"):
-                irrelevant_response = cache_data["irrelevant_response"].get("user_message")
-                if irrelevant_response:
-                    combined_body = f"{irrelevant_response}\n\n{body}"
-                    logger.info(f"combined message for buttons is  :{combined_body}")
-                    # Clear the irrelevant response after using it
-                    cache_data.pop("irrelevant_response", None)
-                    await redis_service.set(cache_key, cache_data, ex=43200)
+            
+            # Skip concatenation for system/maintenance messages
+            if not skip_concatenation:
+                # Access the saved irrelevant response from user cache
+                redis_service = get_redis_service()
+                cache_key = f"user_cache:{formatted_recipient}"
+                cache_data = await redis_service.get(cache_key, as_json=True)
+                if cache_data and cache_data.get("irrelevant_response"):
+                    irrelevant_response = cache_data["irrelevant_response"].get("user_message")
+                    if irrelevant_response:
+                        combined_body = f"{irrelevant_response}\n\n{body}"
+                        logger.info(f"combined message for buttons is  :{combined_body}")
+                        # Clear the irrelevant response after using it
+                        cache_data.pop("irrelevant_response", None)
+                        await redis_service.set(cache_key, cache_data, ex=43200)
             
             # Sanitize body text - remove control characters that can cause API errors
             import re

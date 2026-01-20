@@ -88,7 +88,11 @@ class GlobalErrorHandler:
     async def _send_user_response(self, user_phone: str) -> None:
         """Send user-friendly error response."""
         try:
-            await self.whatsapp_service.send_message(user_phone, self.user_error_message)
+            await self.whatsapp_service.send_message(
+                user_phone, 
+                self.user_error_message,
+                skip_concatenation=True
+            )
             logger.info(f"Sent error response to user {user_phone}")
         except Exception as e:
             logger.error(f"Failed to send user error response: {e}")
@@ -155,7 +159,11 @@ class GlobalErrorHandler:
             success_count = 0
             for phone_number in self.support_team_numbers:
                 try:
-                    result = await self.whatsapp_service.send_message(phone_number, message)
+                    result = await self.whatsapp_service.send_message(
+                        phone_number, 
+                        message,
+                        skip_concatenation=True  # Don't prepend irrelevant responses to notifications
+                    )
                     if result.success:
                         success_count += 1
                         logger.info(f"WhatsApp notification sent to {phone_number}")
