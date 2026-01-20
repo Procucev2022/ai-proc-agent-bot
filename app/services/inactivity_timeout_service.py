@@ -687,7 +687,7 @@ class InactivityTimeoutService:
             else:
                 logger.debug(f"[WORKER_TIMEOUT] No session to reset")
             
-            # 6.Clean up activity and pending_reply keys
+            # 6. Clean up activity and pending_reply keys
             try:
                 await self.redis.delete(activity_key)
                 await self.redis.delete(pending_reply_key)
@@ -695,7 +695,7 @@ class InactivityTimeoutService:
             except Exception as cleanup_error:
                 logger.error(f"[WORKER_TIMEOUT] Error cleaning up keys: {cleanup_error}")
             
-            # 8. Send worker timeout notification (system-side error message)
+            # 7. Send worker timeout notification (system-side error message)
             worker_timeout_message = (
                 "Sorry, your request is taking longer than expected due to high traffic. "
                 "Please try sending your message again in some time."
