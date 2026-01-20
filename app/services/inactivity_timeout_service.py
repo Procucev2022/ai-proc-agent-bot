@@ -687,7 +687,22 @@ class InactivityTimeoutService:
             else:
                 logger.debug(f"[WORKER_TIMEOUT] No session to reset")
             
-            # 6. Clean up activity and pending_reply keys
+            # 6. RACE CONDITION CHECK: Re-verify pending_reply flag still exists
+            # If worker finished between detection and now, flag will be gone
+            try:
+                flag_still_exists = await self.redis.exists(pending_reply_key)
+                if not flag_still_exists:
+                    # Clean up activity key but don't send timeout notification
+                    await self.redis.delete(activity_key)
+                    return
+                
+            except Exception as check_error:
+                logger.warning(
+                    f"[WORKER_TIMEOUT] Error checking flag existence for {user_phone}: {check_error}. "
+                    f"Proceeding with timeout (safe default)."
+                )
+            
+            # 7. Clean up activity and pending_reply keys
             try:
                 await self.redis.delete(activity_key)
                 await self.redis.delete(pending_reply_key)
@@ -695,7 +710,7 @@ class InactivityTimeoutService:
             except Exception as cleanup_error:
                 logger.error(f"[WORKER_TIMEOUT] Error cleaning up keys: {cleanup_error}")
             
-            # 7. Send worker timeout notification (system-side error message)
+            # 8. Send worker timeout notification (system-side error message)
             worker_timeout_message = (
                 "Sorry, your request is taking longer than expected due to high traffic. "
                 "Please try sending your message again in some time."
