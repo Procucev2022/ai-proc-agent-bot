@@ -571,7 +571,6 @@ class InactivityTimeoutService:
             
             if user_inactivity_timeout_count > 0:
                 logger.info(f"[TIMEOUT_SERVICE] Processed {user_inactivity_timeout_count} user inactivity timeout(s)")
-                logger.debug(f"[TIMEOUT_SERVICE] Processed {timeout_count} timeouts in this cycle")
         
         except Exception as e:
             logger.error(f"[TIMEOUT_SERVICE] Error in _check_inactive_users: {e}", exc_info=True)
