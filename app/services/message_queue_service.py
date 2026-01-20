@@ -1058,7 +1058,8 @@ class MessageQueueService:
                 await self.whatsapp_service.send_message(
                     recipient_id=recipient_id,
                     message="Got it. Please wait while we process your request, we will be back shortly.",
-                    clear_pending_reply=False  # Don't clear flag - this is not the final response
+                    clear_pending_reply=False,
+                    skip_concatenation=True  
                 )
                 
                 logger.debug(f"[ACK] Sent acknowledgment to {user_phone} (pending_reply flag preserved)")
@@ -1080,7 +1081,8 @@ class MessageQueueService:
             await self.whatsapp_service.send_message(
                 recipient_id=recipient_id,
                 message="We are working on your request. Please wait while we process it.",
-                clear_pending_reply=False  # Don't clear flag for acknowledgment
+                clear_pending_reply=False,  # Don't clear flag for acknowledgment
+                skip_concatenation=True  # Don't prepend irrelevant responses to system messages
             )
             
             logger.debug(f"[PLEASE_WAIT] Sent to {user_phone}")

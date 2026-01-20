@@ -571,7 +571,6 @@ class InactivityTimeoutService:
             
             if user_inactivity_timeout_count > 0:
                 logger.info(f"[TIMEOUT_SERVICE] Processed {user_inactivity_timeout_count} user inactivity timeout(s)")
-                logger.debug(f"[TIMEOUT_SERVICE] Processed {timeout_count} timeouts in this cycle")
         
         except Exception as e:
             logger.error(f"[TIMEOUT_SERVICE] Error in _check_inactive_users: {e}", exc_info=True)
@@ -704,7 +703,8 @@ class InactivityTimeoutService:
             try:
                 await self.whatsapp_service.send_message(
                     recipient_id=user_phone,
-                    message=worker_timeout_message
+                    message=worker_timeout_message,
+                    skip_concatenation=True
                 )
                 logger.info(f"[WORKER_TIMEOUT] Sent timeout notification to {user_phone}")
             except Exception as send_error:
@@ -911,7 +911,11 @@ class InactivityTimeoutService:
             
             try:
                 logger.debug(f"[TIMEOUT_SERVICE] Sending timeout notification to {user_phone}")
-                await self.whatsapp_service.send_message(user_phone, timeout_message)
+                await self.whatsapp_service.send_message(
+                    user_phone, 
+                    timeout_message,
+                    skip_concatenation=True
+                )
                 logger.debug(
                     f"[TIMEOUT_SERVICE] Successfully sent timeout notification to {user_phone} "
                     f"(user_type={user_type})"
