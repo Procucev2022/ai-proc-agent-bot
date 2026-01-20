@@ -310,7 +310,7 @@ class OpenAIService:
         return "[unknown content]"
 
     @log_service_method("openai_service")
-    async def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
+    async def classify_intent(self, message: str, context: dict = None,user_phone=None) -> Dict[str, Any]:
         """
         Classify user intent using OpenAI function calling with conversation context awareness.
         
@@ -492,8 +492,8 @@ class OpenAIService:
                 error_message="No function call in response",
                 model_used=self.default_model
             )
-            return self._get_fallback_intent_response("No function call in response")
-            
+            return await self._get_fallback_classification(message, context, user_phone=user_phone)
+
         except (APIError, APITimeoutError, RateLimitError, APIConnectionError) as e:
             error_msg = str(e)
             
@@ -512,7 +512,7 @@ class OpenAIService:
             )
             
             logger.error(f"Intent classification failed: {error_msg}")
-            return self._get_fallback_intent_response(error_msg)
+            return await self._get_fallback_classification(message, context,user_phone=user_phone)
         except Exception as e:
             error_msg = str(e)
 
@@ -528,7 +528,30 @@ class OpenAIService:
             )
             
             logger.error(f"Intent classification failed: {error_msg}")
-            return self._get_fallback_intent_response(error_msg)
+            return await self._get_fallback_classification(message, context, user_phone=user_phone)
+
+    async def _get_fallback_classification(self, message: str, context: dict = None, error: str = None,
+                                           user_phone=None) -> Dict[str, Any]:
+        """
+        Provide fallback classification when OpenAI fails.
+
+        Uses simple rule-based classification with context awareness as backup.
+
+        Args:
+            message: Original user message (can be string or dict for multimodal content)
+            context: Optional conversation context
+            error: Optional error message
+
+        Returns:
+            Fallback classification result
+        """
+        # Use cancel service's method to send the appropriate message with buttons
+        from app.services.cancel_service import CancelService
+        user = context.get('user_role')
+        if user:
+            cancel_service = CancelService()
+            await cancel_service._send_cancellation_message(user_phone=user_phone, user_type=user, custom_message=f"Currently, we are facing some technical issues. The team is actively working to get QUA up and running. We apologise for the inconvenience caused and request you to please try again after a while.In case of anything urgent, feel free to reach us at {self.settings.support_contact_info}")
+
         
     @log_service_method("openai_service")
     async def extract_entities(self, message: str, workflow_type: str = "product_search") -> Dict[str, Any]:

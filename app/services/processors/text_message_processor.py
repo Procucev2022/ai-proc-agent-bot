@@ -59,7 +59,7 @@ class TextMessageProcessor:
             
             # Classify intent FIRST
             conversation_context = ChatServiceHelpers.build_conversation_context(session, message)
-            intent_result = self.intent_service.classify_intent(message, conversation_context)
+            intent_result = self.intent_service.classify_intent(message, conversation_context,user.phone_number)
             logger.info(f"Intent classification result: {intent_result}")
             
             intent = intent_result.get('intent')

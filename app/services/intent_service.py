@@ -32,7 +32,7 @@ class IntentService:
         self.openai_service = OpenAIService()
         self.settings = get_settings()
         
-    async def classify_intent(self, message: str, context: dict = None) -> Dict[str, Any]:
+    async def classify_intent(self, message: str, context: dict = None,user_phone=None) -> Dict[str, Any]:
         """
         Classify user message intent using OpenAI with conversation context awareness.
 
@@ -60,21 +60,11 @@ class IntentService:
             - should_update_entities: whether entities should be updated from contextual reference
         """
         try:
+
             # Get session from context if available (for Track 2 checks)
             session = context.get('session') if context else None
 
             if isinstance(message, str):
-
-                # PRIORITY 1: Check for exit/cancel keywords (Track 2)
-                if self.detect_exit_keywords(message):
-                    return {
-                        "intent": "exit_system",
-                        "confidence": 95,
-                        "reasoning": "User wants to exit or cancel workflow",
-                        "success": True,
-                        "context_analysis": {"conversation_stage": "exiting"}
-                    }
-
                 # PRIORITY 2: Check for format modification (Track 2)
                 if session and self.detect_format_modification_intent(message, session):
                     return {
@@ -101,11 +91,11 @@ class IntentService:
 
             # PRIORITY 4: Regular OpenAI classification
             # Get classification from OpenAI (FAQ intent can be detected from prompt alone, no need for full FAQ context)
-            classification_result = await self.openai_service.classify_intent(message, context)
+            classification_result = await self.openai_service.classify_intent(message, context,user_phone)
 
             if not classification_result.get("success", False):
                 logger.warning(f"OpenAI classification failed, using fallback")
-                return self._get_fallback_classification(message, context)
+                return await self._get_fallback_classification(message, context,user_phone)
             
             # Log context-aware classification result
             intent = classification_result['intent']
@@ -126,9 +116,10 @@ class IntentService:
             
         except Exception as e:
             logger.error(f"Intent classification failed: {str(e)}")
-            return self._get_fallback_classification(message, context, error=str(e))
+            return await self._get_fallback_classification(message, context, error=str(e),user_phone=user_phone)
     
-    def _get_fallback_classification(self, message: str, context: dict = None, error: str = None) -> Dict[str, Any]:
+    async def _get_fallback_classification(self, message: str, context: dict = None, error: str = None,
+                                           user_phone=None) -> Dict[str, Any]:
         """
         Provide fallback classification when OpenAI fails.
 
@@ -142,106 +133,12 @@ class IntentService:
         Returns:
             Fallback classification result
         """
-        # Handle non-string message content (e.g., image data)
-        if isinstance(message, dict):
-            message_lower = "image attachment"
-        elif not isinstance(message, str):
-            message_lower = str(message).lower()
-        else:
-            message_lower = message.lower()
-        
-        # Default context analysis
-        default_context_analysis = {
-            "references_existing_data": False,
-            "conversation_stage": "unknown",
-            "modification_details": {"target_entity": None, "modification_type": None},
-            "confirmation_details": {"response_type": None, "has_conditions": False}
-        }
-        
-        # Context-aware fallback classification
-        if context:
-            # Extract key context information
-            has_pending_confirmations = context.get('workflow_state', {}).get('pending_combined_rfq') or context.get('workflow_state', {}).get('pending_rfq')
-            has_incomplete_products = context.get('session_status', {}).get('has_incomplete_products', False)
-            existing_entities = context.get('extracted_entities', {}) or context.get('workflow_state', {}).get('extracted_entities', [])
-            bot_last_message = context.get('bot_last_message', '')
-
-            # Clarification response detection (highest priority)
-            # If user has incomplete products, bot just sent a message, and user isn't using modification language
-            modification_keywords = ["change", "modify", "update", "actually", "instead", "make that", "switch to"]
-            has_modification_keywords = any(keyword in message_lower for keyword in modification_keywords)
-
-            if (has_incomplete_products and bot_last_message and not has_modification_keywords):
-                intent = "buy_something"  # Continue collection workflow
-                confidence = 85
-                default_context_analysis.update({
-                    "references_existing_data": True,
-                    "conversation_stage": "collecting"
-                })
-
-            # Modification request detection
-            elif (has_modification_keywords and (existing_entities or has_pending_confirmations)):
-                intent = "modification_request"
-                confidence = 70
-                default_context_analysis.update({
-                    "references_existing_data": True,
-                    "conversation_stage": "modifying"
-                })
-            
-            # Confirmation response detection
-            elif has_pending_confirmations:
-                confirmation_keywords = ["yes", "confirm", "ok", "proceed", "no", "cancel", "decline"]
-                if any(keyword in message_lower for keyword in confirmation_keywords):
-                    intent = "confirmation_response"
-                    confidence = 75
-                    response_type = "accept" if any(word in message_lower for word in ["yes", "confirm", "ok", "proceed"]) else "decline"
-                    default_context_analysis.update({
-                        "conversation_stage": "confirming",
-                        "confirmation_details": {"response_type": response_type, "has_conditions": "but" in message_lower or "change" in message_lower}
-                    })
-                else:
-                    # In confirmation stage but not clear response
-                    intent = "ambiguous"
-                    confidence = 40
-            else:
-                # No specific context, use general rules
-                intent, confidence = self._get_general_fallback_intent(message_lower)
-        else:
-            # No context available, use general rules
-            intent, confidence = self._get_general_fallback_intent(message_lower)
-        
-        # Build all intent scores
-        all_scores = {
-            "buy_something": 20,
-            "sell_something": 10,
-            "bfs_search": 10,
-            "account_switch": 5,
-            "register_account": 5,
-            "general_inquiry": 20,
-            "modification_request": 10,
-            "confirmation_response": 10,
-            "rfq_status_check": 10,
-            "reference_request": 5,
-            "contextual_reference": 5,
-            "session_inquiry": 5,
-            "exit_system": 5,
-            "cancel_workflow": 5,
-            "alternative_request": 5,
-            "support": 10,
-            "greeting": 10,
-            "ambiguous": 20
-        }
-        all_scores[intent] = confidence
-        
-        return {
-            "intent": intent,
-            "confidence": confidence,
-            "reasoning": f"Fallback rule-based classification{' due to error: ' + error if error else ''}",
-            "all_intent_scores": all_scores,
-            "context_analysis": default_context_analysis,
-            "success": False,
-            "is_fallback": True
-        }
+        # Use cancel service's method to send the appropriate message with buttons
+        from app.services.cancel_service import CancelService
+        user = context.get('user_role')
+        if user:
+            cancel_service = CancelService()
+            await cancel_service._send_cancellation_message(user_phone=user_phone, user_type=user, custom_message=f"Currently, we are facing some technical issues. The team is actively working to get QUA up and running. We apologise for the inconvenience caused and request you to please try again after a while.In case of anything urgent, feel free to reach us at {self.settings.support_contact_info}")
     
     def _get_general_fallback_intent(self, message_lower: str) -> tuple:
         """Get general intent classification without context."""

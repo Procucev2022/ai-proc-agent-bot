@@ -702,7 +702,7 @@ class ChatService:
 
                 conversation_context = await ChatServiceHelpers.build_conversation_context(session, classification_content)
                 # Now using async OpenAI service
-                message_intent_result = await self.intent_service.classify_intent(classification_content, conversation_context)
+                message_intent_result = await self.intent_service.classify_intent(classification_content, conversation_context,user_phone)
                 intent = message_intent_result.get('intent')
                 confidence = message_intent_result.get('confidence', 0)
 
@@ -1102,6 +1102,10 @@ class ChatService:
                 error_message=f"Critical processing error: {str(e)}",
                 error_type="Critical System Error"
             )
+            from app.services.exit_service import ExitService
+            session = await self.session_manager.get_conversation_context(user_phone)
+            exit_service = ExitService(self.whatsapp_service, None, self.session_manager, None)
+            await exit_service.handle_exit_intent(user_phone, session, show_message=False)
             
             return {"status": "technical_failure", "error": str(e)}
 
@@ -1357,7 +1361,7 @@ class ChatService:
             if not intent_result:
                 # Fallback: classify intent if not provided (shouldn't happen with our optimization)
                 conversation_context = await ChatServiceHelpers.build_conversation_context(session, message)
-                intent_result = await self.intent_service.classify_intent(message, conversation_context)
+                intent_result = await self.intent_service.classify_intent(message, conversation_context,user.phone_number)
                 logger.warning(f"Had to fallback to intent classification - this shouldn't happen")
 
             logger.info(f"Intent classification result: {intent_result}")
@@ -3892,6 +3896,9 @@ class ChatService:
                 if msg:
                     self.session_manager.add_message_to_history(session, "assistant", msg)
                     await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
+
+            elif result.get('status') in ['rfq_status_found']:
+                pass
             else:
                 # Send message normally
                 await send_response(result , session)

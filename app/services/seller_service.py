@@ -116,15 +116,13 @@ class SellerService:
                     current_state == "awaiting_rfq_selection"
                     or (
                     session.workflow_type
-                    and session.workflow_type.value == "seller_rfq_view" ) or
-                    (
-                            session.workflow_type
-                            and session.workflow_type.value == "seller_rfq_view"
-                            and intent_result
-                            and intent_result.get("intent") == "rfq_status_check"
-            )
+                    and session.workflow_type.value == "seller_rfq_view" )
             ):
-
+                # Check if intent is rfq_status_check and workflow is seller_rfq_view
+                if (intent_result and intent_result.get("intent") == "rfq_status_check" and 
+                    session.workflow_type and session.workflow_type.value == "seller_rfq_view"):
+                    return await self.rfq_status_service.handle_rfq_status_inquiry(user, message, session)
+                
                 return await self._handle_rfq_selection_response(user, session, message)
 
             # Step 2: Seller is selecting subscription plan
