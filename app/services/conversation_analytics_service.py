@@ -47,76 +47,74 @@ class ConversationAnalyticsService:
         for session in sessions_data:
             session_id = session.get('session_id', '')
             user_type = session.get('user_type', 'unknown')
-            email = session.get('email', '')
             confidence_score = session.get('confidence_score', 0)
             analysis_reasoning=session.get('analysis_reasoning',"")
 
-            # Extract metrics and emails
-            buyer_metrics = session.get('buyer_metrics', {})
-            seller_metrics = session.get('seller_metrics', {})
+            # Extract buyer and seller identities
+            buyer_identities = session.get('buyer_identities', [])
+            seller_identities = session.get('seller_identities', [])
+            unknown_user_metrics = session.get('unknown_user_metrics', {})
             registration_metrics = session.get('registration_metrics', {})
-            buyer_email = session.get('buyer_email', '')
-            seller_email = session.get('seller_email', '')
 
-            # Check if session has buyer activity (any non-zero buyer metric)
-            has_buyer_activity = (
-                    buyer_metrics.get('successful_rfqs_ai', 0) > 0 or
-                    buyer_metrics.get('incomplete_rfqs', 0) > 0 or
-                    buyer_metrics.get('buyers_started_but_not_raised_rfq', 0) > 0 or
-                    buyer_metrics.get('number_of_buyer_chats', 0) > 0
-            )
+            # Check if session has buyer activity
+            has_buyer_activity = len(buyer_identities) > 0
 
-            # Check if session has seller activity (any non-zero seller metric)
-            has_seller_activity = (
-                    seller_metrics.get('subscription_plans_requested', 0) > 0 or
-                    seller_metrics.get('zero_credit_rfq_attempt', 0) > 0 or
-                    seller_metrics.get('number_of_seller_chats', 0) > 0
-            )
+            # Check if session has seller activity
+            has_seller_activity = len(seller_identities) > 0
 
             # Add to buyer_df if has buyer metrics
             if has_buyer_activity:
-                buyer_record = {
-                    'date': analysis_date,
-                    'session_id': session_id,
-                    'phone_number': session.get('phone_number', ''),
-                    'user_type': user_type,
-                    'buyer_email': buyer_email or email,
-                    'successful_rfqs_ai': buyer_metrics.get('successful_rfqs_ai', 0),
-                    'incomplete_rfq': buyer_metrics.get('incomplete_rfqs', 0),
-                    'buyers_started_but_not_raised_rfq': buyer_metrics.get('buyers_started_but_not_raised_rfq', 0),
-                    'number_of_buyer_chats': buyer_metrics.get('number_of_buyer_chats', 0),
-                    'successful_registration': registration_metrics.get('buyer_successful_registration', 0),
-                    'failed_registration': registration_metrics.get('buyer_failed_registration', 0),
-                    'bfs_searches' : buyer_metrics.get('bfs_searches', 0),
-                    'products_bid_for' : buyer_metrics.get('products_bid_for', 0),
-                    'no_of_products_searched': buyer_metrics.get('no_of_products_searched', 0),
-                    'bfs_stock_products_bid_placed_count': buyer_metrics.get('bfs_stock_products_bid_placed_count', 0),
-                    'bfs_products_searched_list': buyer_metrics.get('bfs_products_searched_list', 0),
-                    'confidence_score': confidence_score,
-                    'analysis_reasoning':analysis_reasoning
-                }
-                buyer_records.append(buyer_record)
+                for buyer_identity in buyer_identities:
+                    buyer_email = buyer_identity.get('buyer_email', '')
+                    buyer_metrics = buyer_identity.get('buyer_metrics', {})
+                    
+                    buyer_record = {
+                        'date': analysis_date,
+                        'session_id': session_id,
+                        'phone_number': session.get('phone_number', ''),
+                        'user_type': user_type,
+                        'buyer_email': buyer_email,
+                        'successful_rfqs_ai': buyer_metrics.get('successful_rfqs_ai', 0),
+                        'incomplete_rfq': buyer_metrics.get('incomplete_rfqs', 0),
+                        'buyers_started_but_not_raised_rfq': buyer_metrics.get('buyers_started_but_not_raised_rfq', 0),
+                        'number_of_buyer_chats': buyer_metrics.get('number_of_buyer_chats', 0),
+                        'successful_registration': registration_metrics.get('buyer_successful_registration', 0),
+                        'failed_registration': registration_metrics.get('buyer_failed_registration', 0),
+                        'bfs_searches': buyer_metrics.get('bfs_searches', 0),
+                        'products_bid_for': buyer_metrics.get('products_bid_for', 0),
+                        'no_of_products_searched': buyer_metrics.get('no_of_products_searched', 0),
+                        'bfs_stock_products_bid_placed_count': buyer_metrics.get('bfs_stock_products_bid_placed_count', 0),
+                        'bfs_products_searched_list': buyer_metrics.get('bfs_products_searched_list', []),
+                        'rfq_ids_created': buyer_metrics.get('rfq_ids_created', []),
+                        'confidence_score': confidence_score,
+                        'analysis_reasoning': analysis_reasoning
+                    }
+                    buyer_records.append(buyer_record)
 
             # Add to seller_df if has seller metrics
             if has_seller_activity:
-                seller_record = {
-                    'date': analysis_date,
-                    'session_id': session_id,
-                    'phone_number': session.get('phone_number', ''),
-                    'user_type': user_type,
-                    'seller_email': seller_email or email,
-                    'requested_rfq_ai':seller_metrics.get('rfq_requested_ai',0),
-                    'rfq_response_ai':seller_metrics.get('rfq_response_ai',0),
-                    'subscription_plans_requested': seller_metrics.get('subscription_plans_requested', 0),
-                    'zero_credit_rfq_attempt': seller_metrics.get('zero_credit_rfq_attempt', 0),
-                    'number_of_seller_chats': seller_metrics.get('number_of_seller_chats', 0),
-                    'successful_registration': registration_metrics.get('seller_successful_registration', 0),
-                    'failed_registration': registration_metrics.get('seller_failed_registration', 0),
-                    'bids_accepted_ai':seller_metrics.get('bids_accepted_ai', 0),
-                    'confidence_score': confidence_score,
-                    'analysis_reasoning': analysis_reasoning
-                }
-                seller_records.append(seller_record)
+                for seller_identity in seller_identities:
+                    seller_email = seller_identity.get('seller_email', '')
+                    seller_metrics = seller_identity.get('seller_metrics', {})
+                    
+                    seller_record = {
+                        'date': analysis_date,
+                        'session_id': session_id,
+                        'phone_number': session.get('phone_number', ''),
+                        'user_type': user_type,
+                        'seller_email': seller_email,
+                        'requested_rfq_ai': seller_metrics.get('rfq_requested_ai', 0),
+                        'rfq_response_ai': seller_metrics.get('rfq_response_ai', 0),
+                        'subscription_plans_requested': seller_metrics.get('subscription_plans_requested', 0),
+                        'zero_credit_rfq_attempt': seller_metrics.get('zero_credit_rfq_attempt', 0),
+                        'number_of_seller_chats': seller_metrics.get('number_of_seller_chats', 0),
+                        'successful_registration': registration_metrics.get('seller_successful_registration', 0),
+                        'failed_registration': registration_metrics.get('seller_failed_registration', 0),
+                        'bids_accepted_ai': seller_metrics.get('bids_accepted_ai', 0),
+                        'confidence_score': confidence_score,
+                        'analysis_reasoning': analysis_reasoning
+                    }
+                    seller_records.append(seller_record)
 
             # Add to unknown_df if has NO buyer or seller activity
             if not has_buyer_activity and not has_seller_activity:
@@ -125,14 +123,14 @@ class ConversationAnalyticsService:
                     'session_id': session_id,
                     'phone_number': session.get('external_user_id', ''),
                     'user_type': user_type,
-                    'email': email,
+                    'email': '',
                     'confidence_score': confidence_score,
-                    'analysis_reasoning': session.get('analysis_reasoning', ''),
-                    'unregistered_seller_initiated_chat': session.get('unregistered_seller_initiated_chat', 0),
-                    'unregistered_seller_requested_rfq': session.get('unregistered_seller_requested_rfq', 0),
-                    'unregistered_buyer_bfs_only': session.get('unregistered_buyer_bfs_only', 0),
-                    'number_of_faq_or_general_queries': session.get('number_of_faq_or_general_queries', 0),
-                    'bfs_products_searched_by_unregistered': session.get('bfs_products_searched_by_unregistered', 0)
+                    'analysis_reasoning': analysis_reasoning,
+                    'unregistered_seller_initiated_chat': unknown_user_metrics.get('unregistered_seller_initiated_chat', 0),
+                    'unregistered_seller_requested_rfq': unknown_user_metrics.get('unregistered_seller_requested_rfq', 0),
+                    'unregistered_buyer_bfs_only': unknown_user_metrics.get('unregistered_buyer_bfs_only', 0),
+                    'number_of_faq_or_general_queries': unknown_user_metrics.get('number_of_faq_or_general_queries', 0),
+                    'bfs_products_searched_by_unregistered': unknown_user_metrics.get('bfs_products_searched_by_unregistered', [])
                 }
                 unknown_records.append(unknown_record)
 
@@ -147,8 +145,8 @@ class ConversationAnalyticsService:
                 'date', 'session_id', 'phone_number', 'user_type', 'buyer_email',
                 'successful_rfqs_ai', 'incomplete_rfq', 'buyers_started_but_not_raised_rfq',
                 'number_of_buyer_chats', 'successful_registration', 'failed_registration','bfs_searches','products_bid_for','no_of_products_searched',
-                'bfs_stock_products_bid_placed_count', 'bfs_products_searched_list',
-                'confidence_score','analysis_reasoning'
+                'bfs_products_searched_list', 'rfq_ids_created','bfs_stock_products_bid_placed_count',
+                'confidence_score', 'analysis_reasoning'
             ]
             buyer_df = buyer_df[buyer_cols]
 
@@ -478,7 +476,7 @@ Session IDs to process: {', '.join(session_ids)}
                     result.get('sessions', []),
                     result.get('date', str(target_date))
                 )
-                
+                seller_df.to_csv("selelr data.csv")
                 # Create seller_rfq_interest_event_df from AI metrics
                 seller_rfq_interest_event_df = self._create_seller_rfq_interest_event_df(
                     result.get('sessions', []),
@@ -514,7 +512,8 @@ Session IDs to process: {', '.join(session_ids)}
                 if not buyer_df.empty and not remote_rfq_df.empty:
                     buyer_df['phone_clean'] = buyer_df['phone_number'].str.replace('+', '', regex=False)
                     remote_rfq_df['phone_clean'] = remote_rfq_df['phone'].str.replace('+', '', regex=False)
-                    joined_buyer_df = buyer_df.merge(remote_rfq_df, on=['phone_clean'], how='outer')
+                    joined_buyer_df= buyer_df.merge(remote_rfq_df, left_on=['phone_clean', 'buyer_email'],
+                                   right_on=['phone_clean', 'username'], how='outer')
                     
                     # Coalesce date columns
                     joined_buyer_df['date'] = joined_buyer_df['date_x'].fillna(joined_buyer_df['date_y'])
@@ -554,10 +553,14 @@ Session IDs to process: {', '.join(session_ids)}
                 if not seller_df.empty and not remote_seller_rfq_df.empty:
                     seller_df['phone_clean'] = seller_df['phone_number'].str.replace('+', '', regex=False)
                     remote_seller_rfq_df['phone_clean'] = remote_seller_rfq_df['phone'].str.replace('+', '', regex=False)
-                    joined_seller_df = seller_df.merge(remote_seller_rfq_df, on=['phone_clean'], how='outer')
+                    joined_seller_df = seller_df.merge(remote_seller_rfq_df, left_on=['phone_clean','seller_email'],right_on=['phone_clean', 'username'], how='outer')
+
+                    joined_seller_df.to_csv("joined seller.csv")
 
 
-                    
+
+
+
                     # Coalesce date columns - use rfq_date when date is empty
                     joined_seller_df['date'] = joined_seller_df['date'].fillna(joined_seller_df['rfq_date'])
                     
@@ -1521,8 +1524,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2026, 1, 17).date()
-        end_date = datetime(2026, 1, 19).date()
+        start_date = datetime(2026, 1, 21).date()
+        end_date = datetime(2026, 1, 21).date()
         
         current_date = start_date
         while current_date <= end_date:
