@@ -252,7 +252,11 @@ class BFSSearchHandler:
                     return
 
                 # Send message with Create new RFQ and Cancel buttons when no products found
-                no_results_message = "No items found in stock matching your search."
+                no_results_message = (
+                    "We could not find any in-stock items matching your search criteria. "
+                    "You may refine your search by using different keywords on our Buy From Stock (BFS) portal: https://procucev.com/buy-from-stock/ "
+                    "Alternatively, you may proceed to create a Request for Quotation (RFQ) using the button below, and our team will review and assist accordingly. "
+                )
 
                 buttons = [
                     {"id": "bfs_raise_rfq", "title": "Create new RFQ"},
