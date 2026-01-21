@@ -397,7 +397,7 @@ class SectionedRFQCreationHandler:
                         pincode = delivery_data.get('pincode', '')
                         return await self._display_invalid_pincode_message(user, session, delivery_data, pincode)
                     else:
-                        return await self._display_delivery_missing_fields(user, session, delivery_data, date_validation_error)
+                        return await self._display_delivery_missing_fields(user, session, delivery_data, None)
                 else:
                     # No delivery data found - store any items and re-show the format prompt
                     # Don't increment retry since this wasn't a format attempt
