@@ -237,8 +237,11 @@ class SellerService:
             message_parts.append(f"    • {project_description}")
         
         message_parts.append("")
-        message_parts.append("For more details of the RFQ, log in to procucev.com")
-        
+        message_parts.append(
+            "For more RFQ details, please log in to procucev.com.\n\n"
+            "Please reply with the number (1, 2, etc.) to request the RFQ."
+        )
+
         return "\n".join(message_parts)
 
     async def _handle_rfq_selection_response(self, user: User, session: ConversationSession,message: str) -> Dict[str, Any]:
