@@ -47,70 +47,74 @@ class ConversationAnalyticsService:
         for session in sessions_data:
             session_id = session.get('session_id', '')
             user_type = session.get('user_type', 'unknown')
-            email = session.get('email', '')
             confidence_score = session.get('confidence_score', 0)
             analysis_reasoning=session.get('analysis_reasoning',"")
 
-            # Extract metrics and emails
-            buyer_metrics = session.get('buyer_metrics', {})
-            seller_metrics = session.get('seller_metrics', {})
+            # Extract buyer and seller identities
+            buyer_identities = session.get('buyer_identities', [])
+            seller_identities = session.get('seller_identities', [])
+            unknown_user_metrics = session.get('unknown_user_metrics', {})
             registration_metrics = session.get('registration_metrics', {})
-            buyer_email = session.get('buyer_email', '')
-            seller_email = session.get('seller_email', '')
 
-            # Check if session has buyer activity (any non-zero buyer metric)
-            has_buyer_activity = (
-                    buyer_metrics.get('successful_rfqs_ai', 0) > 0 or
-                    buyer_metrics.get('incomplete_rfqs', 0) > 0 or
-                    buyer_metrics.get('buyers_started_but_not_raised_rfq', 0) > 0 or
-                    buyer_metrics.get('number_of_buyer_chats', 0) > 0
-            )
+            # Check if session has buyer activity
+            has_buyer_activity = len(buyer_identities) > 0
 
-            # Check if session has seller activity (any non-zero seller metric)
-            has_seller_activity = (
-                    seller_metrics.get('subscription_plans_requested', 0) > 0 or
-                    seller_metrics.get('zero_credit_rfq_attempt', 0) > 0 or
-                    seller_metrics.get('number_of_seller_chats', 0) > 0
-            )
+            # Check if session has seller activity
+            has_seller_activity = len(seller_identities) > 0
 
             # Add to buyer_df if has buyer metrics
             if has_buyer_activity:
-                buyer_record = {
-                    'date': analysis_date,
-                    'session_id': session_id,
-                    'phone_number': session.get('phone_number', ''),
-                    'user_type': user_type,
-                    'buyer_email': buyer_email or email,
-                    'successful_rfqs_ai': buyer_metrics.get('successful_rfqs_ai', 0),
-                    'incomplete_rfq': buyer_metrics.get('incomplete_rfqs', 0),
-                    'buyers_started_but_not_raised_rfq': buyer_metrics.get('buyers_started_but_not_raised_rfq', 0),
-                    'number_of_buyer_chats': buyer_metrics.get('number_of_buyer_chats', 0),
-                    'successful_registration': registration_metrics.get('buyer_successful_registration', 0),
-                    'failed_registration': registration_metrics.get('buyer_failed_registration', 0),
-                    'confidence_score': confidence_score,
-                    'analysis_reasoning':analysis_reasoning
-                }
-                buyer_records.append(buyer_record)
+                for buyer_identity in buyer_identities:
+                    buyer_email = buyer_identity.get('buyer_email', '')
+                    buyer_metrics = buyer_identity.get('buyer_metrics', {})
+                    
+                    buyer_record = {
+                        'date': analysis_date,
+                        'session_id': session_id,
+                        'phone_number': session.get('phone_number', ''),
+                        'user_type': user_type,
+                        'buyer_email': buyer_email,
+                        'successful_rfqs_ai': buyer_metrics.get('successful_rfqs_ai', 0),
+                        'incomplete_rfq': buyer_metrics.get('incomplete_rfqs', 0),
+                        'buyers_started_but_not_raised_rfq': buyer_metrics.get('buyers_started_but_not_raised_rfq', 0),
+                        'number_of_buyer_chats': buyer_metrics.get('number_of_buyer_chats', 0),
+                        'successful_registration': registration_metrics.get('buyer_successful_registration', 0),
+                        'failed_registration': registration_metrics.get('buyer_failed_registration', 0),
+                        'bfs_searches': buyer_metrics.get('bfs_searches', 0),
+                        'products_bid_for': buyer_metrics.get('products_bid_for', 0),
+                        'no_of_products_searched': buyer_metrics.get('no_of_products_searched', 0),
+                        'bfs_stock_products_bid_placed_count': buyer_metrics.get('bfs_stock_products_bid_placed_count', 0),
+                        'bfs_products_searched_list': buyer_metrics.get('bfs_products_searched_list', []),
+                        'rfq_ids_created': buyer_metrics.get('rfq_ids_created', []),
+                        'confidence_score': confidence_score,
+                        'analysis_reasoning': analysis_reasoning
+                    }
+                    buyer_records.append(buyer_record)
 
             # Add to seller_df if has seller metrics
             if has_seller_activity:
-                seller_record = {
-                    'date': analysis_date,
-                    'session_id': session_id,
-                    'phone_number': session.get('phone_number', ''),
-                    'user_type': user_type,
-                    'seller_email': seller_email or email,
-                    'requested_rfq_ai':seller_metrics.get('rfq_requested_ai',0),
-                    'rfq_response_ai':seller_metrics.get('rfq_response_ai',0),
-                    'subscription_plans_requested': seller_metrics.get('subscription_plans_requested', 0),
-                    'zero_credit_rfq_attempt': seller_metrics.get('zero_credit_rfq_attempt', 0),
-                    'number_of_seller_chats': seller_metrics.get('number_of_seller_chats', 0),
-                    'successful_registration': registration_metrics.get('seller_successful_registration', 0),
-                    'failed_registration': registration_metrics.get('seller_failed_registration', 0),
-                    'confidence_score': confidence_score,
-                    'analysis_reasoning': analysis_reasoning
-                }
-                seller_records.append(seller_record)
+                for seller_identity in seller_identities:
+                    seller_email = seller_identity.get('seller_email', '')
+                    seller_metrics = seller_identity.get('seller_metrics', {})
+                    
+                    seller_record = {
+                        'date': analysis_date,
+                        'session_id': session_id,
+                        'phone_number': session.get('phone_number', ''),
+                        'user_type': user_type,
+                        'seller_email': seller_email,
+                        'requested_rfq_ai': seller_metrics.get('rfq_requested_ai', 0),
+                        'rfq_response_ai': seller_metrics.get('rfq_response_ai', 0),
+                        'subscription_plans_requested': seller_metrics.get('subscription_plans_requested', 0),
+                        'zero_credit_rfq_attempt': seller_metrics.get('zero_credit_rfq_attempt', 0),
+                        'number_of_seller_chats': seller_metrics.get('number_of_seller_chats', 0),
+                        'successful_registration': registration_metrics.get('seller_successful_registration', 0),
+                        'failed_registration': registration_metrics.get('seller_failed_registration', 0),
+                        'bids_accepted_ai': seller_metrics.get('bids_accepted_ai', 0),
+                        'confidence_score': confidence_score,
+                        'analysis_reasoning': analysis_reasoning
+                    }
+                    seller_records.append(seller_record)
 
             # Add to unknown_df if has NO buyer or seller activity
             if not has_buyer_activity and not has_seller_activity:
@@ -119,13 +123,14 @@ class ConversationAnalyticsService:
                     'session_id': session_id,
                     'phone_number': session.get('external_user_id', ''),
                     'user_type': user_type,
-                    'email': email,
+                    'email': '',
                     'confidence_score': confidence_score,
-                    'analysis_reasoning': session.get('analysis_reasoning', ''),
-                    'unregistered_seller_initiated_chat': session.get('unregistered_seller_initiated_chat', 0),
-                    'unregistered_seller_requested_rfq': session.get('unregistered_seller_requested_rfq', 0),
-                    'unregistered_buyer_bfs_only': session.get('unregistered_buyer_bfs_only', 0),
-                    'number_of_faq_or_general_queries': session.get('number_of_faq_or_general_queries', 0)
+                    'analysis_reasoning': analysis_reasoning,
+                    'unregistered_seller_initiated_chat': unknown_user_metrics.get('unregistered_seller_initiated_chat', 0),
+                    'unregistered_seller_requested_rfq': unknown_user_metrics.get('unregistered_seller_requested_rfq', 0),
+                    'unregistered_buyer_bfs_only': unknown_user_metrics.get('unregistered_buyer_bfs_only', 0),
+                    'number_of_faq_or_general_queries': unknown_user_metrics.get('number_of_faq_or_general_queries', 0),
+                    'bfs_products_searched_by_unregistered': unknown_user_metrics.get('bfs_products_searched_by_unregistered', [])
                 }
                 unknown_records.append(unknown_record)
 
@@ -139,8 +144,9 @@ class ConversationAnalyticsService:
             buyer_cols = [
                 'date', 'session_id', 'phone_number', 'user_type', 'buyer_email',
                 'successful_rfqs_ai', 'incomplete_rfq', 'buyers_started_but_not_raised_rfq',
-                'number_of_buyer_chats', 'successful_registration', 'failed_registration',
-                'confidence_score','analysis_reasoning'
+                'number_of_buyer_chats', 'successful_registration', 'failed_registration','bfs_searches','products_bid_for','no_of_products_searched',
+                'bfs_products_searched_list', 'rfq_ids_created','bfs_stock_products_bid_placed_count',
+                'confidence_score', 'analysis_reasoning'
             ]
             buyer_df = buyer_df[buyer_cols]
 
@@ -148,7 +154,7 @@ class ConversationAnalyticsService:
             seller_cols = [
                 'date', 'session_id', 'phone_number', 'user_type', 'seller_email','requested_rfq_ai','rfq_response_ai',
                 'subscription_plans_requested', 'zero_credit_rfq_attempt',
-                'number_of_seller_chats', 'successful_registration', 'failed_registration',
+                'number_of_seller_chats', 'successful_registration', 'failed_registration','bids_accepted_ai',
                 'confidence_score','analysis_reasoning'
             ]
             seller_df = seller_df[seller_cols]
@@ -158,7 +164,7 @@ class ConversationAnalyticsService:
                 'date', 'session_id', 'phone_number', 'user_type', 'email',
                 'confidence_score', 'analysis_reasoning', 'unregistered_seller_initiated_chat',
                 'unregistered_seller_requested_rfq', 'unregistered_buyer_bfs_only',
-                'number_of_faq_or_general_queries'
+                'number_of_faq_or_general_queries','bfs_products_searched_by_unregistered'
             ]
             unknown_df = unknown_df[unknown_cols]
 
@@ -470,7 +476,7 @@ Session IDs to process: {', '.join(session_ids)}
                     result.get('sessions', []),
                     result.get('date', str(target_date))
                 )
-                
+                seller_df.to_csv("selelr data.csv")
                 # Create seller_rfq_interest_event_df from AI metrics
                 seller_rfq_interest_event_df = self._create_seller_rfq_interest_event_df(
                     result.get('sessions', []),
@@ -506,7 +512,8 @@ Session IDs to process: {', '.join(session_ids)}
                 if not buyer_df.empty and not remote_rfq_df.empty:
                     buyer_df['phone_clean'] = buyer_df['phone_number'].str.replace('+', '', regex=False)
                     remote_rfq_df['phone_clean'] = remote_rfq_df['phone'].str.replace('+', '', regex=False)
-                    joined_buyer_df = buyer_df.merge(remote_rfq_df, on=['phone_clean'], how='outer')
+                    joined_buyer_df= buyer_df.merge(remote_rfq_df, left_on=['phone_clean', 'buyer_email'],
+                                   right_on=['phone_clean', 'username'], how='outer')
                     
                     # Coalesce date columns
                     joined_buyer_df['date'] = joined_buyer_df['date_x'].fillna(joined_buyer_df['date_y'])
@@ -515,9 +522,11 @@ Session IDs to process: {', '.join(session_ids)}
                     relevant_cols = [
                         'date', 'phone_number', 'buyer_email','session_id', 'confidence_score',
                         'successful_rfqs_ai', 'incomplete_rfqs', 'buyers_started_but_not_raised_rfq',
-                        'username', 'org_uuid', 'user_uuid', 'total_rfqs_raised', 
+                        'username', 'org_uuid', 'user_uuid', 'total_rfqs_raised', 'rfqs_with_seller_responses',
                         'total_items_in_rfqs', 'total_distinct_rfq_category','number_of_buyer_chats',
-                        'successful_registration','failed_registration','analysis_reasoning'
+                        'successful_registration','failed_registration','bfs_searches','products_bid_for','no_of_products_searched',
+                        'bfs_stock_products_bid_placed_count', 'bfs_products_searched_list',
+                        'analysis_reasoning'
                     ]
                     joined_buyer_df = joined_buyer_df[[col for col in relevant_cols if col in joined_buyer_df.columns]]
                     
@@ -544,18 +553,22 @@ Session IDs to process: {', '.join(session_ids)}
                 if not seller_df.empty and not remote_seller_rfq_df.empty:
                     seller_df['phone_clean'] = seller_df['phone_number'].str.replace('+', '', regex=False)
                     remote_seller_rfq_df['phone_clean'] = remote_seller_rfq_df['phone'].str.replace('+', '', regex=False)
-                    joined_seller_df = seller_df.merge(remote_seller_rfq_df, on=['phone_clean'], how='outer')
+                    joined_seller_df = seller_df.merge(remote_seller_rfq_df, left_on=['phone_clean','seller_email'],right_on=['phone_clean', 'username'], how='outer')
+
+                    joined_seller_df.to_csv("joined seller.csv")
 
 
-                    
+
+
+
                     # Coalesce date columns - use rfq_date when date is empty
                     joined_seller_df['date'] = joined_seller_df['date'].fillna(joined_seller_df['rfq_date'])
                     
                     # Keep only relevant columns
                     seller_relevant_cols = [
-                        'date', 'phone_number', 'seller_email','session_id', 'confidence_score',
+                        'date', 'phone_number','phone_clean', 'seller_email','session_id', 'confidence_score',
                         'requested_rfq_ai', 'rfq_response_ai','subscription_plans_requested', 'zero_credit_rfq_attempt',
-                        'number_of_seller_chats', 'successful_registration', 'failed_registration',
+                        'number_of_seller_chats', 'successful_registration', 'failed_registration','bids_accepted_ai',
                         'username', 'org_uuid', 'user_uuid', 'total_rfq_responsed', 'analysis_reasoning'
                     ]
                     joined_seller_df = joined_seller_df[[col for col in seller_relevant_cols if col in joined_seller_df.columns]]
@@ -669,21 +682,56 @@ Session IDs to process: {', '.join(session_ids)}
                     successful_rfqs_ai=int(row.get('successful_rfqs_ai', 0)) if pd.notna(row.get('successful_rfqs_ai')) else 0,
                     avg_products_per_rfq=float(row.get('total_items_in_rfqs', 0) / row.get('total_rfqs_raised', 1)) if pd.notna(row.get('total_rfqs_raised')) and row.get('total_rfqs_raised', 0) > 0 else None,
                     avg_categories_per_rfq=float(row.get('total_distinct_rfq_category', 0) / row.get('total_rfqs_raised', 1)) if pd.notna(row.get('total_rfqs_raised')) and row.get('total_rfqs_raised', 0) > 0 else None,
+                    bfs_searches=int(row.get('bfs_searches', 0)) if pd.notna(
+                        row.get('bfs_searches')) else 0,
+                    products_bid_for=int(row.get('products_bid_for', 0)) if pd.notna(
+                        row.get('products_bid_for')) else 0,
+                    rfq_response_count=int(row.get('rfqs_with_seller_responses', 0)) if pd.notna(
+                        row.get('rfqs_with_seller_responses')) else 0,
+                    no_of_products_searched=int(row.get('no_of_products_searched', 0)) if pd.notna(
+                        row.get('no_of_products_searched')) else 0,
+                    bfs_stock_products_bid_placed_count=int(row.get('bfs_stock_products_bid_placed_count', 0)) if pd.notna(
+                        row.get('bfs_stock_products_bid_placed_count')) else 0,
+                    bfs_products_searched_list=row.get('bfs_products_searched_list'),
                     org_id=str(row.get('org_uuid', '')) if pd.notna(row.get('org_uuid')) else None,
                     uuid=str(row.get('user_uuid', '')) if pd.notna(row.get('user_uuid')) else None,
                     ai_reasoning=str(row.get('analysis_reasoning', '')) if pd.notna(row.get('analysis_reasoning')) else None
                 )
                 
-                # Use merge to handle unique constraint
+                # Upsert logic - update if exists, insert if not
                 existing = db_session.query(BuyerDailyMetrics).filter(
                     BuyerDailyMetrics.date == buyer_metric.date,
                     BuyerDailyMetrics.email == buyer_metric.email,
                     BuyerDailyMetrics.phone_number == buyer_metric.phone_number
                 ).first()
                 
-                if not existing:
+                if existing:
+                    # Update existing record
+                    existing.session_id = buyer_metric.session_id
+                    existing.total_rfq_raised = buyer_metric.total_rfq_raised
+                    existing.total_items_in_rfqs = buyer_metric.total_items_in_rfqs
+                    existing.total_distinct_categories_in_rfq = buyer_metric.total_distinct_categories_in_rfq
+                    existing.total_incomplete_rfq = buyer_metric.total_incomplete_rfq
+                    existing.buyers_started_but_not_raised_rfq = buyer_metric.buyers_started_but_not_raised_rfq
+                    existing.failed_registration = buyer_metric.failed_registration
+                    existing.successfully_registered = buyer_metric.successfully_registered
+                    existing.number_of_chats = buyer_metric.number_of_chats
+                    existing.successful_rfqs_ai = buyer_metric.successful_rfqs_ai
+                    existing.avg_products_per_rfq = buyer_metric.avg_products_per_rfq
+                    existing.avg_categories_per_rfq = buyer_metric.avg_categories_per_rfq
+                    existing.bfs_searches = buyer_metric.bfs_searches
+                    existing.products_bid_for = buyer_metric.products_bid_for
+                    existing.rfq_response_count = buyer_metric.rfq_response_count
+                    existing.no_of_products_searched = buyer_metric.no_of_products_searched
+                    existing.bfs_stock_products_bid_placed_count = buyer_metric.bfs_stock_products_bid_placed_count
+                    existing.bfs_products_searched_list = buyer_metric.bfs_products_searched_list
+
+                    existing.org_id = buyer_metric.org_id
+                    existing.uuid = buyer_metric.uuid
+                    existing.ai_reasoning = buyer_metric.ai_reasoning
+                else:
                     db_session.add(buyer_metric)
-                    records_inserted += 1
+                records_inserted += 1
             
             db_session.commit()
             logger.info(f"[CONVERSATION-ANALYTICS] Inserted {records_inserted} records into BuyerDailyMetrics table (skipped {skipped} rows without date)")
@@ -724,7 +772,11 @@ Session IDs to process: {', '.join(session_ids)}
                 ('buyer', 10, 'Total Distinct RFQ Category Combinations', sum(m.total_distinct_categories_in_rfq for m in buyer_metrics)),
                 ('buyer', 25, 'RFQs with At Least One Response', self._calculate_rfqs_with_response(target_date, db_session)),
                 ('buyer', 26, 'Total RFQ Responses', self._calculate_total_rfq_responses(target_date, db_session)),
-                ('buyer', 27, 'No of Buyers Started But Not Raised RFQ', sum(m.buyers_started_but_not_raised_rfq for m in buyer_metrics))
+                ('buyer', 27, 'No of Buyers Started But Not Raised RFQ', sum(m.buyers_started_but_not_raised_rfq for m in buyer_metrics)),
+                ('buyer', 28, 'No of Products Searched by Buyers', sum(m.no_of_products_searched for m in buyer_metrics)),
+                ('buyer', 29, 'No of Unique Buyers searched for BFS Items', len(set((m.email, m.phone_number) for m in buyer_metrics if m.bfs_searches > 0 and (m.email or m.phone_number)))),
+                ('buyer', 30, 'No of Unique buyers participated in Bidding', len(set((m.email, m.phone_number) for m in buyer_metrics if m.products_bid_for > 0 and (m.email or m.phone_number)))),
+                ('buyer', 31, 'BFS Products Bids Count', sum(m.bfs_stock_products_bid_placed_count for m in buyer_metrics))
             ]
             
             # Insert or update aggregates
@@ -760,32 +812,36 @@ Session IDs to process: {', '.join(session_ids)}
             remote_db = get_remote_db_session()
             query = """
             SELECT
-                DATE(rfh.created_ts) AS date,
-                u.username,
-                u.phone,
-                u.org_uuid,
-                u.uuid AS user_uuid,
-                COUNT(DISTINCT rfh.rfq_id) AS total_rfqs_raised,
-                COUNT(ri.uuid) AS total_items_in_rfqs,
-                COUNT(DISTINCT CONCAT(rfh.rfq_id, '_', ri.category)) AS total_distinct_rfq_category,
-                u.org_uuid AS org_id
-            FROM user u
-            JOIN rfq_header rfh 
-                ON u.uuid = rfh.user
-            LEFT JOIN rfq_items ri 
-                ON ri.rfq_uuid = rfh.uuid
-            WHERE 
-                DATE(rfh.created_ts) = :target_date
-                AND u.self_client = 1
-                AND rfh.source_type = 'W'
-            GROUP BY 
-                DATE(rfh.created_ts),
-                u.username,
-                u.phone,
-                u.org_uuid,
-                u.uuid
-            ORDER BY 
-                u.username
+    DATE(rfh.created_ts) AS date,
+    u.username,
+    u.phone,
+    u.org_uuid,
+    u.uuid AS user_uuid,
+    COUNT(DISTINCT rfh.rfq_id) AS total_rfqs_raised,
+    COUNT(ri.uuid) AS total_items_in_rfqs,
+    COUNT(DISTINCT CONCAT(rfh.rfq_id, '_', ri.category)) AS total_distinct_rfq_category,
+    COUNT(DISTINCT grv.rfq_uuid) AS rfqs_with_seller_responses,
+    u.org_uuid AS org_id
+FROM user u
+JOIN rfq_header rfh 
+    ON u.uuid = rfh.user
+LEFT JOIN rfq_items ri 
+    ON ri.rfq_uuid = rfh.uuid
+LEFT JOIN development_gmtbfs.gmt_rfq_vendors grv
+    ON grv.rfq_uuid = rfh.uuid
+WHERE 
+    DATE(rfh.created_ts) = :target_date
+    AND u.is_active = 1
+    AND u.self_client = 1
+    AND rfh.source_type = 'W'
+GROUP BY 
+    DATE(rfh.created_ts),
+    u.username,
+    u.phone,
+    u.org_uuid,
+    u.uuid
+ORDER BY 
+    u.username
             """
             result = remote_db.execute(text(query), {'target_date': str(target_date)})
             rfq_data = [dict(row._mapping) for row in result]
@@ -807,12 +863,12 @@ Session IDs to process: {', '.join(session_ids)}
                 u.uuid,
                 u.org_uuid,
                 u.username,
-                u.phone,
-                COUNT(DISTINCT rfqv.rfq_id) AS total_rfq_responsed
-            FROM development_gmtbfs.rfq_vendors rfqv
-            JOIN user u 
-                ON u.org_uuid = rfqv.organization_uuid
-            WHERE u.self_client=0 
+                u.phone ,
+                COUNT(DISTINCT rfqv.rfq_uuid) AS total_rfq_responsed
+            FROM development_gmtbfs.gmt_rfq_vendors rfqv
+            LEFT JOIN user u 
+                ON u.org_uuid = rfqv.vendor_uuid
+            WHERE u.self_client=0 AND u.is_active=1 and u.source_type='W'
               AND DATE(rfqv.created_ts) = :target_date
             GROUP BY DATE(rfqv.created_ts), u.uuid
             """
@@ -879,23 +935,40 @@ Session IDs to process: {', '.join(session_ids)}
                     seller_successful_registration=int(row.get('successful_registration', 0)) if pd.notna(row.get('successful_registration')) else 0,
                     ai_reasoning=str(row.get('analysis_reasoning', '')) if pd.notna(row.get('analysis_reasoning')) else None,
                     rfq_requested_ai=int(row.get('requested_rfq_ai', 0)) if pd.notna(row.get('requested_rfq_ai')) else 0,
+                    rfq_response_ai=int(row.get('rfq_response_ai', 0)) if pd.notna(row.get('rfq_response_ai')) else 0,
                     subscription_plans_requested=int(row.get('subscription_plans_requested', 0)) if pd.notna(row.get('subscription_plans_requested')) else 0,
                     zero_credit_rfq_attempt=int(row.get('zero_credit_rfq_attempt', 0)) if pd.notna(row.get('zero_credit_rfq_attempt')) else 0,
                     org_id=str(row.get('org_uuid', '')) if pd.notna(row.get('org_uuid')) else None,
                     uuid=str(row.get('user_uuid', '')) if pd.notna(row.get('user_uuid')) else None,
-                    total_rfqs_requested_with_quotation=int(row.get('total_rfqs_requested', 0)) if pd.notna(row.get('total_rfqs_requested')) else 0
+                    total_rfqs_requested=int(row.get('total_rfq_responsed', 0)) if pd.notna(row.get('total_rfq_responsed')) else 0,
+                    bids_accepted_ai=int(row.get('bids_accepted_ai', 0)) if pd.notna(row.get('bids_accepted_ai')) else 0
                 )
                 
-                # Use merge to handle unique constraint
+                # Upsert logic - update if exists, insert if not bids_accepted_ai
                 existing = db_session.query(SellerDailyMetrics).filter(
                     SellerDailyMetrics.date == seller_metric.date,
                     SellerDailyMetrics.email == seller_metric.email,
                     SellerDailyMetrics.phone_number == seller_metric.phone_number
                 ).first()
                 
-                if not existing:
+                if existing:
+                    # Update existing record
+                    existing.session_id = seller_metric.session_id
+                    existing.number_of_chats = seller_metric.number_of_chats
+                    existing.seller_failed_registration = seller_metric.seller_failed_registration
+                    existing.seller_successful_registration = seller_metric.seller_successful_registration
+                    existing.ai_reasoning = seller_metric.ai_reasoning
+                    existing.rfq_requested_ai = seller_metric.rfq_requested_ai
+                    existing.rfq_response_ai = seller_metric.rfq_response_ai
+                    existing.subscription_plans_requested = seller_metric.subscription_plans_requested
+                    existing.zero_credit_rfq_attempt = seller_metric.zero_credit_rfq_attempt
+                    existing.org_id = seller_metric.org_id
+                    existing.uuid = seller_metric.uuid
+                    existing.total_rfqs_requested = seller_metric.total_rfqs_requested
+                    existing.bids_accepted_ai = seller_metric.bids_accepted_ai
+                else:
                     db_session.add(seller_metric)
-                    records_inserted += 1
+                records_inserted += 1
             
             db_session.commit()
             logger.info(f"[CONVERSATION-ANALYTICS] Inserted {records_inserted} records into SellerDailyMetrics table (skipped {skipped} rows without date)")
@@ -920,7 +993,7 @@ Session IDs to process: {', '.join(session_ids)}
             seller_aggregates = [
                 ('seller', 11, 'Seller Chats Initiated', sum(m.number_of_chats for m in seller_metrics)),
                 ('seller', 12, 'Unique Sellers', len(set((m.email, m.phone_number) for m in seller_metrics if m.email or m.phone_number))),
-                ('seller', 13, 'Total RFQs Requested', sum(m.total_rfqs_requested_with_quotation for m in seller_metrics)),
+                ('seller', 13, 'Total RFQs Requested', sum(m.total_rfqs_requested for m in seller_metrics)),
                 ('seller', 14, 'Subscription Plans Requested', sum(m.subscription_plans_requested for m in seller_metrics)),
                 ('seller', 15, 'Seller Registration Failed', sum(m.seller_failed_registration for m in seller_metrics)),
                 ('seller', 16, 'Seller Successful Registration', sum(m.seller_successful_registration for m in seller_metrics)),
@@ -984,40 +1057,64 @@ Session IDs to process: {', '.join(session_ids)}
             remote_db = get_remote_db_session()
             query = """
             SELECT
-    t.rfq_date,
-    t.category,
-    t.total_rfq_raised,
-    q.rfqs_with_quotations
-FROM (
-    SELECT
-        DATE(ri.created_ts) AS rfq_date,
-        ri.category,
-        COUNT(DISTINCT ri.rfq_uuid) AS total_rfq_raised
-    FROM rfq_items ri
-    JOIN rfq_header rh
-        ON ri.rfq_uuid = rh.uuid
-    WHERE DATE(ri.created_ts) = :target_date
-      AND rh.source_type = 'W'
-    GROUP BY DATE(ri.created_ts), ri.category
-) t
-LEFT JOIN (
-    SELECT
-        DATE(ri.created_ts) AS rfq_date,
-        ri.category,
-        COUNT(DISTINCT ri.rfq_uuid) AS rfqs_with_quotations
-    FROM rfq_items ri
-    JOIN rfq_header rh
-        ON ri.rfq_uuid = rh.uuid
-    JOIN rfq_vendors rv
-        ON ri.rfq_uuid = rv.rfq_uuid
-    WHERE DATE(ri.created_ts) = :target_date
-      AND rh.source_type = 'W'
-    GROUP BY DATE(ri.created_ts), ri.category
-) q
-    ON t.rfq_date = q.rfq_date
-   AND t.category = q.category;
-
+                t.rfq_date,
+                t.category,
+                t.total_rfq_raised,
+                q.rfqs_with_quotations AS rfqs_with_quotations,
+                b.bids_requested AS bids_requested,
+                b.bids_accepted AS bids_accepted
+            FROM (
+                /* RFQs Raised */
+                SELECT
+                    DATE(ri.created_ts) AS rfq_date,
+                    ri.category,
+                    COUNT(DISTINCT ri.rfq_uuid) AS total_rfq_raised
+                FROM rfq_items ri
+                JOIN rfq_header rh
+                    ON ri.rfq_uuid = rh.uuid
+                WHERE DATE(ri.created_ts) = :target_date
+                  AND rh.source_type = 'W'
+                GROUP BY DATE(ri.created_ts), ri.category
+            ) t
+            LEFT JOIN (
+                /* RFQs With Quotations */
+                SELECT
+                    DATE(rfqv.created_ts) AS rfq_date,
+                    ri.category,
+                    COUNT(DISTINCT rfqv.rfq_uuid) AS rfqs_with_quotations
+                FROM development_gmtbfs.gmt_rfq_vendors rfqv
+                JOIN rfq_items ri
+                    ON rfqv.rfq_uuid = ri.rfq_uuid
+                JOIN rfq_header rh
+                    ON ri.rfq_uuid = rh.uuid
+                JOIN user u
+                    ON u.org_uuid = rfqv.vendor_uuid
+                WHERE DATE(rfqv.created_ts) = :target_date
+                  AND rh.source_type = 'W'
+                  AND u.self_client = 0
+                  AND u.is_active = 1
+                  AND u.source_type = 'W'
+                GROUP BY DATE(rfqv.created_ts), ri.category
+            ) q
+                ON t.rfq_date = q.rfq_date
+               AND t.category = q.category
+            LEFT JOIN (
+                /* Bids Requested & Accepted */
+                SELECT
+                    DATE(bu.created_ts) AS rfq_date,
+                    bi.category,
+                    COUNT(CASE WHEN bu.status_uuid = 115 THEN 1 END) AS bids_requested,
+                    COUNT(CASE WHEN bu.status_uuid = 118 THEN 1 END) AS bids_accepted
+                FROM development_gmtbfs.bfs_users bu
+                JOIN development_gmtbfs.bfs_items bi
+                    ON bu.items_uuid = bi.uuid
+                WHERE DATE(bu.created_ts) = :target_date
+                GROUP BY DATE(bu.created_ts), bi.category
+            ) b
+                ON t.rfq_date = b.rfq_date
+               AND t.category = b.category;
             """
+
             result = remote_db.execute(text(query), {'target_date': str(target_date)})
             rows = result.fetchall()
 
@@ -1037,13 +1134,18 @@ LEFT JOIN (
                 GROUP BY category
             """)
             intimated_result = db_session.execute(intimated_query, {'target_date': target_date})
-            print("initomates result",intimated_result)
             intimated_dict = {row[0]: int(row[1]) for row in intimated_result}
 
+            # Get BFS product categories from buyer daily metrics
+            bfs_category_counts, unregistered_bfs_category_counts = self._get_bfs_category_counts_combined(target_date, db_session)
+
+            # Process RFQ categories
             for row in rows:
                 category_name = row[1] if row[1] is not None else 'Unknown'
                 total_rfq_raised = int(row[2]) if row[2] is not None else 0
                 rfqs_with_quotations = int(row[3]) if row[3] is not None else 0
+                bids_requested = int(row[4]) if row[4] is not None else 0
+                bids_accepted = int(row[5]) if row[5] is not None else 0
                 total_rfqs_intimated = intimated_dict.get(category_name, 0)
                 
                 existing = db_session.query(CategoryAggregates).filter(
@@ -1055,22 +1157,158 @@ LEFT JOIN (
                     existing.total_rfq_raised_category = total_rfq_raised
                     existing.total_rfqs_with_quotations = rfqs_with_quotations
                     existing.total_rfqs_intimated = total_rfqs_intimated
+                    existing.bids_requested = bids_requested
+                    existing.bids_accepted = bids_accepted
+                    existing.bfs_products_searched_count = bfs_category_counts.get(category_name, 0)
+                    existing.bfs_products_searched_by_unregistered_count = unregistered_bfs_category_counts.get(category_name, 0)
                 else:
                     aggregate = CategoryAggregates(
                         date=target_date,
                         category_name=category_name,
                         total_rfq_raised_category=total_rfq_raised,
                         total_rfqs_with_quotations=rfqs_with_quotations,
-                        total_rfqs_intimated=total_rfqs_intimated
+                        total_rfqs_intimated=total_rfqs_intimated,
+                        bids_requested=bids_requested,
+                        bids_accepted=bids_accepted,
+                        bfs_products_searched_count=bfs_category_counts.get(category_name, 0),
+                        bfs_products_searched_by_unregistered_count=unregistered_bfs_category_counts.get(category_name, 0)
                     )
                     db_session.add(aggregate)
 
+            # Process BFS-only categories
+            all_bfs_categories = set(bfs_category_counts.keys()) | set(unregistered_bfs_category_counts.keys())
+            for category_name in all_bfs_categories:
+                if not any(row[1] == category_name for row in rows if row[1]):
+                    existing = db_session.query(CategoryAggregates).filter(
+                        CategoryAggregates.date == target_date,
+                        CategoryAggregates.category_name == category_name
+                    ).first()
+                    
+                    if not existing:
+                        aggregate = CategoryAggregates(
+                            date=target_date,
+                            category_name=category_name,
+                            total_rfq_raised_category=0,
+                            total_rfqs_with_quotations=0,
+                            total_rfqs_intimated=intimated_dict.get(category_name, 0),
+                            bids_requested=0,
+                            bids_accepted=0,
+                            bfs_products_searched_count=bfs_category_counts.get(category_name, 0),
+                            bfs_products_searched_by_unregistered_count=unregistered_bfs_category_counts.get(category_name, 0)
+                        )
+                        db_session.add(aggregate)
+
             db_session.commit()
-            logger.info(f"[CONVERSATION-ANALYTICS] Stored {len(rows)} category aggregates for {target_date}")
+            logger.info(f"[CONVERSATION-ANALYTICS] Stored category aggregates for {target_date}")
 
         except Exception as e:
             logger.error(f"[CONVERSATION-ANALYTICS] Failed to calculate category aggregates: {e}")
             db_session.rollback()
+
+    def _get_bfs_category_counts_combined(self, target_date, db_session) -> tuple:
+        """Get BFS product category counts from both buyer and unknown daily metrics using pandas."""
+        try:
+            # Get buyer metrics data
+            buyer_query = db_session.query(BuyerDailyMetrics.bfs_products_searched_list).filter(
+                BuyerDailyMetrics.date == target_date,
+                BuyerDailyMetrics.bfs_products_searched_list.isnot(None)
+            )
+            buyer_df = pd.read_sql(buyer_query.statement, db_session.bind)
+            
+            # Get unknown metrics data
+            unknown_query = db_session.query(UnknownDailyMetrics.bfs_products_searched_by_unregistered).filter(
+                UnknownDailyMetrics.date == target_date,
+                UnknownDailyMetrics.bfs_products_searched_by_unregistered.isnot(None)
+            )
+            unknown_df = pd.read_sql(unknown_query.statement, db_session.bind)
+            
+            # Extract all unique products
+            all_products = set()
+            
+            # From buyer data
+            if not buyer_df.empty:
+                buyer_products = buyer_df['bfs_products_searched_list'].dropna().apply(
+                    lambda x: x if isinstance(x, list) else []
+                ).explode().dropna().unique()
+                all_products.update(buyer_products)
+            
+            # From unknown data
+            if not unknown_df.empty:
+                unknown_products = unknown_df['bfs_products_searched_by_unregistered'].dropna().apply(
+                    lambda x: x if isinstance(x, list) else []
+                ).explode().dropna().unique()
+                all_products.update(unknown_products)
+            
+            if not all_products:
+                return {}, {}
+            
+            # Get product-category mapping from BFS database
+            product_category_map = self._get_product_category_mapping(list(all_products))
+            
+            # Count categories for buyer data
+            buyer_category_counts = self._count_categories_from_df(
+                buyer_df, 'bfs_products_searched_list', product_category_map
+            )
+            
+            # Count categories for unknown data
+            unknown_category_counts = self._count_categories_from_df(
+                unknown_df, 'bfs_products_searched_by_unregistered', product_category_map
+            )
+            
+            return buyer_category_counts, unknown_category_counts
+            
+        except Exception as e:
+            logger.error(f"Failed to get BFS category counts: {e}")
+            return {}, {}
+    
+    def _get_product_category_mapping(self, products: list) -> dict:
+        """Get product to category mapping from BFS database."""
+        try:
+            remote_db = get_remote_db_session()
+            placeholders = ','.join([f':product{i}' for i in range(len(products))])
+            like_conditions = ' OR '.join([f'description LIKE :like{i}' for i in range(len(products))])
+            
+            query = text(f"""
+                SELECT DISTINCT category, description 
+                FROM development_gmtbfs.bfs_items 
+                WHERE description IN ({placeholders}) OR {like_conditions}
+            """)
+            
+            params = {}
+            for i, product in enumerate(products):
+                params[f'product{i}'] = product
+                params[f'like{i}'] = f"{product}%"
+            
+            result = remote_db.execute(query, params)
+            mapping = {row[1]: row[0] for row in result.fetchall()}
+            remote_db.close()
+            
+            return mapping
+            
+        except Exception as e:
+            logger.error(f"Failed to get product category mapping: {e}")
+            return {}
+    
+    def _count_categories_from_df(self, df: pd.DataFrame, column_name: str, product_category_map: dict) -> dict:
+        """Count categories from DataFrame using pandas operations."""
+        if df.empty:
+            return {}
+        
+        # Explode products and map to categories
+        products_series = df[column_name].dropna().apply(
+            lambda x: x if isinstance(x, list) else []
+        ).explode().dropna()
+        
+        # Map products to categories
+        category_series = products_series.map(
+            lambda product: next(
+                (cat for desc, cat in product_category_map.items() 
+                 if desc == product or desc.startswith(product)), None
+            )
+        ).dropna()
+        
+        # Count categories
+        return category_series.value_counts().to_dict()
     
    
 
@@ -1146,15 +1384,26 @@ LEFT JOIN (
                     number_of_faq_or_general_queries=int(row.get('number_of_faq_or_general_queries', 0)) if pd.notna(row.get('number_of_faq_or_general_queries')) else 0
                 )
                 
+                # Upsert logic - update if exists, insert if not
                 existing = db_session.query(UnknownDailyMetrics).filter(
                     UnknownDailyMetrics.date == unknown_metric.date,
                     UnknownDailyMetrics.session_id == unknown_metric.session_id,
                     UnknownDailyMetrics.phone_number == unknown_metric.phone_number
                 ).first()
                 
-                if not existing:
+                if existing:
+                    # Update existing record
+                    existing.user_type = unknown_metric.user_type
+                    existing.email = unknown_metric.email
+                    existing.confidence_score = unknown_metric.confidence_score
+                    existing.ai_reasoning = unknown_metric.ai_reasoning
+                    existing.unregistered_seller_initiated_chat = unknown_metric.unregistered_seller_initiated_chat
+                    existing.unregistered_seller_requested_rfq = unknown_metric.unregistered_seller_requested_rfq
+                    existing.unregistered_buyer_bfs_only = unknown_metric.unregistered_buyer_bfs_only
+                    existing.number_of_faq_or_general_queries = unknown_metric.number_of_faq_or_general_queries
+                else:
                     db_session.add(unknown_metric)
-                    records_inserted += 1
+                records_inserted += 1
             
             db_session.commit()
             logger.info(f"[CONVERSATION-ANALYTICS] Inserted {records_inserted} records into UnknownDailyMetrics table (skipped {skipped} rows without date)")
@@ -1275,8 +1524,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2025, 12, 21).date()
-        end_date = datetime(2025, 12, 21).date()
+        start_date = datetime(2026, 1, 21).date()
+        end_date = datetime(2026, 1, 21).date()
         
         current_date = start_date
         while current_date <= end_date:
