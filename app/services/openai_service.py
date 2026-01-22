@@ -3597,6 +3597,107 @@ If multiple emails and user selected a number, include selection."""
             )
             raise e
     @log_service_method("openai_service")
+    async def extract_rfq_ids_from_message(self, message: str, last_bot_message: str) -> Dict[str, Any]:
+        """
+        Extract RFQ IDs from seller's message using OpenAI function calling.
+        
+        Args:
+            message: User's message containing RFQ references
+            last_bot_message: Last bot message for context
+            
+        Returns:
+            Dict with extracted RFQ IDs, confidence, and reasoning
+        """
+        start_time = time.time()
+        
+        try:
+            # Load RFQ ID extraction tool
+            with open(self.tools_dir / "rfq_id_extraction.json", 'r') as f:
+                rfq_tool = json.load(f)
+            
+            # Build context message
+            context_msg = f"""User message: {message}
+            Last bot message: {last_bot_message}
+            
+            Extract the specific RFQ IDs the user is asking about based on the context."""
+            
+            # Track this OpenAI call
+            self._track_openai_call("rfq_id_extraction")
+            
+            response = await self.client.responses.create(
+                model=self.default_model,
+                input=[{"role": "user", "content": context_msg}],
+                instructions=self._load_prompt("rfq_id_extraction", "rfq_id_extraction_prompt"),
+                tools=[rfq_tool],
+                tool_choice={"type": "function", "name": "extract_rfq_ids"}
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Parse function call response
+            if response.output and len(response.output) > 0:
+                function_call = response.output[0]
+                if function_call.type == "function_call":
+                    args = json.loads(function_call.arguments)
+                    
+                    result = {
+                        "success": True,
+                        "rfq_ids": args.get("rfq_ids", []),
+                        "confidence": args.get("confidence", 0),
+                        "reasoning": args.get("reasoning", "")
+                    }
+                    
+                    logger.info(f"Extracted RFQ IDs: {result['rfq_ids']} with confidence {result['confidence']}%")
+                    
+                    # Log successful extraction
+                    self.interaction_logger.log_entity_extraction(
+                        user_input=message,
+                        entities={"rfq_ids": result["rfq_ids"]},
+                        completeness=result["confidence"],
+                        workflow_type="rfq_id_extraction",
+                        model_used=self.default_model,
+                        processing_time=processing_time,
+                        missing_fields=[]
+                    )
+                    
+                    return result
+            
+            # Log failed extraction
+            self.interaction_logger.log_error(
+                interaction_type="rfq_id_extraction",
+                user_input=message,
+                error_message="No function call in response",
+                model_used=self.default_model
+            )
+            
+            return {
+                "success": False,
+                "rfq_ids": [],
+                "confidence": 0,
+                "reasoning": "No function call in response"
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            processing_time = time.time() - start_time
+            
+            # Log error
+            self.interaction_logger.log_error(
+                interaction_type="rfq_id_extraction",
+                user_input=message,
+                error_message=error_msg,
+                model_used=self.default_model
+            )
+            
+            logger.error(f"RFQ ID extraction failed: {error_msg}")
+            return {
+                "success": False,
+                "rfq_ids": [],
+                "confidence": 0,
+                "reasoning": f"Error: {error_msg}"
+            }
+
+    @log_service_method("openai_service")
     async def process_excel_to_rfqs(self, excel_text: str, filename: str) -> Dict[str, Any]:
         """
         Process Excel data directly to multiple RFQ format using OpenAI.

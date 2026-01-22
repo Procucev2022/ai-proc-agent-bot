@@ -262,6 +262,7 @@ class SellerService:
 
             # Extract RFQ IDs from message
             selected_rfq_ids = await self._extract_rfq_ids_from_message(message, session , rfqs)
+            logger.info(f"selected_rfqids:{selected_rfq_ids}")
 
             if not selected_rfq_ids:
                 # Check if user is asking for plan upgrade or other query
@@ -269,7 +270,9 @@ class SellerService:
 
             # Validate selected RFQ IDs
             available_rfqs =[rfq.get("rfq_id") for rfq in rfqs]
+            logger.info(f"avaiable rfqs:{available_rfqs}")
             valid_selections = [rfq_id for rfq_id in selected_rfq_ids if rfq_id in available_rfqs]
+            logger.info(f"valid selections:{valid_selections}")
 
             if not valid_selections:
                 return await self._handle_invalid_rfq_selection(user, session, message, rfq_result)
@@ -975,32 +978,26 @@ class SellerService:
 
             # 1️⃣ Detect if user used sequence numbers
             seq_numbers = self._extract_sequence_numbers(message)
+            logger.info(f"seq :{seq_numbers}")
 
             if seq_numbers and last_bot_message:
                 mapped_ids = self._map_sequence_to_rfq_ids(seq_numbers, last_bot_message)
                 if mapped_ids:
+                    logger.info(f"mapped id:{mapped_ids}")
                     return mapped_ids[:self.settings.rfq_max_allowed]
 
-            context_msg = f"""Based on the user's message and the last bot response, extract the specific RFQ IDs the user is asking about.
-
-            User message: {message}
-            Last bot message: {last_bot_message.get("content", "")}
-
-            If user mentions numbers (like 1, 2, 3), map them to RFQ IDs from the bot message in order.
-            If user mentions specific RFQ IDs, extract those.
-            Return only the RFQ IDs the user specifically wants."""
-
-
-
-            extraction = await self.openai_service.extract_entities(
-                message=context_msg,
-                workflow_type="rfq_status_check"
-            )
-
+            # Use the new OpenAI service method for RFQ ID extraction
+            last_bot_content = last_bot_message.get("content", "") if last_bot_message else ""
+            extraction_result = await self.openai_service.extract_rfq_ids_from_message(message, last_bot_content)
             
+            logger.info(f"OpenAI RFQ extraction result: {extraction_result}")
 
-            extracted_ids = extraction.get("rfq_id") or []
-            return extracted_ids[:self.settings.rfq_max_allowed]
+            if extraction_result.get("success"):
+                extracted_ids = extraction_result.get("rfq_ids", [])
+                return extracted_ids[:self.settings.rfq_max_allowed]
+            else:
+                logger.warning(f"RFQ ID extraction failed: {extraction_result.get('reasoning')}")
+                return []
 
         except Exception as e:
             logger.error(f"Error extracting RFQ IDs: {e}")
