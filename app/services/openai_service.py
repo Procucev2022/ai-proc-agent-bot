@@ -1372,6 +1372,7 @@ Analyze their response to determine their true choice.
             workflow_state = context.get('workflow_state', {}).get('seller_workflow_state', 'awaiting_general_response')
             message_type = context.get('message_type', 'general_assistance')
             credits_available = context.get('seller_credits', 0)
+            support_contact_email= context.get("support_contact_info", "info@procucev.com")
             context_data = json.dumps(context)
 
             response = await self.client.responses.create(
@@ -1385,6 +1386,7 @@ Analyze their response to determine their true choice.
                     workflow_state=workflow_state,
                     message_type=message_type,
                     credits_available=credits_available,
+                    support_contact_info=support_contact_email,
                     context_data=context_data
                 )
             )

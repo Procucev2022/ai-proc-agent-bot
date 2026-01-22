@@ -339,7 +339,9 @@ class SellerService:
             session.workflow_state["last_activity_timestamp"] = utc_now().isoformat()
             workflow_state = session.workflow_state or {}
             # Build conversation context for AI analysis
-            conversation_context = self._build_seller_conversation_context(session, message)
+            credits_result = await self._check_seller_credits(user.org_id)
+            credits_available = credits_result.get("credits_available", 0)
+            conversation_context = self._build_seller_conversation_context(session, message,credits_available)
 
             # Use AI to classify seller's intent with context awareness
             seller_intent = await self._classify_seller_intent(message, conversation_context, session)
@@ -417,8 +419,9 @@ class SellerService:
                 "conversation_context": conversation_context,
                 "recent_messages": recent_messages,
                 "last_bot_message": last_bot_message,
-                "seller_credits": conversation_context.get("workflow_state", {}).get("credits_available", 0),
-                "workflow_state": conversation_context.get("workflow_state")
+                "seller_credits": conversation_context.get("seller_credits",0),
+                "workflow_state": conversation_context.get("workflow_state"),
+                "support_contact_info":self.settings.support_contact_info
             }
             try:
 
@@ -1071,13 +1074,14 @@ class SellerService:
         
         return any(keyword in message_lower for keyword in view_rfq_keywords)
 
-    def _build_seller_conversation_context(self, session: ConversationSession, message: str) -> Dict[str, Any]:
+    def _build_seller_conversation_context(self, session: ConversationSession, message: str,credits_available) -> Dict[str, Any]:
         """Build conversation context for seller responses."""
         return {
             "workflow_type": "seller_rfq_view",
             "current_message": message,
             "session_history": session.conversation_history.get("messages", [])[-5:],
-            "workflow_state": session.workflow_state
+            "workflow_state": session.workflow_state,
+            "seller_credits":credits_available
         }
 
     # Error handlers
