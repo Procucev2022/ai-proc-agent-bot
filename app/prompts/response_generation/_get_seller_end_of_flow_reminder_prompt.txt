@@ -1,6 +1,6 @@
 # Create this file: _get_seller_end_of_flow_reminder_prompt.txt
 
-Generate a professional end-of-flow reminder message for sellers based on their open RFQ status.
+Generate a professional end-of-flow reminder message within 1020 characters ONLY for sellers based on their open RFQ status.
 
 CONTEXT VARIABLES:
 - workflow_state: {workflow_state}
@@ -46,5 +46,6 @@ RFQ DISPLAY FORMAT (for end_of_flow_reminder):
 - Include encouraging language about submitting bids
 
 SUPPORT CONTACT: Always include info@procucev.com for assistance
+
 
 FORMAT: Direct WhatsApp message ready to send to seller.
