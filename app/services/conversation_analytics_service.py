@@ -476,7 +476,6 @@ Session IDs to process: {', '.join(session_ids)}
                     result.get('sessions', []),
                     result.get('date', str(target_date))
                 )
-                seller_df.to_csv("selelr data.csv")
                 # Create seller_rfq_interest_event_df from AI metrics
                 seller_rfq_interest_event_df = self._create_seller_rfq_interest_event_df(
                     result.get('sessions', []),
@@ -520,7 +519,7 @@ Session IDs to process: {', '.join(session_ids)}
                     
                     # Keep only relevant columns
                     relevant_cols = [
-                        'date', 'phone_number', 'buyer_email','session_id', 'confidence_score',
+                        'date', 'phone_number', 'phone_clean','buyer_email','session_id', 'confidence_score',
                         'successful_rfqs_ai', 'incomplete_rfqs', 'buyers_started_but_not_raised_rfq',
                         'username', 'org_uuid', 'user_uuid', 'total_rfqs_raised', 'rfqs_with_seller_responses',
                         'total_items_in_rfqs', 'total_distinct_rfq_category','number_of_buyer_chats',
@@ -555,7 +554,7 @@ Session IDs to process: {', '.join(session_ids)}
                     remote_seller_rfq_df['phone_clean'] = remote_seller_rfq_df['phone'].str.replace('+', '', regex=False)
                     joined_seller_df = seller_df.merge(remote_seller_rfq_df, left_on=['phone_clean','seller_email'],right_on=['phone_clean', 'username'], how='outer')
 
-                    joined_seller_df.to_csv("joined seller.csv")
+
 
 
 
@@ -642,12 +641,27 @@ Session IDs to process: {', '.join(session_ids)}
     async def __aenter__(self):
         return self
 
+    def _safe_json_value(self, value):
+        """Safely convert value to JSON-compatible format or None."""
+        try:
+            if pd.isna(value):
+                return None
+            if isinstance(value, str) and value.lower() == 'nan':
+                return None
+            if hasattr(value, '__len__') and len(value) == 0:
+                return None
+            return value
+        except (ValueError, TypeError):
+            return None
+
     def _dump_joined_buyer_df_to_db(self, joined_buyer_df: pd.DataFrame, db_session) -> None:
         """Dump joined buyer DataFrame to BuyerDailyMetrics table."""
-        try:
-            records_inserted = 0
-            skipped = 0
-            for _, row in joined_buyer_df.iterrows():
+        records_inserted = 0
+        skipped = 0
+        failed = 0
+        
+        for _, row in joined_buyer_df.iterrows():
+            try:
                 # Get date from either date_x or date_y column (from merge)
                 date_val = row.get('date_x') if pd.notna(row.get('date_x')) else row.get('date_y')
                 if not pd.notna(date_val):
@@ -670,7 +684,7 @@ Session IDs to process: {', '.join(session_ids)}
                     date=pd.to_datetime(date_val).date(),
                     session_id=str(row.get('session_id', '')),
                     email=str(row.get('buyer_email', '')) if pd.notna(row.get('buyer_email')) and row.get('buyer_email', '') != '' else str(row.get('username', '')) if pd.notna(row.get('username')) else None,
-                    phone_number=str(row.get('phone_number', '')) if pd.notna(row.get('phone_number')) else None,
+                    phone_number=str(row.get('phone_number', '')) if pd.notna(row.get('phone_number')) else str(row.get('phone_clean', '')) if pd.notna(row.get('phone_clean')) else None,
                     total_rfq_raised=int(row.get('total_rfqs_raised', 0)) if pd.notna(row.get('total_rfqs_raised')) else 0,
                     total_items_in_rfqs=int(row.get('total_items_in_rfqs', 0)) if pd.notna(row.get('total_items_in_rfqs')) else 0,
                     total_distinct_categories_in_rfq=int(row.get('total_distinct_rfq_category', 0)) if pd.notna(row.get('total_distinct_rfq_category')) else 0,
@@ -692,7 +706,7 @@ Session IDs to process: {', '.join(session_ids)}
                         row.get('no_of_products_searched')) else 0,
                     bfs_stock_products_bid_placed_count=int(row.get('bfs_stock_products_bid_placed_count', 0)) if pd.notna(
                         row.get('bfs_stock_products_bid_placed_count')) else 0,
-                    bfs_products_searched_list=row.get('bfs_products_searched_list'),
+                    bfs_products_searched_list=self._safe_json_value(row.get('bfs_products_searched_list')),
                     org_id=str(row.get('org_uuid', '')) if pd.notna(row.get('org_uuid')) else None,
                     uuid=str(row.get('user_uuid', '')) if pd.notna(row.get('user_uuid')) else None,
                     ai_reasoning=str(row.get('analysis_reasoning', '')) if pd.notna(row.get('analysis_reasoning')) else None
@@ -732,16 +746,25 @@ Session IDs to process: {', '.join(session_ids)}
                 else:
                     db_session.add(buyer_metric)
                 records_inserted += 1
-            
+                
+            except Exception as row_error:
+                failed += 1
+                logger.error(f"[CONVERSATION-ANALYTICS] Failed to process buyer row {row.get('session_id', 'unknown')}: {row_error}")
+                continue
+        
+        try:
             db_session.commit()
-            logger.info(f"[CONVERSATION-ANALYTICS] Inserted {records_inserted} records into BuyerDailyMetrics table (skipped {skipped} rows without date)")
-            
-        except Exception as e:
-            logger.error(f"[CONVERSATION-ANALYTICS] Failed to dump joined buyer DataFrame to database: {e}")
+            logger.info(f"[CONVERSATION-ANALYTICS] Buyer metrics: {records_inserted} inserted, {skipped} skipped (no date), {failed} failed")
+        except Exception as commit_error:
+            logger.error(f"[CONVERSATION-ANALYTICS] Failed to commit buyer metrics: {commit_error}")
             db_session.rollback()
     
     def calculate_and_store_daily_aggregates(self, target_date, db_session) -> None:
         """Calculate aggregates from buyer_daily_metrics and store in daily_aggregates table."""
+        inserted = 0
+        updated = 0
+        failed = 0
+        
         try:
             from sqlalchemy import func, distinct
             
@@ -781,26 +804,33 @@ Session IDs to process: {', '.join(session_ids)}
             
             # Insert or update aggregates
             for role, metric_s_no, metric_name, value in aggregates:
-                existing = db_session.query(DailyAggregates).filter(
-                    DailyAggregates.date == target_date,
-                    DailyAggregates.role == role,
-                    DailyAggregates.metric_s_no == metric_s_no
-                ).first()
-                
-                if existing:
-                    existing.value = value
-                else:
-                    aggregate = DailyAggregates(
-                        date=target_date,
-                        role=role,
-                        metric_s_no=metric_s_no,
-                        metric_name=metric_name,
-                        value=value
-                    )
-                    db_session.add(aggregate)
+                try:
+                    existing = db_session.query(DailyAggregates).filter(
+                        DailyAggregates.date == target_date,
+                        DailyAggregates.role == role,
+                        DailyAggregates.metric_s_no == metric_s_no
+                    ).first()
+                    
+                    if existing:
+                        existing.value = value
+                        updated += 1
+                    else:
+                        aggregate = DailyAggregates(
+                            date=target_date,
+                            role=role,
+                            metric_s_no=metric_s_no,
+                            metric_name=metric_name,
+                            value=value
+                        )
+                        db_session.add(aggregate)
+                        inserted += 1
+                except Exception as agg_error:
+                    failed += 1
+                    logger.error(f"[CONVERSATION-ANALYTICS] Failed to process daily aggregate {metric_name}: {agg_error}")
+                    continue
             
             db_session.commit()
-            logger.info(f"[CONVERSATION-ANALYTICS] Stored {len(aggregates)} daily aggregates for {target_date}")
+            logger.info(f"[CONVERSATION-ANALYTICS] Daily aggregates: {inserted} inserted, {updated} updated, {failed} failed")
             
         except Exception as e:
             logger.error(f"[CONVERSATION-ANALYTICS] Failed to calculate daily aggregates: {e}")
@@ -913,10 +943,12 @@ ORDER BY
     
     def _dump_joined_seller_df_to_db(self, joined_seller_df: pd.DataFrame, db_session) -> None:
         """Dump joined seller DataFrame to SellerDailyMetrics table."""
-        try:
-            records_inserted = 0
-            skipped = 0
-            for _, row in joined_seller_df.iterrows():
+        records_inserted = 0
+        skipped = 0
+        failed = 0
+        
+        for _, row in joined_seller_df.iterrows():
+            try:
                 # Get date from either date or rfq_date column (from merge)
                 date_val = row.get('date') if pd.notna(row.get('date')) else row.get('rfq_date')
                 
@@ -969,16 +1001,25 @@ ORDER BY
                 else:
                     db_session.add(seller_metric)
                 records_inserted += 1
-            
+                
+            except Exception as row_error:
+                failed += 1
+                logger.error(f"[CONVERSATION-ANALYTICS] Failed to process seller row {row.get('session_id', 'unknown')}: {row_error}")
+                continue
+        
+        try:
             db_session.commit()
-            logger.info(f"[CONVERSATION-ANALYTICS] Inserted {records_inserted} records into SellerDailyMetrics table (skipped {skipped} rows without date)")
-            
-        except Exception as e:
-            logger.error(f"[CONVERSATION-ANALYTICS] Failed to dump joined seller DataFrame to database: {e}")
+            logger.info(f"[CONVERSATION-ANALYTICS] Seller metrics: {records_inserted} inserted, {skipped} skipped (no date), {failed} failed")
+        except Exception as commit_error:
+            logger.error(f"[CONVERSATION-ANALYTICS] Failed to commit seller metrics: {commit_error}")
             db_session.rollback()
     
     def calculate_and_store_seller_daily_aggregates(self, target_date, db_session) -> None:
         """Calculate seller aggregates from seller_daily_metrics and store in daily_aggregates table."""
+        inserted = 0
+        updated = 0
+        failed = 0
+        
         try:
             seller_metrics = db_session.query(SellerDailyMetrics).filter(
                 SellerDailyMetrics.date == target_date
@@ -987,8 +1028,6 @@ ORDER BY
             if not seller_metrics:
                 logger.info(f"[CONVERSATION-ANALYTICS] No seller metrics found for {target_date}")
                 return
-            
-
             
             seller_aggregates = [
                 ('seller', 11, 'Seller Chats Initiated', sum(m.number_of_chats for m in seller_metrics)),
@@ -1002,26 +1041,33 @@ ORDER BY
             ]
             
             for role, metric_s_no, metric_name, value in seller_aggregates:
-                existing = db_session.query(DailyAggregates).filter(
-                    DailyAggregates.date == target_date,
-                    DailyAggregates.role == role,
-                    DailyAggregates.metric_s_no == metric_s_no
-                ).first()
-                
-                if existing:
-                    existing.value = value
-                else:
-                    aggregate = DailyAggregates(
-                        date=target_date,
-                        role=role,
-                        metric_s_no=metric_s_no,
-                        metric_name=metric_name,
-                        value=value
-                    )
-                    db_session.add(aggregate)
+                try:
+                    existing = db_session.query(DailyAggregates).filter(
+                        DailyAggregates.date == target_date,
+                        DailyAggregates.role == role,
+                        DailyAggregates.metric_s_no == metric_s_no
+                    ).first()
+                    
+                    if existing:
+                        existing.value = value
+                        updated += 1
+                    else:
+                        aggregate = DailyAggregates(
+                            date=target_date,
+                            role=role,
+                            metric_s_no=metric_s_no,
+                            metric_name=metric_name,
+                            value=value
+                        )
+                        db_session.add(aggregate)
+                        inserted += 1
+                except Exception as agg_error:
+                    failed += 1
+                    logger.error(f"[CONVERSATION-ANALYTICS] Failed to process seller aggregate {metric_name}: {agg_error}")
+                    continue
             
             db_session.commit()
-            logger.info(f"[CONVERSATION-ANALYTICS] Stored {len(seller_aggregates)} seller daily aggregates for {target_date}")
+            logger.info(f"[CONVERSATION-ANALYTICS] Seller aggregates: {inserted} inserted, {updated} updated, {failed} failed")
             
         except Exception as e:
             logger.error(f"[CONVERSATION-ANALYTICS] Failed to calculate seller daily aggregates: {e}")
@@ -1053,6 +1099,10 @@ ORDER BY
     
     def calculate_and_store_category_aggregates(self, target_date, db_session) -> None:
         """Calculate category aggregates from remote database and store in category_aggregates table."""
+        inserted = 0
+        updated = 0
+        failed = 0
+        
         try:
             remote_db = get_remote_db_session()
             query = """
@@ -1141,65 +1191,78 @@ ORDER BY
 
             # Process RFQ categories
             for row in rows:
-                category_name = row[1] if row[1] is not None else 'Unknown'
-                total_rfq_raised = int(row[2]) if row[2] is not None else 0
-                rfqs_with_quotations = int(row[3]) if row[3] is not None else 0
-                bids_requested = int(row[4]) if row[4] is not None else 0
-                bids_accepted = int(row[5]) if row[5] is not None else 0
-                total_rfqs_intimated = intimated_dict.get(category_name, 0)
-                
-                existing = db_session.query(CategoryAggregates).filter(
-                    CategoryAggregates.date == target_date,
-                    CategoryAggregates.category_name == category_name
-                ).first()
-
-                if existing:
-                    existing.total_rfq_raised_category = total_rfq_raised
-                    existing.total_rfqs_with_quotations = rfqs_with_quotations
-                    existing.total_rfqs_intimated = total_rfqs_intimated
-                    existing.bids_requested = bids_requested
-                    existing.bids_accepted = bids_accepted
-                    existing.bfs_products_searched_count = bfs_category_counts.get(category_name, 0)
-                    existing.bfs_products_searched_by_unregistered_count = unregistered_bfs_category_counts.get(category_name, 0)
-                else:
-                    aggregate = CategoryAggregates(
-                        date=target_date,
-                        category_name=category_name,
-                        total_rfq_raised_category=total_rfq_raised,
-                        total_rfqs_with_quotations=rfqs_with_quotations,
-                        total_rfqs_intimated=total_rfqs_intimated,
-                        bids_requested=bids_requested,
-                        bids_accepted=bids_accepted,
-                        bfs_products_searched_count=bfs_category_counts.get(category_name, 0),
-                        bfs_products_searched_by_unregistered_count=unregistered_bfs_category_counts.get(category_name, 0)
-                    )
-                    db_session.add(aggregate)
-
-            # Process BFS-only categories
-            all_bfs_categories = set(bfs_category_counts.keys()) | set(unregistered_bfs_category_counts.keys())
-            for category_name in all_bfs_categories:
-                if not any(row[1] == category_name for row in rows if row[1]):
+                try:
+                    category_name = row[1] if row[1] is not None else 'Unknown'
+                    total_rfq_raised = int(row[2]) if row[2] is not None else 0
+                    rfqs_with_quotations = int(row[3]) if row[3] is not None else 0
+                    bids_requested = int(row[4]) if row[4] is not None else 0
+                    bids_accepted = int(row[5]) if row[5] is not None else 0
+                    total_rfqs_intimated = intimated_dict.get(category_name, 0)
+                    
                     existing = db_session.query(CategoryAggregates).filter(
                         CategoryAggregates.date == target_date,
                         CategoryAggregates.category_name == category_name
                     ).first()
-                    
-                    if not existing:
+
+                    if existing:
+                        existing.total_rfq_raised_category = total_rfq_raised
+                        existing.total_rfqs_with_quotations = rfqs_with_quotations
+                        existing.total_rfqs_intimated = total_rfqs_intimated
+                        existing.bids_requested = bids_requested
+                        existing.bids_accepted = bids_accepted
+                        existing.bfs_products_searched_count = bfs_category_counts.get(category_name, 0)
+                        existing.bfs_products_searched_by_unregistered_count = unregistered_bfs_category_counts.get(category_name, 0)
+                        updated += 1
+                    else:
                         aggregate = CategoryAggregates(
                             date=target_date,
                             category_name=category_name,
-                            total_rfq_raised_category=0,
-                            total_rfqs_with_quotations=0,
-                            total_rfqs_intimated=intimated_dict.get(category_name, 0),
-                            bids_requested=0,
-                            bids_accepted=0,
+                            total_rfq_raised_category=total_rfq_raised,
+                            total_rfqs_with_quotations=rfqs_with_quotations,
+                            total_rfqs_intimated=total_rfqs_intimated,
+                            bids_requested=bids_requested,
+                            bids_accepted=bids_accepted,
                             bfs_products_searched_count=bfs_category_counts.get(category_name, 0),
                             bfs_products_searched_by_unregistered_count=unregistered_bfs_category_counts.get(category_name, 0)
                         )
                         db_session.add(aggregate)
+                        inserted += 1
+                except Exception as cat_error:
+                    failed += 1
+                    logger.error(f"[CONVERSATION-ANALYTICS] Failed to process category {row[1] if len(row) > 1 else 'unknown'}: {cat_error}")
+                    continue
+
+            # Process BFS-only categories
+            all_bfs_categories = set(bfs_category_counts.keys()) | set(unregistered_bfs_category_counts.keys())
+            for category_name in all_bfs_categories:
+                try:
+                    if not any(row[1] == category_name for row in rows if row[1]):
+                        existing = db_session.query(CategoryAggregates).filter(
+                            CategoryAggregates.date == target_date,
+                            CategoryAggregates.category_name == category_name
+                        ).first()
+                        
+                        if not existing:
+                            aggregate = CategoryAggregates(
+                                date=target_date,
+                                category_name=category_name,
+                                total_rfq_raised_category=0,
+                                total_rfqs_with_quotations=0,
+                                total_rfqs_intimated=intimated_dict.get(category_name, 0),
+                                bids_requested=0,
+                                bids_accepted=0,
+                                bfs_products_searched_count=bfs_category_counts.get(category_name, 0),
+                                bfs_products_searched_by_unregistered_count=unregistered_bfs_category_counts.get(category_name, 0)
+                            )
+                            db_session.add(aggregate)
+                            inserted += 1
+                except Exception as bfs_error:
+                    failed += 1
+                    logger.error(f"[CONVERSATION-ANALYTICS] Failed to process BFS category {category_name}: {bfs_error}")
+                    continue
 
             db_session.commit()
-            logger.info(f"[CONVERSATION-ANALYTICS] Stored category aggregates for {target_date}")
+            logger.info(f"[CONVERSATION-ANALYTICS] Category aggregates: {inserted} inserted, {updated} updated, {failed} failed")
 
         except Exception as e:
             logger.error(f"[CONVERSATION-ANALYTICS] Failed to calculate category aggregates: {e}")
@@ -1314,6 +1377,10 @@ ORDER BY
 
     def calculate_and_store_unknown_daily_aggregates(self, target_date, db_session) -> None:
         """Calculate unknown user aggregates from unknown_daily_metrics and store in daily_aggregates table."""
+        inserted = 0
+        updated = 0
+        failed = 0
+        
         try:
             unknown_metrics = db_session.query(UnknownDailyMetrics).filter(
                 UnknownDailyMetrics.date == target_date
@@ -1333,26 +1400,33 @@ ORDER BY
             ]
             
             for role, metric_s_no, metric_name, value in unknown_aggregates:
-                existing = db_session.query(DailyAggregates).filter(
-                    DailyAggregates.date == target_date,
-                    DailyAggregates.role == role,
-                    DailyAggregates.metric_s_no == metric_s_no
-                ).first()
-                
-                if existing:
-                    existing.value = value
-                else:
-                    aggregate = DailyAggregates(
-                        date=target_date,
-                        role=role,
-                        metric_s_no=metric_s_no,
-                        metric_name=metric_name,
-                        value=value
-                    )
-                    db_session.add(aggregate)
+                try:
+                    existing = db_session.query(DailyAggregates).filter(
+                        DailyAggregates.date == target_date,
+                        DailyAggregates.role == role,
+                        DailyAggregates.metric_s_no == metric_s_no
+                    ).first()
+                    
+                    if existing:
+                        existing.value = value
+                        updated += 1
+                    else:
+                        aggregate = DailyAggregates(
+                            date=target_date,
+                            role=role,
+                            metric_s_no=metric_s_no,
+                            metric_name=metric_name,
+                            value=value
+                        )
+                        db_session.add(aggregate)
+                        inserted += 1
+                except Exception as agg_error:
+                    failed += 1
+                    logger.error(f"[CONVERSATION-ANALYTICS] Failed to process unknown aggregate {metric_name}: {agg_error}")
+                    continue
             
             db_session.commit()
-            logger.info(f"[CONVERSATION-ANALYTICS] Stored {len(unknown_aggregates)} unknown daily aggregates for {target_date}")
+            logger.info(f"[CONVERSATION-ANALYTICS] Unknown aggregates: {inserted} inserted, {updated} updated, {failed} failed")
             
         except Exception as e:
             logger.error(f"[CONVERSATION-ANALYTICS] Failed to calculate unknown daily aggregates: {e}")
@@ -1360,10 +1434,12 @@ ORDER BY
     
     def _dump_unknown_df_to_db(self, unknown_df: pd.DataFrame, db_session) -> None:
         """Dump unknown DataFrame to UnknownDailyMetrics table."""
-        try:
-            records_inserted = 0
-            skipped = 0
-            for _, row in unknown_df.iterrows():
+        records_inserted = 0
+        skipped = 0
+        failed = 0
+        
+        for _, row in unknown_df.iterrows():
+            try:
                 date_val = row.get('date')
                 
                 if not pd.notna(date_val):
@@ -1404,22 +1480,28 @@ ORDER BY
                 else:
                     db_session.add(unknown_metric)
                 records_inserted += 1
-            
+                
+            except Exception as row_error:
+                failed += 1
+                logger.error(f"[CONVERSATION-ANALYTICS] Failed to process unknown row {row.get('session_id', 'unknown')}: {row_error}")
+                continue
+        
+        try:
             db_session.commit()
-            logger.info(f"[CONVERSATION-ANALYTICS] Inserted {records_inserted} records into UnknownDailyMetrics table (skipped {skipped} rows without date)")
-            
-        except Exception as e:
-            logger.error(f"[CONVERSATION-ANALYTICS] Failed to dump unknown DataFrame to database: {e}")
+            logger.info(f"[CONVERSATION-ANALYTICS] Unknown metrics: {records_inserted} inserted, {skipped} skipped (no date), {failed} failed")
+        except Exception as commit_error:
+            logger.error(f"[CONVERSATION-ANALYTICS] Failed to commit unknown metrics: {commit_error}")
             db_session.rollback()
 
     def _dump_joined_seller_interest_to_fact_table(self, joined_seller_interest_df: pd.DataFrame, db_session) -> None:
         """Dump joined seller interest DataFrame to RFQNotificationFact table."""
-        try:
-            records_inserted = 0
-            records_updated = 0
-            skipped = 0
-            
-            for _, row in joined_seller_interest_df.iterrows():
+        records_inserted = 0
+        records_updated = 0
+        skipped = 0
+        failed = 0
+        
+        for _, row in joined_seller_interest_df.iterrows():
+            try:
                 # Extract date from response_date or use current date
                 date_val = row.get('response_date') or row.get('date')
                 if not pd.notna(date_val):
@@ -1486,15 +1568,20 @@ ORDER BY
                     )
                     db_session.add(fact_record)
                     records_inserted += 1
-            
+                    
+            except Exception as row_error:
+                failed += 1
+                logger.error(f"[CONVERSATION-ANALYTICS] Failed to process seller interest row {row.get('rfq_id', 'unknown')}: {row_error}")
+                continue
+        
+        try:
             db_session.commit()
             logger.info(
-                f"[CONVERSATION-ANALYTICS] RFQ notification fact table updated: "
-                f"{records_inserted} inserted, {records_updated} updated, {skipped} skipped"
+                f"[CONVERSATION-ANALYTICS] RFQ notification fact: "
+                f"{records_inserted} inserted, {records_updated} updated, {skipped} skipped, {failed} failed"
             )
-            
-        except Exception as e:
-            logger.error(f"[CONVERSATION-ANALYTICS] Failed to dump joined seller interest to fact table: {e}")
+        except Exception as commit_error:
+            logger.error(f"[CONVERSATION-ANALYTICS] Failed to commit RFQ notification fact: {commit_error}")
             db_session.rollback()
 
     async def analyze_date_range(self, start_date: date, end_date: date) -> Dict[str, Any]:
@@ -1524,8 +1611,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2026, 1, 21).date()
-        end_date = datetime(2026, 1, 21).date()
+        start_date = datetime(2026, 1, 1).date()
+        end_date = datetime(2026, 1, 3).date()
         
         current_date = start_date
         while current_date <= end_date:
