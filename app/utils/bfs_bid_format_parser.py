@@ -169,19 +169,19 @@ def _build_item_key(item: Dict) -> str:
 def generate_bid_format(bfs_items: List[Dict]) -> str:
     """
     Generate editable bid format from BFS search results.
-    Multi-line format with description, specification, age, price, and quantity.
+    Multi-line format with description, specification, age, location, price, and quantity.
 
     Args:
         bfs_items: List of BFS items with description, specification, sellPrice,
-                   ageOfAsset, availableQuantity
+                   ageOfAsset, availableQuantity, location
 
     Returns:
         Formatted string like:
-        1. Dell XPS 13 -- Intel i7 -- Age: 2yr:
+        1. Dell XPS 13 -- Intel i7 -- Age: 2yr -- Loc: Mumbai:
            a. Price: 85000
            b. Qty: 10
 
-        2. HP Pavilion -- AMD Ryzen -- Age: 1yr:
+        2. HP Pavilion -- AMD Ryzen -- Age: 1yr -- Loc: Delhi:
            a. Price: 70000
            b. Qty: 5
     """
@@ -189,12 +189,14 @@ def generate_bid_format(bfs_items: List[Dict]) -> str:
     DESC_LIMIT = 50
     SPEC_LIMIT = 20
     AGE_LIMIT = 30
+    LOC_LIMIT = 30
 
     blocks = []
     for idx, item in enumerate(bfs_items, start=1):
         desc = (item.get("description") or "")[:DESC_LIMIT].strip()
         spec = (item.get("specification") or "")[:SPEC_LIMIT].strip()
         age = (item.get("ageOfAsset") or "-")[:AGE_LIMIT].strip()
+        loc = (item.get("location") or "-")[:LOC_LIMIT].strip()
         price = round(item.get("sellPrice") or 0)
         qty = int(item.get("availableQuantity") or 1)
 
@@ -205,7 +207,7 @@ def generate_bid_format(bfs_items: List[Dict]) -> str:
             key = desc
 
         block = (
-            f"{idx}. {key} -- Age: {age}:\n"
+            f"{idx}. {key} -- Age: {age} -- Loc: {loc}:\n"
             f"   a. Price: {price}\n"
             f"   b. Qty: {qty}"
         )
@@ -255,8 +257,8 @@ def parse_bid_format(text: str, original_items: List[Dict]) -> Dict[str, Any]:
     bids = []
 
     # Patterns for parsing
-    # Header: "1. Description -- Specification -- Age: 2yr:" or "1. Description -- Age: 2yr:"
-    header_pattern = r'^(\d+)\.\s*(.+?)\s*--\s*Age:\s*[^:]*:\s*$'
+    # Header: "1. Description -- Specification -- Age: 2yr -- Loc: Mumbai:" or without Loc
+    header_pattern = r'^(\d+)\.\s*(.+?)\s*--\s*Age:\s*[^-:]+(?:\s*--\s*Loc:\s*[^:]+)?:\s*$'
     # Price line: "a. Price: 85000" or "a.Price:85000"
     price_pattern = r'^\s*a\.\s*Price:\s*([\d,]+(?:\.\d+)?)\s*$'
     # Qty line: "b. Qty: 10" or "b.Qty:10"
@@ -272,16 +274,16 @@ def parse_bid_format(text: str, original_items: List[Dict]) -> Dict[str, Any]:
         header_match = re.match(header_pattern, header_line, re.IGNORECASE)
 
         if not header_match:
-            # Try alternative: maybe age is on same line differently
-            # Pattern: "1. Description -- Spec -- Age: 2yr:"
+            # Try alternative: maybe age/location is on same line differently
+            # Pattern: "1. Description -- Spec -- Age: 2yr:" (without location)
             alt_pattern = r'^(\d+)\.\s*(.+?)(?:\s*--\s*Age:[^:]*)?:\s*$'
             header_match = re.match(alt_pattern, header_line, re.IGNORECASE)
             if not header_match:
-                return {"error": f"Invalid header format: '{header_line}'\nExpected: 1. Product -- Spec -- Age: Xyr:"}
+                return {"error": f"Invalid header format: '{header_line}'\nExpected: 1. Product -- Spec -- Age: Xyr -- Loc: City:"}
 
-        item_key_with_age = header_match.group(2).strip()
-        # Remove the "-- Age: ..." part to get the item key
-        item_key = re.sub(r'\s*--\s*Age:.*$', '', item_key_with_age, flags=re.IGNORECASE).strip()
+        item_key_with_metadata = header_match.group(2).strip()
+        # Remove the "-- Age: ..." and "-- Loc: ..." parts to get the item key
+        item_key = re.sub(r'\s*--\s*Age:.*$', '', item_key_with_metadata, flags=re.IGNORECASE).strip()
 
         # Find price and qty lines
         price = None
@@ -361,6 +363,7 @@ def generate_bid_summary(bid_items: List[Dict]) -> str:
     """
     # Same limits as generate_bid_format()
     AGE_LIMIT = 30
+    LOC_LIMIT = 30
 
     blocks = []
     for idx, bid in enumerate(bid_items, start=1):
@@ -372,9 +375,10 @@ def generate_bid_summary(bid_items: List[Dict]) -> str:
             continue
         original_item = bid.get("original_item", {})
         age = (original_item.get("ageOfAsset") or "-")[:AGE_LIMIT].strip()
+        loc = (original_item.get("location") or "-")[:LOC_LIMIT].strip()
 
         block = (
-            f"{idx}. {key} -- Age: {age}:\n"
+            f"{idx}. {key} -- Age: {age} -- Loc: {loc}:\n"
             f"   a. Price: ₹{price:,.0f}\n"
             f"   b. Qty: {qty}"
         )

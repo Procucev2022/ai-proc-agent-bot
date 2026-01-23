@@ -280,7 +280,7 @@ class BFSSearchHandler:
             await self.session_manager.save_session(session, persist_to_db=False)
 
             # Format results using same structure as bid format
-            # Character limits: desc=50, spec=20, age=30
+            # Character limits: desc=50, spec=20, age=30, loc=30
             if isinstance(data, list):
                 result_message = f"*{len(data)} item(s) in stock:*"
 
@@ -289,6 +289,7 @@ class BFSSearchHandler:
                         desc = (item.get("description") or "N/A")[:50].strip()
                         spec = (item.get("specification") or "")[:20].strip()
                         age = (item.get("ageOfAsset") or "-")[:30].strip()
+                        loc = (item.get("location") or "-")[:30].strip()
                         qty = int(item.get("availableQuantity") or 0)
                         price = item.get("sellPrice") or 0
 
@@ -299,7 +300,7 @@ class BFSSearchHandler:
                             key = desc
 
                         # Format matching bid format structure
-                        result_message += f"\n\n{idx}. {key} -- Age: {age}:\n"
+                        result_message += f"\n\n{idx}. {key} -- Age: {age} -- Loc: {loc}:\n"
                         result_message += f"   a. Price: ₹{price:,.0f}\n"
                         result_message += f"   b. Qty: {qty}"
 
