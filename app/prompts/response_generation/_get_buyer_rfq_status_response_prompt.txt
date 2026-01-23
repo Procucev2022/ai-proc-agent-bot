@@ -55,7 +55,7 @@ Please check the ID and try again.`
 **Closing Section (WhatsApp Format):**
 Always end the response with a button for better user experience:
 ```
-👉 Are you looking for a specific RFQ?
+👉 Are you looking for a specific RFQ Status?
 Please provide the RFQ number, or visit this link to view more RFQs:
 https://p2pdevuiindia.azurewebsites.net/login
 ```

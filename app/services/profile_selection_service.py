@@ -526,11 +526,11 @@ class ProfileSelectionService:
         try:
             # Case 6: New User Registration Flow
             message = (
-                "It looks like there’s no registered account linked to this number or email.\n\n"
+                "It looks like there’s no registered account linked to this mobile number.\n\n"
                 "Let’s get you started by creating a new profile so you can easily raise or respond to RFQs.\n\n"
                 "Please select one of the options below 👇\n"
                 "1. *Register as Buyer* – to create and manage RFQs for your requirements\n"
-                "2. *Register as Seller* – to receive and respond to buyer RFQs\n"
+                "2. *Register as Seller* – to receive new enquires (RFQ) and sell your products/services\n"
                 "3. *Exit*\n\n"
                 "Please reply with the number (1, 2, or 3) or type *Buyer*, *Seller*, or *Exit* to continue."
             )
@@ -816,7 +816,7 @@ class ProfileSelectionService:
                         buttons_config = [
                             {"id": "create_rfq", "title": "Create new RFQ"},
                             {"id": "rfq_status", "title": "Check RFQ Status"},
-                            {"id": "search_bfs", "title": "Search Stocks"}
+                            {"id": "search_bfs", "title": "Search Ready Stocks"}
                         ]
 
                         await self.whatsapp_service.send_configurable_buttons(
@@ -1013,7 +1013,7 @@ class ProfileSelectionService:
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Stocks"}
+                    {"id": "search_bfs", "title": "Search Ready Stocks"}
                 ]
             else:  # seller
                 # Get name from user_data fullName field

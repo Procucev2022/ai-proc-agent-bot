@@ -331,7 +331,7 @@ class CancelService:
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Stocks"}
+                    {"id": "search_bfs", "title": "Search Ready Stocks"}
                 ]
                 logger.info(f"Sending cancellation with buyer buttons to {user_phone}")
                 await self.whatsapp_service.send_configurable_buttons(

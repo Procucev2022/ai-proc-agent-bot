@@ -182,7 +182,7 @@ class ProductsArrayHandler:
                 "• 25 – Cable – 10 m roll, 10 mm thickness\n"
                 "• 6 – Book – A4 size, 200 pages\n\n"
                 "You can leave Brand or other Details empty if you don’t have them.\n\n"
-                "Alternatively, you may upload the item details in an Excel file with all the fields."
+                "Alternatively, you can bulk upload an Excel file (Max 49 items) with all the above fields."
             )
 
             await self.whatsapp_service.send_message(user.phone_number, no_products_message)

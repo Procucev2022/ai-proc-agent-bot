@@ -71,7 +71,7 @@
                       "bfs_searches": {
                         "type": "integer",
                         "minimum": 0,
-                        "description": "BFS searches by THIS buyer. Look for 'bfs_search' intent or 'Search Stocks' clicks"
+                        "description": "BFS searches by THIS buyer. Look for 'bfs_search' intent or 'Search Ready Stocks' clicks"
                       },
                       "products_bid_for": {
                         "type": "integer",

@@ -245,7 +245,7 @@ class ConfirmationHandler:
         # await self.whatsapp_service.send_message(user.phone_number, seller_match)
 
         # Note: We no longer auto-check BFS availability immediately after RFQ creation.
-        # Instead, we offer a contextual "Search Stocks" button post-submission.
+        # Instead, we offer a contextual "Search Ready Stocks" button post-submission.
         
         # Mark session as completed
         from app.models import ConversationOutcome
@@ -578,7 +578,7 @@ class ConfirmationHandler:
             if successful_count == 1:
                 response = (
                     "✅ *RFQ created successfully!*\n\n"
-                    f"*ID:* {rfq_ids[0]}\n"
+                    f"*ID: {rfq_ids[0]}*\n"
                     "(You can use this ID anytime to track your request.)\n\n"
                     "What would you like to do next?\n"
                     "You can choose from the options below or simply type what you’d like to do next."

@@ -275,7 +275,7 @@ class SectionedRFQCreationHandler:
                 if date_validation_error:
                     msg = f"{date_validation_error}\n\nPlease provide a valid delivery date and delivery pincode."
                 else:
-                    msg = "Please provide your delivery date and delivery pincode."
+                    msg = "Please provide your RFQ items Delivery Date and Delivery Location Pincode."
                 buttons_config = [
                     {"id": "restart_rfq", "title": "Restart"}
                 ]
@@ -731,7 +731,7 @@ class SectionedRFQCreationHandler:
                 "• Qty 15 - Laptop - UoM pieces - HP, 10\" display, i7 processor, blue\n"
                 "• Qty 25 - Cable - UoM meters - 10 mm thickness\n\n"
                 "You can leave Brand or other Details empty if you don't have them.\n\n"
-                "Alternatively, you may upload the item details in an Excel file with all the fields."
+                "Alternatively, you can bulk upload an Excel file (Max 49 items) with all the above fields."
             )
 
 
@@ -963,7 +963,6 @@ class SectionedRFQCreationHandler:
 
             # Ask about attachments directly (don't call confirmation_handler yet)
             optional_message = (
-                "Would you like to add any *specification documents, product images, or other attachments* to your RFQ?\n\n"
                 "You may upload files in the following formats: *JPEG, PNG, PDF, Excel, DOCX, or CSV*\n"
                 "• *Maximum 4 attachments*\n"
                 "• *Each file up to 1 MB*\n\n"
@@ -1622,7 +1621,7 @@ class SectionedRFQCreationHandler:
                 "• Qty 15 - Laptop - UoM pieces - HP, 10\" display, i7 processor, blue\n"
                 "• Qty 25 - Cable - UoM meters - 10 mm thickness\n\n"
                 "You can leave Brand or other Details empty if you don't have them.\n\n"
-                "Alternatively, you may upload the item details in an Excel file with all the fields."
+                "Alternatively, you can bulk upload an Excel file (Max 49 items) with all the above fields."
             )
 
             await self.whatsapp_service.send_message(user.phone_number, msg, session_id=session)

@@ -7,7 +7,7 @@ Based on the context provided, generate a clear, concise, and user-friendly mess
 
 **Opening Line:**
 - If specific RFQ IDs were provided: ✅ Here is the status of the RFQs you requested:
-- If no specific RFQ IDs were provided: ℹ️ Here are some RFQs available in your categories:
+- If no specific RFQ IDs were provided: ℹ️ Here are the status of your recent RFQs:
 - If the RFQ given by the seller is not found then show this message:
     We've checked the RFQ ID, but it's either not available in your categories or has been closed.
     Please check if the RFQ is still active or contact support for assistance.

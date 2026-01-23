@@ -375,7 +375,7 @@ class ResponseHelpers:
             buttons_config = [
                 {"id": "create_rfq", "title": "Create new RFQ"},
                 {"id": "rfq_status", "title": "Check RFQ Status"},
-                {"id": "search_bfs", "title": "Search Stocks"}
+                {"id": "search_bfs", "title": "Search Ready Stocks"}
             ]
             message = (
                 "What can I assist you with today?"

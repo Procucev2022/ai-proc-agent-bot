@@ -217,7 +217,7 @@ class SellerService:
             if credits_available <= 0:
                 message_parts.append("You do not have enough credits to request the RFQ. In order to request more RFQs please buy credits. Use the plans to subscribe and add credits so that you can request for RFQs")
             else:
-                message_parts.append("Here are some RFQs available for you in your selected categories. You can use your available credits to request RFQs.")
+                message_parts.append("Here are some RFQs available in your selected categories. You can use your available credits to request RFQs.")
         
         message_parts.append(f"*Available Credit:* {credits_available}")
         message_parts.append(f"*Total RFQs Available:* {total_count}")
@@ -238,8 +238,7 @@ class SellerService:
         
         message_parts.append("")
         message_parts.append(
-            "For more RFQ details, please log in to procucev.com.\n\n"
-            "Please reply with the number (1, 2, etc.) to request the RFQ."
+            f"To download RFQ’s please enter Serial Number/RFQ ID. You can also visit our QUA portal ({self.settings.procucev_rfq_details_url}) to subscribe, view and download more RFQ’s."
         )
 
         return "\n".join(message_parts)

@@ -721,13 +721,13 @@ class BFSSearchHandler:
                 buttons = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Stocks"}
+                    {"id": "search_bfs", "title": "Search Ready Stocks"}
                 ]
             else:
                 buttons = [
                     {"id": "view_rfqs", "title": "View Open RFQs"},
                     {"id": "quote_status", "title": "Check Quote Status"},
-                    {"id": "search_bfs", "title": "Search Stocks"}
+                    {"id": "search_bfs", "title": "Search Ready Stocks"}
                 ]
 
             # Send single message with buttons attached
@@ -837,14 +837,14 @@ class BFSSearchHandler:
             buttons = [
                 {"id": "create_rfq", "title": "Create new RFQ"},
                 {"id": "rfq_status", "title": "Check RFQ Status"},
-                {"id": "search_bfs", "title": "Search Stocks"}
+                {"id": "search_bfs", "title": "Search Ready Stocks"}
             ]
         else:
             # Seller menu
             buttons = [
                 {"id": "view_rfqs", "title": "View Open RFQs"},
                 {"id": "quote_status", "title": "Check Quote Status"},
-                {"id": "search_bfs", "title": "Search Stocks"}
+                {"id": "search_bfs", "title": "Search Ready Stocks"}
             ]
 
         await self.whatsapp_service.send_configurable_buttons(

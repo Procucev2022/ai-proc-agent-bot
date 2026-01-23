@@ -91,7 +91,7 @@ MESSAGE TYPES:
         - Submission date (do mention “Not specified” if unavailable)
    - Show open RFQs they haven't bid on
    - Encourage them to submit their bids and mention that You can resume viewing RFQs or managing bids anytime by saying 'Hi'.
-
+   - Mention that You can visit daily and say “Hi”, get latest enquiries and expand your business. Visit www.procucev.com for more details.
 8. generic_closing:
    - Thank the seller for using QUA AI!
    - Provide support contact when the reminder API fails

@@ -13,6 +13,7 @@ from app.services.authentication_service import AuthenticationService
 from app.services.session_management_service import SessionManagementService
 from app.database import DatabaseManager
 from app.utils.datetime_utils import utc_now
+from app.config import get_settings
 from app.utils.message_restore_utils import restore_last_bot_message
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ class ExitService:
                  db_manager: DatabaseManager = None):
         self.whatsapp_service = whatsapp_service or WhatsAppService()
         self.authentication_service = authentication_service
+        self.settings = get_settings()
         self.session_manager = session_manager
         self.db_manager = db_manager or DatabaseManager()
 
@@ -248,7 +250,7 @@ class ExitService:
         """
         try:
             goodbye_message = (
-               "Thank you for using QUA! I’ll be here whenever you need procurement support."
+               f"Thank you for using QUA! I’ll be here whenever you need procurement support.\n\n Procucev is also a pioneer in providing Digital Procurement Services, proCPX, and Procurement Consulting Services. For further details visit {self.settings.procucev_link}"
             )
 
             await self.whatsapp_service.send_message(user_phone, goodbye_message)

@@ -42,7 +42,7 @@ Classify each session as:
 
 **bfs_searches**:
 - Count each product search in BFS (Buy From Stock)
-- Look for intent 'bfs_search' or 'Search Stocks' button clicks
+- Look for intent 'bfs_search' or 'Search Ready Stocks' button clicks
 
 **products_bid_for**:
 - Count distinct products from "*Bids Placed Successfully!*" confirmations

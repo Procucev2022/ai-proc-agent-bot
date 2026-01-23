@@ -116,7 +116,7 @@ class BuyerRegistrationSchema(BaseModel):
 
 class SellerRegistrationSchema(BaseModel):
     name: str = Field(..., description="Full name")
-    companyName: str = Field(..., description="Company name")
+    companyName: str = Field(..., description="Organization Full Name( with Pvt Ltd./Ltd./LLP)")
     email: str = Field(..., description="Organization email")
     address1: str = Field(..., description="Location")
     zipCode: str = Field(..., description="Pincode")

@@ -2420,7 +2420,7 @@ class ChatService:
                     buttons_config = [
                         {"id": "create_rfq", "title": "Create new RFQ"},
                         {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "search_bfs", "title": "Search Stocks"}
+                        {"id": "search_bfs", "title": "Search Ready Stocks"}
                     ]
                 else:
                     buttons_config = [
@@ -2843,7 +2843,7 @@ class ChatService:
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Stocks"}
+                    {"id": "search_bfs", "title": "Search Ready Stocks"}
                 ]
                 profile_message = (
                     f"Perfect! We’ll continue with your Buyer profile (*{user.email}*).\n\n"
@@ -2871,7 +2871,7 @@ class ChatService:
                         buttons_config = [
                             {"id": "create_rfq", "title": "Create new RFQ"},
                             {"id": "rfq_status", "title": "Check RFQ Status"},
-                            {"id": "search_bfs", "title": "Search Stocks"}
+                            {"id": "search_bfs", "title": "Search Ready Stocks"}
                         ]
                         profile_message = (
                             f"We’ll continue with your Buyer profile (*{user.email}*).\n\n"
@@ -2893,7 +2893,7 @@ class ChatService:
                         buttons_config = [
                             {"id": "create_rfq", "title": "Create new RFQ"},
                             {"id": "rfq_status", "title": "Check RFQ Status"},
-                            {"id": "search_bfs", "title": "Search Stocks"}
+                            {"id": "search_bfs", "title": "Search Ready Stocks"}
                         ]
                         profile_message = "How can I help you with your procurement needs today?"
                         header = "Please choose an option:"
@@ -2901,7 +2901,7 @@ class ChatService:
                     buttons_config = [
                         {"id": "create_rfq", "title": "Create new RFQ"},
                         {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "search_bfs", "title": "Search Stocks"}
+                        {"id": "search_bfs", "title": "Search Ready Stocks"}
                     ]
                     profile_message = "How can I help you with your procurement needs today?"
                     header = "Please choose an option:"
@@ -2990,7 +2990,7 @@ class ChatService:
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Stocks"}
+                    {"id": "search_bfs", "title": "Search Ready Stocks"}
                 ]
                 header = "What else can I help you with?"
             elif user_role == "seller":
@@ -3033,7 +3033,7 @@ class ChatService:
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Stocks"}
+                    {"id": "search_bfs", "title": "Search Ready Stocks"}
                 ]
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
@@ -3062,7 +3062,7 @@ class ChatService:
                     buttons_config = [
                         {"id": "create_rfq", "title": "Create new RFQ"},
                         {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "search_bfs", "title": "Search Stocks"}
+                        {"id": "search_bfs", "title": "Search Ready Stocks"}
                     ]
                 elif user_role == "seller":
                     buttons_config = [
@@ -3073,7 +3073,7 @@ class ChatService:
                     buttons_config = [
                         {"id": "create_rfq", "title": "Create new RFQ"},
                         {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "search_bfs", "title": "Search Stocks"}
+                        {"id": "search_bfs", "title": "Search Ready Stocks"}
                     ]
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
@@ -3100,7 +3100,7 @@ class ChatService:
                 buttons_config = [
                     {"id": "create_rfq", "title": "Create new RFQ"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Stocks"}
+                    {"id": "search_bfs", "title": "Search Ready Stocks"}
                 ]
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
@@ -3129,7 +3129,7 @@ class ChatService:
                     buttons_config = [
                         {"id": "create_rfq", "title": "Create new RFQ"},
                         {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "search_bfs", "title": "Search Stocks"}
+                        {"id": "search_bfs", "title": "Search Ready Stocks"}
                     ]
                 elif user_role == "seller":
                     buttons_config = [
@@ -3140,7 +3140,7 @@ class ChatService:
                     buttons_config = [
                         {"id": "create_rfq", "title": "Create new RFQ"},
                         {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "search_bfs", "title": "Search Stocks"}
+                        {"id": "search_bfs", "title": "Search Ready Stocks"}
                     ]
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,

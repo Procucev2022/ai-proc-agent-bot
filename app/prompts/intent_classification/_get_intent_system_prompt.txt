@@ -241,7 +241,7 @@ IMPORTANT: Do NOT classify user message as irrelevant if the user message contai
 ** Buttons REPLY **
     - if button title is create new rfq then intent should be buy_something and relevant_message should be create new rfq and irrelevant_message should be null
     - if button title is check rfq status then intent should be rfq_status_check and relevant message should be check rfq status and irrelevant message should be null
-    - if button title is search stocks then intent should be bfs_search and relevant message should be search stocks and irrelevant message should be null
+    - if button title is Search Ready Stocks then intent should be bfs_search and relevant message should be Search Ready Stocks and irrelevant message should be null
     - if button title is get support info then intent should be support and relevant message should be get support info and irrelevant message should be null
 
 IMPORTANT: Sectioned RFQ Context Handling

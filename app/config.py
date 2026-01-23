@@ -189,11 +189,12 @@ class Settings:
         # Procucev website URL for RFQ details (used in "Check Details" button)
         self.procucev_rfq_details_url = os.getenv(
             "PROCUCEV_RFQ_DETAILS_URL",
-            "https://p2pdevuiindia.azurewebsites.net"
+            "https://p2pdevuiindia.azurewebsites.net/login"
         )
 
         # Fetch RFQ limit
         self.rfq_fetch_limit = int(os.getenv("RFQ_FETCH_LIMIT", "3"))
+        self.procucev_link = os.getenv("PROCUCEV_LINK", "www.procucev.com")
         
         # Email configuration
         self.support_email = os.getenv("SUPPORT_EMAIL", "support@procucev.com")
