@@ -175,9 +175,9 @@ class BFSSellerBidHandler(SellerAuthMixin):
 
             if result.get('success'):
                 if is_accept:
-                    message = "*Bid Accepted!*\n\nYou have accepted the buyer's offer. The buyer will be notified and you can proceed with the transaction."
+                    message = "*Bid Accepted!*\n\nYou have accepted the buyer's offer. Procucev team will be connecting with you shortly, to complete the Transaction."
                 else:
-                    message = "*Bid Rejected*\n\nYou have declined this offer. The buyer will be notified."
+                    message = "*Bid Rejected*\n\nYou have declined this offer. The buyer will be directed to proceed with other offers."
 
                 await self.whatsapp_service.send_message(
                     recipient_id=user_phone,

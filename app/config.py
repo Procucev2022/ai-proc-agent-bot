@@ -207,7 +207,7 @@ class Settings:
         self.error_notification_cooldown_minutes = int(os.getenv("ERROR_NOTIFICATION_COOLDOWN_MINUTES", "5"))
         
         # Support configuration
-        self.support_contact_info = os.getenv("SUPPORT_CONTACT_INFO", "info@procucev.com")
+        self.support_contact_info = os.getenv("SUPPORT_CONTACT_INFO", "support@procucev.com")
         self.contact_email = os.getenv("CONTACT_EMAIL", "contact@procucev.com")
         self.support_team_email = os.getenv("SUPPORT_TEAM_EMAILS", "priya.soni@mohap.ai")
         self.support_team_email = os.getenv("SUPPORT_TEAM_EMAILS", "priya.soni@mohap.ai")
