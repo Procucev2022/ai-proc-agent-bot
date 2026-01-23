@@ -98,11 +98,11 @@ class EnhancedExcelReportService:
         return output_file
     
     def _generate_buyer_details_sheet(self, writer: pd.ExcelWriter, target_date: date):
-        """Generate Buyer Details (Last 30D) sheet using buyer_daily_metrics table."""
+        """Generate Buyer Details sheet using buyer_daily_metrics table for target date only."""
         logger.info("Generating Buyer Details sheet from buyer_daily_metrics")
         
-        # Calculate date range (last 30 days)
-        start_date = target_date - timedelta(days=29)
+        # Use only target date
+        start_date = target_date
         
         with get_db_session_context() as db:
             # First try to use buyer_daily_metrics table if it exists
@@ -115,33 +115,19 @@ class EnhancedExcelReportService:
                         number_of_chats as "Chat Initiated",
                         total_rfq_raised as "RFQ Raised",
                         avg_products_per_rfq as "Avg Products per RFQ", 
-                        avg_categories_per_rfq as "Avg Categories per RFQ"
+                        avg_categories_per_rfq as "Avg Categories per RFQ",
+                        bfs_searches as "BFS Searches",
+                        products_bid_for as "Products Bid For",
+                        rfq_response_count as "RFQs w/ Response",
+                        total_incomplete_rfq as "RFQ Started But not Submitted"
                     FROM buyer_daily_metrics 
-                    WHERE date BETWEEN :start_date AND :target_date
-                    ORDER BY date DESC, email
+                    WHERE date = :target_date
+                    ORDER BY email
                 """)
                 
-                result = db.execute(query, {
-                    'start_date': start_date,
+                df = pd.read_sql(query, db.bind, params={
                     'target_date': target_date
                 })
-                
-                # Convert to DataFrame
-                columns = ["date", "email", "phone_number", "Chat Initiated", "RFQ Raised", "Avg Products per RFQ", "Avg Categories per RFQ"]
-                data = []
-                
-                for row in result:
-                    data.append([
-                        row[0],  # date
-                        row[1],  # email
-                        row[2],  # phone_number
-                        row[3],  # Chat Initiated
-                        row[4],  # RFQ Raised
-                        round(float(row[5]) if row[5] else 0, 2),  # Avg Products per RFQ
-                        round(float(row[6]) if row[6] else 0, 2)   # Avg Categories per RFQ
-                    ])
-                
-                df = pd.DataFrame(data, columns=columns)
                 
             except Exception as e:
                 logger.warning(f"buyer_daily_metrics table not found or error: {e}. Using conversation_sessions fallback.")
@@ -172,33 +158,17 @@ class EnhancedExcelReportService:
             ORDER BY date DESC, external_user_id
         """)
         
-        result = db.execute(query, {
+        return pd.read_sql(query, db.bind, params={
             'start_date': start_date,
             'target_date': target_date
         })
-        
-        columns = ["date", "email", "phone_number", "Chat Initiated", "RFQ Raised", "Avg Products per RFQ", "Avg Categories per RFQ"]
-        data = []
-        
-        for row in result:
-            data.append([
-                row[0],  # date
-                row[1],  # email
-                row[2],  # phone_number
-                row[3],  # Chat Initiated
-                row[4],  # RFQ Raised
-                round(float(row[5]), 2),  # Avg Products per RFQ
-                round(float(row[6]), 2)   # Avg Categories per RFQ
-            ])
-        
-        return pd.DataFrame(data, columns=columns)
     
     def _generate_seller_details_sheet(self, writer: pd.ExcelWriter, target_date: date):
-        """Generate Seller Details (Last 30D) sheet using seller_daily_metrics table."""
+        """Generate Seller Details sheet using seller_daily_metrics table for target date only."""
         logger.info("Generating Seller Details sheet from seller_daily_metrics")
         
-        # Calculate date range (last 30 days)
-        start_date = target_date - timedelta(days=29)
+        # Use only target date
+        start_date = target_date
         
         with get_db_session_context() as db:
             # First try to use seller_daily_metrics table if it exists
@@ -209,33 +179,17 @@ class EnhancedExcelReportService:
                         email,
                         phone_number,
                         number_of_chats as "Chats Initiated",
-                        total_rfqs_requested_with_quotation as "Requested RFQs",
-                        rfq_response_ai as "RFQs Responded"
+                        total_rfqs_requested as "Requested RFQs",
+                        rfq_response_ai as "RFQs Responded",
+                        bids_accepted_ai as "Bids Accepted"
                     FROM seller_daily_metrics 
-                    WHERE date BETWEEN :start_date AND :target_date
-                    ORDER BY date DESC, email
+                    WHERE date = :target_date
+                    ORDER BY email
                 """)
                 
-                result = db.execute(query, {
-                    'start_date': start_date,
+                df = pd.read_sql(query, db.bind, params={
                     'target_date': target_date
                 })
-                
-                # Convert to DataFrame
-                columns = ["date", "email", "phone_number", "Chats Initiated", "Requested RFQs", "RFQs Responded"]
-                data = []
-                
-                for row in result:
-                    data.append([
-                        row[0],  # date
-                        row[1],  # email
-                        row[2],  # phone_number
-                        row[3],  # Chats Initiated
-                        row[4],  # Requested RFQs
-                        row[5]   # RFQs Responded
-                    ])
-                
-                df = pd.DataFrame(data, columns=columns)
                 
             except Exception as e:
                 logger.warning(f"seller_daily_metrics table not found or error: {e}. Using conversation_sessions fallback.")
@@ -265,32 +219,17 @@ class EnhancedExcelReportService:
             ORDER BY date DESC, external_user_id
         """)
         
-        result = db.execute(query, {
+        return pd.read_sql(query, db.bind, params={
             'start_date': start_date,
             'target_date': target_date
         })
-        
-        columns = ["date", "email", "phone_number", "Chats Initiated", "Requested RFQs", "RFQs Responded"]
-        data = []
-        
-        for row in result:
-            data.append([
-                row[0],  # date
-                row[1],  # email
-                row[2],  # phone_number
-                row[3],  # Chats Initiated
-                row[4],  # Requested RFQs
-                row[5]   # RFQs Responded
-            ])
-        
-        return pd.DataFrame(data, columns=columns)
     
     def _generate_category_details_sheet(self, writer: pd.ExcelWriter, target_date: date):
-        """Generate Category Details (Last 30D) sheet using category_aggregates table."""
+        """Generate Category Details sheet using category_aggregates table for target date only."""
         logger.info("Generating Category Details sheet from category_aggregates")
         
-        # Calculate date range (last 30 days)
-        start_date = target_date - timedelta(days=29)
+        # Use only target date
+        start_date = target_date
         
         with get_db_session_context() as db:
             # First try to use category_aggregates table if it exists
@@ -300,30 +239,17 @@ class EnhancedExcelReportService:
                         date,
                         category_name as "Category",
                         total_rfq_raised_category as "RFQs Raised",
-                        total_rfqs_intimated as "RFQs w/ Response"
+                        total_rfqs_intimated as "RFQs w/ Response",
+                        bids_requested as "Bids Made",
+                        bids_accepted as "Offers Accepted"
                     FROM category_aggregates 
-                    WHERE date BETWEEN :start_date AND :target_date
-                    ORDER BY date DESC, category_name
+                    WHERE date = :target_date
+                    ORDER BY category_name
                 """)
                 
-                result = db.execute(query, {
-                    'start_date': start_date,
+                df = pd.read_sql(query, db.bind, params={
                     'target_date': target_date
                 })
-                
-                # Convert to DataFrame
-                columns = ["date", "Category", "RFQs Raised", "RFQs w/ Response"]
-                data = []
-                
-                for row in result:
-                    data.append([
-                        row[0],  # date
-                        row[1],  # Category
-                        row[2],  # RFQs Raised
-                        row[3]   # RFQs w/ Response
-                    ])
-                
-                df = pd.DataFrame(data, columns=columns)
                 
             except Exception as e:
                 logger.warning(f"category_aggregates table not found or error: {e}. Using daily_aggregated_metrics fallback.")
@@ -350,22 +276,10 @@ class EnhancedExcelReportService:
                 ORDER BY date DESC
             """)
             
-            result = db.execute(query, {
+            df = pd.read_sql(query, db.bind, params={
                 'start_date': start_date,
                 'target_date': target_date
             })
-            
-            columns = ["date", "Category", "RFQs Raised"]
-            data = []
-            
-            for row in result:
-                data.append([
-                    row[0],  # date
-                    row[1] or "General",  # Category
-                    int(row[2]) if row[2] else 0   # RFQs Raised
-                ])
-            
-            df = pd.DataFrame(data, columns=columns)
             
         except Exception as e:
             logger.warning(f"daily_aggregated_metrics fallback failed: {e}. Using basic fallback.")
@@ -421,7 +335,11 @@ class EnhancedExcelReportService:
             "Incomplete RFQs",
             "No. of Registrations failed",
             "Unregistered Buyers initiated chat but not continued along with details",
-            "User Not Identified"
+            "User Not Identified",
+            "No of Products Searched by Buyers",
+            "No of Unique Buyers searched for BFS Items",
+            "No of Unique buyers participated in Bidding",
+            "BFS Products Bids Count"
         ]
         
         # Create the summary table
@@ -510,10 +428,12 @@ class EnhancedExcelReportService:
                 GROUP BY metric_name
             """)
             
-            result = db.execute(query, {
+            df_result = pd.read_sql(query, db.bind, params={
                 'start_date': start_date,
                 'end_date': end_date
-            }).fetchall()
+            })
+            
+            result = df_result.values.tolist() if not df_result.empty else []
             
             if result:
                 metrics_dict = {row[0]: float(row[1]) for row in result}
@@ -566,41 +486,30 @@ class EnhancedExcelReportService:
                         category_name as "Category",
                         SUM(total_rfq_raised_category) as "RFQs Uploaded",
                         SUM(total_rfqs_with_quotations) as "total_rfqs_with_quotations",
-                        SUM(total_rfqs_intimated) as "RFQs w/ Response"
+                        SUM(total_rfqs_intimated) as "RFQs w/ Response",
+                        SUM(bfs_products_searched_count) as "BFS Products Searched",
+                        SUM(bfs_products_searched_by_unregistered_count) as "BFS Products Searched by Unregistered Users",
+                        SUM(bids_requested) as "BFS Counter Offer By Buyer"
                     FROM category_aggregates 
                     WHERE date BETWEEN :start_date AND :target_date
                     GROUP BY category_name
                     ORDER BY category_name
                 """)
                 
-                result = db.execute(query, {
+                df = pd.read_sql(query, db.bind, params={
                     'start_date': start_date,
                     'target_date': target_date
                 })
-                
-                # Convert to DataFrame
-                columns = ["Category", "RFQs Uploaded", "total_rfqs_with_quotations", "RFQs w/ Response"]
-                data = []
-                
-                for row in result:
-                    data.append([
-                        row[0] or "General",  # Category
-                        int(row[1] or 0),     # RFQs Uploaded
-                        int(row[2] or 0),     # total_rfqs_with_quotations
-                        int(row[3] or 0)      # RFQs w/ Response
-                    ])
-                
-                df = pd.DataFrame(data, columns=columns)
                 
             except Exception as e:
                 logger.warning(f"Category summary query failed: {e}. Using sample data.")
                 # Fallback sample data
                 df = pd.DataFrame([
-                    ["Bearings & Accessories", 0, 0, 0],
-                    ["Cables", 0, 0, 0],
-                    ["Chemicals", 0, 0, 0],
-                    ["Ferrous Material & Metals", 0, 0, 0]
-                ], columns=["Category", "RFQs Uploaded", "total_rfqs_with_quotations", "RFQs w/ Response"])
+                    ["Bearings & Accessories", 0, 0, 0, 0, 0, 0],
+                    ["Cables", 0, 0, 0, 0, 0, 0],
+                    ["Chemicals", 0, 0, 0, 0, 0, 0],
+                    ["Ferrous Material & Metals", 0, 0, 0, 0, 0, 0]
+                ], columns=["Category", "RFQs Uploaded", "total_rfqs_with_quotations", "RFQs w/ Response", "BFS Products Searched", "BFS Products Searched by Unregistered Users", "BFS Counter Offer By Buyer"])
             
             # Write to Excel
             df.to_excel(writer, sheet_name='Category Summary (Last 30D)', index=False)
@@ -625,10 +534,12 @@ class EnhancedExcelReportService:
                 LIMIT 1
             """)
             
-            result = db.execute(query, {
+            df_result = pd.read_sql(query, db.bind, params={
                 'window_type': window_type,
                 'end_date': end_date
-            }).fetchone()
+            })
+            
+            result = df_result.iloc[0] if not df_result.empty else None
             
             if result and result[0]:
                 return result[0]  # JSON data
@@ -653,10 +564,12 @@ class EnhancedExcelReportService:
                 GROUP BY metric_name
             """)
             
-            result = db.execute(query, {
+            df_result = pd.read_sql(query, db.bind, params={
                 'start_date': start_date,
                 'end_date': end_date
-            }).fetchall()
+            })
+            
+            result = df_result.values.tolist() if not df_result.empty else []
             
             if result:
                 # Convert to dictionary
@@ -683,7 +596,11 @@ class EnhancedExcelReportService:
                     'incomplete_rfqs': int(metrics_dict.get('Incomplete RFQs', 0)),
                     'registrations_failed': int(metrics_dict.get('No. of Registrations failed', 0)),
                     'unregistered_abandoned': int(metrics_dict.get('unregistered_abandoned', 0)),
-                    'user_not_identified': int(metrics_dict.get('user_not_identified', 0))
+                    'user_not_identified': int(metrics_dict.get('user_not_identified', 0)),
+                    'no_of_products_searched': int(metrics_dict.get('No of Products Searched by Buyers', 0)),
+                    'unique_bfs_searchers': int(metrics_dict.get('No of Unique Buyers searched for BFS Items', 0)),
+                    'unique_bidders': int(metrics_dict.get('No of Unique buyers participated in Bidding', 0)),
+                    'bfs_products_bids_count': int(metrics_dict.get('BFS Products Bids Count', 0))
                 }
                 
         except Exception as e:
@@ -711,10 +628,12 @@ class EnhancedExcelReportService:
                 AND DATE(created_at) BETWEEN :start_date AND :end_date
         """)
         
-        result = db.execute(query, {
+        df_result = pd.read_sql(query, db.bind, params={
             'start_date': start_date,
             'end_date': end_date
-        }).fetchone()
+        })
+        
+        result = df_result.iloc[0] if not df_result.empty else None
         
         if not result:
             return self._get_empty_metrics()
@@ -764,7 +683,11 @@ class EnhancedExcelReportService:
             "Incomplete RFQs": period_data.get('incomplete_rfqs', 0),
             "No. of Registrations failed": period_data.get('registrations_failed', 0),
             "Unregistered Buyers initiated chat but not continued along with details": period_data.get('unregistered_abandoned', 0),
-            "User Not Identified": period_data.get('user_not_identified', 0)
+            "User Not Identified": period_data.get('user_not_identified', 0),
+            "No of Products Searched by Buyers": period_data.get('no_of_products_searched', 0),
+            "No of Unique Buyers searched for BFS Items": period_data.get('unique_bfs_searchers', 0),
+            "No of Unique buyers participated in Bidding": period_data.get('unique_bidders', 0),
+            "BFS Products Bids Count": period_data.get('bfs_products_bids_count', 0)
         }
         return mapping.get(metric_name, 0)
     
@@ -783,7 +706,11 @@ class EnhancedExcelReportService:
             'incomplete_rfqs': 0,
             'registrations_failed': 0,
             'unregistered_abandoned': 0,
-            'user_not_identified': 0
+            'user_not_identified': 0,
+            'no_of_products_searched': 0,
+            'unique_bfs_searchers': 0,
+            'unique_bidders': 0,
+            'bfs_products_bids_count': 0
         }
     
     def _format_excel_sheets(self, writer: pd.ExcelWriter):

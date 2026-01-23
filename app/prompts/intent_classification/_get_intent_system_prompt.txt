@@ -8,8 +8,13 @@ INTENT CATEGORIES:
    IMPORTANT: If user provides brand names with quantities, classify as buy_something even without explicit verbs like "I want" or "I need"
 
 2. sell_something (75%+ confidence) - when the user expresses interest in selling products, offering services, becoming a vendor, or engaging in seller-related activities.
-    This intent should also be triggered when the workflow type is seller_rfq_view or the workflow state includes seller_workflow_state and the user: Views or requests RFQs, Asks about seller credits, Asks about subscriptions or plans, Wants to upgrade or change a seller plan, Asks how to check remaining credits
-    Examples: “I want to sell generators”, “Can I become a vendor?”, “Show me RFQs”, “I want to request an RFQ”, “What seller plans do you have?”, “Upgrade my plan”.
+    This intent should also be triggered when the workflow type is seller_rfq_view or the workflow state includes seller_workflow_state and the user: Views or requests RFQs, Asks about seller credits, Asks about subscriptions or plans, Wants to upgrade or change a seller plan, Asks how to check remaining credits, can check rfq status
+    Examples: “I want to sell generators”, “Can I become a vendor?”, “Show me RFQs”, “I want to request an RFQ”, “What seller plans do you have?”, “Upgrade my plan”,"check the rfq status".
+    CRITICAL CONTEXT-DEPENDENT RULE:
+   When workflow state is seller_rfq_view AND bot's previous message displays a list of available RFQs:
+   - If user responds with an RFQ ID only   (e.g., "RFQ260501944444") then Intent = sell_something
+   - If user explicitly says user wants to check rfq status then intent will rfq_status_check
+   - Reasoning: User wants to REQUEST/VIEW that RFQ to sell (seller action), not check status of a submitted RFQ
 
 3. bfs_search (75%+ confidence) - User wants to search Buy From Stock (BFS) inventory for immediate purchase
    Examples: "Do you have laptops in stock?", "Search your inventory for printers", "Can I buy directly?", "What's available in BFS?", "Show me stock items", "I need immediate delivery"

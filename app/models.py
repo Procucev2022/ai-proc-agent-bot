@@ -855,6 +855,12 @@ class BuyerDailyMetrics(Base):
     successful_rfqs_ai = Column(Integer, default=0)
     avg_products_per_rfq = Column(DECIMAL(5,2), nullable=True)
     avg_categories_per_rfq = Column(DECIMAL(5,2), nullable=True)
+    bfs_searches= Column(Integer, default=0)
+    products_bid_for= Column(Integer, default=0)
+    no_of_products_searched= Column(Integer, default=0)
+    rfq_response_count= Column(Integer,default=0)
+    bfs_stock_products_bid_placed_count= Column(Integer,default=0)
+    bfs_products_searched_list = Column(JSON,nullable=True)
     org_id = Column(String(255), nullable=True)
     uuid = Column(String(255), nullable=True)
     ai_reasoning = Column(Text, nullable=True)
@@ -883,11 +889,13 @@ class SellerDailyMetrics(Base):
     seller_successful_registration = Column(Integer, default=0)
     ai_reasoning = Column(Text, nullable=True)
     rfq_requested_ai = Column(Integer, default=0)
+    rfq_response_ai = Column(Integer, default=0)
     subscription_plans_requested = Column(Integer, default=0)
     zero_credit_rfq_attempt = Column(Integer, default=0)
     org_id = Column(String(255), nullable=True)
     uuid = Column(String(255), nullable=True)
-    total_rfqs_requested_with_quotation = Column(Integer, default=0)  # From joined query
+    total_rfqs_requested = Column(Integer, default=0)  # From joined query
+    bids_accepted_ai = Column(Integer, default=0)
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
     
     __table_args__ = (
@@ -949,6 +957,10 @@ class CategoryAggregates(Base):
     total_rfq_raised_category = Column(Integer, default=0)
     total_rfqs_with_quotations = Column(Integer, default=0)
     total_rfqs_intimated = Column(Integer, default=0)
+    bids_requested = Column(Integer, default=0)
+    bids_accepted = Column(Integer, default=0)
+    bfs_products_searched_count = Column(Integer, default=0)
+    bfs_products_searched_by_unregistered_count = Column(Integer, default=0)
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
     
     __table_args__ = (
@@ -976,6 +988,7 @@ class UnknownDailyMetrics(Base):
     unregistered_seller_requested_rfq = Column(Integer, default=0)
     unregistered_buyer_bfs_only = Column(Integer, default=0)
     number_of_faq_or_general_queries = Column(Integer, default=0)
+    bfs_products_searched_by_unregistered = Column(JSON,nullable=True)
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
     
     __table_args__ = (
