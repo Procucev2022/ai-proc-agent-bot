@@ -51,11 +51,11 @@ Classify each session as:
 **bfs_stock_products_bid_placed_count**:
 - CRITICAL SEQUENCE ONLY:
   1. User creates RFQ
-  2. User clicks 'Check Availability' button
+  2. User clicks 'Check Ready Stocks' button
   3. System shows BFS stock results
   4. User clicks 'Place Bid' button (id='bfs_negotiate')
   5. User successfully places bid (confirmation appears)
-- Count ONLY bids through this Check Availability flow AFTER RFQ creation
+- Count ONLY bids through this Check Ready Stocks flow AFTER RFQ creation
 
 **bfs_products_searched_list**:
 - Extract from "*X item(s) in stock:*" messages
@@ -77,7 +77,7 @@ Classify each session as:
 
 **rfq_requested_ai**:
 - Count ALL RFQ request attempts
-- Increment for: 'Request Active RFQs', 'View RFQs', '[Button: Request RFQ]' clicks
+- Increment for: 'Other Active RFQs', 'View RFQs', '[Button: Request RFQ]' clicks
 - Count regardless of success or credit availability
 
 **rfq_response_ai**:
@@ -114,7 +114,7 @@ Capture from messages containing "[Button: I'm Interested]":
 3. **Count only confirmed successful actions** - don't count attempts without confirmation
 4. **Track identity switches** - create new metric buckets when emails change
 5. **Distinguish registered vs unregistered users** - they populate different fields
-6. **Sequence matters** for bfs_stock_products_bid_placed_count - must follow RFQ→Check Availability→Bid flow
+6. **Sequence matters** for bfs_stock_products_bid_placed_count - must follow RFQ→Check Ready Stocks→Bid flow
 
 
 

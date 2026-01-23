@@ -2995,7 +2995,7 @@ class ChatService:
                 header = "What else can I help you with?"
             elif user_role == "seller":
                 buttons_config = [
-                    {"id": "view_rfqs", "title": "Request Active RFQs"},
+                    {"id": "view_rfqs", "title": "Other Active RFQs"},
                     {"id": "rfq_status", "title": "Show RFQ status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
@@ -3844,7 +3844,7 @@ class ChatService:
             elif result.get("workflow_step") in ["general_seller_response","awaiting_plan_selection"]:
 
                 buttons_config = [
-                    {"id": "view_rfqs", "title": "Request Active RFQs"},
+                    {"id": "view_rfqs", "title": "Other Active RFQs"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
@@ -3863,7 +3863,7 @@ class ChatService:
             elif result.get("workflow_step") in ["payment_link_generated","rfq_emails_processed"]:
 
                 buttons_config = [
-                    {"id": "view_rfqs", "title": "Request Active RFQs"},
+                    {"id": "view_rfqs", "title": "Other Active RFQs"},
                     {"id": "rfq_status", "title": "Check RFQ Status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]

@@ -43,23 +43,37 @@ MESSAGE TYPES:
    
    If you would like to expand your categories, please visit procucev.com or email us at {support_info_email}"
 
-2. subscription_plans:
-    Show all available subscription plans in a short, concise, and persuasive tone.
-    Present the plans in a simple, user-friendly format with plan name, price, duration, and key benefits only.
-    Avoid technical details, bullet overload, or internal terminology.
+2. When asked about subscription plans, use the API response data and format it exactly as shown below:
 
-    Format the response exactly like this:
+"Choose a suitable plan and expand your business with QUA AI:
 
-        Choose a plan that fits your business needs:
+*CONNECT* – ~₹24,999~ ₹4,999 (3 months)
+Experience WhatsApp AI assistant, Get RFQ alerts, view all RFQs and Submit quotes. RFQ Bundle Size - 50.
 
-        *CONNECT* – ₹4,999 (3 months)
-        Get RFQ alerts, view all RFQs & WhatsApp AI assistant.
+*SELECT* – ~₹49,999~ ₹9,999 (3 months)
+All features in CONNECT + Automated AI quotations & Catalogue listing. RFQ Bundle Size - 75.
 
-        *SELECT* – ₹9,999 (3 months)
-        Everything in CONNECT + AI quotations & catalogue listing.
+*ELECT* – ~₹74,999~ ₹14,999 (3 months)
+All features of QUA AI unlocked including real-time negotiation & dedicated account manager. RFQ Bundle Size 100."
 
-        *ELECT* – ₹14,999 (3 months)
-        All features unlocked including real-time negotiation & dedicated account manager.
+Formatting rules:
+- Use asterisks (*) for bold plan names
+- Show original price with strikethrough using ₹ symbol
+- Display launch offer price prominently
+- Include subscription period in parentheses
+- List key features in a single concise line
+- Always mention RFQ Bundle Size at the end of each plan description
+- Keep the tone persuasive and professional
+- No bullet points - use continuous text format
+
+Data mapping from API:
+- planName → Plan name in bold
+- subscriptionPrice → Original crossed-out price
+- launchOfferPrice → Discounted price
+- subscriptionPeriodMonths → Duration in months
+- rfqBundleSize → RFQ Bundle Size
+- Feature flags (YES/NO) → Determine which features to mention
+
 3. payment_link:
     Confirm the user’s selected subscription plan in a short and clear manner.
     Share the secure payment link.
@@ -84,6 +98,7 @@ MESSAGE TYPES:
 6. clarification: Ask for clarification
 7. end_of_flow_reminder:
    - Thank the seller for using QUA AI!
+   - Remind them: "You can visit daily and say 'Hi' to get the latest enquiries and expand your business. Visit www.procucev.com for more details."
    - Inform them about the number of open RFQs they have not yet bid on.
    - List each open RFQ clearly with:
         - RFQ ID
@@ -91,7 +106,7 @@ MESSAGE TYPES:
         - Submission date (do mention “Not specified” if unavailable)
    - Show open RFQs they haven't bid on
    - Encourage them to submit their bids and mention that You can resume viewing RFQs or managing bids anytime by saying 'Hi'.
-   - Mention that You can visit daily and say “Hi”, get latest enquiries and expand your business. Visit www.procucev.com for more details.
+
 8. generic_closing:
    - Thank the seller for using QUA AI!
    - Provide support contact when the reminder API fails

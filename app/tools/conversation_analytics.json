@@ -86,7 +86,7 @@
                       "bfs_stock_products_bid_placed_count": {
                         "type": "integer",
                         "minimum": 0,
-                        "description": "SEQUENCE ONLY: (1)Create RFQ (2)Click 'Check Availability' (3)BFS results shown (4)Click 'Place Bid'(id='bfs_negotiate') (5)Bid confirmation. Count products from confirmation."
+                        "description": "SEQUENCE ONLY: (1)Create RFQ (2)Click 'Check Ready Stocks' (3)BFS results shown (4)Click 'Place Bid'(id='bfs_negotiate') (5)Bid confirmation. Count products from confirmation."
                       },
                       "bfs_products_searched_list": {
                         "type": "array",
@@ -142,7 +142,7 @@
                       "rfq_requested_ai": {
                         "type": "integer",
                         "minimum": 0,
-                        "description": "All RFQ request attempts. Count: 'Request Active RFQs', 'View RFQs', '[Button: Request RFQ]' clicks. Regardless of success"
+                        "description": "All RFQ request attempts. Count: 'Other Active RFQs', 'View RFQs', '[Button: Request RFQ]' clicks. Regardless of success"
                       },
                       "rfq_response_ai": {
                         "type": "integer",

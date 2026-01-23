@@ -341,7 +341,7 @@ class CancelService:
                 )
             elif is_seller:
                 buttons_config = [
-                    {"id": "view_rfqs", "title": "Request Active RFQs"},
+                    {"id": "view_rfqs", "title": "Other Active RFQs"},
                     {"id": "rfq_status", "title": "Check RFQs Status"},
                     {"id": "contact_support", "title": "Contact Support"}
                 ]

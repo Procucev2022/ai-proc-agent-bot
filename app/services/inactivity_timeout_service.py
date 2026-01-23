@@ -296,7 +296,7 @@ class InactivityTimeoutService:
             logger.warning("[TIMEOUT_SERVICE] Monitor already running on this worker")
             return True
         
-        # Try to acquire global lock without blocking to check availability
+        # Try to acquire global lock without blocking to Check Ready Stocks
         lock_key = "global:timeout_monitor:lock"
         lock = self.redis.lock(lock_key, timeout=5, blocking_timeout=0)
         

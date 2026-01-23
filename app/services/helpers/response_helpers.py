@@ -466,15 +466,33 @@ class ResponseHelpers:
         """Fallback for subscription plans display."""
         plans = context.get("plans", [])
 
-        message = "💼 Available Subscription Plans:\n\n"
-        for i, plan in enumerate(plans, 1):
-            name = plan.get("name", "Plan")
-            price = plan.get("price", 0)
-            rfq_count = plan.get("rfq_count", 0)
-            message += f"{i}. {name} Plan - ₹{price}\n   📊 {rfq_count} RFQ requests\n\n"
+        message = "Choose a suitable plan and expand your business with QUA AI:\n\n"
 
-        message += "Please choose a plan by typing the plan name or number."
-        return message
+        for plan in plans:
+            plan_name = plan.get("planName", "").upper()
+            original_price = plan.get("subscriptionPrice", 0)
+            offer_price = plan.get("launchOfferPrice", 0)
+            duration = plan.get("subscriptionPeriodMonths", 3)
+            rfq_bundle = plan.get("rfqBundleSize", 0)
+
+            # Format prices
+            original_price_str = f"~₹{int(original_price):,}~"
+            offer_price_str = f"₹{int(offer_price):,}"
+
+            # Build feature description based on plan
+            if plan_name == "CONNECT":
+                features = "Experience WhatsApp AI assistant, Get RFQ alerts, view all RFQs and Submit quotes."
+            elif plan_name == "SELECT":
+                features = "All features in CONNECT + Automated AI quotations & Catalogue listing."
+            elif plan_name == "ELECT":
+                features = "All features of QUA AI unlocked including real-time negotiation & dedicated account manager."
+            else:
+                features = "Full feature access."
+
+            message += f"*{plan_name}* – {original_price_str} {offer_price_str} ({duration} months)\n"
+            message += f"{features} RFQ Bundle Size - {rfq_bundle}.\n\n"
+
+        return message.strip()
 
     def _get_payment_link_fallback(self, context: Dict[str, Any]) -> str:
         """Fallback for payment link response."""

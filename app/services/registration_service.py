@@ -680,7 +680,9 @@ class RegistrationService:
                             logger.info(f"entitiies:{entities}")
                             # Show buying options with buttons
                             buying_message = (
-                                f"Your OTP has been verified successfully, and your account is now active and ready to use.To serve you better, please update your profile and categories at {self.settings.procucev_rfq_details_url} You will receive your login details through E-mail.\n\n"
+                                f"Your OTP has been verified successfully, and your account is now active and ready to use."
+                                f"To serve you better, please update your profile and categories at {self.settings.procucev_rfq_details_url} "
+                                f"You will receive your login details through E-mail.\n\n"
                                 f"Let's continue with your *Buyer profile ({entities.get('email', 'your profile')})*.\n"
                                 "What would you like to do today?\n"
                                 "You can choose from the options below or type your request."
@@ -792,7 +794,9 @@ class RegistrationService:
                     # Send success message without buttons
                     name = entities.get('name', 'there').split()[0].title()
                     success_message = (
-                        f"Hi {name}! Your OTP has been verified successfully. Please update your profile and categories.\n\n"
+                        f"Hello {name},"
+                        f"Your OTP has been verified successfully and your account is now active and ready to use."
+                        f"To serve you better, Please update your profile and categories at {self.settings.procucev_rfq_details_url}.\n\n"
                         f"Got it, you'd like to sell items!\n"
                         f"Let's continue with your Seller profile ({entities.get('email', 'your profile')}).\n"
                     )
