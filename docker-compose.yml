@@ -36,6 +36,7 @@ services:
       - REDIS_URL=redis://celery_redis:6379/0
       - CELERY_BROKER_URL=redis://celery_redis:6379/0
       - CELERY_RESULT_BACKEND=redis://celery_redis:6379/0
+      - ENABLE_REMOTE_CATEGORIZATION=true
     volumes:
       - .:/app
       - ./logs:/app/logs
