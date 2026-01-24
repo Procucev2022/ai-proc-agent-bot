@@ -1,7 +1,7 @@
 {
   "scenario_id": "whatsapp_insight_report",
   "subject": "B2B WhatsApp Insights - Daily Report {parsed_Date}",
-  "to": "shubham@mohap.ai",
+  "to": "{WHATSAPP_REPORT_EMAILS}",
   "cc": "",
   "bcc": "",
   "body": "Dear Team,\n\nPlease find attached the daily B2B WhatsApp insights report for {parsed_Date}.\n\nThis report contains comprehensive metrics and analytics for the procurement agent activities.\n\n",
