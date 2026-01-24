@@ -15,6 +15,8 @@ ENABLE_AUTO_CATEGORIZATION = True
 ENABLE_VECTOR_STORE_SYNC = True
 ENABLE_SELLER_MATCHING = False
 ENABLE_DAILY_AGGREGATION = False
+ENABLE_WHATSAPP_REPORT_AUTOMATION = True  # WhatsApp report automation orchestrator
+ENABLE_WHATSAPP_REPORT_AUTOMATION_TEST = False  # Test version (every 5 minutes)
 ENABLE_DAILY_CATEGORY_REBUILD = True  # Daily rebuild of category_items vector store
 ENABLE_CATEGORY_NAME_SYNC = True  # Daily sync of category_names collection from remote DB
 ENABLE_LOG_CLEANUP = True  # Daily log cleanup and archival
@@ -90,15 +92,7 @@ if ENABLE_SELLER_MATCHING:
         }
     }
 
-if ENABLE_DAILY_AGGREGATION:
-    beat_schedule['daily-aggregation-task'] = {
-        'task': 'app.tasks.daily_aggregation_task.run_daily_aggregation',
-        'schedule': crontab(minute=0, hour='*/12'),
-        'options': {
-            'expires': 7200,
-            'queue': 'aggregation'
-        }
-    }
+
 
 if ENABLE_DAILY_CATEGORY_REBUILD:
     beat_schedule['daily-category-vector-rebuild-task'] = {
@@ -160,18 +154,30 @@ if ENABLE_BFS_NOTIFICATION:
         }
     }
 
+if ENABLE_WHATSAPP_REPORT_AUTOMATION:
+    beat_schedule['whatsapp-report-automation-task'] = {
+        'task': 'app.tasks.whatsapp_report_automation_task.run_whatsapp_report_automation',
+        'schedule': crontab(minute=0, hour=7),  # Daily at 7:00 AM
+        'options': {
+            'expires': 7200,
+            'queue': 'report_automation'
+        }
+    }
+
+
 # Task routing - distribute tasks across different queues
 task_routes = {
     'app.tasks.auto_categorization_task.*': {'queue': 'categorization'},
     'app.tasks.vector_store_sync_task.*': {'queue': 'vector_store'},
     'app.tasks.seller_matching_task.*': {'queue': 'seller_matching'},
-    'app.tasks.daily_aggregation_task.*': {'queue': 'aggregation'},
+
     'app.tasks.daily_category_vector_rebuild_task.*': {'queue': 'vector_store'},
     'app.tasks.category_name_sync_task.*': {'queue': 'vector_store'},
     'app.tasks.log_cleanup_task.*': {'queue': 'maintenance'},
     'app.tasks.export_excel_task.*': {'queue': 'export'},
     'app.tasks.test_cron_task.*': {'queue': 'default'},
     'app.tasks.bfs_notification_task.*': {'queue': 'bfs_notification'},
+    'app.tasks.whatsapp_report_automation_task.*': {'queue': 'report_automation'},
 }
 
 # Queue configuration

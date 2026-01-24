@@ -19,11 +19,11 @@ celery_app = Celery(
         'app.tasks.auto_categorization_task',
         'app.tasks.vector_store_sync_task',
         'app.tasks.seller_matching_task',
-        'app.tasks.daily_aggregation_task',
         'app.tasks.daily_category_vector_rebuild_task',
         'app.tasks.test_cron_task',
         'app.tasks.log_cleanup_task',
-        'app.tasks.bfs_notification_task'
+        'app.tasks.bfs_notification_task',
+        'app.tasks.whatsapp_report_automation_task'
     ]
 )
 
