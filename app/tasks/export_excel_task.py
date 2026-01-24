@@ -188,7 +188,8 @@ async def _send_excel_to_client(excel_file_path: str, parsed_date: date) -> Dict
         template_variables = {
             "parsed_Date": parsed_date.strftime('%Y-%m-%d'),
             "sender_email": settings.email_report_sender or "shubham@mohap.ai",
-            "support_email": settings.support_email or "support@procucev.com"
+            "support_email": settings.support_email or "support@procucev.com",
+            "WHATSAPP_REPORT_EMAILS": os.getenv('WHATSAPP_REPORT_EMAILS', 'priyasoniy17@gmail.com,shubham@mohap.ai')
         }
         
         logger.info(f"Sending Excel report email for {parsed_date}")
