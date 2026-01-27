@@ -121,7 +121,7 @@ class ConversationAnalyticsService:
                 unknown_record = {
                     'date': analysis_date,
                     'session_id': session_id,
-                    'phone_number': session.get('external_user_id', ''),
+                    'phone_number': session.get('phone_number', ''),
                     'user_type': user_type,
                     'email': '',
                     'confidence_score': confidence_score,
@@ -503,6 +503,10 @@ Session IDs to process: {', '.join(session_ids)}
                 else:
                     joined_seller_interest_df = seller_rfq_interest_event_df
                 
+                # Dump joined seller interest data to RFQ notification fact table
+                if not joined_seller_interest_df.empty:
+                    self._dump_joined_seller_interest_to_fact_table(joined_seller_interest_df, db)
+                
                 # Join buyer_df with remote_rfq_df
                 if not buyer_df.empty and not remote_rfq_df.empty:
                     buyer_df['phone_clean'] = buyer_df['phone_number'].str.replace('+', '', regex=False)
@@ -512,7 +516,7 @@ Session IDs to process: {', '.join(session_ids)}
                     
                     # Coalesce date columns
                     joined_buyer_df['date'] = joined_buyer_df['date_x'].fillna(joined_buyer_df['date_y'])
-                    
+
                     # Keep only relevant columns
                     relevant_cols = [
                         'date', 'phone_number', 'phone_clean','buyer_email','session_id', 'confidence_score',
@@ -560,7 +564,7 @@ Session IDs to process: {', '.join(session_ids)}
 
                     # Coalesce date columns - use rfq_date when date is empty
                     joined_seller_df['date'] = joined_seller_df['date'].fillna(joined_seller_df['rfq_date'])
-                    
+
                     # Keep only relevant columns
                     seller_relevant_cols = [
                         'date', 'phone_number','phone_clean', 'seller_email','session_id', 'confidence_score',
@@ -588,14 +592,11 @@ Session IDs to process: {', '.join(session_ids)}
                 
                 # Dump unknown DataFrame to database
                 if not unknown_df.empty:
+                    
                     self._dump_unknown_df_to_db(unknown_df, db)
                     
                     # Calculate and store unknown daily aggregates
                     self.calculate_and_store_unknown_daily_aggregates(target_date, db)
-                
-                # Dump joined seller interest data to RFQ notification fact table
-                if not joined_seller_interest_df.empty:
-                    self._dump_joined_seller_interest_to_fact_table(joined_seller_interest_df, db)
                 
 
                 
@@ -743,19 +744,23 @@ Session IDs to process: {', '.join(session_ids)}
                     existing.ai_reasoning = buyer_metric.ai_reasoning
                 else:
                     db_session.add(buyer_metric)
-                records_inserted += 1
+                
+                # Commit each row individually to prevent rollback of all rows
+                try:
+                    db_session.commit()
+                    records_inserted += 1
+                except Exception as commit_error:
+                    db_session.rollback()
+                    failed += 1
+                    logger.error(f"[CONVERSATION-ANALYTICS] Failed to commit buyer row {row.get('session_id', 'unknown')}: {commit_error}")
+                    continue
                 
             except Exception as row_error:
                 failed += 1
                 logger.error(f"[CONVERSATION-ANALYTICS] Failed to process buyer row {row.get('session_id', 'unknown')}: {row_error}")
                 continue
         
-        try:
-            db_session.commit()
-            logger.info(f"[CONVERSATION-ANALYTICS] Buyer metrics: {records_inserted} inserted, {skipped} skipped (no date), {failed} failed")
-        except Exception as commit_error:
-            logger.error(f"[CONVERSATION-ANALYTICS] Failed to commit buyer metrics: {commit_error}")
-            db_session.rollback()
+        logger.info(f"[CONVERSATION-ANALYTICS] Buyer metrics: {records_inserted} inserted, {skipped} skipped (no date), {failed} failed")
     
     def calculate_and_store_daily_aggregates(self, target_date, db_session) -> None:
         """Calculate aggregates from buyer_daily_metrics and store in daily_aggregates table."""
@@ -1012,19 +1017,23 @@ ORDER BY
                     existing.bids_accepted_ai = seller_metric.bids_accepted_ai
                 else:
                     db_session.add(seller_metric)
-                records_inserted += 1
+                
+                # Commit each row individually to prevent rollback of all rows
+                try:
+                    db_session.commit()
+                    records_inserted += 1
+                except Exception as commit_error:
+                    db_session.rollback()
+                    failed += 1
+                    logger.error(f"[CONVERSATION-ANALYTICS] Failed to commit seller row {row.get('session_id', 'unknown')}: {commit_error}")
+                    continue
                 
             except Exception as row_error:
                 failed += 1
                 logger.error(f"[CONVERSATION-ANALYTICS] Failed to process seller row {row.get('session_id', 'unknown')}: {row_error}")
                 continue
         
-        try:
-            db_session.commit()
-            logger.info(f"[CONVERSATION-ANALYTICS] Seller metrics: {records_inserted} inserted, {skipped} skipped (no date), {failed} failed")
-        except Exception as commit_error:
-            logger.error(f"[CONVERSATION-ANALYTICS] Failed to commit seller metrics: {commit_error}")
-            db_session.rollback()
+        logger.info(f"[CONVERSATION-ANALYTICS] Seller metrics: {records_inserted} inserted, {skipped} skipped (no date), {failed} failed")
     
     def calculate_and_store_seller_daily_aggregates(self, target_date, db_session) -> None:
         """Calculate seller aggregates from seller_daily_metrics and store in daily_aggregates table."""
@@ -1491,19 +1500,23 @@ ORDER BY
                     existing.number_of_faq_or_general_queries = unknown_metric.number_of_faq_or_general_queries
                 else:
                     db_session.add(unknown_metric)
-                records_inserted += 1
+                
+                # Commit each row individually to prevent rollback of all rows
+                try:
+                    db_session.commit()
+                    records_inserted += 1
+                except Exception as commit_error:
+                    db_session.rollback()
+                    failed += 1
+                    logger.error(f"[CONVERSATION-ANALYTICS] Failed to commit unknown row {row.get('session_id', 'unknown')}: {commit_error}")
+                    continue
                 
             except Exception as row_error:
                 failed += 1
                 logger.error(f"[CONVERSATION-ANALYTICS] Failed to process unknown row {row.get('session_id', 'unknown')}: {row_error}")
                 continue
         
-        try:
-            db_session.commit()
-            logger.info(f"[CONVERSATION-ANALYTICS] Unknown metrics: {records_inserted} inserted, {skipped} skipped (no date), {failed} failed")
-        except Exception as commit_error:
-            logger.error(f"[CONVERSATION-ANALYTICS] Failed to commit unknown metrics: {commit_error}")
-            db_session.rollback()
+        logger.info(f"[CONVERSATION-ANALYTICS] Unknown metrics: {records_inserted} inserted, {skipped} skipped (no date), {failed} failed")
 
     def _dump_joined_seller_interest_to_fact_table(self, joined_seller_interest_df: pd.DataFrame, db_session) -> None:
         """Dump joined seller interest DataFrame to RFQNotificationFact table."""
@@ -1580,21 +1593,25 @@ ORDER BY
                     )
                     db_session.add(fact_record)
                     records_inserted += 1
+                
+                # Commit each row individually to prevent rollback of all rows
+                try:
+                    db_session.commit()
+                except Exception as commit_error:
+                    db_session.rollback()
+                    failed += 1
+                    logger.error(f"[CONVERSATION-ANALYTICS] Failed to commit seller interest row {row.get('rfq_id', 'unknown')}: {commit_error}")
+                    continue
                     
             except Exception as row_error:
                 failed += 1
                 logger.error(f"[CONVERSATION-ANALYTICS] Failed to process seller interest row {row.get('rfq_id', 'unknown')}: {row_error}")
                 continue
         
-        try:
-            db_session.commit()
-            logger.info(
-                f"[CONVERSATION-ANALYTICS] RFQ notification fact: "
-                f"{records_inserted} inserted, {records_updated} updated, {skipped} skipped, {failed} failed"
-            )
-        except Exception as commit_error:
-            logger.error(f"[CONVERSATION-ANALYTICS] Failed to commit RFQ notification fact: {commit_error}")
-            db_session.rollback()
+        logger.info(
+            f"[CONVERSATION-ANALYTICS] RFQ notification fact: "
+            f"{records_inserted} inserted, {records_updated} updated, {skipped} skipped, {failed} failed"
+        )
 
     async def analyze_date_range(self, start_date: date, end_date: date) -> Dict[str, Any]:
         """Analyze conversations for a date range."""

@@ -867,7 +867,7 @@ class BuyerDailyMetrics(Base):
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
     
     __table_args__ = (
-        UniqueConstraint('date', 'email', 'phone_number', name='unique_buyer_daily_metrics'),
+        UniqueConstraint('date', 'email', 'phone_number','session_id', name='unique_buyer_daily_metrics'),
     )
 
 class SellerDailyMetrics(Base):
@@ -899,7 +899,7 @@ class SellerDailyMetrics(Base):
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
     
     __table_args__ = (
-        UniqueConstraint('date', 'email', 'phone_number', name='unique_seller_daily_metrics'),
+        UniqueConstraint('date', 'email', 'phone_number','session_id', name='unique_seller_daily_metrics'),
     )
 
 class MetricMaster(Base):
