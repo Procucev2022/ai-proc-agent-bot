@@ -187,6 +187,7 @@ class ConversationAnalyticsService:
                         'seller_id': event.get('seller_id', ''),
                         'response_date': event.get('response_date', analysis_date),
                         'session_id': session.get('session_id', ''),
+                        'phone_number':session.get('phone_number',''),
                         'rfq_notified_at': event.get('rfq_notified_at'),
                         'seller_response_at': event.get('seller_response_at')
                     }
@@ -460,7 +461,7 @@ Session IDs to process: {', '.join(session_ids)}
                         "unknown_df": pd.DataFrame(),
                         "joined_buyer_df": pd.DataFrame(),
                         "joined_seller_df": pd.DataFrame(),
-                        "message": "No conversations found for analysis"
+                        "message": f"No conversations found for analysis on {target_date}"
                     }
 
                 logger.info(
@@ -554,11 +555,13 @@ Session IDs to process: {', '.join(session_ids)}
                     remote_seller_rfq_df['phone_clean'] = remote_seller_rfq_df['phone'].str.replace('+', '', regex=False)
                     joined_seller_df = seller_df.merge(remote_seller_rfq_df, left_on=['phone_clean','seller_email'],right_on=['phone_clean', 'username'], how='outer')
 
-
-
-
-
-
+                    # Join with seller interest data to fill rfq_response_ai
+                    if not joined_seller_interest_df.empty:
+                        seller_response_counts = joined_seller_interest_df.groupby(['seller_id','session_id','phone_number'])['rfq_id'].nunique().reset_index()
+                        seller_response_counts.columns = ['seller_id','session_id','phone_number','rfq_response_count']
+                        joined_seller_df = joined_seller_df.merge(seller_response_counts, left_on=['phone_clean','session_id'], right_on=['phone_number','session_id'], how='left')
+                        joined_seller_df['rfq_response_ai'] = joined_seller_df['rfq_response_count'].fillna(joined_seller_df['rfq_response_ai']).fillna(0)
+                        joined_seller_df.drop(['seller_id', 'rfq_response_count'], axis=1, inplace=True, errors='ignore')
 
                     # Coalesce date columns - use rfq_date when date is empty
                     joined_seller_df['date'] = joined_seller_df['date'].fillna(joined_seller_df['rfq_date'])
@@ -1611,8 +1614,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2026, 1, 1).date()
-        end_date = datetime(2026, 1, 3).date()
+        start_date = datetime(2026, 1, 24).date()
+        end_date = datetime(2026, 1, 25).date()
         
         current_date = start_date
         while current_date <= end_date:

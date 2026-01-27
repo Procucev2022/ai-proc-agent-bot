@@ -131,7 +131,6 @@ class EnhancedExcelReportService:
                 
             except Exception as e:
                 logger.warning(f"buyer_daily_metrics table not found or error: {e}. Using conversation_sessions fallback.")
-                df = self._generate_buyer_details_fallback(db, start_date, target_date)
             
             # Write to Excel
             df.to_excel(writer, sheet_name='Buyer Details (Last 30D)', index=False)
@@ -193,7 +192,6 @@ class EnhancedExcelReportService:
                 
             except Exception as e:
                 logger.warning(f"seller_daily_metrics table not found or error: {e}. Using conversation_sessions fallback.")
-                df = self._generate_seller_details_fallback(db, start_date, target_date)
             
             # Write to Excel
             df.to_excel(writer, sheet_name='Seller Details (Last 30D)', index=False)
@@ -253,7 +251,6 @@ class EnhancedExcelReportService:
                 
             except Exception as e:
                 logger.warning(f"category_aggregates table not found or error: {e}. Using daily_aggregated_metrics fallback.")
-                df = self._generate_category_details_fallback(db, start_date, target_date)
             
             # Write to Excel
             df.to_excel(writer, sheet_name='Category Details (Last 30D)', index=False)
@@ -315,6 +312,10 @@ class EnhancedExcelReportService:
                 metrics = self._get_rolling_window_metrics(db, target_date, days)
                 if not metrics:
                     metrics = self._calculate_buyer_metrics(db, start_date, target_date)
+                
+                # Ensure metrics is not None
+                if not metrics:
+                    metrics = self._get_empty_metrics()
                 
                 metrics_data.append({
                     'Period': period_name,
@@ -503,14 +504,6 @@ class EnhancedExcelReportService:
                 
             except Exception as e:
                 logger.warning(f"Category summary query failed: {e}. Using sample data.")
-                # Fallback sample data
-                df = pd.DataFrame([
-                    ["Bearings & Accessories", 0, 0, 0, 0, 0, 0],
-                    ["Cables", 0, 0, 0, 0, 0, 0],
-                    ["Chemicals", 0, 0, 0, 0, 0, 0],
-                    ["Ferrous Material & Metals", 0, 0, 0, 0, 0, 0]
-                ], columns=["Category", "RFQs Uploaded", "total_rfqs_with_quotations", "RFQs w/ Response", "BFS Products Searched", "BFS Products Searched by Unregistered Users", "BFS Counter Offer By Buyer"])
-            
             # Write to Excel
             df.to_excel(writer, sheet_name='Category Summary (Last 30D)', index=False)
             
@@ -605,68 +598,7 @@ class EnhancedExcelReportService:
                 
         except Exception as e:
             logger.warning(f"daily_aggregates table not found or error: {e}. Using conversation_sessions fallback.")
-        
-        # Fallback to conversation_sessions
-        query = text("""
-            SELECT 
-                COUNT(DISTINCT session_id) as total_chats,
-                COUNT(DISTINCT external_user_id) as unique_buyers,
-                COUNT(DISTINCT CASE WHEN rfq_ids IS NOT NULL AND JSON_LENGTH(rfq_ids) > 0 THEN session_id
-                                   WHEN rfq_id IS NOT NULL THEN session_id END) as sessions_with_rfqs,
-                COUNT(DISTINCT CASE WHEN rfq_ids IS NOT NULL AND JSON_LENGTH(rfq_ids) > 0 THEN external_user_id
-                                   WHEN rfq_id IS NOT NULL THEN external_user_id END) as unique_buyers_with_rfqs,
-                COALESCE(SUM(CASE WHEN rfq_ids IS NOT NULL AND JSON_LENGTH(rfq_ids) > 0 THEN JSON_LENGTH(rfq_ids) 
-                                 WHEN rfq_id IS NOT NULL THEN 1 ELSE 0 END), 0) as total_rfqs,
-                COALESCE(SUM(CASE WHEN product_items IS NOT NULL AND JSON_LENGTH(product_items) > 0 
-                                 THEN JSON_LENGTH(product_items) ELSE 0 END), 0) as total_products,
-                COALESCE(SUM(CASE WHEN rfqs_with_response IS NOT NULL AND JSON_LENGTH(rfqs_with_response) > 0 
-                                 THEN JSON_LENGTH(rfqs_with_response) ELSE 0 END), 0) as rfqs_with_response,
-                COUNT(CASE WHEN outcome IS NULL OR outcome = 'abandoned' THEN 1 END) as incomplete_sessions,
-                COUNT(CASE WHEN user_type = 'unknown' THEN 1 END) as unknown_users
-            FROM conversation_sessions 
-            WHERE user_type IN ('buyer', 'unknown')
-                AND DATE(created_at) BETWEEN :start_date AND :end_date
-        """)
-        
-        df_result = pd.read_sql(query, db.bind, params={
-            'start_date': start_date,
-            'end_date': end_date
-        })
-        
-        result = df_result.iloc[0] if not df_result.empty else None
-        
-        if not result:
-            return self._get_empty_metrics()
-        
-        total_chats = result[0] or 0
-        unique_buyers = result[1] or 0
-        sessions_with_rfqs = result[2] or 0
-        unique_buyers_with_rfqs = result[3] or 0
-        total_rfqs = result[4] or 0
-        total_products = result[5] or 0
-        rfqs_with_response = result[6] or 0
-        incomplete_sessions = result[7] or 0
-        unknown_users = result[8] or 0
-        
-        # Calculate averages
-        avg_products_per_rfq = round(total_products / total_rfqs, 2) if total_rfqs > 0 else 0
-        avg_categories_per_rfq = 1.2  # Placeholder - would need category extraction logic
-        
-        return {
-            'chats_initiated': total_chats,
-            'unique_buyers': unique_buyers,
-            'total_rfqs': total_rfqs,
-            'unique_buyers_with_rfqs': unique_buyers_with_rfqs,
-            'buyers_no_rfq': 0,  # Should use daily_aggregates column
-            'avg_products_per_rfq': avg_products_per_rfq,
-            'avg_categories_per_rfq': avg_categories_per_rfq,
-            'rfqs_with_response': rfqs_with_response,
-            'total_rfq_responses': rfqs_with_response * 2,  # Estimate
-            'incomplete_rfqs': 0,  # Should use daily_aggregates column
-            'registrations_failed': 0,  # Would need registration failure tracking
-            'unregistered_abandoned': max(0, incomplete_sessions - unique_buyers),  # Estimate
-            'user_not_identified': unknown_users
-        }
+
     
     def _get_metric_value(self, metric_name: str, period_data: Dict) -> Any:
         """Map metric names to data values."""
