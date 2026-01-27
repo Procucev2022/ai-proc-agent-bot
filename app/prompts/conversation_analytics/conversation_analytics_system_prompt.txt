@@ -99,12 +99,12 @@ Classify each session as:
 
 **STRICT EXTRACTION RULE**:
 Extract ONLY from messages matching this EXACT format:
-"[Button: I'm Interested] RFQ: RFQ{{number}} SellerID:{{seller_id}}"
+"[Button: I'm Interested] RFQ: {{number}} SellerID:{{seller_id}}"
 
 **What to Extract:**
 
 - **rfq_id**:
-  - Extract from the token "RFQ: RFQ{{number}}"
+  - Extract from the token "RFQ: {{number}}"
   - Format: "RFQ" followed by digits (e.g., "RFQ260601441973")
   - Position: Immediately after "RFQ: " in the message
 

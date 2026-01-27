@@ -204,19 +204,19 @@
             },
             "seller_rfq_interest_event": {
               "type": "array",
-              "description": "STRICT FILTER: Extract ONLY when message matches exact format '[Button: I'm Interested] RFQ: RFQ{number} SellerID:{uuid}'.",
+              "description": "STRICT FILTER: Extract ONLY when message matches exact format '[Button: I'm Interested] RFQ: {number} SellerID:{uuid}'.",
               "items": {
                 "type": "object",
                 "properties": {
                   "rfq_id": {
                     "type": "string",
                     "pattern": "^RFQ[0-9]+$",
-                    "description": "Extract ONLY from the explicit 'RFQ:' token present in '[Button: I'm Interested] RFQ: RFQ{number} SellerID:{uuid}'"
+                    "description": "Extract ONLY from the explicit 'RFQ:' token present in '[Button: I'm Interested] RFQ: {number} SellerID:{uuid}'"
                   },
                   "seller_id": {
                     "type": "string",
                     "format": "uuid",
-                    "description": "Extract ONLY from the explicit 'SellerID:' token present in '[Button: I'm Interested] RFQ: RFQ{number} SellerID:{uuid}'"
+                    "description": "Extract ONLY from the explicit 'SellerID:' token present in '[Button: I'm Interested] RFQ: {number} SellerID:{uuid}'"
 
                   },
                   "response_date": {
