@@ -144,11 +144,6 @@
                         "minimum": 0,
                         "description": "All RFQ request attempts. Count: 'Other Active RFQs', 'View RFQs', '[Button: Request RFQ]' clicks. Regardless of success"
                       },
-                      "rfq_response_ai": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "description": "Count interest expressions. Look for: \"[Button: I'm Interested]\", button_reply with 'interested'"
-                      },
                       "bids_accepted_ai": {
                         "type": "integer",
                         "minimum": 0,
@@ -160,7 +155,6 @@
                       "subscription_plans_requested",
                       "zero_credit_rfq_attempt",
                       "rfq_requested_ai",
-                      "rfq_response_ai",
                       "bids_accepted_ai"
                     ]
                   }
@@ -210,20 +204,24 @@
             },
             "seller_rfq_interest_event": {
               "type": "array",
-              "description": "Captured from \"[Button: I'm Interested]\" messages",
+              "description": "STRICT FILTER: Extract ONLY when message matches exact format '[Button: I'm Interested] RFQ: {number} SellerID:{uuid}'.",
               "items": {
                 "type": "object",
                 "properties": {
                   "rfq_id": {
                     "type": "string",
-                    "description": "Extract after 'RFQ:' token in user message"
+                    "pattern": "^RFQ[0-9]+$",
+                    "description": "Extract ONLY from the explicit 'RFQ:' token present in '[Button: I'm Interested] RFQ: {number} SellerID:{uuid}'"
                   },
                   "seller_id": {
                     "type": "string",
-                    "description": "Extract after 'SellerID:' token"
+                    "format": "uuid",
+                    "description": "Extract ONLY from the explicit 'SellerID:' token present in '[Button: I'm Interested] RFQ: {number} SellerID:{uuid}'"
+
                   },
                   "response_date": {
                     "type": "string",
+                    "format": "date-time",
                     "description": "User message timestamp when button clicked"
                   },
                   "rfq_notified_at": {
@@ -235,7 +233,7 @@
                     "description": "Seller interest click timestamp (ISO format)"
                   }
                 },
-                "required": ["rfq_id", "seller_id", "response_date"]
+                "required": ["rfq_id", "seller_id", "response_date","rfq_notified_at","seller_response_at"]
               }
             },
             "registration_metrics": {

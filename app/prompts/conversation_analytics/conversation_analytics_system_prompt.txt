@@ -80,10 +80,6 @@ Classify each session as:
 - Increment for: 'Other Active RFQs', 'View RFQs', '[Button: Request RFQ]' clicks
 - Count regardless of success or credit availability
 
-**rfq_response_ai**:
-- Count RFQs where seller expressed interest
-- Look for: "[Button: I'm Interested]", button_reply containing 'interested'
-- Pattern: "[Button: I'm Interested] RFQ: RFQ[number]"
 
 #### Unknown User Metrics
 
@@ -101,10 +97,38 @@ Classify each session as:
 
 #### Seller RFQ Interest Events
 
-Capture from messages containing "[Button: I'm Interested]":
-- **rfq_id**: Extract after "RFQ:" token
-- **seller_id**: Extract after "SellerID:" token
-- **response_date**: User message timestamp when button clicked
+**STRICT EXTRACTION RULE**:
+Extract ONLY from messages matching this EXACT format:
+"[Button: I'm Interested] RFQ: {{number}} SellerID:{{seller_id}}"
+
+**What to Extract:**
+
+- **rfq_id**:
+  - Extract from the token "RFQ: {{number}}"
+  - Format: "RFQ" followed by digits (e.g., "RFQ260601441973")
+  - Position: Immediately after "RFQ: " in the message
+
+- **seller_id**:
+  - Extract from the token "SellerID:{{seller_id}}"
+  - Format: UUID value
+  - Position: Immediately after "SellerID:" (no space between colon and value)
+
+- **response_date**:
+  - ISO 8601 timestamp of message receipt/processing
+  - [OR: Current system timestamp when extraction occurs]
+  - [OR: Specify actual source]
+
+**Validation:**
+- Do NOT extract if the exact format is not matched
+- Do NOT assume or generate missing values
+- Both rfq_id and seller_id must be present to proceed
+
+**Validation Checklist:**
+1. Message must contain exact string: "[Button: I'm Interested] RFQ: RFQ{{number}} SellerID:{{seller_id}}"
+2. Extract RFQ number (the digits after "RFQ")
+3. Extract SellerID (the value after "SellerID:")
+4. Only extract when the complete pattern is found
+5. Do not generate or assume any values not explicitly present in the message
 
 
 ## Critical Reminders

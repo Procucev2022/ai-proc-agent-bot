@@ -187,6 +187,7 @@ class ConversationAnalyticsService:
                         'seller_id': event.get('seller_id', ''),
                         'response_date': event.get('response_date', analysis_date),
                         'session_id': session.get('session_id', ''),
+                        'phone_number':session.get('phone_number',''),
                         'rfq_notified_at': event.get('rfq_notified_at'),
                         'seller_response_at': event.get('seller_response_at')
                     }
@@ -460,7 +461,7 @@ Session IDs to process: {', '.join(session_ids)}
                         "unknown_df": pd.DataFrame(),
                         "joined_buyer_df": pd.DataFrame(),
                         "joined_seller_df": pd.DataFrame(),
-                        "message": "No conversations found for analysis"
+                        "message": f"No conversations found for analysis on {target_date}"
                     }
 
                 logger.info(
@@ -486,22 +487,17 @@ Session IDs to process: {', '.join(session_ids)}
                 # Query remote database after creating DataFrames
                 remote_rfq_df = self._query_remote_users(target_date)
                 remote_seller_rfq_df = self._query_remote_seller_rfqs(target_date)
-                remote_rfq_category_df = self._query_remote_rfq_categories(target_date)
+                
+                # Get RFQ IDs from seller interest events for filtering
+                rfq_ids_filter = seller_rfq_interest_event_df['rfq_id'].unique().tolist() if not seller_rfq_interest_event_df.empty else []
+                remote_rfq_category_df = self._query_remote_rfq_categories(target_date, rfq_ids_filter)
                 
                 # Join seller_rfq_interest_event_df with remote RFQ categories
                 if not seller_rfq_interest_event_df.empty and not remote_rfq_category_df.empty:
-                    seller_rfq_interest_event_df['response_date'] = pd.to_datetime(
-                        seller_rfq_interest_event_df['response_date']
-                    ).dt.date
-
-                    remote_rfq_category_df['date'] = pd.to_datetime(
-                        remote_rfq_category_df['date']
-                    ).dt.date
-
                     joined_seller_interest_df = seller_rfq_interest_event_df.merge(
                         remote_rfq_category_df, 
-                        left_on=['response_date', 'rfq_id'],
-                        right_on=['date', 'rfq_id'], 
+                        left_on=['rfq_id'],
+                        right_on=['rfq_id'],
                         how='left'
                     )
                 else:
@@ -554,11 +550,13 @@ Session IDs to process: {', '.join(session_ids)}
                     remote_seller_rfq_df['phone_clean'] = remote_seller_rfq_df['phone'].str.replace('+', '', regex=False)
                     joined_seller_df = seller_df.merge(remote_seller_rfq_df, left_on=['phone_clean','seller_email'],right_on=['phone_clean', 'username'], how='outer')
 
-
-
-
-
-
+                    # Join with seller interest data to fill rfq_response_ai
+                    if not joined_seller_interest_df.empty:
+                        seller_response_counts = joined_seller_interest_df.groupby(['seller_id','session_id','phone_number'])['rfq_id'].nunique().reset_index()
+                        seller_response_counts.columns = ['seller_id','session_id','phone_number','rfq_response_count']
+                        joined_seller_df = joined_seller_df.merge(seller_response_counts, left_on=['phone_clean','session_id'], right_on=['phone_number','session_id'], how='left')
+                        joined_seller_df['rfq_response_ai'] = joined_seller_df['rfq_response_count'].fillna(joined_seller_df['rfq_response_ai']).fillna(0)
+                        joined_seller_df.drop(['seller_id', 'rfq_response_count'], axis=1, inplace=True, errors='ignore')
 
                     # Coalesce date columns - use rfq_date when date is empty
                     joined_seller_df['date'] = joined_seller_df['date'].fillna(joined_seller_df['rfq_date'])
@@ -912,26 +910,40 @@ ORDER BY
             logger.error(f"[CONVERSATION-ANALYTICS] Remote seller RFQ query failed: {e}")
             return pd.DataFrame()
     
-    def _query_remote_rfq_categories(self, target_date: date):
+    def _query_remote_rfq_categories(self, target_date: date, rfq_ids_filter: list = None):
         """Query remote database for RFQ categories data."""
         try:
             remote_db = get_remote_db_session()
+            
+            # Base query
             query = """
             SELECT
                 DATE(rh.created_ts) AS date,
                 rh.rfq_id,
                 rh.uuid AS rfq_uuid,
-                ri.category
+                ri.category as category
             FROM rfq_header rh
             JOIN rfq_items ri
                 ON rh.uuid = ri.rfq_uuid
-            WHERE DATE(rh.created_ts) = :target_date and rh.source_type="W"
+            WHERE rh.source_type="W"
+            """
+            
+            # Add RFQ ID filter if provided
+            params = {'target_date': str(target_date)}
+            if rfq_ids_filter:
+                placeholders = ','.join([f':rfq_id_{i}' for i in range(len(rfq_ids_filter))])
+                query += f" AND rh.rfq_id IN ({placeholders})"
+                for i, rfq_id in enumerate(rfq_ids_filter):
+                    params[f'rfq_id_{i}'] = rfq_id
+            
+            query += """
             GROUP BY
                 rh.rfq_id,
                 rh.uuid,
                 ri.category
             """
-            result = remote_db.execute(text(query), {'target_date': str(target_date)})
+            
+            result = remote_db.execute(text(query), params)
             rfq_category_data = [dict(row._mapping) for row in result]
             remote_db.close()
             rfq_category_df = pd.DataFrame(rfq_category_data)
@@ -1611,8 +1623,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2026, 1, 1).date()
-        end_date = datetime(2026, 1, 3).date()
+        start_date = datetime(2026, 1, 21).date()
+        end_date = datetime(2026, 1, 23).date()
         
         current_date = start_date
         while current_date <= end_date:
