@@ -15,6 +15,8 @@ Workflow Check Logic:
 """
 
 import logging
+import os
+from logging.handlers import RotatingFileHandler
 from typing import Dict, List, Any, Optional, Tuple
 
 from datetime import datetime, timedelta
@@ -28,6 +30,51 @@ logger = logging.getLogger(__name__)
 
 # Inactivity threshold - sellers inactive for this long are safe to notify
 WORKFLOW_INACTIVITY_THRESHOLD_MINUTES = 15
+
+# ==================== Dedicated Notification Logger ====================
+# Creates a separate log file for notification events for easier tracking
+
+def _setup_notification_logger() -> logging.Logger:
+    """
+    Set up a dedicated logger for notification events.
+    Writes to logs/notifications_YYYY-MM-DD.log with rotation.
+    """
+    notification_logger = logging.getLogger("notification_events")
+
+    # Avoid adding duplicate handlers
+    if notification_logger.handlers:
+        return notification_logger
+
+    notification_logger.setLevel(logging.INFO)
+    notification_logger.propagate = False  # Don't propagate to root logger
+
+    # Create logs directory if it doesn't exist
+    log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+
+    # Date-based log file
+    log_file = os.path.join(log_dir, f"notifications_{datetime.now().strftime('%Y-%m-%d')}.log")
+
+    # File handler with rotation (10MB max, keep 30 backups)
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=10*1024*1024,
+        backupCount=30,
+        encoding='utf-8'
+    )
+
+    # Human-readable format
+    formatter = logging.Formatter(
+        '%(asctime)s | %(levelname)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(formatter)
+    notification_logger.addHandler(file_handler)
+
+    return notification_logger
+
+# Initialize the dedicated notification logger
+notification_logger = _setup_notification_logger()
 
 
 class SellerNotificationService:
@@ -211,6 +258,9 @@ class SellerNotificationService:
         """
         db = None
         try:
+            # Normalize phone number - strip + prefix to match external_user_id format in DB
+            normalized_phone = phone_number.lstrip('+')
+
             db = get_db_session()
 
             # Query for today's session with activity in last 15 minutes
@@ -226,11 +276,11 @@ class SellerNotificationService:
                 LIMIT 1
             """)
 
-            result = db.execute(query, {'phone_number': phone_number}).fetchone()
+            result = db.execute(query, {'phone_number': normalized_phone}).fetchone()
 
             if not result:
                 # No session today - safe to notify
-                logger.debug(f"[WORKFLOW_CHECK] {phone_number}: No session today - SAFE")
+                logger.debug(f"[WORKFLOW_CHECK] {normalized_phone}: No session today - SAFE")
                 return (False, None, None)
 
             workflow_type = result[0]
@@ -239,21 +289,22 @@ class SellerNotificationService:
 
             # Check if active in last 15 minutes
             if minutes_inactive < WORKFLOW_INACTIVITY_THRESHOLD_MINUTES:
-                logger.info(
-                    f"[WORKFLOW_CHECK] {phone_number}: Active {minutes_inactive}min ago "
-                    f"(workflow: {workflow_type}) - SKIP"
+                notification_logger.info(
+                    f"HELD | Phone: {normalized_phone} | "
+                    f"Reason: User active {minutes_inactive}min ago (workflow: {workflow_type}) | "
+                    f"Will retry in next task run"
                 )
                 return (True, workflow_type, minutes_inactive)
 
             # Inactive for 15+ minutes - safe to notify
-            logger.debug(
-                f"[WORKFLOW_CHECK] {phone_number}: Inactive {minutes_inactive}min "
-                f"(>= {WORKFLOW_INACTIVITY_THRESHOLD_MINUTES}min threshold) - SAFE"
+            notification_logger.info(
+                f"READY | Phone: {normalized_phone} | "
+                f"User inactive for {minutes_inactive}min (>= {WORKFLOW_INACTIVITY_THRESHOLD_MINUTES}min threshold)"
             )
             return (False, workflow_type, minutes_inactive)
 
         except Exception as e:
-            logger.error(f"[WORKFLOW_CHECK] {phone_number}: Error checking status - {e}")
+            logger.error(f"[WORKFLOW_CHECK] {normalized_phone}: Error checking status - {e}")
             # On error, default to allowing notification (fail-open)
             return (False, None, None)
         finally:
@@ -337,6 +388,11 @@ class SellerNotificationService:
                 if is_active:
                     # Skip seller - they will be reconsidered in the next task run
                     skipped_count += 1
+                    notification_logger.info(
+                        f"RFQ HELD | RFQ: {rfq_id} | Seller: {seller_name} | "
+                        f"Phone: {phone_number} | Reason: User active {minutes_inactive}min ago | "
+                        f"Will retry in next task run"
+                    )
                     results.append({
                         "seller_id": seller_id,
                         "seller_name": seller_name,
@@ -363,7 +419,10 @@ class SellerNotificationService:
                 )
 
                 if response.success:
-                    logger.info(f"Successfully sent RFQ {rfq_id} to seller {seller_name} ({phone_number})")
+                    notification_logger.info(
+                        f"RFQ SENT | RFQ: {rfq_id} | Seller: {seller_name} | "
+                        f"Phone: {phone_number} | Message ID: {response.message_id}"
+                    )
                     sent_count += 1
                     results.append({
                         "seller_id": seller_id,
@@ -373,7 +432,10 @@ class SellerNotificationService:
                         "message_id": response.message_id
                     })
                 else:
-                    logger.error(f"Failed to send RFQ {rfq_id} to seller {seller_name}: {response.error}")
+                    notification_logger.error(
+                        f"RFQ FAILED | RFQ: {rfq_id} | Seller: {seller_name} | "
+                        f"Phone: {phone_number} | Error: {response.error}"
+                    )
                     failed_count += 1
                     results.append({
                         "seller_id": seller_id,
@@ -393,9 +455,10 @@ class SellerNotificationService:
                     "error": str(e)
                 })
 
-        logger.info(
-            f"RFQ {rfq_id} notifications complete: {sent_count} sent, "
-            f"{failed_count} failed, {skipped_count} skipped (in workflow)"
+        notification_logger.info(
+            f"RFQ SUMMARY | RFQ: {rfq_id} | "
+            f"Total: {len(sellers)} | Sent: {sent_count} | Failed: {failed_count} | "
+            f"Held: {skipped_count} (will retry next run)"
         )
 
         return {
@@ -510,8 +573,10 @@ class SellerNotificationService:
                 seller_phone
             )
             if is_active:
-                logger.info(
-                    f"[BFS_NOTIFY] Skipping {seller_phone}: Active {minutes_inactive}min ago"
+                item_desc = bid_data.get('item_description', 'N/A')
+                notification_logger.info(
+                    f"BFS HELD | Item: {item_desc} | Phone: {seller_phone} | "
+                    f"Reason: User active {minutes_inactive}min ago | Will retry in next task run"
                 )
                 return {
                     "success": False,
@@ -527,10 +592,8 @@ class SellerNotificationService:
             message_body = self.format_bfs_bid_message(bid_data)
             buttons = self._get_bfs_buttons(bfs_user_uuid, seller_id)
 
-            logger.info(
-                f"[BFS_NOTIFY] Sending bid notification to {seller_phone} "
-                f"for item: {bid_data.get('item_description', 'N/A')}"
-            )
+            item_desc = bid_data.get('item_description', 'N/A')
+            ask_price = bid_data.get('ask_price', 0)
 
             # Send message with interactive buttons
             response: MessageResponse = await self.whatsapp_service.send_configurable_buttons(
@@ -542,8 +605,9 @@ class SellerNotificationService:
             )
 
             if response.success:
-                logger.info(
-                    f"[BFS_NOTIFY] Successfully sent bid notification to {seller_phone}"
+                notification_logger.info(
+                    f"BFS SENT | Item: {item_desc} | Bid: ₹{ask_price:,.0f} | "
+                    f"Phone: {seller_phone} | Message ID: {response.message_id}"
                 )
                 return {
                     "success": True,
@@ -552,8 +616,9 @@ class SellerNotificationService:
                     "message_id": response.message_id
                 }
             else:
-                logger.error(
-                    f"[BFS_NOTIFY] Failed to send to {seller_phone}: {response.error}"
+                notification_logger.error(
+                    f"BFS FAILED | Item: {item_desc} | Phone: {seller_phone} | "
+                    f"Error: {response.error}"
                 )
                 return {
                     "success": False,
@@ -563,7 +628,9 @@ class SellerNotificationService:
                 }
 
         except Exception as e:
-            logger.error(f"[BFS_NOTIFY] Exception sending to {seller_phone}: {e}")
+            notification_logger.error(
+                f"BFS FAILED | Phone: {seller_phone} | Exception: {e}"
+            )
             return {
                 "success": False,
                 "seller_phone": seller_phone,
@@ -601,7 +668,7 @@ class SellerNotificationService:
                 "results": []
             }
 
-        logger.info(f"[BFS_NOTIFY] Sending {len(notifications)} bid notifications")
+        notification_logger.info(f"BFS BATCH START | Processing {len(notifications)} bid notifications")
 
         results = []
         sent_count = 0
@@ -626,9 +693,9 @@ class SellerNotificationService:
             else:
                 failed_count += 1
 
-        logger.info(
-            f"[BFS_NOTIFY] Batch complete: {sent_count} sent, "
-            f"{failed_count} failed, {skipped_count} skipped"
+        notification_logger.info(
+            f"BFS SUMMARY | Total: {len(notifications)} | "
+            f"Sent: {sent_count} | Failed: {failed_count} | Held: {skipped_count} (will retry next run)"
         )
 
         return {

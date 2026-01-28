@@ -573,6 +573,16 @@ class ChatService:
             # CRITICAL: Handle seller_rfq_intimation workflow BEFORE intent classification
             # This workflow has stages: switch_prompt, otp - both need dedicated handling
             workflow_type_value = session.workflow_type.value if hasattr(session.workflow_type, 'value') else str(session.workflow_type) if session.workflow_type else None
+
+            # Check for exit intent in seller workflows before routing to handlers
+            # This allows users to exit during switch_prompt or otp stages
+            if workflow_type_value in ("seller_rfq_intimation", "bfs_seller_bid"):
+                auth_stage = session.workflow_state.get("auth_stage") if session.workflow_state else None
+                if auth_stage in ("switch_prompt", "otp") and message_content.strip().lower() == "exit":
+                    logger.info(f"Exit detected in {workflow_type_value} workflow (auth_stage={auth_stage}) - triggering exit service")
+                    exit_result = await self.exit_service.handle_exit_intent(user_phone, session, message=message_content)
+                    return exit_result
+
             if workflow_type_value == "seller_rfq_intimation":
                 auth_stage = session.workflow_state.get("auth_stage") if session.workflow_state else None
                 logger.debug(f"seller_rfq_intimation workflow detected, auth_stage={auth_stage}")

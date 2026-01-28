@@ -221,14 +221,14 @@ class SellerAuthMixin:
                 return "switch"
 
         # Check for stay indicators
-        stay_patterns = ["2", "stay", "no", "current", "keep"]
+        stay_patterns = ["2", "stay", "no", "current", "keep", "cancel", "quit"]
         for pattern in stay_patterns:
             if pattern in message_lower:
                 return "stay"
 
         # Use AI for complex responses
         try:
-            response = self.openai_service.generate_response(
+            response = await self.openai_service.generate_response(
                 context={
                     "message": message,
                     "options": "1. Switch to Seller account, 2. Stay with current account"
@@ -274,15 +274,15 @@ class SellerAuthMixin:
                 "Sorry, we couldn't find the seller account associated with this notification. "
                 "Please contact support for assistance."
             )
-            await self.whatsapp_service.send_message(user_phone, error_message)
-
-            # Clear workflow
-            session.workflow_type = None
-            session.workflow_state = {}
+            # Reset workflow and show menu options
+            await self._reset_workflow_with_menu(
+                user_phone, session, error_message
+            )
 
             return {
                 "status": "seller_not_found",
-                "error": "Could not find seller email"
+                "error": "Could not find seller email",
+                "workflow_reset": True
             }
 
         # Store seller info in session for OTP validation and post-OTP authentication
@@ -308,11 +308,15 @@ class SellerAuthMixin:
                     "Sorry, we couldn't send the verification code. "
                     "Please try again later."
                 )
-                await self.whatsapp_service.send_message(user_phone, error_message)
+                # Reset workflow and show menu options
+                await self._reset_workflow_with_menu(
+                    user_phone, session, error_message
+                )
 
                 return {
                     "status": "otp_send_failed",
-                    "error": otp_result.get("error", "Unknown error")
+                    "error": otp_result.get("error", "Unknown error"),
+                    "workflow_reset": True
                 }
         else:
             # No OTP service available - send OTP message manually
@@ -386,3 +390,77 @@ class SellerAuthMixin:
         except Exception as e:
             logger.error(f"Error getting seller email for {user_phone}: {e}")
             return None, None
+
+    async def _reset_workflow_with_menu(
+        self,
+        user_phone: str,
+        session,
+        message: str
+    ) -> None:
+        """
+        Reset workflow and show appropriate menu options based on user type.
+
+        Args:
+            user_phone: User's phone number
+            session: Current conversation session
+            message: Message to display before menu options
+        """
+        # Get user type from current auth state
+        user_type = await self._get_current_user_type(user_phone)
+
+        # Clear workflow
+        session.workflow_type = None
+        session.workflow_state = {}
+
+        if self.session_manager:
+            await self.session_manager.save_session(session)
+
+        # Send message with appropriate menu buttons
+        if user_type == "buyer":
+            buttons_config = [
+                {"id": "create_rfq", "title": "Create new RFQ"},
+                {"id": "rfq_status", "title": "Check RFQ Status"},
+                {"id": "search_bfs", "title": "Search Ready Stocks"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                recipient_id=user_phone,
+                body=message,
+                buttons_config=buttons_config
+            )
+        elif user_type == "seller":
+            buttons_config = [
+                {"id": "view_rfqs", "title": "Other Active RFQs"},
+                {"id": "rfq_status", "title": "Check RFQs Status"},
+                {"id": "contact_support", "title": "Contact Support"}
+            ]
+            await self.whatsapp_service.send_configurable_buttons(
+                recipient_id=user_phone,
+                body=message,
+                buttons_config=buttons_config
+            )
+        else:
+            # Unknown user type - just send message without buttons
+            await self.whatsapp_service.send_message(user_phone, message)
+
+        logger.info(f"Workflow reset with menu for {user_phone} (user_type={user_type})")
+
+    async def _get_current_user_type(self, user_phone: str) -> Optional[str]:
+        """
+        Get current user type from Redis auth token.
+
+        Returns:
+            "buyer" or "seller" or None
+        """
+        try:
+            normalized_phone = user_phone.lstrip('+')
+            user_data = await self.auth_redis_service.retrieve(normalized_phone)
+
+            if user_data:
+                is_self_client = user_data.self_client if hasattr(user_data, 'self_client') else False
+                return "buyer" if is_self_client else "seller"
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error getting user type for {user_phone}: {e}")
+            return None
