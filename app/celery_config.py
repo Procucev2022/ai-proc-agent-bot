@@ -16,12 +16,11 @@ ENABLE_VECTOR_STORE_SYNC = True
 ENABLE_SELLER_MATCHING = False
 ENABLE_DAILY_AGGREGATION = False
 ENABLE_WHATSAPP_REPORT_AUTOMATION = True  # WhatsApp report automation orchestrator
-ENABLE_WHATSAPP_REPORT_AUTOMATION_TEST = False  # Test version (every 5 minutes)
 ENABLE_DAILY_CATEGORY_REBUILD = True  # Daily rebuild of category_items vector store
 ENABLE_CATEGORY_NAME_SYNC = True  # Daily sync of category_names collection from remote DB
 ENABLE_LOG_CLEANUP = True  # Daily log cleanup and archival
-ENABLE_EXPORT_EXCEL = True  # Export Excel reports every 12 hours
-ENABLE_TEST_CRON = True
+
+
 ENABLE_BFS_NOTIFICATION = True  # BFS seller bid notifications
 # ============================================================================
 
@@ -124,25 +123,9 @@ if ENABLE_LOG_CLEANUP:
         }
     }
 
-if ENABLE_EXPORT_EXCEL:
-    beat_schedule['export-excel-report-task'] = {
-        'task': 'app.tasks.export_excel_task.send_excel_report_to_client',
-        'schedule': crontab(minute=0, hour='7,19'),  # At 7 AM and 7 PM
-        'options': {
-            'expires': 7200,
-            'queue': 'export'
-        }
-    }
 
-if ENABLE_TEST_CRON:
-    beat_schedule['test-cron-job'] = {
-        'task': 'app.tasks.test_cron_task.test_cron_job',
-        'schedule': crontab(minute='*/5'),
-        'options': {
-            'expires': 300,
-            'queue': 'default'
-        }
-    }
+
+
 
 if ENABLE_BFS_NOTIFICATION:
     beat_schedule['bfs-notification-task'] = {
@@ -157,7 +140,7 @@ if ENABLE_BFS_NOTIFICATION:
 if ENABLE_WHATSAPP_REPORT_AUTOMATION:
     beat_schedule['whatsapp-report-automation-task'] = {
         'task': 'app.tasks.whatsapp_report_automation_task.run_whatsapp_report_automation',
-        'schedule': crontab(minute=0, hour=7),  # Daily at 7:00 AM
+        'schedule': crontab(minute=30, hour=1),  # Daily at 7:00 AM IST (1:30 AM UTC)
         'options': {
             'expires': 7200,
             'queue': 'report_automation'
@@ -175,7 +158,7 @@ task_routes = {
     'app.tasks.category_name_sync_task.*': {'queue': 'vector_store'},
     'app.tasks.log_cleanup_task.*': {'queue': 'maintenance'},
     'app.tasks.export_excel_task.*': {'queue': 'export'},
-    'app.tasks.test_cron_task.*': {'queue': 'default'},
+
     'app.tasks.bfs_notification_task.*': {'queue': 'bfs_notification'},
     'app.tasks.whatsapp_report_automation_task.*': {'queue': 'report_automation'},
 }

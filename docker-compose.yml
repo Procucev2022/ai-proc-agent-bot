@@ -29,7 +29,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.celery
-    command: celery -A app.celery_app worker --loglevel=info --concurrency=2 --queues=default,categorization,vector_store,seller_matching,maintenance,bfs_notification,aggregation,export
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=2 --queues= categorization,vector_store,seller_matching,maintenance,bfs_notification,aggregation,report_automation
     depends_on:
       - celery_redis
     environment:
