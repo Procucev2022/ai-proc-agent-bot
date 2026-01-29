@@ -12,13 +12,16 @@ The task ensures each step completes before the next starts and is not parallel.
 import logging
 import os
 import asyncio
+import pandas as pd
+import base64
 from typing import Dict, Any
 from celery import shared_task
 from datetime import datetime, date, timedelta
 
 from app.services.conversation_analytics_service import ConversationAnalyticsService
 from app.services.enhanced_excel_report_service import EnhancedExcelReportService
-from app.tasks.export_excel_task import _send_excel_to_client_with_init
+from app.tasks.export_excel_task import _send_excel_to_client_with_init, _send_excel_to_client_with_init_multiple
+from app.services.email_service import EmailService
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -102,10 +105,21 @@ async def run_whatsapp_report_automation_async(self, target_date: str = None):
         logger.info("Step 2: Generating Excel report")
         try:
             # Generate output filename in reportStore folder
-            output_filename = os.path.join(report_store_dir, f"whatsapp_report_{parsed_date.strftime('%Y-%m-%d')}.xlsx")
+            output_filename = os.path.join(report_store_dir, f"Daily_Analytics_{parsed_date.strftime('%Y-%m-%d')}.xlsx")
             
             excel_service = EnhancedExcelReportService()
             excel_file_path = excel_service.generate_report(target_date=parsed_date, output_file=output_filename)
+            
+            # Create additional Excel file with sessions DataFrame
+            sessions_filename = os.path.join(report_store_dir, f"Daily_Chats_{parsed_date.strftime('%Y-%m-%d')}.xlsx")
+            sessions_df = analytics_result.get('sessions_df', pd.DataFrame())
+            
+            if not sessions_df.empty:
+                with pd.ExcelWriter(sessions_filename, engine='openpyxl') as writer:
+                    sessions_df.to_excel(writer, sheet_name='Sessions Data', index=False)
+                logger.info(f"Sessions Excel file created: {sessions_filename}")
+            else:
+                logger.warning("No sessions data available for Excel creation")
             
             if not os.path.exists(excel_file_path):
                 logger.error(f"Excel file was not created: {excel_file_path}")
@@ -132,7 +146,13 @@ async def run_whatsapp_report_automation_async(self, target_date: str = None):
         # Step 3: Send Excel report via email
         logger.info("Step 3: Sending Excel report via email")
         try:
-            email_result = await _send_excel_to_client_with_init(excel_file_path, parsed_date)
+            # Prepare list of files to send
+            files_to_send = [excel_file_path]
+            if 'sessions_filename' in locals() and os.path.exists(sessions_filename):
+                files_to_send.append(sessions_filename)
+            
+            # Send all files in a single email
+            email_result = await _send_excel_to_client_with_init_multiple(files_to_send, parsed_date)
             
             if email_result.get("status") != "Success":
                 logger.error(f"Email sending failed: {email_result}")
@@ -140,20 +160,22 @@ async def run_whatsapp_report_automation_async(self, target_date: str = None):
                     "status": "failed",
                     "step": "email_sending",
                     "target_date": str(parsed_date),
-                    "excel_file": excel_file_path,
+                    "excel_files": files_to_send,
                     "error": f"Email sending failed: {email_result.get('message', 'Unknown error')}",
                     "email_result": email_result,
                     "timestamp": datetime.utcnow().isoformat()
                 }
             
-            logger.info("Step 3 completed: Excel report sent via email successfully")
+            logger.info(f"Step 3 completed: {len(files_to_send)} Excel files sent via email successfully")
             
-            # Clean up the Excel file after successful email delivery
-            try:
-                os.remove(excel_file_path)
-                logger.info(f"Excel file removed after successful delivery: {excel_file_path}")
-            except Exception as e:
-                logger.warning(f"Failed to remove Excel file {excel_file_path}: {e}")
+            # Clean up the Excel files after successful email delivery
+            for file_path in files_to_send:
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        logger.info(f"Excel file removed after successful delivery: {file_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove Excel file {file_path}: {e}")
             
         except Exception as e:
             logger.error(f"Step 3 failed - Email sending error: {e}")
