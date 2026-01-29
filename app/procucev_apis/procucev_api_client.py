@@ -208,6 +208,35 @@ class ProcucevAPIClient:
                 logger.error(f"Authentication failed with token: {self.auth_token}")
             return success
 
+    async def authenticate_dynamic(self, username: str, phone: str) -> Optional[str]:
+        """
+        Authenticate dynamically with provided credentials to obtain a bearer token.
+        Does NOT cache the token.
+        """
+        auth_url = f"{self.base_url}/authenticate"
+        try:
+            payload = {
+                "username": username,
+                "phone": f"{normalize_phone_number(phone)}"
+            }
+            # Use a fresh session or existing one, but we manually request to avoid recursion
+            if self.session is None or self.session.closed:
+                await self.create_session()
+                
+            async with self.session.post(auth_url, json=payload, headers={}) as resp:
+                text = await resp.text()
+                if 200 <= resp.status < 300:
+                    data = await self.normalize_response(resp, text)
+                    token = data.get("access_token") or data.get("token")
+                    if token:
+                        return token
+                
+                logger.error(f"Dynamic auth failed: {resp.status} - {text}")
+                return None
+        except Exception as e:
+            logger.error(f"Dynamic Token Authentication error: {e}")
+            return None
+
     async def send_request(
         self,
         method: Literal["GET", "POST", "PUT", "DELETE"],
@@ -218,7 +247,8 @@ class ProcucevAPIClient:
         data: Optional[Any] = None,
         headers: Optional[Dict[str, str]] = None,
         require_auth: bool = False,
-        api_title: Optional[str] = None
+        api_title: Optional[str] = None,
+        dynamic_token: Optional[Any] = None # Can be str (token) or dict (credentials)
     ) -> Dict[str, Any]:
         """ Base HTTP request handler with retry/backoff. """
         # Start timing for logging
@@ -243,8 +273,24 @@ class ProcucevAPIClient:
             "require_auth": require_auth
         }
 
+        # Resolve dynamic token if credentials provided
+        actual_dynamic_token = None
+        if dynamic_token:
+            if isinstance(dynamic_token, dict):
+                # It's credentials, fetch the token
+                uname = dynamic_token.get("username") or dynamic_token.get("email")
+                phone = dynamic_token.get("phone")
+                if uname and phone:
+                    actual_dynamic_token = await self.authenticate_dynamic(uname, phone)
+                    if not actual_dynamic_token:
+                        logger.error("Failed to retrieve dynamic token with provided credentials")
+            elif isinstance(dynamic_token, str):
+                actual_dynamic_token = dynamic_token
+
         # Ensure authentication if needed
-        if require_auth:
+        if actual_dynamic_token:
+            headers["Authorization"] = f"Bearer {actual_dynamic_token}"
+        elif require_auth:
             await self._ensure_authenticated()
             headers["Authorization"] = f"Bearer {self.auth_token}"
 
@@ -260,7 +306,8 @@ class ProcucevAPIClient:
                     logger.info(f"Procucev API {method} {url} response received in {response_time:.3f}s (status: {status})")
                     
                     # If 401 Unauthorized, maybe token expired: retry after refreshing token
-                    if status == 401 and require_auth:
+                    # Only refresh if NOT using dynamic token
+                    if status == 401 and require_auth and not actual_dynamic_token:
                         logger.warning("401 Unauthorized – refreshing token and retrying...")
                         self.auth_token = None
                         await self._ensure_authenticated()
