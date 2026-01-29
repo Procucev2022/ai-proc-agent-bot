@@ -10,11 +10,24 @@ INTENT CATEGORIES:
 2. sell_something (75%+ confidence) - when the user expresses interest in selling products, offering services, becoming a vendor, or engaging in seller-related activities.
     This intent should also be triggered when the workflow type is seller_rfq_view or the workflow state includes seller_workflow_state and the user: Views or requests RFQs, Asks about seller credits, Asks about subscriptions or plans, Wants to upgrade or change a seller plan, Asks how to check remaining credits, can check rfq status
     Examples: “I want to sell generators”, “Can I become a vendor?”, “Show me RFQs”, “I want to request an RFQ”, “What seller plans do you have?”, “Upgrade my plan”,"check the rfq status".
-    CRITICAL CONTEXT-DEPENDENT RULE:
-   When workflow state is seller_rfq_view AND bot's previous message displays a list of available RFQs:
-   - If user responds with an RFQ ID only   (e.g., "RFQ260501944444") then Intent = sell_something
-   - If user explicitly says user wants to check rfq status then intent will rfq_status_check
-   - Reasoning: User wants to REQUEST/VIEW that RFQ to sell (seller action), not check status of a submitted RFQ
+
+      CRITICAL CONTEXT-DEPENDENT RULES FOR RFQ ID INPUT:
+
+        A. When workflow state is seller_rfq_view AND bot's previous message displays a list of available RFQs for requesting:
+           - If user responds with ONLY an RFQ ID (e.g., "RFQ260501944444", "1", "RFQ252012248491") → Intent = sell_something
+           - Reasoning: User wants to REQUEST/DOWNLOAD that RFQ  (seller action)
+
+        B. When user explicitly mentions checking status:
+           - If user says "check RFQ status", "what's the status of RFQ123", "track my RFQ" → Intent = rfq_status_check
+           - Applies to BOTH buyers and sellers
+
+        C. When workflow state is seller_rfq_view OR user previously checked RFQ status:
+           - If user then enters an RFQ ID → Intent = rfq_status_check
+           - Reasoning: Context indicates continuing status check activity
+
+        D. When user is a buyer:
+           - If user enters an RFQ ID → Intent = rfq_status_check
+           - Reasoning: Buyers check status of RFQs they created, they don't request RFQs to sell
 
 3. bfs_search (75%+ confidence) - User wants to search Buy From Stock (BFS) inventory for immediate purchase
    Examples: "Do you have laptops in stock?", "Search your inventory for printers", "Can I buy directly?", "What's available in BFS?", "Show me stock items", "I need immediate delivery"
@@ -111,6 +124,11 @@ INTENT CATEGORIES:
    NOT this intent: Questions about RFQ availability, why no RFQs visible, platform RFQ display issues
    Important: from user message relevant message will be RFQ ID only and other portion of message will be irrelevant
    for example user message: "I created RFQ12334444 but no received any offers?", here relevant message is RFQ12334444 and irrelevant message is no received any offers
+   TRIGGERS:
+   - User explicitly asks about RFQ status
+   - User is a BUYER and enters an RFQ ID
+   - User is a SELLER and previously was in RFQ status check flow, then enters another RFQ ID
+   - User mentions an RFQ ID with status-related concerns (e.g., "no offers received", "not getting responses")
 
 
 8. contextual_reference (80%+ confidence) - User referencing previously provided information

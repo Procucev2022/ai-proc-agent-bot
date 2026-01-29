@@ -1106,15 +1106,20 @@ class SellerService:
         if not rfq_result.get("success"):
             return await self._handle_rfq_fetch_error(user, session)
 
+
         rfqs = rfq_result.get("rfqs")
         total_count = rfq_result.get("total_count", 0)
-        
-        credits_result = await self._check_seller_credits(user.org_id)
-        credits_available = credits_result.get("credits_available", 0)
-        
-        # Generate invalid RFQ message using existing function
-        rfq_display = self._generate_hardcoded_rfq_display(rfqs, total_count, credits_available, skip_intro=True)
-        response_message = f"Please select a valid RFQ ID from the list.\n\n{rfq_display}"
+
+        # Only show the RFQ list message if user has RFQs
+        if total_count > 0:
+            credits_result = await self._check_seller_credits(user.org_id)
+            credits_available = credits_result.get("credits_available", 0)
+
+            # Generate invalid RFQ message using existing function
+            rfq_display = self._generate_hardcoded_rfq_display(rfqs, total_count, credits_available, skip_intro=True)
+            response_message = f"Please select a valid RFQ ID from the list.\n\n{rfq_display}"
+        else:
+            response_message = "You don't have any RFQs available at the moment to request."
 
         return {
             "success": False,

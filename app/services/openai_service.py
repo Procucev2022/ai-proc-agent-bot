@@ -550,7 +550,9 @@ class OpenAIService:
         user = context.get('user_role')
         if user:
             cancel_service = CancelService()
-            await cancel_service._send_cancellation_message(user_phone=user_phone, user_type=user, custom_message=f"Currently, we are facing some technical issues. The team is actively working to get QUA up and running. We apologise for the inconvenience caused and request you to please try again after a while.In case of anything urgent, feel free to reach us at {self.settings.support_contact_info}")
+            await cancel_service._send_cancellation_message(user_phone=user_phone, user_type=user, custom_message="Currently, we are facing some technical issues. The team is actively working to get QUA up and running.\n"
+            "We apologise for the inconvenience caused and request you to please try again after a while.\n"
+            f"In case of anything urgent, feel free to reach us at {self.settings.support_contact_info}")
 
         
     @log_service_method("openai_service")
