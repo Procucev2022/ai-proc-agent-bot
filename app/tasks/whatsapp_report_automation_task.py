@@ -207,20 +207,3 @@ async def run_whatsapp_report_automation_async(self, target_date: str = None):
         logger.error(f"WhatsApp report automation task failed: {e}")
         # Retry with exponential backoff
         raise self.retry(countdown=300)
-
-
-# For testing purposes - change schedule to every 5 minutes
-@shared_task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 300})
-def run_whatsapp_report_automation_test(self, target_date: str = None):
-    """
-    Test version of WhatsApp report automation that runs every 5 minutes.
-    Uses only shubham@mohap.ai as email recipient.
-    
-    Args:
-        target_date: Date string in YYYY-MM-DD format. If None, uses yesterday.
-        
-    Returns:
-        Dict with task execution results
-    """
-    logger.info("Starting WhatsApp report automation TEST task (5-minute schedule)")
-    return run_whatsapp_report_automation(self, target_date)

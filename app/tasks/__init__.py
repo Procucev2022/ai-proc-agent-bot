@@ -10,14 +10,11 @@ from .auto_categorization_task import process_uncategorized_rfqs
 from .seller_matching_task import process_seller_matching
 from .bfs_notification_task import process_bfs_seller_notifications
 from .whatsapp_report_automation_task import (
-    run_whatsapp_report_automation,
-    run_whatsapp_report_automation_test
-)
+    run_whatsapp_report_automation )
 
 __all__ = [
     'process_uncategorized_rfqs',
     'process_seller_matching',
     'process_bfs_seller_notifications',
     'run_whatsapp_report_automation',
-    'run_whatsapp_report_automation_test'
 ]

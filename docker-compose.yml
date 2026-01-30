@@ -1,74 +1,157 @@
+# ====================================================================
+# AI Procurement Agent - Development Docker Compose Configuration
+# ====================================================================
+# Development setup with main app commented out for faster iteration
+# Uses existing ChromaDB instead of Docker container
+# ====================================================================
+
 services:
-  # Redis for general use
+  # ====================================================================
+  # MAIN APPLICATION - COMMENTED OUT FOR DEV
+  # ====================================================================
+  
+  # app:
+  #   container_name: procucev_main_app_dev
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.app
+  #   ports:
+  #     - "8005:8005"
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     - REDIS_URL=redis://redis:6379/0
+  #     - CELERY_BROKER_URL=redis://redis:6379/1
+  #     - CELERY_RESULT_BACKEND=redis://redis:6379/1
+  #     # Use existing ChromaDB (not Docker)
+  #     - CHROMA_HOST=localhost
+  #     - CHROMA_PORT=8100
+  #     - CHROMA_USE_SERVER=true
+  #     - WORKERS=2
+  #     - WORKER_THREADS=1
+  #   volumes:
+  #     - ./:/app
+  #     - ./logs:/app/logs
+  #   networks:
+  #     - procucev_network
+  #   restart: unless-stopped
+
+  # ====================================================================
+  # DATA STORES
+  # ====================================================================
+  
   redis:
-    container_name: procurev_redis
-    image: redis:7.2-alpine
+    container_name: procucev_redis_dev
+    image: redis:7-alpine
     ports:
       - "6379:6379"
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
-      - redis_data:/data
+      - redis_data_dev:/data
     networks:
-      - procurev_network
+      - procucev_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  # Redis for Celery broker and result backend
-  celery_redis:
-    container_name: procucev_celery_redis
-    image: redis:7.2-alpine
-    ports:
-      - "6380:6379"
-    command: redis-server --appendonly yes
-    volumes:
-      - celery_redis_data:/data
-    networks:
-      - procurev_network
-
-  # Celery Worker - processes all task queues
+  # ====================================================================
+  # BACKGROUND TASK PROCESSING
+  # ====================================================================
+  
   celery_worker:
-    container_name: procucev_celery_worker
+    container_name: procucev_celery_worker_dev
     build:
       context: .
       dockerfile: Dockerfile.celery
-    command: celery -A app.celery_app worker --loglevel=info --concurrency=2 -Q default,categorization,vector_store,seller_matching,maintenance,bfs_notification,aggregation,export
+    command: >
+      celery -A app.celery_app worker
+      --loglevel=info
+      --concurrency=2
+      -Q categorization,vector_store,bfs_notification,seller_matching,maintenance,aggregation,report_automation
     depends_on:
-      - celery_redis
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
     environment:
-      - REDIS_URL=redis://celery_redis:6379/0
-      - CELERY_BROKER_URL=redis://celery_redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://celery_redis:6379/0
-      - ENABLE_REMOTE_CATEGORIZATION=true
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - CELERY_APP=app.celery_app
+      - C_FORCE_ROOT=1
+      # Use existing ChromaDB (not Docker)
+      - CHROMA_HOST=host.docker.internal
+      - CHROMA_PORT=8100
+      - CHROMA_USE_SERVER=true
     volumes:
-      - .:/app
+      - ./:/app
       - ./logs:/app/logs
     networks:
-      - procurev_network
+      - procucev_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+  celery_beat:
+    container_name: procucev_celery_beat_dev
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    command: celery -A app.celery_app beat --loglevel=info --scheduler=celery.beat:PersistentScheduler --schedule=/app/celerybeat-data/celerybeat-schedule
+    depends_on:
+      redis:
+        condition: service_healthy
+      celery_worker:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - CELERY_APP=app.celery_app
+      - C_FORCE_ROOT=1
+    volumes:
+      - ./:/app
+      - ./logs:/app/logs
+      - celery_beat_data_dev:/app/celerybeat-data
+    networks:
+      - procucev_network
     restart: unless-stopped
 
-  # Celery Beat (scheduler) - triggers periodic tasks
-  celery_beat:
-    container_name: procucev_celery_beat
-    build:
-      context: .
-      dockerfile: Dockerfile.celery
-    command: celery -A app.celery_app beat --loglevel=info
-    depends_on:
-      - celery_redis
-      - celery_worker
-    environment:
-      - REDIS_URL=redis://celery_redis:6379/0
-      - CELERY_BROKER_URL=redis://celery_redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://celery_redis:6379/0
-    volumes:
-      - .:/app
-      - ./logs:/app/logs
-    networks:
-      - procurev_network
-    restart: unless-stopped
+# ====================================================================
+# PERSISTENT STORAGE
+# ====================================================================
 
 volumes:
-  redis_data:
-  celery_redis_data:
+  redis_data_dev:
+    driver: local
+  celery_beat_data_dev:
+    driver: local
+
+# ====================================================================
+# NETWORKING
+# ====================================================================
 
 networks:
-  procurev_network:
+  procucev_network:
     driver: bridge
+    name: procucev_network_dev

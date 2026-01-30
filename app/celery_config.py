@@ -19,8 +19,6 @@ ENABLE_WHATSAPP_REPORT_AUTOMATION = True  # WhatsApp report automation orchestra
 ENABLE_DAILY_CATEGORY_REBUILD = True  # Daily rebuild of category_items vector store
 ENABLE_CATEGORY_NAME_SYNC = True  # Daily sync of category_names collection from remote DB
 ENABLE_LOG_CLEANUP = True  # Daily log cleanup and archival
-
-
 ENABLE_BFS_NOTIFICATION = True  # BFS seller bid notifications
 # ============================================================================
 
@@ -91,8 +89,6 @@ if ENABLE_SELLER_MATCHING:
         }
     }
 
-
-
 if ENABLE_DAILY_CATEGORY_REBUILD:
     beat_schedule['daily-category-vector-rebuild-task'] = {
         'task': 'app.tasks.daily_category_vector_rebuild_task.rebuild_category_vector_store',
@@ -123,10 +119,6 @@ if ENABLE_LOG_CLEANUP:
         }
     }
 
-
-
-
-
 if ENABLE_BFS_NOTIFICATION:
     beat_schedule['bfs-notification-task'] = {
         'task': 'app.tasks.bfs_notification_task.process_bfs_seller_notifications',
@@ -140,7 +132,7 @@ if ENABLE_BFS_NOTIFICATION:
 if ENABLE_WHATSAPP_REPORT_AUTOMATION:
     beat_schedule['whatsapp-report-automation-task'] = {
         'task': 'app.tasks.whatsapp_report_automation_task.run_whatsapp_report_automation',
-        'schedule': crontab(minute=30, hour=1),  # Daily at 7:00 AM IST (1:30 AM UTC)
+        'schedule': crontab(minute=30, hour=10),  # Daily at 4:00 PM IST (10:30 AM UTC)
         'options': {
             'expires': 7200,
             'queue': 'report_automation'
@@ -153,12 +145,9 @@ task_routes = {
     'app.tasks.auto_categorization_task.*': {'queue': 'categorization'},
     'app.tasks.vector_store_sync_task.*': {'queue': 'vector_store'},
     'app.tasks.seller_matching_task.*': {'queue': 'seller_matching'},
-
     'app.tasks.daily_category_vector_rebuild_task.*': {'queue': 'vector_store'},
     'app.tasks.category_name_sync_task.*': {'queue': 'vector_store'},
     'app.tasks.log_cleanup_task.*': {'queue': 'maintenance'},
-    'app.tasks.export_excel_task.*': {'queue': 'export'},
-
     'app.tasks.bfs_notification_task.*': {'queue': 'bfs_notification'},
     'app.tasks.whatsapp_report_automation_task.*': {'queue': 'report_automation'},
 }

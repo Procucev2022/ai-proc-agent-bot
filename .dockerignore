@@ -1,0 +1,77 @@
+# Git and version control
+.git
+.gitignore
+.github
+
+# Documentation
+*.md
+documentation/
+
+# Development files
+.env.example
+*.pem
+.vishwa/
+
+# Logs and temporary files
+logs/
+*.log
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Test files
+tests/
+test_*.py
+*_test.py
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Database files (keep structure, ignore data)
+*.sqlite3
+*.db
+chroma_db/
+simple_vector_store/
+
+# Celery
+celerybeat-schedule
+celerybeat-data/
+
+# Static files that will be generated
+static/
+templates/
+
+# Large data files
+daily_metrics/
+whatsapp_logs/
+app/whatsapp_logs/
+app/logs/
+app/reportStore/
+app/download/
+app/app/download/
+
+# Docker files (don't copy into container)
+docker-compose*.yml
+Dockerfile*
+docker-start.*
+DOCKER_SETUP.md

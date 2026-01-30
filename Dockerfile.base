@@ -1,0 +1,25 @@
+# ====================================================================
+# SHARED BASE IMAGE - BUILD ONCE, USE EVERYWHERE
+# ====================================================================
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy and install Python dependencies (ONCE)
+COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Verify critical packages
+RUN pip list | grep -E "(gunicorn|celery)"
