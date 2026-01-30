@@ -435,14 +435,17 @@ Session IDs to process: {', '.join(session_ids)}
                     
                     if isinstance(content, dict):
                         if 'body' in content:
-                            content = content['body'].get('text', '')
+                            content = content['body'].get('text', '') if isinstance(content['body'], dict) else str(content['body'])
                         elif 'button_reply' in content:
+                            content = content['button_reply'].get('title', '')
+                        elif content.get('type') == 'button_reply' and 'button_reply' in content:
                             content = content['button_reply'].get('title', '')
                         else:
                             content = str(content)
                     
                     label = "User" if role == "user" else "Assistant"
                     chat_lines.append(f'{label}: {content}')
+
         
         return '\n'.join(chat_lines)
 
@@ -1673,8 +1676,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2026, 1, 21).date()
-        end_date = datetime(2026, 1, 23).date()
+        start_date = datetime(2026, 1, 28).date()
+        end_date = datetime(2026, 1, 28).date()
         
         current_date = start_date
         while current_date <= end_date:

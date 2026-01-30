@@ -20,7 +20,7 @@ from datetime import datetime, date, timedelta
 
 from app.services.conversation_analytics_service import ConversationAnalyticsService
 from app.services.enhanced_excel_report_service import EnhancedExcelReportService
-from app.tasks.export_excel_task import _send_excel_to_client_with_init, _send_excel_to_client_with_init_multiple
+from app.tasks.export_excel_task import  _send_excel_reports_with_api_session
 from app.services.email_service import EmailService
 from app.config import get_settings
 
@@ -106,20 +106,21 @@ async def run_whatsapp_report_automation_async(self, target_date: str = None):
         try:
             # Generate output filename in reportStore folder
             output_filename = os.path.join(report_store_dir, f"Daily_Analytics_{parsed_date.strftime('%Y-%m-%d')}.xlsx")
+
             
             excel_service = EnhancedExcelReportService()
             excel_file_path = excel_service.generate_report(target_date=parsed_date, output_file=output_filename)
             
-            # Create additional Excel file with sessions DataFrame
-            sessions_filename = os.path.join(report_store_dir, f"Daily_Chats_{parsed_date.strftime('%Y-%m-%d')}.xlsx")
+            # Create additional CSV file with sessions DataFrame
+            sessions_filename = os.path.join(report_store_dir, f"Daily_Chats_{parsed_date.strftime('%Y-%m-%d')}.csv")
+
             sessions_df = analytics_result.get('sessions_df', pd.DataFrame())
             
             if not sessions_df.empty:
-                with pd.ExcelWriter(sessions_filename, engine='openpyxl') as writer:
-                    sessions_df.to_excel(writer, sheet_name='Sessions Data', index=False)
-                logger.info(f"Sessions Excel file created: {sessions_filename}")
+                sessions_df.to_csv(sessions_filename, index=False)
+                logger.info(f"Sessions CSV file created: {sessions_filename}")
             else:
-                logger.warning("No sessions data available for Excel creation")
+                logger.warning("No sessions data available for CSV creation")
             
             if not os.path.exists(excel_file_path):
                 logger.error(f"Excel file was not created: {excel_file_path}")
@@ -150,9 +151,10 @@ async def run_whatsapp_report_automation_async(self, target_date: str = None):
             files_to_send = [excel_file_path]
             if 'sessions_filename' in locals() and os.path.exists(sessions_filename):
                 files_to_send.append(sessions_filename)
+
             
             # Send all files in a single email
-            email_result = await _send_excel_to_client_with_init_multiple(files_to_send, parsed_date)
+            email_result = await _send_excel_reports_with_api_session(files_to_send, parsed_date)
             
             if email_result.get("status") != "Success":
                 logger.error(f"Email sending failed: {email_result}")
