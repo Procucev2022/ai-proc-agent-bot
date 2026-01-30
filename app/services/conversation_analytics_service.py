@@ -422,6 +422,33 @@ Session IDs to process: {', '.join(session_ids)}
 """
         return prompt
 
+    def _extract_chat_sequence(self, conversation_data):
+        """Extract user and assistant messages in a simple format."""
+        chat_lines = []
+        
+        if isinstance(conversation_data, dict) and 'messages' in conversation_data:
+            for message in conversation_data['messages']:
+                role = message.get('role')
+                
+                if role in ['user', 'assistant']:
+                    content = message.get('content', '')
+                    
+                    if isinstance(content, dict):
+                        if 'body' in content:
+                            content = content['body'].get('text', '') if isinstance(content['body'], dict) else str(content['body'])
+                        elif 'button_reply' in content:
+                            content = content['button_reply'].get('title', '')
+                        elif content.get('type') == 'button_reply' and 'button_reply' in content:
+                            content = content['button_reply'].get('title', '')
+                        else:
+                            content = str(content)
+                    
+                    label = "User" if role == "user" else "Assistant"
+                    chat_lines.append(f'{label}: {content}')
+
+        
+        return '\n'.join(chat_lines)
+
     async def analyze_daily_conversations(self, target_date: date = None) -> Dict[str, Any]:
         """
         Analyze conversations for a specific date using AI with batch processing.
@@ -444,8 +471,25 @@ Session IDs to process: {', '.join(session_ids)}
             with get_db_session() as db:
                 # Get all conversation sessions for the target date
                 sessions = db.query(ConversationSession) \
+                    .with_entities(
+                    ConversationSession.created_at,
+                    ConversationSession.session_id,
+                    ConversationSession.external_user_id,
+                    ConversationSession.conversation_history
+                ) \
                     .filter(func.date(ConversationSession.created_at) == target_date) \
                     .all()
+                
+                # Create sessions DataFrame
+                sessions_data = []
+                for session in sessions:
+                    chat_sequence = self._extract_chat_sequence(session.conversation_history)
+                    sessions_data.append({
+                        'created_at': session.created_at,
+                        'phone_number': session.external_user_id,
+                        'conversation_history': chat_sequence
+                    })
+                sessions_df = pd.DataFrame(sessions_data)
 
                 if not sessions:
                     logger.info(
@@ -456,6 +500,7 @@ Session IDs to process: {', '.join(session_ids)}
                         "date": str(target_date),
                         "total_sessions": 0,
                         "sessions": [],
+                        "sessions_df": pd.DataFrame(),
                         "buyer_df": pd.DataFrame(),
                         "seller_df": pd.DataFrame(),
                         "unknown_df": pd.DataFrame(),
@@ -603,21 +648,11 @@ Session IDs to process: {', '.join(session_ids)}
                 # Add DataFrames to result
                 result["success"] = True
                 result["analysis_timestamp"] = datetime.now(timezone.utc).isoformat()
-                result["buyer_df"] = joined_buyer_df
-                result["seller_df"] = joined_seller_df
-                result["unknown_df"] = unknown_df
-                result["remote_rfq_df"] = remote_rfq_df
-                result["remote_seller_rfq_df"] = remote_seller_rfq_df
-                result["joined_buyer_df"] = joined_buyer_df
-                result["joined_seller_df"] = joined_seller_df
-                result["seller_rfq_interest_event_df"] = seller_rfq_interest_event_df
-                result["joined_seller_interest_df"] = joined_seller_interest_df
+                result["sessions_df"] = sessions_df
 
                 logger.info(
                     f"[CONVERSATION-ANALYTICS] Analysis completed for {target_date}. "
-                    f"Total sessions analyzed: {result['total_sessions']}, "
-                    f"Buyer rows: {len(joined_buyer_df)}, Seller rows: {len(joined_seller_df)}, Unknown rows: {len(unknown_df)}"
-                )
+                    f"Total sessions analyzed: {result['total_sessions']} "                )
                 return result
 
         except Exception as e:
@@ -629,6 +664,7 @@ Session IDs to process: {', '.join(session_ids)}
                 "date": str(target_date),
                 "total_sessions": 0,
                 "sessions": [],
+                "sessions_df": pd.DataFrame(),
                 "buyer_df": pd.DataFrame(),
                 "seller_df": pd.DataFrame(),
                 "unknown_df": pd.DataFrame(),
@@ -1640,8 +1676,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2026, 1, 21).date()
-        end_date = datetime(2026, 1, 23).date()
+        start_date = datetime(2026, 1, 28).date()
+        end_date = datetime(2026, 1, 28).date()
         
         current_date = start_date
         while current_date <= end_date:
