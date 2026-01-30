@@ -31,7 +31,7 @@ print_error() {
 build() {
     print_status "Full build - base image + services..."
     docker build -f Dockerfile.base -t procucev-python-base:latest --no-cache .
-    docker-compose -f docker-compose.yml build --no-cache
+    docker compose -f docker-compose.yml build --no-cache
     print_status "Full build completed successfully"
 }
 
@@ -40,9 +40,9 @@ run() {
     print_status "Building base image (Python + dependencies)..."
     docker build -f Dockerfile.base -t procucev-python-base:latest .
     print_status "Building service images..."
-    docker-compose -f docker-compose.yml build
+    docker compose -f docker-compose.yml build
     print_status "Starting background services (Redis, Celery)..."
-    docker-compose -f docker-compose.yml up -d
+    docker compose -f docker-compose.yml up -d
     print_status "Background services started successfully"
     print_status "Redis: localhost:6379 (DB 0: sessions, DB 1: Celery)"
     print_warning "Main app is commented out - use restart.sh to run locally"
@@ -51,15 +51,15 @@ run() {
 # Quick rebuild (code changes only)
 rebuild() {
     print_status "Quick rebuild - code changes only..."
-    docker-compose -f docker-compose.yml build
-    docker-compose -f docker-compose.yml up -d --force-recreate
+    docker compose -f docker-compose.yml build
+    docker compose -f docker-compose.yml up -d --force-recreate
     print_status "Quick rebuild completed successfully"
 }
 
 # Start all services
 start() {
     print_status "Starting background services..."
-    docker-compose -f docker-compose.yml up -d
+    docker compose -f docker-compose.yml up -d
     print_status "Background services started successfully"
     print_status "Redis: localhost:6379 (DB 0: sessions, DB 1: Celery)"
     print_warning "Main app is commented out - use restart.sh to run locally"
@@ -68,7 +68,7 @@ start() {
 # Stop all services
 stop() {
     print_status "Stopping all services..."
-    docker-compose -f docker-compose.yml down
+    docker compose -f docker-compose.yml down
     print_status "All services stopped"
 }
 
@@ -81,28 +81,28 @@ restart() {
 # Reload code changes (fastest)
 reload() {
     print_status "Reloading with code changes..."
-    docker-compose -f docker-compose.yml up -d --build
+    docker compose -f docker-compose.yml up -d --build
     print_status "Code reloaded successfully"
 }
 
 # Show logs
 logs() {
     if [ -z "$1" ]; then
-        docker-compose -f docker-compose.yml logs -f
+        docker compose -f docker-compose.yml logs -f
     else
-        docker-compose -f docker-compose.yml logs -f "$1"
+        docker compose -f docker-compose.yml logs -f "$1"
     fi
 }
 
 # Show status
 status() {
-    docker-compose -f docker-compose.yml ps
+    docker compose -f docker-compose.yml ps
 }
 
 # Clean up
 clean() {
     print_status "Cleaning up Docker resources..."
-    docker-compose -f docker-compose.yml down -v --remove-orphans
+    docker compose -f docker-compose.yml down -v --remove-orphans
     docker system prune -f
     print_status "Cleanup completed"
 }
