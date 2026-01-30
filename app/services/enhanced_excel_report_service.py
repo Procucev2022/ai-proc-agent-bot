@@ -98,11 +98,11 @@ class EnhancedExcelReportService:
         return output_file
     
     def _generate_buyer_details_sheet(self, writer: pd.ExcelWriter, target_date: date):
-        """Generate Buyer Details sheet using buyer_daily_metrics table for target date only."""
+        """Generate Buyer Details sheet using buyer_daily_metrics table for last 30 days."""
         logger.info("Generating Buyer Details sheet from buyer_daily_metrics")
         
-        # Use only target date
-        start_date = target_date
+        # Use last 30 days
+        start_date = target_date - timedelta(days=29)
         
         with get_db_session_context() as db:
             # First try to use buyer_daily_metrics table if it exists
@@ -121,11 +121,12 @@ class EnhancedExcelReportService:
                         rfq_response_count as "RFQs w/ Response",
                         total_incomplete_rfq as "RFQ Started But not Submitted"
                     FROM buyer_daily_metrics 
-                    WHERE date = :target_date
-                    ORDER BY email
+                    WHERE date BETWEEN :start_date AND :target_date
+                    ORDER BY date DESC, email
                 """)
                 
                 df = pd.read_sql(query, db.bind, params={
+                    'start_date': start_date,
                     'target_date': target_date
                 })
                 
@@ -163,11 +164,11 @@ class EnhancedExcelReportService:
         })
     
     def _generate_seller_details_sheet(self, writer: pd.ExcelWriter, target_date: date):
-        """Generate Seller Details sheet using seller_daily_metrics table for target date only."""
+        """Generate Seller Details sheet using seller_daily_metrics table for last 30 days."""
         logger.info("Generating Seller Details sheet from seller_daily_metrics")
         
-        # Use only target date
-        start_date = target_date
+        # Use last 30 days
+        start_date = target_date - timedelta(days=29)
         
         with get_db_session_context() as db:
             # First try to use seller_daily_metrics table if it exists
@@ -182,11 +183,12 @@ class EnhancedExcelReportService:
                         rfq_response_ai as "RFQs Responded",
                         bids_accepted_ai as "Bids Accepted"
                     FROM seller_daily_metrics 
-                    WHERE date = :target_date
-                    ORDER BY email
+                    WHERE date BETWEEN :start_date AND :target_date
+                    ORDER BY date DESC, email
                 """)
                 
                 df = pd.read_sql(query, db.bind, params={
+                    'start_date': start_date,
                     'target_date': target_date
                 })
                 
@@ -223,11 +225,11 @@ class EnhancedExcelReportService:
         })
     
     def _generate_category_details_sheet(self, writer: pd.ExcelWriter, target_date: date):
-        """Generate Category Details sheet using category_aggregates table for target date only."""
+        """Generate Category Details sheet using category_aggregates table for last 30 days."""
         logger.info("Generating Category Details sheet from category_aggregates")
         
-        # Use only target date
-        start_date = target_date
+        # Use last 30 days
+        start_date = target_date - timedelta(days=29)
         
         with get_db_session_context() as db:
             # First try to use category_aggregates table if it exists
@@ -241,11 +243,12 @@ class EnhancedExcelReportService:
                         bids_requested as "Bids Made",
                         bids_accepted as "Offers Accepted"
                     FROM category_aggregates 
-                    WHERE date = :target_date
-                    ORDER BY category_name
+                    WHERE date BETWEEN :start_date AND :target_date
+                    ORDER BY date DESC, category_name
                 """)
                 
                 df = pd.read_sql(query, db.bind, params={
+                    'start_date': start_date,
                     'target_date': target_date
                 })
                 
