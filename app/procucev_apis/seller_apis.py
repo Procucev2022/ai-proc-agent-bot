@@ -237,16 +237,51 @@ class SellerAPIService:
             logger.error(f"Error fetching subscription plans: {e}")
             return {"success": False, "error": str(e)}
 
-    async def generate_payment_link(self, plan_id: str, seller_id: str) -> Dict[str, Any]:
+    async def generate_payment_link(self, plan_id: str, user_email: str = None, user_phone: str = None) -> Dict[str, Any]:
         """Generate application portal link for subscription plan."""
         try:
-            # Return static portal link instead of payment link
-            portal_link = "https://p2pdevuiindia.azurewebsites.net/"
-            
-            return {
-                "success": True,
-                "payment_link": portal_link
+            endpoint = "/rest/api/payments/link/generate"
+
+            # Construct dynamic credentials dictionary
+            dynamic_token_creds = None
+            if user_email and user_phone:
+                dynamic_token_creds = {
+                    "username": user_email,
+                    "phone": user_phone
+                }
+
+            # Send planId and user details in the body
+            payload = {
+                "planId": plan_id,
+                "userEmail": user_email,
+                "userPhone": user_phone
             }
+
+            response = await self.api_client.post(
+                endpoint=endpoint,
+                json_data=payload,
+                require_auth=True,
+                api_title="generate_payment_link",
+                dynamic_token=dynamic_token_creds
+            )
+
+            if response.get('success'):
+                # API might return data at root or inside 'data' field
+                result = response.get('data') or response
+                
+                return {
+                    "success": True,
+                    "payment_url": result.get("paymentUrl"),
+                    "data": result
+                }
+            else:
+                # Return static portal link instead of payment link
+                portal_link = "https://p2pdevuiindia.azurewebsites.net/"
+
+                return {
+                    "success": True,
+                    "payment_url": portal_link
+                }
             
         except Exception as e:
             logger.error(f"Error generating portal link: {e}")

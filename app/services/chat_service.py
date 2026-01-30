@@ -2065,46 +2065,24 @@ class ChatService:
                 await self.session_manager.send_and_track_message(user.phone_number, registration_response, session)
                 return {"status": "handled", "response": "registration_required"}
 
-            # Check if user is in optional phase - treat Excel as attachment instead of bulk upload
-            has_pending_optional = bool(
-                session.workflow_state.get("pending_optional_rfq") or
-                session.workflow_state.get("pending_optional_combined_rfq")
-            )
-            if has_pending_optional:
-                logger.info(f"[EXCEL-UPLOAD] User {user.phone_number} is in optional phase - treating Excel as attachment")
-                # Delegate to image processor to handle as attachment
-                return await self.image_processor.process_image_message(user, session, content)
-
-            # Check if an Excel file has already been processed in this workflow
-            if session.workflow_state and session.workflow_state.get('excel_file_processed'):
-                processed_filename = session.workflow_state.get('excel_filename', 'a file')
-                logger.info(f"[EXCEL-UPLOAD] Excel file already processed: {processed_filename} for user {user.phone_number}")
-                await self.whatsapp_service.send_message(
-                    user.phone_number,
-                    f"An Excel file ('{processed_filename}') has already been processed for this RFQ. "
-                    f"If you would like to upload a different excel file, please create a new RFQ by completing the current one, or by cancelling it."
-                )
-                return {"status": "handled", "response": "excel_already_processed"}
-
-            # Extract document information - handle both formats
-            if not isinstance(content, dict):
-                raise ValueError("Invalid Excel upload content format")
-
-            if "document" in content:
-                # Standard WhatsApp format
-                document_info = content["document"]
-                file_url = document_info.get("link")
-                filename = document_info.get("filename", "")
-            else:
-                # ICS format - direct content structure
-                media_id = content.get("id")
-                filename = content.get("filename", "")
-                
-                if media_id:
-                    # Construct download URL from media ID
-                    file_url = f"https://download.sendmsg.in/whatsapp-mediadownloader/{media_id}"
+            # Extract document information first to avoid duplication
+            file_url = None
+            filename = ""
+            
+            if isinstance(content, dict):
+                if "document" in content:
+                    # Standard WhatsApp format
+                    doc_info = content["document"]
+                    file_url = doc_info.get("link")
+                    filename = doc_info.get("filename", "")
                 else:
-                    file_url = None
+                    # ICS format - direct content structure
+                    media_id = content.get("id")
+                    filename = content.get("filename", "")
+                    if media_id:
+                        file_url = f"https://download.sendmsg.in/whatsapp-mediadownloader/{media_id}"
+            else:
+                 raise ValueError("Invalid Excel upload content format")
 
             if not file_url:
                 error_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'file_access_error'}
@@ -2116,21 +2094,60 @@ class ChatService:
                 await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
                 return {"status": "handled", "response": "file_access_error"}
 
+            # Determine workflow checks
+            is_sectioned_attachment = (WorkflowManager.is_sectioned_rfq_active(session) and 
+                                      WorkflowManager.get_sectioned_rfq_section(session) == "attachments")
+            
+            has_pending_optional = bool(
+                session.workflow_state.get("pending_optional_rfq") or
+                session.workflow_state.get("pending_optional_combined_rfq")
+            )
+
+            # Check if this should be treated as an attachment (skip strict content validation)
+            is_attachment_mode = is_sectioned_attachment or has_pending_optional
+
             # Validate Excel file
+            # If attachment mode -> skip_content_validation=True (basic checks only)
+            # If bulk upload mode -> skip_content_validation=False (full checks)
             validation_service = ExcelValidationService()
-            validation_result = await validation_service.validate_excel_file_from_url(file_url, filename)
+            validation_result = await validation_service.validate_excel_file_from_url(
+                file_url, filename, skip_content_validation=is_attachment_mode
+            )
 
             if not validation_result.get('valid'):
-                validation_error = validation_result.get('error', 'Invalid Excel file')
+                # For attachments, log warning but return handled
+                log_level = logging.WARNING if is_attachment_mode else logging.INFO
+                logger.log(log_level, f"[EXCEL-UPLOAD] Validation failed (Attachment Mode: {is_attachment_mode}): {validation_result.get('error')}")
+                
                 error_context = {'workflow_type': 'excel_upload', 'conversation_stage': 'validation_failed',
-                                 'error': validation_error}
+                                 'error': validation_result.get('error')}
                 error_response = await self.response_helpers.generate_contextual_response(
                     error_context,
-                    [validation_error],
+                    [validation_result.get('error')],
                     "validation_failed"
                 )
                 await self.session_manager.send_and_track_message(user.phone_number, error_response, session)
                 return {"status": "handled", "response": "validation_failed"}
+
+            # ROUTING LOGIC
+            
+            # Case 1: Attachment handling (Sectioned RFQ or Optional Phase)
+            if is_attachment_mode:
+                logger.info(f"[EXCEL-UPLOAD] Validated attachment (Sectioned: {is_sectioned_attachment}, Optional: {has_pending_optional})")
+                return await self.image_processor.process_image_message(user, session, content)
+
+            # Case 2: Bulk Upload handling
+            
+            # Check if an Excel file has already been processed in this workflow
+            if session.workflow_state and session.workflow_state.get('excel_file_processed'):
+                processed_filename = session.workflow_state.get('excel_filename', 'a file')
+                logger.info(f"[EXCEL-UPLOAD] Excel file already processed: {processed_filename} for user {user.phone_number}")
+                await self.whatsapp_service.send_message(
+                    user.phone_number,
+                    f"An Excel file ('{processed_filename}') has already been processed for this RFQ. "
+                    f"If you would like to upload a different excel file, please create a new RFQ by completing the current one, or by cancelling it."
+                )
+                return {"status": "handled", "response": "excel_already_processed"}
 
             # Acquire upload lock to prevent simultaneous uploads
             from redis.asyncio import Redis

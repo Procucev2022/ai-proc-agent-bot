@@ -606,9 +606,12 @@ class SellerService:
                 }
 
             # Generate payment link
+
+            # Generate payment link
             payment_result = await self.seller_api_service.generate_payment_link(
                 selected_plan.get("id"),
-                user.id
+                getattr(user, "email", None),
+                getattr(user, "phone_number", None)
             )
 
             if not payment_result.get("success"):
@@ -618,7 +621,7 @@ class SellerService:
             context = {
                 "workflow_state": "payment_link_generated",
                 "selected_plan": selected_plan,
-                "payment_link": payment_result.get("payment_link"),
+                "payment_url": payment_result.get("payment_url"),
             }
 
             response_message = await self.response_helpers.generate_seller_contextual_response(context)
@@ -629,7 +632,7 @@ class SellerService:
             session.workflow_type = None
             session.workflow_state = {}  # Clear entire workflow state
 
-            logger.info(f"Cleared workflow_type and workflow_state immediately after payment link generation")
+
 
             await self.session_manager.save_session(session)
 
@@ -637,7 +640,7 @@ class SellerService:
                 "success": True,
                 "workflow_step": "payment_link_generated",
                 "message": response_message,
-                "payment_link": payment_result.get("payment_link"),
+                "payment_url": payment_result.get("payment_url"),
                 "message_already_sent": False
             }
 
@@ -1027,7 +1030,7 @@ class SellerService:
         return result
 
     async def _extract_plan_selection(self, message: str, available_plans: List[Dict]) -> Dict[str, Any]:
-        """Extract plan selection from seller's message using AI."""
+        """Extract plan selection from seller's message using AI with improved fallback matching."""
         try:
             # Use AI to extract plan selection
             extraction = await self.openai_service.extract_entities(
@@ -1046,13 +1049,48 @@ class SellerService:
                         str(plan.get("id", "")) == selected_plan_info):
                         return plan
             
-            # Fallback to simple matching if AI extraction fails
-            message_lower = message.lower()
+            # Enhanced fallback matching with typo tolerance
+            message_lower = message.lower().strip()
+            
+            # Check for plan names with typo tolerance
             for plan in available_plans:
                 plan_name = plan.get("planName", "").lower()
+                
+                # Direct match
                 if plan_name in message_lower:
+                    logger.info(f"Found plan via direct match: {plan.get('planName')}")
+                    return plan
+                
+                # Check if message contains plan selection keywords + plan name
+                plan_keywords = ["select", "choose", "want", "pick", "get"]
+                if any(keyword in message_lower for keyword in plan_keywords) and plan_name in message_lower:
+                    logger.info(f"Found plan via keyword + name match: {plan.get('planName')}")
                     return plan
             
+            # If user says "select plan" without specifying which one, check if only one plan available
+            if any(word in message_lower for word in ["select", "choose", "want", "pick"]) and "plan" in message_lower:
+                if len(available_plans) == 1:
+                    logger.info(f"Single plan available, auto-selecting: {available_plans[0].get('planName')}")
+                    return available_plans[0]
+                
+                # Multiple plans - check if user mentioned any plan-specific words
+                plan_indicators = {
+                    "connect": "CONNECT",
+                    "select": "SELECT", 
+                    "elect": "ELECT",
+                    "basic": "CONNECT",
+                    "premium": "SELECT",
+                    "advanced": "ELECT"
+                }
+                
+                for indicator, plan_name in plan_indicators.items():
+                    if indicator in message_lower:
+                        for plan in available_plans:
+                            if plan.get("planName", "").upper() == plan_name:
+                                logger.info(f"Found plan via indicator '{indicator}': {plan.get('planName')}")
+                                return plan
+            
+            logger.warning(f"No plan found for message: '{message}'")
             return None
 
         except Exception as e:

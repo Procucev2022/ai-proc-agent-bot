@@ -43,19 +43,20 @@ class ExcelValidationService:
     SPECIAL_CHARS_PATTERN = r'[^a-zA-Z0-9\s\-\._()&]'
     
 
-    async def validate_excel_file_from_url(self, file_url: str, filename: str) -> Dict[str, Any]:
+    async def validate_excel_file_from_url(self, file_url: str, filename: str, skip_content_validation: bool = False) -> Dict[str, Any]:
         """
         Download and validate Excel file from WhatsApp URL with comprehensive checks.
         
         Args:
             file_url: Direct URL to the Excel file
             filename: Original filename from WhatsApp
+            skip_content_validation: If True, skips row/column limits, structure, and data quality checks
             
         Returns:
             Dict containing validation result and file content or error details
         """
         try:
-            logger.info(f"[EXCEL-VALIDATION] Starting validation for file: {filename}")
+            logger.info(f"[EXCEL-VALIDATION] Starting validation for file: {filename} (skip_content_validation={skip_content_validation})")
             
             # Step 1: Validate file extension
             logger.info(f"[EXCEL-VALIDATION] Step 1: Validating file extension")
@@ -116,6 +117,22 @@ class ExcelValidationService:
                 logger.error(f"[EXCEL-VALIDATION] Readability validation failed: {readability_validation.get('error')}")
                 return readability_validation
             logger.info(f"[EXCEL-VALIDATION] File is readable")
+            
+            # Skip content validation if requested (for attachments)
+            if skip_content_validation:
+                logger.info(f"[EXCEL-VALIDATION] Skipping structure and data quality checks as requested")
+                return {
+                    'valid': True,
+                    'content': file_content,
+                    'filename': filename,
+                    'size': len(file_content),
+                    'format': content_validation['format'],
+                    'validation_summary': {
+                        'structure_check': 'skipped',
+                        'data_quality_check': 'skipped',
+                        'business_rules_check': 'skipped'
+                    }
+                }
             
             # Step 7: Validate structure (rows, merged cells, worksheets)
             logger.info(f"[EXCEL-VALIDATION] Step 7: Validating structure (rows, merged cells, worksheets)")
