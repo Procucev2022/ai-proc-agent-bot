@@ -483,7 +483,6 @@ Session IDs to process: {', '.join(session_ids)}
                     chat_sequence = self._extract_chat_sequence(session.conversation_history)
                     sessions_data.append({
                         'created_at': session.created_at,
-                        'session_id': session.session_id,
                         'phone_number': session.external_user_id,
                         'conversation_history': chat_sequence
                     })
