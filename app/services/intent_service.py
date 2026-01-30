@@ -93,6 +93,16 @@ class IntentService:
             # Get classification from OpenAI (FAQ intent can be detected from prompt alone, no need for full FAQ context)
             classification_result = await self.openai_service.classify_intent(message, context,user_phone)
 
+            # If OpenAI service returned None
+            if classification_result is None:
+                logger.error(f"OpenAI classify_intent returned None, using fallback")
+                return self._get_fallback_classification(message, context, error="OpenAI service returned None")
+            
+            # Check for timeout handling BEFORE checking success (timeout takes precedence)
+            if classification_result.get("timeout_handled"):
+                logger.info(f"Rate limit timeout was handled, passing through to chat service")
+                return classification_result
+            
             if not classification_result.get("success", False):
                 logger.warning(f"OpenAI classification failed, using fallback")
                 return await self._get_fallback_classification(message, context,user_phone)
