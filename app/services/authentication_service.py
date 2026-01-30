@@ -787,7 +787,7 @@ Return only the selected email address or "none" if no clear selection.
     
     # Email OTP Sub-Service
     async def handle_email_otp_validation(self, user_phone: str, message: str,
-                                        session: ConversationSession) -> Dict[str, Any]:
+                                        session: ConversationSession,intent_result=None,last_meaningful_intent=None,last_meaningful_message=None) -> Dict[str, Any]:
         """Handle email OTP validation process with domain checking for buyers."""
         try:
             filtered_users = session.workflow_state.get("filtered_users", [])
@@ -921,7 +921,9 @@ Return only the selected email address or "none" if no clear selection.
                         return {
                             "status": "authentication_completed",
                             "user_type": "seller",
-                            "redirect_to_main_flow": True
+                            "redirect_to_main_flow": True,
+                            "original_intent": last_meaningful_intent,
+                            "original_message": last_meaningful_message
                         }
                 
                 # Fallback: If we reach here, something went wrong - return error

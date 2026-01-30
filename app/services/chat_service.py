@@ -774,7 +774,7 @@ class ChatService:
                 await self.handle_irrelevant_message_flow(user_phone, message_intent_result, session)
 
 
-            auth_result = await self.authentication_orchestrator_flow(user_phone,message_intent_result.get('relevant_message') or message_content,session, message_intent_result)
+            auth_result = await self.authentication_orchestrator_flow(user_phone,message_intent_result.get('relevant_message') or message_content,session, message_intent_result,last_meaningful_intent=last_meaningful_intent,last_meaningful_message=last_meaningful)
 
 
             # Check if authentication is still in progress
@@ -1294,7 +1294,7 @@ class ChatService:
             logger.error(f"Error caching irrelevant response: {e}")
 
     async def authentication_orchestrator_flow(self, user_phone: str, message_content: str,
-                                               session: ConversationSession, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
+                                               session: ConversationSession, intent_result: Dict[str, Any] = None,last_meaningful_intent=None,last_meaningful_message=None) -> Dict[str, Any]:
         """Main authentication orchestrator function."""
         try:
             # Initialize authentication orchestrator
@@ -1308,7 +1308,7 @@ class ChatService:
             )
 
             return await auth_orchestrator.authentication_orchestrator_flow(
-                user_phone, message_content, session, intent_result
+                user_phone, message_content, session, intent_result,last_meaningful_intent=last_meaningful_intent,last_meaningful_message=last_meaningful_message
             )
 
         except Exception as e:

@@ -52,7 +52,7 @@ class AuthenticationOrchestrator:
         self.profile_selection_service = ProfileSelectionService(whatsapp_service, authentication_service, openai_service)
 
     async def authentication_orchestrator_flow(self, user_phone: str, message_content: str,
-                                             session: ConversationSession, intent_result: Dict[str, Any] = None) -> Dict[str, Any]:
+                                             session: ConversationSession, intent_result: Dict[str, Any] = None,last_meaningful_intent=None,last_meaningful_message=None) -> Dict[str, Any]:
         """Main authentication orchestrator function following the specified flow."""
         try:
             logger.info(f"Starting authentication flow for {user_phone}")
@@ -117,7 +117,7 @@ class AuthenticationOrchestrator:
 
             if workflow_type_str in ["workflowtype.authentication", "authentication"]:
                 logger.info("Routing to existing authentication workflow")
-                return await self._handle_authentication_workflow(user_phone, message_content, session, intent_result or {})
+                return await self._handle_authentication_workflow(user_phone, message_content, session, intent_result or {},last_meaningful_intent,last_meaningful_message)
             elif workflow_type_str in ["workflowtype.registration", "registration"]:
                 return await self._handle_registration_workflow(user_phone, message_content, session, intent_result or {})
             
@@ -332,7 +332,7 @@ class AuthenticationOrchestrator:
             )
     
     async def _handle_authentication_workflow(self, user_phone: str, message_content: str,
-                                            session: ConversationSession, intent_result: Dict) -> Dict[str, Any]:
+                                            session: ConversationSession, intent_result: Dict,last_meaningful_intent=None,last_meaningful_message=None) -> Dict[str, Any]:
         """Handle ongoing authentication workflow."""
         try:
             # Check authentication stage first (OTP takes priority over profile selection)
@@ -343,7 +343,7 @@ class AuthenticationOrchestrator:
             if auth_stage == "email_otp":
                 logger.info(f"Processing OTP validation for message: {message_content}")
                 return await self.authentication_service.handle_email_otp_validation(
-                    user_phone, message_content, session
+                    user_phone, message_content, session,intent_result=intent_result,last_meaningful_intent=last_meaningful_intent,last_meaningful_message=last_meaningful_message
                 )
             
             # Check for profile selection response - HIGHEST PRIORITY after OTP

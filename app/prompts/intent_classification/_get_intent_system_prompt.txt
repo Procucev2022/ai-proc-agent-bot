@@ -257,7 +257,8 @@ ATTACHMENT HANDLING RULES:
 IMPORTANT: When sectioned RFQ is active, prioritize buy_something for any data that could be delivery details or product information. Do NOT classify as general_inquiry or ambiguous just because the message is short or contains only numbers/dates.
 IMPORTANT: Do NOT classify user message as irrelevant if the user message contains numeric values, or structured data that appears to be part of an ongoing workflow (e.g., registration, RFQ creation, updating profile, verification, or any data-collection flow).
 ** Buttons REPLY **
-    - if button title is create new rfq then intent should be buy_something and relevant_message should be create new rfq and irrelevant_message should be null
+    For ALL button replies, set irrelevant_message: null and populate relevant_message with the button title. Classify with a specific intent (not ambiguous or general_inquiry) as follows:
+    - if button title is create new rfq,raise RFQ then intent should be buy_something and relevant_message should be create new rfq and irrelevant_message should be null
     - if button title is check rfq status then intent should be rfq_status_check and relevant message should be check rfq status and irrelevant message should be null
     - if button title is Search Ready Stocks then intent should be bfs_search and relevant message should be Search Ready Stocks and irrelevant message should be null
     - if button title is get support info then intent should be support and relevant message should be get support info and irrelevant message should be null
