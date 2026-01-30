@@ -29,8 +29,8 @@ from openai import AsyncOpenAI
 from openai import APIError, APITimeoutError, RateLimitError, APIConnectionError
 from app.config import get_settings
 from app.tools.interaction_logger import get_interaction_logger
-from app.utils.logging_utils import log_service_method
-from app.utils.datetime_utils import format_date_display, format_date_for_validation_error, add_business_days, calculate_working_days_from_now
+from app.utils.logging_utils import log_service_method, get_user_phone_context
+from app.utils.datetime_utils import format_date_display, format_date_for_validation_error, add_business_days, calculate_working_days_from_now, utc_now
 
 # from app.services.global_error_handler import handle_api_error  # Removed to avoid circular import
 
@@ -494,14 +494,53 @@ class OpenAIService:
             )
             return await self._get_fallback_classification(message, context, user_phone=user_phone)
 
-        except (APIError, APITimeoutError, RateLimitError, APIConnectionError) as e:
+        except RateLimitError as e:
+            error_msg = str(e)
+            
+            # Log API rate limit (429)
+            logger.error(f"OpenAI API rate limit (429) in intent classification: {error_msg}")
+            
+            # Send WhatsApp notification (non-blocking - don't let this prevent timeout handling)
+            try:
+                await self._notify_openai_error("Rate Limit (429)", error_msg, "classify_intent")
+            except Exception as notify_error:
+                logger.error(f"Failed to send error notification (non-critical): {notify_error}")
+            
+            # Log error
+            self.interaction_logger.log_error(
+                interaction_type="intent_classification",
+                user_input=message,
+                error_message=error_msg,
+                model_used=self.default_model
+            )
+            
+            # Get user phone from context and trigger worker timeout pattern
+            user_phone = get_user_phone_context()
+            if user_phone:
+                logger.info(f"Rate limit detected for {user_phone}, triggering worker timeout pattern")
+                await self._handle_rate_limit_timeout(user_phone)
+                # Return special response to signal timeout handled (chat_service should stop processing)
+                return {
+                    "intent": "system_timeout",
+                    "confidence": 0,
+                    "success": False,
+                    "timeout_handled": True
+                }
+            else:
+                logger.warning("Rate limit error but no user context available, using fallback")
+                return await self._get_fallback_classification(message, context, user_phone=user_phone)
+        
+        except (APIError, APITimeoutError, APIConnectionError) as e:
             error_msg = str(e)
             
             # Log API error
             logger.error(f"OpenAI API error in intent classification: {error_msg}")
             
             # Send WhatsApp notification
-            await self._notify_openai_error("API Error", error_msg, "classify_intent")
+            try:
+                await self._notify_openai_error("API Error", error_msg, "classify_intent")
+            except Exception as notify_error:
+                logger.error(f"Failed to send error notification (non-critical): {notify_error}")
             
             # Log error
             self.interaction_logger.log_error(
@@ -512,12 +551,15 @@ class OpenAIService:
             )
             
             logger.error(f"Intent classification failed: {error_msg}")
-            return await self._get_fallback_classification(message, context,user_phone=user_phone)
+            return await self._get_fallback_classification(message, context, user_phone=user_phone)
         except Exception as e:
             error_msg = str(e)
 
-            # Send WhatsApp notification for unexpected errors
-            await self._notify_openai_error("Unexpected Error", error_msg, "classify_intent")
+            # Send WhatsApp notification for unexpected errors (non-blocking - don't let this prevent fallback)
+            try:
+                await self._notify_openai_error("Unexpected Error", error_msg, "classify_intent")
+            except Exception as notify_error:
+                logger.error(f"Failed to send error notification (non-critical): {notify_error}")
             
             # Log error
             self.interaction_logger.log_error(
@@ -1549,6 +1591,113 @@ Analyze their response to determine their true choice.
             logger.error(f"Field validation failed: {str(e)}")
             return {"is_valid": True, "validation_score": 50, "suggestions": [], "reason": f"Validation error: {str(e)}", "normalized_value": None, "severity": "warning"}
         
+    async def _handle_rate_limit_timeout(self, user_phone: str) -> None:
+        """Handle rate limit timeout using worker timeout pattern (clears session completely)."""
+        try:
+            logger.debug(f"[RATE_LIMIT_TIMEOUT] Handling timeout for {user_phone}")
+            
+            # Import dependencies
+            from app.services.helpers.session_helpers import SessionHelpers
+            from app.redis_db import get_session_redis_service, get_redis_service
+            from app.database import DatabaseManager
+            from app.models import ConversationOutcome, ConversationSession
+            
+            session_id = SessionHelpers.generate_session_id(user_phone, "daily")
+            redis_session = get_session_redis_service()
+            redis = get_redis_service()
+            
+            # 1. Get session from Redis
+            session_data = None
+            try:
+                session_data = await redis_session.get_session(session_id)
+                if session_data:
+                    logger.debug(f"[RATE_LIMIT_TIMEOUT] Retrieved session from Redis for {user_phone}")
+                else:
+                    logger.debug(f"[RATE_LIMIT_TIMEOUT] No session in Redis for {user_phone}")
+            except Exception as redis_error:
+                logger.error(f"[RATE_LIMIT_TIMEOUT] Error retrieving session from Redis: {redis_error}")
+            
+            # 2-3. Set outcome and persist to database (if session exists)
+            if session_data:
+                try:
+                    # Mark as abandoned (system-side error)
+                    session_data['outcome'] = ConversationOutcome.abandoned.value
+                    session_data['completed_at'] = utc_now().isoformat()
+                    
+                    # Persist to database
+                    db_manager = DatabaseManager()
+                    try:
+                        # session_data is already a dict, extract only valid fields for ConversationSession
+                        valid_fields = {}
+                        for field in ['session_id', 'external_user_id', 'workflow_type',
+                                     'outcome', 'workflow_state', 'conversation_history',
+                                     'extracted_entities', 'retention_date', 'created_at',
+                                     'last_activity_at', 'completed_at']:
+                            if field in session_data:
+                                valid_fields[field] = session_data[field]
+                        
+                        session_obj = ConversationSession(**valid_fields)
+                        db_manager.save_conversation_session(session_obj)
+                        logger.debug(f"[RATE_LIMIT_TIMEOUT] Persisted session to DB (outcome: abandoned)")
+                        
+                    except Exception as db_error:
+                        logger.error(f"[RATE_LIMIT_TIMEOUT] Error persisting to DB: {db_error}")
+                    finally:
+                        db_manager.close()
+                        
+                except Exception as persist_error:
+                    logger.error(f"[RATE_LIMIT_TIMEOUT] Error in persist flow: {persist_error}")
+            
+            # 4. Clear all message queue keys (use direct Redis client for multi-key delete)
+            normalized_phone = user_phone.lstrip('+')
+            queue_keys = [
+                f"{normalized_phone}:incoming",
+                f"{normalized_phone}:outgoing",
+                f"{normalized_phone}:processing",
+                f"{normalized_phone}:session",
+                f"{normalized_phone}:batch_trigger",
+                f"{normalized_phone}:response_ready",
+                f"{normalized_phone}:ack_sent",
+                f"{normalized_phone}:pending_reply",
+                f"{normalized_phone}:last_activity",
+            ]
+            
+            # Initialize Redis client and use direct client for multi-key delete
+            await redis.init_client()
+            deleted_count = await redis.client.delete(*queue_keys)
+            logger.debug(f"[RATE_LIMIT_TIMEOUT] Cleared {deleted_count} queue keys")
+            
+            # 5. Delete session from Redis (complete cleanup)
+            if session_data:
+                try:
+                    await redis_session.delete_session(session_id)
+                    logger.debug(f"[RATE_LIMIT_TIMEOUT] Deleted session from Redis")
+                except Exception as delete_error:
+                    logger.error(f"[RATE_LIMIT_TIMEOUT] Error deleting session: {delete_error}")
+            else:
+                logger.debug(f"[RATE_LIMIT_TIMEOUT] No session to delete")
+            
+            # 6. Send rate limit timeout notification (same message as worker timeout)
+            rate_limit_message = (
+                "Sorry, your request is taking longer than expected due to high traffic. "
+                "Please try sending your message again in some time."
+            )
+            
+            try:
+                from app.services.whatsapp_service import WhatsAppService
+                whatsapp_service = WhatsAppService()
+                await whatsapp_service.send_message(
+                    recipient_id=user_phone,
+                    message=rate_limit_message,
+                    skip_concatenation=True
+                )
+                logger.info(f"[RATE_LIMIT_TIMEOUT] Sent timeout notification to {user_phone}")
+            except Exception as send_error:
+                logger.error(f"[RATE_LIMIT_TIMEOUT] Error sending timeout notification: {send_error}")
+        
+        except Exception as e:
+            logger.error(f"[RATE_LIMIT_TIMEOUT] Error in _handle_rate_limit_timeout for {user_phone}: {e}", exc_info=True)
+    
     def _get_fallback_intent_response(self, error: str) -> Dict[str, Any]:
         """Fallback response for intent classification failures."""
         logger.warning(f"Using fallback intent classification: {error}")

@@ -713,6 +713,12 @@ class ChatService:
                 conversation_context = await ChatServiceHelpers.build_conversation_context(session, classification_content)
                 # Now using async OpenAI service
                 message_intent_result = await self.intent_service.classify_intent(classification_content, conversation_context,user_phone)
+                
+                # Check if rate limit timeout was handled (429 error)
+                if message_intent_result.get("timeout_handled"):
+                    logger.info(f"Rate limit timeout handled for {user_phone}, stopping processing")
+                    return {"status": "rate_limit_timeout", "message": "Rate limit timeout handled"}
+                
                 intent = message_intent_result.get('intent')
                 confidence = message_intent_result.get('confidence', 0)
 
@@ -724,6 +730,8 @@ class ChatService:
                 logger.warning(f"Intent classification failed during message tracking: {e}")
                 self.session_manager.add_message_to_history(session, "user", message_content, message_type)
                 message_intent_result = {"intent": "greeting", "confidence": 0}
+                intent = "greeting"
+                confidence = 0
 
             # Track meaningful messages during auth/registration flows for later processing
             self._track_meaningful_message_during_auth_flow(session, message_intent_result.get('relevant_message') or message_content, message_intent_result)
