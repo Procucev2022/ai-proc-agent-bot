@@ -397,7 +397,8 @@ class EnhancedExcelReportService:
             "RFQs Requested",
             "Subscription Plans Requested",
             "Seller Requested for RFQ but 0 credits",
-            "Unregistered sellers initiated chat but not registered"
+            "Unregistered sellers initiated chat but not registered",
+            "Unregistered Sellers requested for RFQ"
         ]
         
         # Create the summary table
@@ -448,7 +449,8 @@ class EnhancedExcelReportService:
                     'rfqs_requested': int(metrics_dict.get('Total RFQs Requested', 0)),
                     'subscription_plans_requested': int(metrics_dict.get('Subscription Plans Requested', 0)),
                     'zero_credit_rfq_attempt': int(metrics_dict.get('Zero Credit RFQ Attempt', 0)),
-                    'unregistered_sellers_requested_rfq': int(metrics_dict.get('Unregistered Sellers Requested for RFQ', 0))
+                    'unregistered_Sellers_initiated_chat':int(metrics_dict.get('Unregistered Sellers Initiated Chat But Not Registered', 0)),
+                    'unregistered_sellers_requested_rfq': int(metrics_dict.get('Unregistered Sellers Requested for RFQ', 0)),
                 }
                 
         except Exception as e:
@@ -472,7 +474,8 @@ class EnhancedExcelReportService:
             "RFQs Requested": period_data.get('rfqs_requested', 0),
             "Subscription Plans Requested": period_data.get('subscription_plans_requested', 0),
             "Seller Requested for RFQ but 0 credits": period_data.get('zero_credit_rfq_attempt', 0),
-            "Unregistered sellers initiated chat but not registered": period_data.get('unregistered_sellers_requested_rfq', 0)
+            "Unregistered sellers initiated chat but not registered": period_data.get('unregistered_Sellers_initiated_chat', 0),
+            "Unregistered Sellers requested for RFQ":period_data.get('unregistered_sellers_requested_rfq', 0)
         }
         return mapping.get(metric_name, 0)
     
@@ -489,7 +492,7 @@ class EnhancedExcelReportService:
                     SELECT 
                         category_name as "Category",
                         SUM(total_rfq_raised_category) as "RFQs Uploaded",
-                        SUM(total_rfqs_with_quotations) as "total_rfqs_with_quotations",
+                        SUM(total_rfqs_with_quotations) as "RFQ Requested",
                         SUM(total_rfqs_intimated) as "RFQs w/ Response",
                         SUM(bfs_products_searched_count) as "BFS Products Searched",
                         SUM(bfs_products_searched_by_unregistered_count) as "BFS Products Searched by Unregistered Users",
