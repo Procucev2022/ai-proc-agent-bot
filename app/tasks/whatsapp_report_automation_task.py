@@ -114,13 +114,21 @@ async def run_whatsapp_report_automation_async(self, target_date: str = None):
             # Create additional CSV file with sessions DataFrame
             sessions_filename = os.path.join(report_store_dir, f"Daily_Chats_{parsed_date.strftime('%Y-%m-%d')}.csv")
 
-            sessions_df = analytics_result.get('sessions_df', pd.DataFrame())
-            
-            if not sessions_df.empty:
-                sessions_df.to_csv(sessions_filename, index=False)
-                logger.info(f"Sessions CSV file created: {sessions_filename}")
+            sessions_df = analytics_result.get('sessions_df', pd.DataFrame(columns=["created_at", "phone_number", "conversation_history"]))
+
+            # If sessions_df exists but has no columns, enforce column names
+            if sessions_df.empty and sessions_df.columns.tolist() == []:
+                sessions_df = pd.DataFrame(
+                    columns=["created_at", "phone_number", "conversation_history"]
+                )
+
+            # Always create CSV (even if empty)
+            sessions_df.to_csv(sessions_filename, index=False)
+
+            if sessions_df.empty:
+                logger.warning(f"Sessions CSV created but contains no data: {sessions_filename}")
             else:
-                logger.warning("No sessions data available for CSV creation")
+                logger.info(f"Sessions CSV file created: {sessions_filename}")
             
             if not os.path.exists(excel_file_path):
                 logger.error(f"Excel file was not created: {excel_file_path}")

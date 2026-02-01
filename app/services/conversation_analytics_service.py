@@ -500,7 +500,7 @@ Session IDs to process: {', '.join(session_ids)}
                         "date": str(target_date),
                         "total_sessions": 0,
                         "sessions": [],
-                        "sessions_df": pd.DataFrame(),
+                        "sessions_df": pd.DataFrame(columns=["created_at", "phone_number", "conversation_history"]),
                         "buyer_df": pd.DataFrame(),
                         "seller_df": pd.DataFrame(),
                         "unknown_df": pd.DataFrame(),
@@ -1676,8 +1676,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2026, 1, 28).date()
-        end_date = datetime(2026, 1, 28).date()
+        start_date = datetime(2026, 1, 30).date()
+        end_date = datetime(2026, 1, 31).date()
         
         current_date = start_date
         while current_date <= end_date:
