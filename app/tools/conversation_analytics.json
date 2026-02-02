@@ -83,6 +83,13 @@
                         "minimum": 0,
                         "description": "Count of distinct product keywords searched in BFS"
                       },
+                      "user_searched_products": {
+      "type": "array",
+      "description": "List of distinct product keywords searched in BFS ",
+      "items": {
+        "type": "string"
+      }
+    },
                       "bfs_stock_products_bid_placed_count": {
                         "type": "integer",
                         "minimum": 0,
@@ -104,7 +111,8 @@
                       "products_bid_for",
                       "no_of_products_searched",
                       "bfs_stock_products_bid_placed_count",
-                      "bfs_products_searched_list"
+                      "bfs_products_searched_list",
+                      "user_searched_products"
                     ]
                   }
                 },

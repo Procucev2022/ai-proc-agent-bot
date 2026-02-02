@@ -44,6 +44,42 @@ Classify each session as:
 - Count each product search in BFS (Buy From Stock)
 - Look for intent 'bfs_search' or 'Search Ready Stocks' button clicks
 
+**user_searched_products**:
+    Identify and extract all distinct product keywords that the buyer searched for in the BFS (Buy From Stock) feature.
+    **Step-by-step extraction process**:
+    1. **Locate BFS search sequences**:
+       - Find where user clicks button with id "search_bfs" OR has intent "bfs_search"
+       - Assistant responds with: "What products are you looking for?"
+       - User's NEXT message contains the product search keyword
+
+    2. **Extract the product name**:
+       - Take the user's text response immediately after "What products are you looking for?"
+       - This text is the product search keyword
+       - Capture it exactly as the user typed it (preserve case, spelling, spacing)
+
+    3. **Build the searched_products array**:
+       - Add each extracted product keyword to the array
+       - Remove duplicates - only keep unique/distinct product names
+       - If user searches "Hydraulic Press" three times, it should appear only ONCE in the array
+       - Maintain the order of first occurrence
+
+    4. **What NOT to include**:
+       - Don't include button clicks themselves
+       - Don't include products from RFQ creation (that's a different workflow)
+       - Don't include products mentioned in casual conversation
+       - Only include products explicitly searched in BFS workflow
+
+     **Edge cases**:
+    - If user clicks search button but doesn't provide product name → don't add anything
+    - Product name variations (e.g., "hydraulic press" vs "Hydraulic Press") → treat as same product
+
+    **Examples from conversation patterns**:
+
+    Example 1:User: [clicks search_bfs button]
+    Assistant: "What products are you looking for?"
+    User: "Hydraulic Press"
+    → Add "Hydraulic Press" to searched_products
+
 **products_bid_for**:
 - Count distinct products from "*Bids Placed Successfully!*" confirmations
 - Each product line item counted once

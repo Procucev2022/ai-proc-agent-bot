@@ -861,6 +861,7 @@ class BuyerDailyMetrics(Base):
     rfq_response_count= Column(Integer,default=0)
     bfs_stock_products_bid_placed_count= Column(Integer,default=0)
     bfs_products_searched_list = Column(JSON,nullable=True)
+    user_searched_products=Column(JSON,nullable=True)
     org_id = Column(String(255), nullable=True)
     uuid = Column(String(255), nullable=True)
     ai_reasoning = Column(Text, nullable=True)
