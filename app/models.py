@@ -998,6 +998,29 @@ class UnknownDailyMetrics(Base):
         UniqueConstraint('date', 'session_id', 'phone_number', name='unique_unknown_daily_metrics'),
     )
 
+class BFSSearchDetails(Base):
+    """
+    BFS search details table for storing search keywords and results.
+    
+    Stores detailed BFS search activity including search keywords,
+    results found, and actions taken by users.
+    """
+    __tablename__ = "bfs_search_details"
+    
+    id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    date = Column(Date, nullable=False, index=True)
+    session_id = Column(String(255), nullable=False, index=True)
+    email = Column(String(255), nullable=True)
+    phone_number = Column(String(15), nullable=True)
+    searched_keywords = Column(String(500), nullable=False)
+    searched_result = Column(Text, nullable=True)
+    action_taken = Column(String(50), nullable=True)
+    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    
+    __table_args__ = (
+        UniqueConstraint('date', 'session_id', 'searched_keywords', name='unique_bfs_search'),
+    )
+
 class RFQNotificationFact(Base):
     """
     RFQ notification fact table for tracking seller notifications and responses.

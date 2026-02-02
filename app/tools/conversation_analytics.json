@@ -101,6 +101,70 @@
                         "items": {
                           "type": "string"
                         }
+                      },
+                      "bfs_search_details": {
+                        "type": "array",
+                        "description": "Detailed tracking of each BFS search with results and outcomes",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "search_keyword": {
+                              "type": "string",
+                              "description": "The product keyword searched by user"
+                            },
+                            "results_count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "description": "Number of products returned in search results"
+                            },
+                            "results_found": {
+                              "type": "array",
+                              "description": "List of product names found in search (text before '--')",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "action_taken": {
+                              "type": "string",
+                              "enum": [
+                                "viewed_only",
+                                "bid_placed",
+                                "no_stock_available",
+                                "raise_rfq_clicked"
+                              ],
+                              "description": "Action user took after seeing search results"
+                            },
+                            "bid_details": {
+                              "type": "object",
+                              "description": "Present only if action_taken involves bidding",
+                              "properties": {
+                                "products_bid": {
+                                  "type": "array",
+                                  "description": "List of products user successfully bid on",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "bid_count": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "description": "Number of successful bids placed"
+                                },
+                                "attempts": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "description": "Number of bid attempts made"
+                                },
+                                "failure_reason": {
+                                  "type": "string",
+                                  "enum": ["format_error", "max_attempts_reached", "otp_failed", "cancelled"],
+                                  "description": "Reason for bid failure if applicable"
+                                }
+                              }
+                            }
+                          },
+                          "required": ["search_keyword", "search_timestamp", "results_count", "results_found", "action_taken"]
+                        }
                       }
                     },
                     "required": [
@@ -112,7 +176,8 @@
                       "no_of_products_searched",
                       "bfs_stock_products_bid_placed_count",
                       "bfs_products_searched_list",
-                      "user_searched_products"
+                      "user_searched_products",
+                      "bfs_search_details"
                     ]
                   }
                 },

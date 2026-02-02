@@ -10,7 +10,7 @@ from datetime import datetime, date, timezone
 from sqlalchemy import func
 
 from app.database import get_db_session, get_remote_db_session
-from app.models import ConversationSession, BuyerDailyMetrics, SellerDailyMetrics, DailyAggregates, MetricMaster, CategoryAggregates, UnknownDailyMetrics, RFQNotificationFact
+from app.models import ConversationSession, BuyerDailyMetrics, SellerDailyMetrics, DailyAggregates, MetricMaster, CategoryAggregates, UnknownDailyMetrics, RFQNotificationFact, BFSSearchDetails
 from app.services.openai_service import OpenAIService
 from app.config import get_settings
 from app.utils.logging_utils import log_service_method
@@ -176,6 +176,49 @@ class ConversationAnalyticsService:
 
         return buyer_df, seller_df, unknown_df
     
+    def _create_bfs_search_dataframe(self, sessions_data: List[Dict[str, Any]], analysis_date: str) -> pd.DataFrame:
+        """
+        Create BFS search details DataFrame.
+        
+        Returns:
+            DataFrame with session_id, email, phone_number, searched_keywords, searched_result, action_taken
+        """
+        bfs_records = []
+        
+        for session in sessions_data:
+            session_id = session.get('session_id', '')
+            phone_number = session.get('phone_number', '')
+            
+            # Get email from buyer identities only
+            buyer_identities = session.get('buyer_identities', [])
+            if not buyer_identities:
+                continue
+                
+            email = buyer_identities[0].get('buyer_email', '')
+            
+            # Extract BFS search details from buyer metrics only
+            for buyer_identity in buyer_identities:
+                buyer_metrics = buyer_identity.get('buyer_metrics', {})
+                bfs_search_details = buyer_metrics.get('bfs_search_details', [])
+                
+                # Create records from BFS search details
+                for search_detail in bfs_search_details:
+                    search_keyword = search_detail.get('search_keyword', '')
+                    results_found = search_detail.get('results_found', [])
+                    action_taken = search_detail.get('action_taken', 'viewed_only')
+                    
+                    # Create one record per search with comma-separated results
+                    bfs_records.append({
+                        'session_id': session_id,
+                        'email': email,
+                        'phone_number': phone_number,
+                        'searched_keywords': search_keyword,
+                        'searched_result': ', '.join(results_found),
+                        'action_taken': action_taken
+                    })
+        
+        return pd.DataFrame(bfs_records)
+
     def _create_seller_rfq_interest_event_df(self, sessions_data: List[Dict[str, Any]], analysis_date: str) -> pd.DataFrame:
         """Create seller RFQ interest event DataFrame from AI metrics."""
         interest_records = []
@@ -528,6 +571,15 @@ Session IDs to process: {', '.join(session_ids)}
                     result.get('sessions', []),
                     result.get('date', str(target_date))
                 )
+                # Create BFS search details DataFrame
+                bfs_search_df = self._create_bfs_search_dataframe(
+                    result.get('sessions', []),
+                    result.get('date', str(target_date))
+                )
+                
+                # Insert BFS search details into database
+                if not bfs_search_df.empty:
+                    self._dump_bfs_search_df_to_db(bfs_search_df, db, target_date)
 
 
                 # Query remote database after creating DataFrames
@@ -651,6 +703,7 @@ Session IDs to process: {', '.join(session_ids)}
                 result["success"] = True
                 result["analysis_timestamp"] = datetime.now(timezone.utc).isoformat()
                 result["sessions_df"] = sessions_df
+                result["bfs_search_df"] = bfs_search_df
 
                 logger.info(
                     f"[CONVERSATION-ANALYTICS] Analysis completed for {target_date}. "
@@ -1679,6 +1732,50 @@ ORDER BY bc.category;
             f"[CONVERSATION-ANALYTICS] RFQ notification fact: "
             f"{records_inserted} inserted, {records_updated} updated, {skipped} skipped, {failed} failed"
         )
+
+    def _dump_bfs_search_df_to_db(self, bfs_search_df: pd.DataFrame, db_session, target_date: date) -> None:
+        """Dump BFS search DataFrame to BFSSearchDetails table."""
+        records_inserted = 0
+        failed = 0
+        
+        for _, row in bfs_search_df.iterrows():
+            try:
+                bfs_search = BFSSearchDetails(
+                    date=target_date,
+                    session_id=str(row.get('session_id', '')),
+                    email=str(row.get('email', '')) if pd.notna(row.get('email')) else None,
+                    phone_number=str(row.get('phone_number', '')) if pd.notna(row.get('phone_number')) else None,
+                    searched_keywords=str(row.get('searched_keywords', '')),
+                    searched_result=str(row.get('searched_result', '')) if pd.notna(row.get('searched_result')) else None,
+                    action_taken=str(row.get('action_taken', '')) if pd.notna(row.get('action_taken')) else None
+                )
+                
+                # Check if record exists
+                existing = db_session.query(BFSSearchDetails).filter(
+                    BFSSearchDetails.date == target_date,
+                    BFSSearchDetails.session_id == bfs_search.session_id,
+                    BFSSearchDetails.searched_keywords == bfs_search.searched_keywords
+                ).first()
+                
+                if existing:
+                    # Update existing record
+                    existing.email = bfs_search.email
+                    existing.phone_number = bfs_search.phone_number
+                    existing.searched_result = bfs_search.searched_result
+                    existing.action_taken = bfs_search.action_taken
+                else:
+                    db_session.add(bfs_search)
+                
+                db_session.commit()
+                records_inserted += 1
+                
+            except Exception as row_error:
+                db_session.rollback()
+                failed += 1
+                logger.error(f"[CONVERSATION-ANALYTICS] Failed to process BFS search row: {row_error}")
+                continue
+        
+        logger.info(f"[CONVERSATION-ANALYTICS] BFS search details: {records_inserted} inserted, {failed} failed")
 
     async def analyze_date_range(self, start_date: date, end_date: date) -> Dict[str, Any]:
         """Analyze conversations for a date range."""
