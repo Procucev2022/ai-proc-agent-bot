@@ -1154,7 +1154,7 @@ ORDER BY
             logger.error(f"Error calculating total RFQ responses: {e}")
             return 0
     
-    def calculate_and_store_category_aggregates(self, target_date, db_session) -> None:
+    def calculate_and_store_category_aggregates(self, target_date, db_session,null_replacement='Uncategorized') -> None:
         """Calculate category aggregates from remote database and store in category_aggregates table."""
         inserted = 0
         updated = 0
@@ -1163,66 +1163,95 @@ ORDER BY
         try:
             remote_db = get_remote_db_session()
             query = """
-            SELECT
-                t.rfq_date,
-                t.category,
-                t.total_rfq_raised,
-                q.rfqs_with_quotations AS rfqs_with_quotations,
-                b.bids_requested AS bids_requested,
-                b.bids_accepted AS bids_accepted
-            FROM (
-                /* RFQs Raised */
-                SELECT
-                    DATE(ri.created_ts) AS rfq_date,
-                    ri.category,
-                    COUNT(DISTINCT ri.rfq_uuid) AS total_rfq_raised
-                FROM rfq_items ri
-                JOIN rfq_header rh
-                    ON ri.rfq_uuid = rh.uuid
-                WHERE DATE(ri.created_ts) = :target_date
-                  AND rh.source_type = 'W'
-                GROUP BY DATE(ri.created_ts), ri.category
-            ) t
-            LEFT JOIN (
-                /* RFQs With Quotations */
-                SELECT
-                    DATE(rfqv.created_ts) AS rfq_date,
-                    ri.category,
-                    COUNT(DISTINCT rfqv.rfq_uuid) AS rfqs_with_quotations
-                FROM development_gmtbfs.gmt_rfq_vendors rfqv
-                JOIN rfq_items ri
-                    ON rfqv.rfq_uuid = ri.rfq_uuid
-                JOIN rfq_header rh
-                    ON ri.rfq_uuid = rh.uuid
-                JOIN user u
-                    ON u.org_uuid = rfqv.vendor_uuid
-                WHERE DATE(rfqv.created_ts) = :target_date
-                  AND rh.source_type = 'W'
-                  AND u.self_client = 0
-                  AND u.is_active = 1
-                  AND u.source_type = 'W'
-                GROUP BY DATE(rfqv.created_ts), ri.category
-            ) q
-                ON t.rfq_date = q.rfq_date
-               AND t.category = q.category
-            LEFT JOIN (
-                /* Bids Requested & Accepted */
-                SELECT
-                    DATE(bu.created_ts) AS rfq_date,
-                    bi.category,
-                    COUNT(CASE WHEN bu.status_uuid = 115 THEN 1 END) AS bids_requested,
-                    COUNT(CASE WHEN bu.status_uuid = 118 THEN 1 END) AS bids_accepted
-                FROM development_gmtbfs.bfs_users bu
-                JOIN development_gmtbfs.bfs_items bi
-                    ON bu.items_uuid = bi.uuid
-                WHERE DATE(bu.created_ts) = :target_date
-                GROUP BY DATE(bu.created_ts), bi.category
-            ) b
-                ON t.rfq_date = b.rfq_date
-               AND t.category = b.category;
+        SELECT
+    bc.rfq_date,
+    bc.category,
+    COALESCE(t.total_rfq_raised, 0) AS total_rfq_raised,
+    COALESCE(q.rfqs_with_quotations, 0) AS rfqs_with_quotations,
+    COALESCE(b.bids_requested, 0) AS bids_requested,
+    COALESCE(b.bids_accepted, 0) AS bids_accepted,
+    COALESCE(b.bfs_counter_offer_by_buyer, 0) AS bfs_counter_offer_by_buyer,
+    COALESCE(b.bfs_counter_offer_accepted_by_seller, 0) AS bfs_counter_offer_accepted_by_seller
+FROM
+(
+    SELECT 
+        :target_date AS rfq_date,
+        category
+    FROM (
+        SELECT DISTINCT COALESCE(category, :null_replacement) AS category FROM rfq_items
+        UNION
+        SELECT DISTINCT COALESCE(category, :null_replacement) AS category FROM development_gmtbfs.bfs_items
+    ) all_categories
+) bc
+LEFT JOIN (
+    SELECT
+        DATE(ri.created_ts) AS rfq_date,
+        COALESCE(ri.category, :null_replacement) AS category,
+        COUNT(DISTINCT ri.rfq_uuid) AS total_rfq_raised
+    FROM rfq_items ri
+    JOIN rfq_header rh ON ri.rfq_uuid = rh.uuid
+    WHERE DATE(ri.created_ts) = :target_date
+      AND rh.source_type = 'W'
+    GROUP BY DATE(ri.created_ts), COALESCE(ri.category, :null_replacement)
+) t
+    ON bc.rfq_date = t.rfq_date
+   AND bc.category = t.category
+LEFT JOIN (
+    SELECT
+        DATE(rfqv.created_ts) AS rfq_date,
+        COALESCE(ri.category, :null_replacement) AS category,
+        COUNT(DISTINCT rfqv.rfq_uuid) AS rfqs_with_quotations
+    FROM development_gmtbfs.gmt_rfq_vendors rfqv
+    JOIN rfq_items ri ON rfqv.rfq_uuid = ri.rfq_uuid
+    JOIN rfq_header rh ON ri.rfq_uuid = rh.uuid
+    JOIN user u ON u.org_uuid = rfqv.vendor_uuid
+    WHERE DATE(rfqv.created_ts) = :target_date
+      AND rh.source_type = 'W'
+      AND u.self_client = 0
+      AND u.is_active = 1
+      AND u.source_type = 'W'
+    GROUP BY DATE(rfqv.created_ts), COALESCE(ri.category, :null_replacement)
+) q
+    ON bc.rfq_date = q.rfq_date
+   AND bc.category = q.category
+LEFT JOIN (
+    SELECT
+        DATE(bu.created_ts) AS rfq_date,
+        COALESCE(bi.category, :null_replacement) AS category,
+        COUNT(CASE WHEN bu.status_uuid = 115 THEN 1 END) AS bids_requested,
+        COUNT(CASE WHEN bu.status_uuid = 118 THEN 1 END) AS bids_accepted,
+        COUNT(
+            CASE
+                WHEN bu.status_uuid = 115
+                 AND (
+                        bu.ask_price <> bu.buy_price
+                     OR bu.quantity <> bi.available_quantity
+                 )
+                THEN 1
+            END
+        ) AS bfs_counter_offer_by_buyer,
+        COUNT(
+            CASE
+                WHEN bu.status_uuid = 118
+                 AND (
+                        bu.ask_price <> bu.buy_price
+                     OR bu.quantity <> bi.available_quantity
+                 )
+                THEN 1
+            END
+        ) AS bfs_counter_offer_accepted_by_seller
+    FROM development_gmtbfs.bfs_users bu
+    JOIN development_gmtbfs.bfs_items bi
+        ON bu.items_uuid = bi.uuid
+    WHERE DATE(bu.created_ts) = :target_date
+    GROUP BY DATE(bu.created_ts), COALESCE(bi.category, :null_replacement)
+) b
+    ON bc.rfq_date = b.rfq_date
+   AND bc.category = b.category
+ORDER BY bc.category;
             """
 
-            result = remote_db.execute(text(query), {'target_date': str(target_date)})
+            result = remote_db.execute(text(query), {'target_date': str(target_date),'null_replacement': null_replacement})
             rows = result.fetchall()
 
             remote_db.close()
@@ -1254,6 +1283,8 @@ ORDER BY
                     rfqs_with_quotations = int(row[3]) if row[3] is not None else 0
                     bids_requested = int(row[4]) if row[4] is not None else 0
                     bids_accepted = int(row[5]) if row[5] is not None else 0
+                    bfs_counter_offer_by_buyer=int(row[6]) if row[6] is not None else 0
+                    bfs_counter_offer_accepted_by_seller=int(row[7]) if row[7] is not None else 0
                     total_rfqs_intimated = intimated_dict.get(category_name, 0)
                     
                     existing = db_session.query(CategoryAggregates).filter(
@@ -1267,6 +1298,8 @@ ORDER BY
                         existing.total_rfqs_intimated = total_rfqs_intimated
                         existing.bids_requested = bids_requested
                         existing.bids_accepted = bids_accepted
+                        existing.bfs_counter_offer_by_buyer = bfs_counter_offer_by_buyer
+                        existing.bfs_counter_offer_accepted_by_seller = bfs_counter_offer_accepted_by_seller
                         existing.bfs_products_searched_count = bfs_category_counts.get(category_name, 0)
                         existing.bfs_products_searched_by_unregistered_count = unregistered_bfs_category_counts.get(category_name, 0)
                         updated += 1
@@ -1279,6 +1312,8 @@ ORDER BY
                             total_rfqs_intimated=total_rfqs_intimated,
                             bids_requested=bids_requested,
                             bids_accepted=bids_accepted,
+                            bfs_counter_offer_by_buyer=bfs_counter_offer_by_buyer,
+                            bfs_counter_offer_accepted_by_seller=bfs_counter_offer_accepted_by_seller,
                             bfs_products_searched_count=bfs_category_counts.get(category_name, 0),
                             bfs_products_searched_by_unregistered_count=unregistered_bfs_category_counts.get(category_name, 0)
                         )
@@ -1676,8 +1711,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2026, 1, 30).date()
-        end_date = datetime(2026, 1, 31).date()
+        start_date = datetime(2026, 1, 29).date()
+        end_date = datetime(2026, 1, 29).date()
         
         current_date = start_date
         while current_date <= end_date:

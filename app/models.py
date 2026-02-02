@@ -961,6 +961,8 @@ class CategoryAggregates(Base):
     bids_accepted = Column(Integer, default=0)
     bfs_products_searched_count = Column(Integer, default=0)
     bfs_products_searched_by_unregistered_count = Column(Integer, default=0)
+    bfs_counter_offer_by_buyer= Column(Integer, default=0)
+    bfs_counter_offer_accepted_by_seller= Column(Integer, default=0)
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
     
     __table_args__ = (
