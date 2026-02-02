@@ -1666,7 +1666,7 @@ class ChatService:
                             result_message += f"\n\t*₹{price:,.0f}*"
 
                     # Add reminder message
-                    result_message += "\n\n_Please use the buttons below to proceed._"
+                    result_message += "\n\n*To proceed, please Place a Bid or click Cancel to start something new.*"
 
                     buttons = [
                         {"id": "bfs_negotiate", "title": "Place Bid"},
