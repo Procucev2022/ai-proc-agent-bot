@@ -85,7 +85,6 @@ class ConversationAnalyticsService:
                         'no_of_products_searched': buyer_metrics.get('no_of_products_searched', 0),
                         'bfs_stock_products_bid_placed_count': buyer_metrics.get('bfs_stock_products_bid_placed_count', 0),
                         'bfs_products_searched_list': buyer_metrics.get('bfs_products_searched_list', []),
-                        'user_searched_products':buyer_metrics.get('user_searched_products', []),
                         'rfq_ids_created': buyer_metrics.get('rfq_ids_created', []),
                         'confidence_score': confidence_score,
                         'analysis_reasoning': analysis_reasoning
@@ -146,7 +145,7 @@ class ConversationAnalyticsService:
                 'date', 'session_id', 'phone_number', 'user_type', 'buyer_email',
                 'successful_rfqs_ai', 'incomplete_rfq', 'buyers_started_but_not_raised_rfq',
                 'number_of_buyer_chats', 'successful_registration', 'failed_registration','bfs_searches','products_bid_for','no_of_products_searched',
-                'bfs_products_searched_list', 'rfq_ids_created','bfs_stock_products_bid_placed_count','user_searched_products',
+                'bfs_products_searched_list', 'rfq_ids_created','bfs_stock_products_bid_placed_count',
                 'confidence_score', 'analysis_reasoning'
             ]
             buyer_df = buyer_df[buyer_cols]
@@ -622,7 +621,7 @@ Session IDs to process: {', '.join(session_ids)}
                         'username', 'org_uuid', 'user_uuid', 'total_rfqs_raised', 'rfqs_with_seller_responses',
                         'total_items_in_rfqs', 'total_distinct_rfq_category','number_of_buyer_chats',
                         'successful_registration','failed_registration','bfs_searches','products_bid_for','no_of_products_searched',
-                        'bfs_stock_products_bid_placed_count', 'bfs_products_searched_list','user_searched_products',
+                        'bfs_stock_products_bid_placed_count', 'bfs_products_searched_list',
                         'analysis_reasoning'
                     ]
                     joined_buyer_df = joined_buyer_df[[col for col in relevant_cols if col in joined_buyer_df.columns]]
@@ -789,7 +788,6 @@ Session IDs to process: {', '.join(session_ids)}
                     bfs_stock_products_bid_placed_count=int(row.get('bfs_stock_products_bid_placed_count', 0)) if pd.notna(
                         row.get('bfs_stock_products_bid_placed_count')) else 0,
                     bfs_products_searched_list=row.get('bfs_products_searched_list'),
-                    user_searched_products=row.get('user_searched_products'),
                     org_id=str(row.get('org_uuid', '')) if pd.notna(row.get('org_uuid')) else None,
                     uuid=str(row.get('user_uuid', '')) if pd.notna(row.get('user_uuid')) else None,
                     ai_reasoning=str(row.get('analysis_reasoning', '')) if pd.notna(row.get('analysis_reasoning')) else None
@@ -822,7 +820,6 @@ Session IDs to process: {', '.join(session_ids)}
                     existing.no_of_products_searched = buyer_metric.no_of_products_searched
                     existing.bfs_stock_products_bid_placed_count = buyer_metric.bfs_stock_products_bid_placed_count
                     existing.bfs_products_searched_list = buyer_metric.bfs_products_searched_list
-                    existing.user_searched_products = buyer_metric.user_searched_products
 
                     existing.org_id = buyer_metric.org_id
                     existing.uuid = buyer_metric.uuid
