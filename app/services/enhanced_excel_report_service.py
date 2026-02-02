@@ -496,7 +496,8 @@ class EnhancedExcelReportService:
                         SUM(total_rfqs_intimated) as "RFQs w/ Response",
                         SUM(bfs_products_searched_count) as "BFS Products Searched",
                         SUM(bfs_products_searched_by_unregistered_count) as "BFS Products Searched by Unregistered Users",
-                        SUM(bids_requested) as "BFS Counter Offer By Buyer"
+                        SUM(bfs_counter_offer_by_buyer) as "BFS Counter Offer By Buyer",
+                        SUM(bfs_counter_offer_accepted_by_seller) as "Counter Offers Accepted By Sellers"
                     FROM category_aggregates 
                     WHERE date BETWEEN :start_date AND :target_date
                     GROUP BY category_name
