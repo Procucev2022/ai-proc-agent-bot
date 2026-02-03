@@ -157,6 +157,7 @@ class BFSSearchHandler:
                 session,
                 api_response.get("data"),
                 suppress_raise_rfq_on_no_results=suppress_raise_rfq_on_no_results,
+                search_query=message,
             )
             return {"status": "bfs_search_completed", "data": api_response.get("data")}
         else:
@@ -239,6 +240,7 @@ class BFSSearchHandler:
         session: ConversationSession,
         data: Any,
         suppress_raise_rfq_on_no_results: bool = False,
+        search_query: str = "",
     ) -> None:
         """Format and send BFS search results to user with action buttons."""
         try:
@@ -282,7 +284,8 @@ class BFSSearchHandler:
             # Format results using same structure as bid format
             # Character limits: desc=50, spec=20, age=30, loc=30
             if isinstance(data, list):
-                result_message = f"*{len(data)} item(s) in stock:*"
+                search_label = f" for _{search_query}_" if search_query else ""
+                result_message = f"*{len(data)} item(s) in stock{search_label}:*"
 
                 for idx, item in enumerate(data[:5], 1):
                     if isinstance(item, dict):

@@ -22,11 +22,12 @@ def _normalize_bid_text_newlines(text: str) -> str:
     Normalize text by inserting newlines where WhatsApp may have stripped them.
 
     WhatsApp sometimes strips newlines when copy-pasting, resulting in:
-    "1. Laptop -- Age: 2:    a. Price: 6000    b. Qty: 10  2. Dell Laptops..."
+    "1. Laptop -- Age: 2:    Seller Price: 6000 | Available Qty: 10    a. Your Price: 5000    b. Your Qty: 8  2. Dell Laptops..."
 
     This function detects boundaries and inserts newlines:
-    - Before "a. Price:"
-    - Before "b. Qty:"
+    - Before "Seller Price:"
+    - Before "a. Your Price:" / "a. Price:"
+    - Before "b. Your Qty:" / "b. Qty:"
     - Before item numbers like "2.", "3.", etc.
 
     Args:
@@ -37,26 +38,34 @@ def _normalize_bid_text_newlines(text: str) -> str:
     """
     normalized = text
 
-    # Insert newline before "a. Price:" (with optional spaces)
+    # Insert newline before "Seller Price:" to separate from header
     normalized = re.sub(
-        r'\s+(a\.\s*Price:)',
+        r'\s+(Seller\s+Price:)',
         r'\n   \1',
         normalized,
         flags=re.IGNORECASE
     )
 
-    # Insert newline before "b. Qty:" (with optional spaces)
+    # Insert newline before "a. Your Price:" or "a. Price:" (with optional spaces)
     normalized = re.sub(
-        r'\s+(b\.\s*Qty:)',
+        r'\s+(a\.\s*(?:Your\s+)?Price:)',
+        r'\n   \1',
+        normalized,
+        flags=re.IGNORECASE
+    )
+
+    # Insert newline before "b. Your Qty:" or "b. Qty:" (with optional spaces)
+    normalized = re.sub(
+        r'\s+(b\.\s*(?:Your\s+)?Qty:)',
         r'\n   \1',
         normalized,
         flags=re.IGNORECASE
     )
 
     # Insert newline before item numbers (2., 3., 4., etc.) that follow a quantity
-    # Pattern: "Qty: <number>" followed by spaces and a new item number
+    # Pattern: "Qty: <number>" (possibly with trailing text like ", max 5") followed by spaces and a new item number
     normalized = re.sub(
-        r'(Qty:\s*\d+)\s+(\d+\.)',
+        r'(Qty:\s*\d+[^"\n]*?)\s+(\d+\.)',
         r'\1\n\n\2',
         normalized,
         flags=re.IGNORECASE
@@ -178,12 +187,14 @@ def generate_bid_format(bfs_items: List[Dict]) -> str:
     Returns:
         Formatted string like:
         1. Dell XPS 13 -- Intel i7 -- Age: 2yr -- Loc: Mumbai:
-           a. Price: 85000
-           b. Qty: 10
+           Seller Price: 85000 | Available Qty: 10
+           a. Your Price: (Enter your price)
+           b. Your Qty: (Enter quantity, max 10)
 
         2. HP Pavilion -- AMD Ryzen -- Age: 1yr -- Loc: Delhi:
-           a. Price: 70000
-           b. Qty: 5
+           Seller Price: 70000 | Available Qty: 5
+           a. Your Price: (Enter your price)
+           b. Your Qty: (Enter quantity, max 5)
     """
     # Character limits for display
     DESC_LIMIT = 50
@@ -208,8 +219,9 @@ def generate_bid_format(bfs_items: List[Dict]) -> str:
 
         block = (
             f"{idx}. {key} -- Age: {age} -- Loc: {loc}:\n"
-            f"   a. Price: {price}\n"
-            f"   b. Qty: {qty}"
+            f"   Seller Price: {price} | Available Qty: {qty}\n"
+            f"   a. Your Price: (Enter your price)\n"
+            f"   b. Your Qty: (Enter quantity, max {qty})"
         )
         blocks.append(block)
     return "\n\n".join(blocks)
@@ -221,9 +233,10 @@ def parse_bid_format(text: str, original_items: List[Dict]) -> Dict[str, Any]:
     Match by "Description -- Specification" (case-insensitive).
 
     Expected format:
-        1. Dell XPS 13 -- Intel i7 -- Age: 2yr:
-           a. Price: 85000
-           b. Qty: 10
+        1. Dell XPS 13 -- Intel i7 -- Age: 2yr -- Loc: Mumbai:
+           Seller Price: 85000 | Available Qty: 10
+           a. Your Price: 85000
+           b. Your Qty: 10
 
     Args:
         text: User's message with bid format
@@ -259,10 +272,11 @@ def parse_bid_format(text: str, original_items: List[Dict]) -> Dict[str, Any]:
     # Patterns for parsing
     # Header: "1. Description -- Specification -- Age: 2yr -- Loc: Mumbai:" or without Loc
     header_pattern = r'^(\d+)\.\s*(.+?)\s*--\s*Age:\s*[^-:]+(?:\s*--\s*Loc:\s*[^:]+)?:\s*$'
-    # Price line: "a. Price: 85000" or "a.Price:85000"
-    price_pattern = r'^\s*a\.\s*Price:\s*([\d,]+(?:\.\d+)?)\s*$'
-    # Qty line: "b. Qty: 10" or "b.Qty:10"
-    qty_pattern = r'^\s*b\.\s*Qty:\s*(\d+)\s*$'
+    # Price line: "a. Your Price: 85000" or "a. Price: 85000" (backwards compatible)
+    price_pattern = r'^\s*a\.\s*(?:Your\s+)?Price:\s*([\d,]+(?:\.\d+)?)\s*$'
+    # Qty line: "b. Qty: 10" or "b.Qty:10" (ignore trailing hints like ", max 10")
+    # Qty line: "b. Your Qty: 10" or "b. Qty: 10" (backwards compatible)
+    qty_pattern = r'^\s*b\.\s*(?:Your\s+)?Qty:\s*(\d+)'
 
     for block in blocks:
         lines = block.strip().split('\n')
@@ -313,10 +327,10 @@ def parse_bid_format(text: str, original_items: List[Dict]) -> Dict[str, Any]:
 
         # Validate required fields
         if price is None:
-            return {"error": f"Missing price for '{item_key}'.\nExpected: a. Price: <amount>"}
+            return {"error": f"Missing price for '{item_key}'.\nExpected: a. Your Price: <amount>"}
 
         if quantity is None:
-            return {"error": f"Missing quantity for '{item_key}'.\nExpected: b. Qty: <number>"}
+            return {"error": f"Missing quantity for '{item_key}'.\nExpected: b. Your Qty: <number>"}
 
         if price <= 0:
             return {"error": f"Invalid price for '{item_key}'. Price must be greater than 0."}
@@ -377,10 +391,14 @@ def generate_bid_summary(bid_items: List[Dict]) -> str:
         age = (original_item.get("ageOfAsset") or "-")[:AGE_LIMIT].strip()
         loc = (original_item.get("location") or "-")[:LOC_LIMIT].strip()
 
+        seller_price = round(original_item.get("sellPrice") or 0)
+        available_qty = int(original_item.get("availableQuantity") or 1)
+
         block = (
             f"{idx}. {key} -- Age: {age} -- Loc: {loc}:\n"
-            f"   a. Price: ₹{price:,.0f}\n"
-            f"   b. Qty: {qty}"
+            f"   Seller Price: ₹{seller_price:,} | Available Qty: {available_qty}\n"
+            f"   a. Your Price: ₹{price:,.0f}\n"
+            f"   b. Your Qty: {qty}"
         )
         blocks.append(block)
     return "\n\n".join(blocks)
