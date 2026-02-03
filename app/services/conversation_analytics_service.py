@@ -10,7 +10,7 @@ from datetime import datetime, date, timezone
 from sqlalchemy import func
 
 from app.database import get_db_session, get_remote_db_session
-from app.models import ConversationSession, BuyerDailyMetrics, SellerDailyMetrics, DailyAggregates, MetricMaster, CategoryAggregates, UnknownDailyMetrics, RFQNotificationFact
+from app.models import ConversationSession, BuyerDailyMetrics, SellerDailyMetrics, DailyAggregates, MetricMaster, CategoryAggregates, UnknownDailyMetrics, RFQNotificationFact, BFSSearchDetails
 from app.services.openai_service import OpenAIService
 from app.config import get_settings
 from app.utils.logging_utils import log_service_method
@@ -175,6 +175,49 @@ class ConversationAnalyticsService:
 
         return buyer_df, seller_df, unknown_df
     
+    def _create_bfs_search_dataframe(self, sessions_data: List[Dict[str, Any]], analysis_date: str) -> pd.DataFrame:
+        """
+        Create BFS search details DataFrame.
+        
+        Returns:
+            DataFrame with session_id, email, phone_number, searched_keywords, searched_result, action_taken
+        """
+        bfs_records = []
+        
+        for session in sessions_data:
+            session_id = session.get('session_id', '')
+            phone_number = session.get('phone_number', '')
+            
+            # Get email from buyer identities only
+            buyer_identities = session.get('buyer_identities', [])
+            if not buyer_identities:
+                continue
+                
+            email = buyer_identities[0].get('buyer_email', '')
+            
+            # Extract BFS search details from buyer metrics only
+            for buyer_identity in buyer_identities:
+                buyer_metrics = buyer_identity.get('buyer_metrics', {})
+                bfs_search_details = buyer_metrics.get('bfs_search_details', [])
+                
+                # Create records from BFS search details
+                for search_detail in bfs_search_details:
+                    search_keyword = search_detail.get('search_keyword', '')
+                    results_found = search_detail.get('results_found', [])
+                    action_taken = search_detail.get('action_taken', 'viewed_only')
+                    
+                    # Create one record per search with comma-separated results
+                    bfs_records.append({
+                        'session_id': session_id,
+                        'email': email,
+                        'phone_number': phone_number,
+                        'searched_keywords': search_keyword,
+                        'searched_result': ', '.join(results_found),
+                        'action_taken': action_taken
+                    })
+        
+        return pd.DataFrame(bfs_records)
+
     def _create_seller_rfq_interest_event_df(self, sessions_data: List[Dict[str, Any]], analysis_date: str) -> pd.DataFrame:
         """Create seller RFQ interest event DataFrame from AI metrics."""
         interest_records = []
@@ -527,6 +570,15 @@ Session IDs to process: {', '.join(session_ids)}
                     result.get('sessions', []),
                     result.get('date', str(target_date))
                 )
+                # Create BFS search details DataFrame
+                bfs_search_df = self._create_bfs_search_dataframe(
+                    result.get('sessions', []),
+                    result.get('date', str(target_date))
+                )
+                
+                # Insert BFS search details into database
+                if not bfs_search_df.empty:
+                    self._dump_bfs_search_df_to_db(bfs_search_df, db, target_date)
 
 
                 # Query remote database after creating DataFrames
@@ -573,6 +625,7 @@ Session IDs to process: {', '.join(session_ids)}
                         'analysis_reasoning'
                     ]
                     joined_buyer_df = joined_buyer_df[[col for col in relevant_cols if col in joined_buyer_df.columns]]
+
                     
                     # Dump joined buyer DataFrame to database
                     self._dump_joined_buyer_df_to_db(joined_buyer_df, db)
@@ -649,6 +702,7 @@ Session IDs to process: {', '.join(session_ids)}
                 result["success"] = True
                 result["analysis_timestamp"] = datetime.now(timezone.utc).isoformat()
                 result["sessions_df"] = sessions_df
+                result["bfs_search_df"] = bfs_search_df
 
                 logger.info(
                     f"[CONVERSATION-ANALYTICS] Analysis completed for {target_date}. "
@@ -706,14 +760,6 @@ Session IDs to process: {', '.join(session_ids)}
                 if not pd.notna(date_val):
                     skipped += 1
                     continue
-
-                relevant_cols = [
-                    'date', 'phone_number', 'email', 'session_id', 'confidence_score',
-                    'successful_rfqs_ai', 'incomplete_rfqs', 'buyers_started_but_not_raised_rfq',
-                    'username', 'org_uuid', 'user_uuid', 'total_rfqs_raised',
-                    'total_items_in_rfqs', 'total_distinct_rfq_category', 'number_of_buyer_chats',
-                    'successful_registration', 'failed_registration', 'analysis_reasoning'
-                ]
                 
                 buyer_metric = BuyerDailyMetrics(
                     date=pd.to_datetime(date_val).date(),
@@ -741,7 +787,7 @@ Session IDs to process: {', '.join(session_ids)}
                         row.get('no_of_products_searched')) else 0,
                     bfs_stock_products_bid_placed_count=int(row.get('bfs_stock_products_bid_placed_count', 0)) if pd.notna(
                         row.get('bfs_stock_products_bid_placed_count')) else 0,
-                    bfs_products_searched_list=self._safe_json_value(row.get('bfs_products_searched_list')),
+                    bfs_products_searched_list=row.get('bfs_products_searched_list'),
                     org_id=str(row.get('org_uuid', '')) if pd.notna(row.get('org_uuid')) else None,
                     uuid=str(row.get('user_uuid', '')) if pd.notna(row.get('user_uuid')) else None,
                     ai_reasoning=str(row.get('analysis_reasoning', '')) if pd.notna(row.get('analysis_reasoning')) else None
@@ -1154,7 +1200,7 @@ ORDER BY
             logger.error(f"Error calculating total RFQ responses: {e}")
             return 0
     
-    def calculate_and_store_category_aggregates(self, target_date, db_session) -> None:
+    def calculate_and_store_category_aggregates(self, target_date, db_session,null_replacement='Uncategorized') -> None:
         """Calculate category aggregates from remote database and store in category_aggregates table."""
         inserted = 0
         updated = 0
@@ -1163,66 +1209,95 @@ ORDER BY
         try:
             remote_db = get_remote_db_session()
             query = """
-            SELECT
-                t.rfq_date,
-                t.category,
-                t.total_rfq_raised,
-                q.rfqs_with_quotations AS rfqs_with_quotations,
-                b.bids_requested AS bids_requested,
-                b.bids_accepted AS bids_accepted
-            FROM (
-                /* RFQs Raised */
-                SELECT
-                    DATE(ri.created_ts) AS rfq_date,
-                    ri.category,
-                    COUNT(DISTINCT ri.rfq_uuid) AS total_rfq_raised
-                FROM rfq_items ri
-                JOIN rfq_header rh
-                    ON ri.rfq_uuid = rh.uuid
-                WHERE DATE(ri.created_ts) = :target_date
-                  AND rh.source_type = 'W'
-                GROUP BY DATE(ri.created_ts), ri.category
-            ) t
-            LEFT JOIN (
-                /* RFQs With Quotations */
-                SELECT
-                    DATE(rfqv.created_ts) AS rfq_date,
-                    ri.category,
-                    COUNT(DISTINCT rfqv.rfq_uuid) AS rfqs_with_quotations
-                FROM development_gmtbfs.gmt_rfq_vendors rfqv
-                JOIN rfq_items ri
-                    ON rfqv.rfq_uuid = ri.rfq_uuid
-                JOIN rfq_header rh
-                    ON ri.rfq_uuid = rh.uuid
-                JOIN user u
-                    ON u.org_uuid = rfqv.vendor_uuid
-                WHERE DATE(rfqv.created_ts) = :target_date
-                  AND rh.source_type = 'W'
-                  AND u.self_client = 0
-                  AND u.is_active = 1
-                  AND u.source_type = 'W'
-                GROUP BY DATE(rfqv.created_ts), ri.category
-            ) q
-                ON t.rfq_date = q.rfq_date
-               AND t.category = q.category
-            LEFT JOIN (
-                /* Bids Requested & Accepted */
-                SELECT
-                    DATE(bu.created_ts) AS rfq_date,
-                    bi.category,
-                    COUNT(CASE WHEN bu.status_uuid = 115 THEN 1 END) AS bids_requested,
-                    COUNT(CASE WHEN bu.status_uuid = 118 THEN 1 END) AS bids_accepted
-                FROM development_gmtbfs.bfs_users bu
-                JOIN development_gmtbfs.bfs_items bi
-                    ON bu.items_uuid = bi.uuid
-                WHERE DATE(bu.created_ts) = :target_date
-                GROUP BY DATE(bu.created_ts), bi.category
-            ) b
-                ON t.rfq_date = b.rfq_date
-               AND t.category = b.category;
+        SELECT
+    bc.rfq_date,
+    bc.category,
+    COALESCE(t.total_rfq_raised, 0) AS total_rfq_raised,
+    COALESCE(q.rfqs_with_quotations, 0) AS rfqs_with_quotations,
+    COALESCE(b.bids_requested, 0) AS bids_requested,
+    COALESCE(b.bids_accepted, 0) AS bids_accepted,
+    COALESCE(b.bfs_counter_offer_by_buyer, 0) AS bfs_counter_offer_by_buyer,
+    COALESCE(b.bfs_counter_offer_accepted_by_seller, 0) AS bfs_counter_offer_accepted_by_seller
+FROM
+(
+    SELECT 
+        :target_date AS rfq_date,
+        category
+    FROM (
+        SELECT DISTINCT COALESCE(category, :null_replacement) AS category FROM rfq_items
+        UNION
+        SELECT DISTINCT COALESCE(category, :null_replacement) AS category FROM development_gmtbfs.bfs_items
+    ) all_categories
+) bc
+LEFT JOIN (
+    SELECT
+        DATE(ri.created_ts) AS rfq_date,
+        COALESCE(ri.category, :null_replacement) AS category,
+        COUNT(DISTINCT ri.rfq_uuid) AS total_rfq_raised
+    FROM rfq_items ri
+    JOIN rfq_header rh ON ri.rfq_uuid = rh.uuid
+    WHERE DATE(ri.created_ts) = :target_date
+      AND rh.source_type = 'W'
+    GROUP BY DATE(ri.created_ts), COALESCE(ri.category, :null_replacement)
+) t
+    ON bc.rfq_date = t.rfq_date
+   AND bc.category = t.category
+LEFT JOIN (
+    SELECT
+        DATE(rfqv.created_ts) AS rfq_date,
+        COALESCE(ri.category, :null_replacement) AS category,
+        COUNT(DISTINCT rfqv.rfq_uuid) AS rfqs_with_quotations
+    FROM development_gmtbfs.gmt_rfq_vendors rfqv
+    JOIN rfq_items ri ON rfqv.rfq_uuid = ri.rfq_uuid
+    JOIN rfq_header rh ON ri.rfq_uuid = rh.uuid
+    JOIN user u ON u.org_uuid = rfqv.vendor_uuid
+    WHERE DATE(rfqv.created_ts) = :target_date
+      AND rh.source_type = 'W'
+      AND u.self_client = 0
+      AND u.is_active = 1
+      AND u.source_type = 'W'
+    GROUP BY DATE(rfqv.created_ts), COALESCE(ri.category, :null_replacement)
+) q
+    ON bc.rfq_date = q.rfq_date
+   AND bc.category = q.category
+LEFT JOIN (
+    SELECT
+        DATE(bu.created_ts) AS rfq_date,
+        COALESCE(bi.category, :null_replacement) AS category,
+        COUNT(CASE WHEN bu.status_uuid = 115 THEN 1 END) AS bids_requested,
+        COUNT(CASE WHEN bu.status_uuid = 118 THEN 1 END) AS bids_accepted,
+        COUNT(
+            CASE
+                WHEN bu.status_uuid = 115
+                 AND (
+                        bu.ask_price <> bu.buy_price
+                     OR bu.quantity <> bi.available_quantity
+                 )
+                THEN 1
+            END
+        ) AS bfs_counter_offer_by_buyer,
+        COUNT(
+            CASE
+                WHEN bu.status_uuid = 118
+                 AND (
+                        bu.ask_price <> bu.buy_price
+                     OR bu.quantity <> bi.available_quantity
+                 )
+                THEN 1
+            END
+        ) AS bfs_counter_offer_accepted_by_seller
+    FROM development_gmtbfs.bfs_users bu
+    JOIN development_gmtbfs.bfs_items bi
+        ON bu.items_uuid = bi.uuid
+    WHERE DATE(bu.created_ts) = :target_date
+    GROUP BY DATE(bu.created_ts), COALESCE(bi.category, :null_replacement)
+) b
+    ON bc.rfq_date = b.rfq_date
+   AND bc.category = b.category
+ORDER BY bc.category;
             """
 
-            result = remote_db.execute(text(query), {'target_date': str(target_date)})
+            result = remote_db.execute(text(query), {'target_date': str(target_date),'null_replacement': null_replacement})
             rows = result.fetchall()
 
             remote_db.close()
@@ -1254,6 +1329,8 @@ ORDER BY
                     rfqs_with_quotations = int(row[3]) if row[3] is not None else 0
                     bids_requested = int(row[4]) if row[4] is not None else 0
                     bids_accepted = int(row[5]) if row[5] is not None else 0
+                    bfs_counter_offer_by_buyer=int(row[6]) if row[6] is not None else 0
+                    bfs_counter_offer_accepted_by_seller=int(row[7]) if row[7] is not None else 0
                     total_rfqs_intimated = intimated_dict.get(category_name, 0)
                     
                     existing = db_session.query(CategoryAggregates).filter(
@@ -1267,6 +1344,8 @@ ORDER BY
                         existing.total_rfqs_intimated = total_rfqs_intimated
                         existing.bids_requested = bids_requested
                         existing.bids_accepted = bids_accepted
+                        existing.bfs_counter_offer_by_buyer = bfs_counter_offer_by_buyer
+                        existing.bfs_counter_offer_accepted_by_seller = bfs_counter_offer_accepted_by_seller
                         existing.bfs_products_searched_count = bfs_category_counts.get(category_name, 0)
                         existing.bfs_products_searched_by_unregistered_count = unregistered_bfs_category_counts.get(category_name, 0)
                         updated += 1
@@ -1279,6 +1358,8 @@ ORDER BY
                             total_rfqs_intimated=total_rfqs_intimated,
                             bids_requested=bids_requested,
                             bids_accepted=bids_accepted,
+                            bfs_counter_offer_by_buyer=bfs_counter_offer_by_buyer,
+                            bfs_counter_offer_accepted_by_seller=bfs_counter_offer_accepted_by_seller,
                             bfs_products_searched_count=bfs_category_counts.get(category_name, 0),
                             bfs_products_searched_by_unregistered_count=unregistered_bfs_category_counts.get(category_name, 0)
                         )
@@ -1649,6 +1730,50 @@ ORDER BY
             f"{records_inserted} inserted, {records_updated} updated, {skipped} skipped, {failed} failed"
         )
 
+    def _dump_bfs_search_df_to_db(self, bfs_search_df: pd.DataFrame, db_session, target_date: date) -> None:
+        """Dump BFS search DataFrame to BFSSearchDetails table."""
+        records_inserted = 0
+        failed = 0
+        
+        for _, row in bfs_search_df.iterrows():
+            try:
+                bfs_search = BFSSearchDetails(
+                    date=target_date,
+                    session_id=str(row.get('session_id', '')),
+                    email=str(row.get('email', '')) if pd.notna(row.get('email')) else None,
+                    phone_number=str(row.get('phone_number', '')) if pd.notna(row.get('phone_number')) else None,
+                    searched_keywords=str(row.get('searched_keywords', '')),
+                    searched_result=str(row.get('searched_result', '')) if pd.notna(row.get('searched_result')) else None,
+                    action_taken=str(row.get('action_taken', '')) if pd.notna(row.get('action_taken')) else None
+                )
+                
+                # Check if record exists
+                existing = db_session.query(BFSSearchDetails).filter(
+                    BFSSearchDetails.date == target_date,
+                    BFSSearchDetails.session_id == bfs_search.session_id,
+                    BFSSearchDetails.searched_keywords == bfs_search.searched_keywords
+                ).first()
+                
+                if existing:
+                    # Update existing record
+                    existing.email = bfs_search.email
+                    existing.phone_number = bfs_search.phone_number
+                    existing.searched_result = bfs_search.searched_result
+                    existing.action_taken = bfs_search.action_taken
+                else:
+                    db_session.add(bfs_search)
+                
+                db_session.commit()
+                records_inserted += 1
+                
+            except Exception as row_error:
+                db_session.rollback()
+                failed += 1
+                logger.error(f"[CONVERSATION-ANALYTICS] Failed to process BFS search row: {row_error}")
+                continue
+        
+        logger.info(f"[CONVERSATION-ANALYTICS] BFS search details: {records_inserted} inserted, {failed} failed")
+
     async def analyze_date_range(self, start_date: date, end_date: date) -> Dict[str, Any]:
         """Analyze conversations for a date range."""
         from datetime import timedelta
@@ -1676,8 +1801,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2026, 1, 30).date()
-        end_date = datetime(2026, 1, 31).date()
+        start_date = datetime(2026, 1, 29).date()
+        end_date = datetime(2026, 1, 29).date()
         
         current_date = start_date
         while current_date <= end_date:

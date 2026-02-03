@@ -85,6 +85,7 @@ class EnhancedExcelReportService:
             self._generate_buyer_summary_sheet(writer, target_date)
             self._generate_seller_summary_sheet(writer, target_date)
             self._generate_category_summary_sheet(writer, target_date)
+            self._generate_aggregate_sheet_90d(writer, target_date)
             
             # Format the Excel file
             self._format_excel_sheets(writer)
@@ -496,7 +497,8 @@ class EnhancedExcelReportService:
                         SUM(total_rfqs_intimated) as "RFQs w/ Response",
                         SUM(bfs_products_searched_count) as "BFS Products Searched",
                         SUM(bfs_products_searched_by_unregistered_count) as "BFS Products Searched by Unregistered Users",
-                        SUM(bids_requested) as "BFS Counter Offer By Buyer"
+                        SUM(bfs_counter_offer_by_buyer) as "BFS Counter Offer By Buyer",
+                        SUM(bfs_counter_offer_accepted_by_seller) as "Counter Offers Accepted By Sellers"
                     FROM category_aggregates 
                     WHERE date BETWEEN :start_date AND :target_date
                     GROUP BY category_name
@@ -513,7 +515,48 @@ class EnhancedExcelReportService:
             # Write to Excel
             df.to_excel(writer, sheet_name='Category Summary (Last 30D)', index=False)
             
-            logger.info(f"Category Summary sheet created with {len(df)} rows")
+    def _generate_aggregate_sheet_90d(self, writer: pd.ExcelWriter, target_date: date):
+        """Generate Aggregate Sheet (Last 90D) using buyer_daily_metrics for last 90 days."""
+        logger.info("Generating Aggregate Sheet (Last 90D) from buyer_daily_metrics")
+        
+        # Use last 90 days
+        start_date = target_date - timedelta(days=89)
+        
+        with get_db_session_context() as db:
+            try:
+                query = text("""
+                    SELECT 
+    date,
+    email,
+    phone_number,
+    searched_keywords AS "Products Searched For",
+    searched_result AS "Searched Products Results",
+    CASE action_taken
+        WHEN 'viewed_only' THEN 'Viewed Only'
+        WHEN 'bid_placed' THEN 'Bid Placed'
+        WHEN 'no_stock_available' THEN 'No Stock Available'
+        WHEN 'raise_rfq_clicked' THEN 'Raise RFQ Clicked'
+        ELSE action_taken
+    END AS "Action Taken"
+FROM bfs_search_details 
+WHERE date BETWEEN :start_date AND :target_date
+ORDER BY date DESC, email;
+
+                """)
+                
+                df = pd.read_sql(query, db.bind, params={
+                    'start_date': start_date,
+                    'target_date': target_date
+                })
+                
+            except Exception as e:
+                logger.warning(f"buyer_daily_metrics table not found or error: {e}. Creating empty dataframe.")
+                df = pd.DataFrame(columns=['date', 'email', 'phone_number', 'user_searched_products', 'bfs_products_searched_list', 'have_placed_bids'])
+            
+            # Write to Excel
+            df.to_excel(writer, sheet_name='Aggregate Sheet(Last 90D)', index=False)
+            
+            logger.info(f"Aggregate Sheet (Last 90D) created with {len(df)} rows")
     
     def _get_rolling_window_metrics(self, db, end_date: date, days: int) -> Optional[Dict[str, Any]]:
         """Try to get metrics from rolling_window_metrics table."""
@@ -785,13 +828,14 @@ def main():
         output_file = service.generate_report(target_date, args.output, args.email)
         
         print(f"Enhanced Excel report generated successfully: {output_file}")
-        print(f"Report contains 6 sheets:")
+        print(f"Report contains 7 sheets:")
         print(f"  1. Buyer Details (Last 30D)")
         print(f"  2. Seller Details (Last 30D)")
         print(f"  3. Category Details (Last 30D)")
         print(f"  4. Buyer Summary (1/7/30/90 day metrics)")
         print(f"  5. Seller Summary (1/7/30/90 day metrics)")
         print(f"  6. Category Summary (Last 30D)")
+        print(f"  7. Aggregate Sheet (Last 90D)")
         
     except Exception as e:
         logger.error(f"Failed to generate enhanced Excel report: {e}")
