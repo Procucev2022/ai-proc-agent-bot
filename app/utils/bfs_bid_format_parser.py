@@ -188,13 +188,13 @@ def generate_bid_format(bfs_items: List[Dict]) -> str:
         Formatted string like:
         1. Dell XPS 13 -- Intel i7 -- Age: 2yr -- Loc: Mumbai:
            Seller Price: 85000 | Available Qty: 10
-           a. Your Price: (Enter your price)
-           b. Your Qty: (Enter quantity, max 10)
+           a. Your Price:
+           b. Your Qty:
 
         2. HP Pavilion -- AMD Ryzen -- Age: 1yr -- Loc: Delhi:
            Seller Price: 70000 | Available Qty: 5
-           a. Your Price: (Enter your price)
-           b. Your Qty: (Enter quantity, max 5)
+           a. Your Price:
+           b. Your Qty:
     """
     # Character limits for display
     DESC_LIMIT = 50

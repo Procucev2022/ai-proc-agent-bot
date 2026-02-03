@@ -372,7 +372,6 @@ class BFSSearchHandler:
 
         # Send format message with Cancel button
         message = (
-            "*Place Your Bid*\n\n"
             "To place your bid copy the format below, edit prices & qty in the provided empty fields, remove items you don't want:\n\n"
             f"{bid_format}"
         )
