@@ -372,10 +372,8 @@ class BFSSearchHandler:
 
         # Send format message with Cancel button
         message = (
-            "*Accept/Place Your Bid*\n\n"
-            "Either you can accept the price or you can bid your final price. Your prices will be directly notified to the seller for confirmation. After confirmation, you will be notified with a confirmation E-mail. Let me know if you'd like to proceed with the below price or place your bid.\n\n"
-            "*Place Bid*\n\n"
-            "Copy the format below, confirm the Prices, Qty and remove items you don't want to bid on:\n\n"
+            "*Place Your Bid*\n\n"
+            "To place your bid copy the format below, edit prices & qty in the provided empty fields, remove items you don't want:\n\n"
             f"{bid_format}"
         )
 

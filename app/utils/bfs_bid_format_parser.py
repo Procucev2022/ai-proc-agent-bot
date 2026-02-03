@@ -220,8 +220,8 @@ def generate_bid_format(bfs_items: List[Dict]) -> str:
         block = (
             f"{idx}. {key} -- Age: {age} -- Loc: {loc}:\n"
             f"   Seller Price: {price} | Available Qty: {qty}\n"
-            f"   a. Your Price: (Enter your price)\n"
-            f"   b. Your Qty: (Enter quantity, max {qty})"
+            f"   a. Your Price:\n"
+            f"   b. Your Qty:"
         )
         blocks.append(block)
     return "\n\n".join(blocks)
