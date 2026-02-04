@@ -27,6 +27,7 @@ import sys
 import logging
 import base64
 import asyncio
+import re
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Any, Optional
 import pandas as pd
@@ -55,6 +56,20 @@ class EnhancedExcelReportService:
     
     def __init__(self):
         self.settings = get_settings()
+    
+    def sanitize_for_excel(self, text):
+        """
+        Removes non-printable ASCII control characters that cause Excel errors.
+        
+        This regex targets characters in the ranges:
+        \x00-\x1F (ASCII 0 to 31, except standard tabs/line breaks if needed)
+        \x7F-\x9F (Delete and extended control codes)
+        """
+        if text is None:
+            return ''
+        # Replacing invalid characters with an empty string ('') effectively removes them
+        cleaned_text = re.sub(r'[\x00-\x1F\x7F-\x9F]', '', str(text))
+        return cleaned_text
         
     def generate_report(self, target_date: date = None, output_file: str = None, send_email: bool = False) -> str:
         """
@@ -548,6 +563,11 @@ ORDER BY date DESC, email;
                     'start_date': start_date,
                     'target_date': target_date
                 })
+                
+                # Clean all string columns using sanitize_for_excel
+                for col in df.columns:
+                    if df[col].dtype == 'object':  # String columns
+                        df[col] = df[col].apply(self.sanitize_for_excel)
                 
             except Exception as e:
                 logger.warning(f"buyer_daily_metrics table not found or error: {e}. Creating empty dataframe.")
