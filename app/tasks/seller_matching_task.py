@@ -25,6 +25,7 @@ from app.database import execute_remote_query, get_remote_db_session
 from app.services.seller_recommendation_service import SellerRecommendationService
 from app.services.seller_notification_service import SellerNotificationService
 from app.config import get_settings
+from app.tasks.task_utils import get_users_active_in_last_24hrs, normalize_phone_for_comparison
 
 logger = logging.getLogger(__name__)
 
@@ -471,6 +472,28 @@ async def process_single_rfq_matching(
         )
 
         if all_selected:
+            # Check which sellers were active in the last 24 hours (for message type selection)
+            seller_phones = [s.get('phone_number') for s in all_selected if s.get('phone_number')]
+            active_seller_phones = get_users_active_in_last_24hrs(seller_phones)
+
+            # Add use_template_message flag to each seller
+            interactive_count = 0
+            template_count = 0
+            for seller in all_selected:
+                phone = seller.get('phone_number', '')
+                normalized_phone = normalize_phone_for_comparison(phone)
+                user_recently_active = normalized_phone in active_seller_phones
+                seller['use_template_message'] = not user_recently_active  # Use template if NOT active
+                if user_recently_active:
+                    interactive_count += 1
+                else:
+                    template_count += 1
+
+            logger.info(
+                f"RFQ {rfq_id} message type split: {interactive_count} interactive (active users), "
+                f"{template_count} template (inactive users)"
+            )
+
             # Log detailed seller information
             _log_selected_sellers_details(rfq_id, all_selected, categories)
 
@@ -483,6 +506,8 @@ async def process_single_rfq_matching(
                 logger.info(f"Seller selection completed for RFQ {rfq_id} but logging skipped")
 
             # Send WhatsApp notifications to sellers
+            # TODO: The notification service should check 'use_template_message' flag on each seller
+            # and send WhatsApp template message for inactive users instead of interactive message
             notification_service = SellerNotificationService()
             notification_results = await notification_service.send_rfq_notifications(
                 rfq_data=rfq_data,
@@ -501,6 +526,8 @@ async def process_single_rfq_matching(
                 "unsubscribed_selected": len(selected_unsubscribed),
                 "sellers_excluded": excluded_count,
                 "categories_used": categories,
+                "interactive_messages": interactive_count,
+                "template_messages": template_count,
                 "notifications_sent": notification_results.get("sent", 0),
                 "notifications_failed": notification_results.get("failed", 0),
                 "seller_ids_notified": [s.get('seller_id') for s in all_selected],  # For batch exclusion

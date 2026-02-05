@@ -68,7 +68,16 @@ class Settings:
         self.WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "test_verify_token")
         self.WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY", "test_api_key")
         self.WHATSAPP_MOCK_MODE = os.getenv("WHATSAPP_MOCK_MODE", "true").lower() == "true"
-            
+
+        # WhatsApp Template Names for re-engagement (24hr+ inactive users)
+        # These templates must be pre-approved in WhatsApp Business Manager
+        self.WHATSAPP_TEMPLATE_RFQ_NOTIFICATION = os.getenv(
+            "WHATSAPP_TEMPLATE_RFQ_NOTIFICATION"
+        )
+        self.WHATSAPP_TEMPLATE_BFS_BID_NOTIFICATION = os.getenv(
+            "WHATSAPP_TEMPLATE_BFS_BID_NOTIFICATION"
+        )
+
         # Legacy fields for backward compatibility
         self.whatsapp_access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
         self.whatsapp_verify_token = self.WHATSAPP_VERIFY_TOKEN

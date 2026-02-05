@@ -100,6 +100,10 @@ class SellerNotificationService:
         self.whatsapp_service = WhatsAppService()
         self.settings = get_settings()
 
+        # Template names for 24hr+ inactive users
+        self.rfq_template_name = self.settings.WHATSAPP_TEMPLATE_RFQ_NOTIFICATION
+        self.bfs_template_name = self.settings.WHATSAPP_TEMPLATE_BFS_BID_NOTIFICATION
+
     def format_rfq_message(self, rfq_data: Dict[str, Any]) -> str:
         """
         Format RFQ data into a WhatsApp message for sellers.
@@ -210,6 +214,143 @@ class SellerNotificationService:
                     "title": "I'm Interested"
                 }
             ]
+
+    def _build_rfq_template_parameters(self, rfq_data: Dict[str, Any], seller: Dict[str, Any]) -> List[str]:
+        """
+        Build template parameters for RFQ notification template.
+
+        Template structure (sellers_for_rfq_yes_or_no):
+            Hi {{1}}
+            An RFQ is available on the Procucev portal (QUA AI).
+            *RFQ ID:* {{2}}
+            *Delivery Date:* {{3}}
+            *Delivery Location:* {{4}}
+            *Description:* {{5}}
+
+        Args:
+            rfq_data: RFQ information dictionary
+            seller: Seller information dictionary
+
+        Returns:
+            List of parameter values in order:
+                [name, rfq_id, delivery_date, delivery_location, description]
+        """
+        # {{1}} - Seller name
+        seller_name = seller.get('seller_name', 'Seller')
+
+        # {{2}} - RFQ ID
+        rfq_id = str(rfq_data.get('rfq_id', 'N/A'))
+
+        # {{3}} - Delivery Date (formatted)
+        delivery_date = rfq_data.get('delivery_date')
+        formatted_date = self._format_date(delivery_date) if delivery_date else 'N/A'
+
+        # {{4}} - Delivery Location (city, state)
+        delivery_location = rfq_data.get('delivery_location', {})
+        city = delivery_location.get('city', '')
+        state = delivery_location.get('state', '')
+        location_str = ", ".join(filter(None, [city, state])) or 'N/A'
+
+        # {{5}} - Description
+        description = rfq_data.get('description', '').strip() or 'N/A'
+
+        return [seller_name, rfq_id, formatted_date, location_str, description]
+
+    def _build_bfs_template_parameters(self, bid_data: Dict[str, Any], seller_id: str) -> List[str]:
+        """
+        Build template parameters for BFS bid notification template.
+
+        Template structure (bfs_bid_notification_for_sellers):
+            Hello {{1}},
+            Here is a New Bid from the buyer for the stocks listed by you.
+            Item: {{2}}
+            Your Listed Price: ₹{{3}}
+            Buyer's Offer: ₹{{4}}
+            Quantity: {{5}}
+            Please review and respond to this bid by clicking on the buttons below.
+
+        Args:
+            bid_data: Bid information dictionary
+            seller_id: Seller's organization UUID
+
+        Returns:
+            List of parameter values in order:
+                [seller_name, item_description, listed_price, offer_price, quantity]
+        """
+        # {{1}} - Seller name (recipient of the message)
+        seller_name = bid_data.get('seller_name', 'Seller')
+
+        # {{2}} - Item description
+        item_description = bid_data.get('item_description', 'N/A')
+
+        # {{3}} - Listed price (seller's price)
+        buy_price = bid_data.get('buy_price', 0)
+        listed_price = f"{buy_price:,.0f}" if buy_price else "N/A"
+
+        # {{4}} - Buyer's offer (ask price)
+        ask_price = bid_data.get('ask_price', 0)
+        offer_price = f"{ask_price:,.0f}" if ask_price else "N/A"
+
+        # {{5}} - Quantity
+        quantity = str(bid_data.get('quantity', 1))
+
+        return [seller_name, item_description, listed_price, offer_price, quantity]
+
+    async def _send_rfq_template_notification(
+        self,
+        phone_number: str,
+        rfq_data: Dict[str, Any],
+        seller: Dict[str, Any]
+    ) -> MessageResponse:
+        """
+        Send RFQ notification using WhatsApp template message.
+
+        Used for sellers who haven't been active in the last 24 hours,
+        requiring a template message to re-initiate conversation.
+
+        Args:
+            phone_number: Seller's phone number
+            rfq_data: RFQ information dictionary
+            seller: Seller information dictionary
+
+        Returns:
+            MessageResponse with success status
+        """
+        parameters = self._build_rfq_template_parameters(rfq_data, seller)
+
+        return await self.whatsapp_service.send_template_message(
+            recipient_id=phone_number,
+            template_name=self.rfq_template_name,
+            parameters=parameters
+        )
+
+    async def _send_bfs_template_notification(
+        self,
+        phone_number: str,
+        bid_data: Dict[str, Any],
+        seller_id: str
+    ) -> MessageResponse:
+        """
+        Send BFS bid notification using WhatsApp template message.
+
+        Used for sellers who haven't been active in the last 24 hours,
+        requiring a template message to re-initiate conversation.
+
+        Args:
+            phone_number: Seller's phone number
+            bid_data: Bid information dictionary
+            seller_id: Seller's organization UUID
+
+        Returns:
+            MessageResponse with success status
+        """
+        parameters = self._build_bfs_template_parameters(bid_data, seller_id)
+
+        return await self.whatsapp_service.send_template_message(
+            recipient_id=phone_number,
+            template_name=self.bfs_template_name,
+            parameters=parameters
+        )
 
     def get_intermediate_rfq_buttons(self, rfq_id: str, seller_id: str) -> List[Dict[str, str]]:
         """
@@ -406,22 +547,32 @@ class SellerNotificationService:
                     continue
 
             try:
-                # Generate buttons per-seller with seller_id for authentication flow
-                buttons = self._get_rfq_buttons(str(rfq_id), str(seller_id))
+                # Check if we should use template message (user inactive 24hr+)
+                use_template = seller.get('use_template_message', False)
+                message_type = "template" if use_template else "interactive"
 
-                # Send message with interactive buttons
-                response: MessageResponse = await self.whatsapp_service.send_configurable_buttons(
-                    recipient_id=phone_number,
-                    body=message_body,
-                    buttons_config=buttons,
-                    header="New RFQ Opportunity",
-                    footer="Select an option to proceed"
-                )
+                if use_template:
+                    # Send template message for inactive users (24hr+ since last activity)
+                    response: MessageResponse = await self._send_rfq_template_notification(
+                        phone_number=phone_number,
+                        rfq_data=rfq_data,
+                        seller=seller
+                    )
+                else:
+                    # Send interactive message for active users (within 24hr window)
+                    buttons = self._get_rfq_buttons(str(rfq_id), str(seller_id))
+                    response: MessageResponse = await self.whatsapp_service.send_configurable_buttons(
+                        recipient_id=phone_number,
+                        body=message_body,
+                        buttons_config=buttons,
+                        header="New RFQ Opportunity",
+                        footer="Select an option to proceed"
+                    )
 
                 if response.success:
                     notification_logger.info(
                         f"RFQ SENT | RFQ: {rfq_id} | Seller: {seller_name} | "
-                        f"Phone: {phone_number} | Message ID: {response.message_id}"
+                        f"Phone: {phone_number} | Type: {message_type} | Message ID: {response.message_id}"
                     )
                     sent_count += 1
                     results.append({
@@ -429,12 +580,13 @@ class SellerNotificationService:
                         "seller_name": seller_name,
                         "phone_number": phone_number,
                         "success": True,
-                        "message_id": response.message_id
+                        "message_id": response.message_id,
+                        "message_type": message_type
                     })
                 else:
                     notification_logger.error(
                         f"RFQ FAILED | RFQ: {rfq_id} | Seller: {seller_name} | "
-                        f"Phone: {phone_number} | Error: {response.error}"
+                        f"Phone: {phone_number} | Type: {message_type} | Error: {response.error}"
                     )
                     failed_count += 1
                     results.append({
@@ -442,7 +594,8 @@ class SellerNotificationService:
                         "seller_name": seller_name,
                         "phone_number": phone_number,
                         "success": False,
-                        "error": response.error
+                        "error": response.error,
+                        "message_type": message_type
                     })
 
             except Exception as e:
@@ -538,7 +691,8 @@ class SellerNotificationService:
         bid_data: Dict[str, Any],
         bfs_user_uuid: str,
         seller_id: str,
-        skip_workflow_check: bool = False
+        skip_workflow_check: bool = False,
+        use_template_message: bool = False
     ) -> Dict[str, Any]:
         """
         Send a BFS bid notification to a seller.
@@ -549,6 +703,7 @@ class SellerNotificationService:
             bfs_user_uuid: The bfs_users UUID for button callbacks
             seller_id: The seller's organization UUID for account verification
             skip_workflow_check: If True, skip workflow checking
+            use_template_message: If True, send template message instead of interactive
 
         Returns:
             Dictionary with success status and notification details
@@ -588,43 +743,53 @@ class SellerNotificationService:
                 }
 
         try:
-            # Format the message
-            message_body = self.format_bfs_bid_message(bid_data)
-            buttons = self._get_bfs_buttons(bfs_user_uuid, seller_id)
-
             item_desc = bid_data.get('item_description', 'N/A')
             ask_price = bid_data.get('ask_price', 0)
+            message_type = "template" if use_template_message else "interactive"
 
-            # Send message with interactive buttons
-            response: MessageResponse = await self.whatsapp_service.send_configurable_buttons(
-                recipient_id=seller_phone,
-                body=message_body,
-                buttons_config=buttons,
-                header="New Bid Received",
-                footer="Tap to respond"
-            )
+            if use_template_message:
+                # Send template message for inactive users (24hr+ since last activity)
+                response: MessageResponse = await self._send_bfs_template_notification(
+                    phone_number=seller_phone,
+                    bid_data=bid_data,
+                    seller_id=seller_id
+                )
+            else:
+                # Send interactive message for active users (within 24hr window)
+                message_body = self.format_bfs_bid_message(bid_data)
+                buttons = self._get_bfs_buttons(bfs_user_uuid, seller_id)
+
+                response: MessageResponse = await self.whatsapp_service.send_configurable_buttons(
+                    recipient_id=seller_phone,
+                    body=message_body,
+                    buttons_config=buttons,
+                    header="New Bid Received",
+                    footer="Tap to respond"
+                )
 
             if response.success:
                 notification_logger.info(
                     f"BFS SENT | Item: {item_desc} | Bid: ₹{ask_price:,.0f} | "
-                    f"Phone: {seller_phone} | Message ID: {response.message_id}"
+                    f"Phone: {seller_phone} | Type: {message_type} | Message ID: {response.message_id}"
                 )
                 return {
                     "success": True,
                     "seller_phone": seller_phone,
                     "bfs_user_uuid": bfs_user_uuid,
-                    "message_id": response.message_id
+                    "message_id": response.message_id,
+                    "message_type": message_type
                 }
             else:
                 notification_logger.error(
                     f"BFS FAILED | Item: {item_desc} | Phone: {seller_phone} | "
-                    f"Error: {response.error}"
+                    f"Type: {message_type} | Error: {response.error}"
                 )
                 return {
                     "success": False,
                     "seller_phone": seller_phone,
                     "bfs_user_uuid": bfs_user_uuid,
-                    "error": response.error
+                    "error": response.error,
+                    "message_type": message_type
                 }
 
         except Exception as e:
@@ -652,6 +817,7 @@ class SellerNotificationService:
                 - bid_data: Bid information (item_description, ask_price, etc.)
                 - bfs_user_uuid: Record UUID for button callbacks
                 - seller_id: Seller's organization UUID for account verification
+                - use_template_message: If True, send template instead of interactive
             skip_workflow_check: If True, skip workflow checking for all
 
         Returns:
@@ -681,7 +847,8 @@ class SellerNotificationService:
                 bid_data=notification['bid_data'],
                 bfs_user_uuid=notification['bfs_user_uuid'],
                 seller_id=notification['seller_id'],
-                skip_workflow_check=skip_workflow_check
+                skip_workflow_check=skip_workflow_check,
+                use_template_message=notification.get('use_template_message', False)
             )
 
             results.append(result)
