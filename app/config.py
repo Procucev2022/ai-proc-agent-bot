@@ -78,6 +78,9 @@ class Settings:
             "WHATSAPP_TEMPLATE_BFS_BID_NOTIFICATION"
         )
 
+        # Procucev Portal URL (used in template messages)
+        self.PROCUCEV_PORTAL_URL = os.getenv("PROCUCEV_PORTAL_URL")
+
         # Legacy fields for backward compatibility
         self.whatsapp_access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
         self.whatsapp_verify_token = self.WHATSAPP_VERIFY_TOKEN

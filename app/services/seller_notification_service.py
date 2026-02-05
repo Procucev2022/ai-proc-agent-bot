@@ -220,12 +220,13 @@ class SellerNotificationService:
         Build template parameters for RFQ notification template.
 
         Template structure (sellers_for_rfq_yes_or_no):
-            Hi {{1}}
-            An RFQ is available on the Procucev portal (QUA AI).
-            *RFQ ID:* {{2}}
-            *Delivery Date:* {{3}}
-            *Delivery Location:* {{4}}
-            *Description:* {{5}}
+            An RFQ is available on Procucev Portal (QUA AI).
+            *RFQ ID:* {{1}}
+            *Delivery Date:* {{2}}
+            *Delivery Location:* {{3}}
+            *Description:* {{4}}
+            Click on the provided Procucev Portal {{5}} link to view or submit your quote.
+            (T&C Apply)
 
         Args:
             rfq_data: RFQ information dictionary
@@ -233,28 +234,28 @@ class SellerNotificationService:
 
         Returns:
             List of parameter values in order:
-                [name, rfq_id, delivery_date, delivery_location, description]
+                [rfq_id, delivery_date, delivery_location, description, portal_link]
         """
-        # {{1}} - Seller name
-        seller_name = seller.get('seller_name', 'Seller')
-
-        # {{2}} - RFQ ID
+        # {{1}} - RFQ ID
         rfq_id = str(rfq_data.get('rfq_id', 'N/A'))
 
-        # {{3}} - Delivery Date (formatted)
+        # {{2}} - Delivery Date (formatted)
         delivery_date = rfq_data.get('delivery_date')
         formatted_date = self._format_date(delivery_date) if delivery_date else 'N/A'
 
-        # {{4}} - Delivery Location (city, state)
+        # {{3}} - Delivery Location (city, state)
         delivery_location = rfq_data.get('delivery_location', {})
         city = delivery_location.get('city', '')
         state = delivery_location.get('state', '')
         location_str = ", ".join(filter(None, [city, state])) or 'N/A'
 
-        # {{5}} - Description
+        # {{4}} - Description
         description = rfq_data.get('description', '').strip() or 'N/A'
 
-        return [seller_name, rfq_id, formatted_date, location_str, description]
+        # {{5}} - Portal link
+        portal_link = self.settings.PROCUCEV_PORTAL_URL or 'N/A'
+
+        return [rfq_id, formatted_date, location_str, description, portal_link]
 
     def _build_bfs_template_parameters(self, bid_data: Dict[str, Any], seller_id: str) -> List[str]:
         """
@@ -263,11 +264,11 @@ class SellerNotificationService:
         Template structure (bfs_bid_notification_for_sellers):
             Hello {{1}},
             Here is a New Bid from the buyer for the stocks listed by you.
-            Item: {{2}}
-            Your Listed Price: ₹{{3}}
-            Buyer's Offer: ₹{{4}}
-            Quantity: {{5}}
-            Please review and respond to this bid by clicking on the buttons below.
+            *Item:* {{2}}
+            *Your Listed Price:* {{3}}
+            *Buyer's Offer:* {{4}}
+            *Quantity:* {{5}}
+            Click on the provided Procucev Portal {{6}} link to accept or reject the bid.
 
         Args:
             bid_data: Bid information dictionary
@@ -275,7 +276,7 @@ class SellerNotificationService:
 
         Returns:
             List of parameter values in order:
-                [seller_name, item_description, listed_price, offer_price, quantity]
+                [seller_name, item_description, listed_price, offer_price, quantity, portal_link]
         """
         # {{1}} - Seller name (recipient of the message)
         seller_name = bid_data.get('seller_name', 'Seller')
@@ -294,7 +295,10 @@ class SellerNotificationService:
         # {{5}} - Quantity
         quantity = str(bid_data.get('quantity', 1))
 
-        return [seller_name, item_description, listed_price, offer_price, quantity]
+        # {{6}} - Portal link
+        portal_link = self.settings.PROCUCEV_PORTAL_URL or 'N/A'
+
+        return [seller_name, item_description, listed_price, offer_price, quantity, portal_link]
 
     async def _send_rfq_template_notification(
         self,
