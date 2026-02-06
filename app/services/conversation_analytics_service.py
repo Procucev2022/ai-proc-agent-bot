@@ -5,6 +5,8 @@ Conversation Analytics Service - With Batch Processing and DataFrame Creation
 import logging
 import json
 import pandas as pd
+import time
+import asyncio
 from typing import Dict, Any, List, Tuple
 from datetime import datetime, date, timezone
 from sqlalchemy import func
@@ -110,7 +112,6 @@ class ConversationAnalyticsService:
                         'number_of_seller_chats': seller_metrics.get('number_of_seller_chats', 0),
                         'successful_registration': registration_metrics.get('seller_successful_registration', 0),
                         'failed_registration': registration_metrics.get('seller_failed_registration', 0),
-                        'bids_accepted_ai': seller_metrics.get('bids_accepted_ai', 0),
                         'confidence_score': confidence_score,
                         'analysis_reasoning': analysis_reasoning
                     }
@@ -154,7 +155,7 @@ class ConversationAnalyticsService:
             seller_cols = [
                 'date', 'session_id', 'phone_number', 'user_type', 'seller_email','requested_rfq_ai','rfq_response_ai',
                 'subscription_plans_requested', 'zero_credit_rfq_attempt',
-                'number_of_seller_chats', 'successful_registration', 'failed_registration','bids_accepted_ai',
+                'number_of_seller_chats', 'successful_registration', 'failed_registration',
                 'confidence_score','analysis_reasoning'
             ]
             seller_df = seller_df[seller_cols]
@@ -267,8 +268,6 @@ class ConversationAnalyticsService:
                     batch_num,
                     target_date
                 )
-                print("ai",ai_response)
-                logger.info(f"ai response:{ai_response}")
 
                 if ai_response and 'sessions' in ai_response:
                     # AI returns flat format with all sessions in this batch
@@ -289,6 +288,11 @@ class ConversationAnalyticsService:
                     f"[CONVERSATION-ANALYTICS] Failed to process batch {batch_num}: {e}"
                 )
                 continue
+            
+            # Sleep between batches to avoid rate limiting
+            if batch_num < total_batches:
+                logger.info(f"[CONVERSATION-ANALYTICS] Sleeping 2 seconds before next batch")
+                await asyncio.sleep(2)
 
         result = {
             "date": str(target_date),
@@ -405,6 +409,13 @@ class ConversationAnalyticsService:
             return None
 
         except Exception as e:
+            # Check if it's a rate limit error
+            if "too many requests" in str(e).lower() or "rate limit" in str(e).lower():
+                logger.warning(
+                    f"[CONVERSATION-ANALYTICS] Rate limit hit for batch {batch_num}, processing sessions individually"
+                )
+                return await self._process_sessions_individually(batch_data, batch_num, target_date)
+            
             logger.error(
                 f"[CONVERSATION-ANALYTICS] AI analysis failed for batch {batch_num}: {e}"
             )
@@ -464,6 +475,37 @@ CRITICAL: You must analyze and return data for ALL {len(batch_data)} sessions.
 Session IDs to process: {', '.join(session_ids)}
 """
         return prompt
+    
+    async def _process_sessions_individually(self, batch_data: List[Dict[str, Any]], batch_num: int, target_date: date) -> Dict[str, Any]:
+        """
+        Process sessions individually when rate limit is hit.
+        """
+        individual_sessions = []
+        
+        for i, session_data in enumerate(batch_data):
+            try:
+                logger.info(f"[CONVERSATION-ANALYTICS] Processing individual session {i+1}/{len(batch_data)} from batch {batch_num}")
+                
+                # Reuse existing function with single session
+                single_session_response = await self._analyze_batch_with_ai(
+                    [session_data], f"{batch_num}-{i+1}", target_date
+                )
+                
+                if single_session_response and 'sessions' in single_session_response:
+                    individual_sessions.extend(single_session_response.get('sessions', []))
+                
+                # Small delay between individual calls
+                await asyncio.sleep(1)
+                
+            except Exception as session_error:
+                logger.error(f"[CONVERSATION-ANALYTICS] Failed to process individual session {session_data.get('session_id', 'unknown')}: {session_error}")
+                continue
+        
+        return {
+            'sessions': individual_sessions,
+            'total_sessions': len(individual_sessions)
+        }
+
 
     def _extract_chat_sequence(self, conversation_data):
         """Extract user and assistant messages in a simple format."""
@@ -584,6 +626,7 @@ Session IDs to process: {', '.join(session_ids)}
                 # Query remote database after creating DataFrames
                 remote_rfq_df = self._query_remote_users(target_date)
                 remote_seller_rfq_df = self._query_remote_seller_rfqs(target_date)
+                remote_bids_df = self._query_remote_counter_seller_bids(target_date)
                 
                 # Get RFQ IDs from seller interest events for filtering
                 rfq_ids_filter = seller_rfq_interest_event_df['rfq_id'].unique().tolist() if not seller_rfq_interest_event_df.empty else []
@@ -662,15 +705,39 @@ Session IDs to process: {', '.join(session_ids)}
 
                     # Coalesce date columns - use rfq_date when date is empty
                     joined_seller_df['date'] = joined_seller_df['date'].fillna(joined_seller_df['rfq_date'])
+                    # Ensure remote_bids_df is usable
+                    if not remote_bids_df.empty and not joined_seller_df.empty:
+                        remote_bids_df['phone_clean'] = (
+                            remote_bids_df['phone_number']
+                            .astype(str)
+                            .str.replace('+', '', regex=False)
+                        )
+
+                        joined_seller_df = joined_seller_df.merge(
+                            remote_bids_df,
+                            left_on=['date', 'phone_clean', 'username'],
+                            right_on=['date', 'phone_clean', 'username'],
+                            how='outer'
+                        )
+
+
+
+
+
+
 
                     # Keep only relevant columns
                     seller_relevant_cols = [
                         'date', 'phone_number','phone_clean', 'seller_email','session_id', 'confidence_score',
                         'requested_rfq_ai', 'rfq_response_ai','subscription_plans_requested', 'zero_credit_rfq_attempt',
-                        'number_of_seller_chats', 'successful_registration', 'failed_registration','bids_accepted_ai',
+                        'number_of_seller_chats', 'successful_registration', 'failed_registration','bids_accepted','counter_offer_accepted',
                         'username', 'org_uuid', 'user_uuid', 'total_rfq_responsed', 'analysis_reasoning'
                     ]
                     joined_seller_df = joined_seller_df[[col for col in seller_relevant_cols if col in joined_seller_df.columns]]
+
+
+
+                    joined_seller_df.to_csv('5.csv')
 
                     # Dump joined seller DataFrame to database
                     self._dump_joined_seller_df_to_db(joined_seller_df, db)
@@ -996,6 +1063,48 @@ ORDER BY
         except Exception as e:
             logger.error(f"[CONVERSATION-ANALYTICS] Remote seller RFQ query failed: {e}")
             return pd.DataFrame()
+
+    def _query_remote_counter_seller_bids(self, target_date: date):
+        """Query remote database for seller RFQ data with quotations."""
+        try:
+            remote_db = get_remote_db_session()
+            query = """
+            SELECT 
+    DATE(bu.created_ts) AS date,bu.status_uuid,u.username,u.phone as phone_number,
+    SUM(
+        CASE 
+            WHEN bu.status_uuid = 118 THEN 1
+            ELSE 0
+        END
+    ) AS bids_accepted,
+    SUM(CASE 
+        WHEN bu.status_uuid = 118
+         AND (
+              bu.ask_price <> bu.buy_price
+              OR bi.available_quantity <> bu.quantity
+         )
+        THEN 1
+        ELSE 0
+    END ) AS counter_offer_accepted
+FROM development_gmtbfs.bfs_users bu
+JOIN development_gmtbfs.bfs_items bi
+    ON bi.uuid = bu.items_uuid
+LEFT join user u on u.org_uuid= bi.org_uuid and u.self_client=0 and u.is_active=1
+WHERE DATE(bu.created_ts)= :target_date
+  AND bu.status_uuid = 118
+  GROUP BY bi.org_uuid;
+
+
+            """
+            result = remote_db.execute(text(query), {'target_date': str(target_date)})
+            seller_counter_bid_data = [dict(row._mapping) for row in result]
+            remote_db.close()
+            seller_counter_bid_df = pd.DataFrame(seller_counter_bid_data)
+            logger.info(f"[CONVERSATION-ANALYTICS] Retrieved {len(seller_counter_bid_df)} seller RFQ records from remote database")
+            return seller_counter_bid_df
+        except Exception as e:
+            logger.error(f"[CONVERSATION-ANALYTICS] Remote seller RFQ query failed: {e}")
+            return pd.DataFrame()
     
     def _query_remote_rfq_categories(self, target_date: date, rfq_ids_filter: list = None):
         """Query remote database for RFQ categories data."""
@@ -1072,10 +1181,12 @@ ORDER BY
                     org_id=str(row.get('org_uuid', '')) if pd.notna(row.get('org_uuid')) else None,
                     uuid=str(row.get('user_uuid', '')) if pd.notna(row.get('user_uuid')) else None,
                     total_rfqs_requested=int(row.get('total_rfq_responsed', 0)) if pd.notna(row.get('total_rfq_responsed')) else 0,
-                    bids_accepted_ai=int(row.get('bids_accepted_ai', 0)) if pd.notna(row.get('bids_accepted_ai')) else 0
+                    bids_accepted=int(row.get('bids_accepted', 0)) if pd.notna(row.get('bids_accepted')) else 0,
+                    counter_offer_accepted=int(row.get('counter_offer_accepted', 0)) if pd.notna(row.get('counter_offer_accepted')) else 0
+
                 )
                 
-                # Upsert logic - update if exists, insert if not bids_accepted_ai
+                # Upsert logic - update if exists, insert if not bids_accepted
                 existing = db_session.query(SellerDailyMetrics).filter(
                     SellerDailyMetrics.date == seller_metric.date,
                     SellerDailyMetrics.email == seller_metric.email,
@@ -1096,7 +1207,8 @@ ORDER BY
                     existing.org_id = seller_metric.org_id
                     existing.uuid = seller_metric.uuid
                     existing.total_rfqs_requested = seller_metric.total_rfqs_requested
-                    existing.bids_accepted_ai = seller_metric.bids_accepted_ai
+                    existing.bids_accepted = seller_metric.bids_accepted
+                    existing.counter_offer_accepted = seller_metric.counter_offer_accepted
                 else:
                     db_session.add(seller_metric)
                 
@@ -1180,8 +1292,7 @@ ORDER BY
         """Calculate RFQs with at least one response from rfq_notification_fact table."""
         try:
             count = db_session.query(RFQNotificationFact.rfq_id).filter(
-                RFQNotificationFact.date == target_date,
-                RFQNotificationFact.seller_response_at.isnot(None)
+                RFQNotificationFact.date == target_date
             ).distinct().count()
             return count
         except Exception as e:
@@ -1192,8 +1303,7 @@ ORDER BY
         """Calculate total RFQ responses from rfq_notification_fact table."""
         try:
             count = db_session.query(RFQNotificationFact).filter(
-                RFQNotificationFact.date == target_date,
-                RFQNotificationFact.seller_response_at.isnot(None)
+                RFQNotificationFact.date == target_date
             ).count()
             return count
         except Exception as e:
@@ -1801,8 +1911,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2026, 1, 29).date()
-        end_date = datetime(2026, 1, 29).date()
+        start_date = datetime(2026, 2, 1).date()
+        end_date = datetime(2026, 2, 4).date()
         
         current_date = start_date
         while current_date <= end_date:

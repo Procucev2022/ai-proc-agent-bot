@@ -197,7 +197,8 @@ class EnhancedExcelReportService:
                         number_of_chats as "Chats Initiated",
                         total_rfqs_requested as "Requested RFQs",
                         rfq_response_ai as "RFQs Responded",
-                        bids_accepted_ai as "Bids Accepted"
+                        bids_accepted as "Bids Accepted",
+                        counter_offer_accepted as "Counter Offers Accepted"
                     FROM seller_daily_metrics 
                     WHERE date BETWEEN :start_date AND :target_date
                     ORDER BY date DESC, email
