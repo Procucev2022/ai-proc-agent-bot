@@ -895,7 +895,8 @@ class SellerDailyMetrics(Base):
     org_id = Column(String(255), nullable=True)
     uuid = Column(String(255), nullable=True)
     total_rfqs_requested = Column(Integer, default=0)  # From joined query
-    bids_accepted_ai = Column(Integer, default=0)
+    bids_accepted = Column(Integer, default=0)
+    counter_offer_accepted = Column(Integer, default=0)
     created_at = Column(TIMESTAMP, default=func.current_timestamp())
     
     __table_args__ = (
