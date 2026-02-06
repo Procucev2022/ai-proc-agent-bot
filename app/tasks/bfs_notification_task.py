@@ -15,7 +15,7 @@ The seller can then:
 
 import asyncio
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Set
 from datetime import datetime
 
 from celery import shared_task
@@ -24,6 +24,7 @@ from sqlalchemy import text
 from app.database import get_remote_db_session
 from app.services.seller_notification_service import get_seller_notification_service
 from app.config import get_settings
+from app.tasks.task_utils import get_users_active_in_last_24hrs, normalize_phone_for_comparison
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +206,16 @@ async def process_bfs_notifications() -> Dict[str, Any]:
 
     logger.info(f"[BFS_TASK] Processing {len(pending)} pending notifications")
 
+    # Collect all seller phones first to batch check activity
+    all_seller_phones = [
+        record.get('seller_phone') for record in pending
+        if record.get('seller_phone')
+    ]
+
+    # Check which sellers were active in the last 24 hours
+    active_users = get_users_active_in_last_24hrs(all_seller_phones)
+    logger.info(f"[BFS_TASK] {len(active_users)} of {len(all_seller_phones)} sellers active in last 24hrs")
+
     # Build notification payloads
     notifications = []
     for record in pending:
@@ -220,20 +231,26 @@ async def process_bfs_notifications() -> Dict[str, Any]:
         if not seller_phone.startswith('+'):
             seller_phone = f"+{seller_phone}"
 
+        # Check if user was active in last 24hrs (determines message type)
+        normalized_phone = normalize_phone_for_comparison(seller_phone)
+        user_recently_active = normalized_phone in active_users
+
         bid_data = {
             'item_description': record.get('item_description', 'N/A'),
             'category': record.get('item_category', ''),
             'buy_price': record.get('buy_price') or record.get('listed_price') or 0,
             'ask_price': record.get('ask_price', 0),
             'quantity': record.get('quantity', 1),
-            'buyer_name': record.get('buyer_name', '')
+            'buyer_name': record.get('buyer_name', ''),
+            'seller_name': record.get('seller_name', 'Seller')
         }
 
         notifications.append({
             'seller_phone': seller_phone,
             'bid_data': bid_data,
             'bfs_user_uuid': record.get('bfs_user_uuid'),
-            'seller_id': record.get('seller_org_uuid')
+            'seller_id': record.get('seller_org_uuid'),
+            'use_template_message': not user_recently_active  # Use template if NOT active in last 24hrs
         })
 
     if not notifications:
@@ -244,7 +261,17 @@ async def process_bfs_notifications() -> Dict[str, Any]:
             "message": "No valid seller phone numbers"
         }
 
+    # Log template vs interactive message split
+    template_count = sum(1 for n in notifications if n.get('use_template_message'))
+    interactive_count = len(notifications) - template_count
+    logger.info(
+        f"[BFS_TASK] Message type split: {interactive_count} interactive (active users), "
+        f"{template_count} template (inactive users)"
+    )
+
     # Send notifications via the service
+    # TODO: The notification service should check 'use_template_message' flag
+    # and send WhatsApp template message for inactive users instead of interactive message
     notification_service = get_seller_notification_service()
     results = await notification_service.send_bfs_bid_notifications_batch(
         notifications=notifications,
@@ -265,6 +292,8 @@ async def process_bfs_notifications() -> Dict[str, Any]:
         "status": "completed",
         "total_pending": len(pending),
         "notifications_prepared": len(notifications),
+        "interactive_messages": interactive_count,
+        "template_messages": template_count,
         "sent": results.get('sent', 0),
         "failed": results.get('failed', 0),
         "skipped": results.get('skipped', 0),
