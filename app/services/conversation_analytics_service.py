@@ -741,7 +741,7 @@ Session IDs to process: {', '.join(session_ids)}
 
 
 
-                    joined_seller_df.to_csv('5.csv')
+                    
 
                     # Dump joined seller DataFrame to database
                     self._dump_joined_seller_df_to_db(joined_seller_df, db)
