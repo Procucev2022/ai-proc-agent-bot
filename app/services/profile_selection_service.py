@@ -291,7 +291,7 @@ class ProfileSelectionService:
                 message_text = (
                     "Got it! You'd like to buy or raise an RFQ.\n"
                     "Let's check your registered Buyer profiles...\n\n"
-                    "I don't see any Buyer profiles linked to your number or email.\n"
+                    "I don't see any Buyer profiles linked to this mobile number\n"
                     "Would you like to create one now?\n\n"
                     "1.Register as Buyer\n"
                     "2.Exit"
@@ -1364,7 +1364,7 @@ class ProfileSelectionService:
             # Create appropriate message based on target role
             if target_role == "buyer":
                 message_parts = [
-                    "It looks like you don't have a Buyer profile linked to your account.",
+                    "It looks like you don't have a Buyer profile linked to this mobile number.",
                     "Would you like to register as a Buyer to continue?",
                     "",
                     "1. Register as Buyer",
@@ -1374,7 +1374,7 @@ class ProfileSelectionService:
                 ]
             else:  # target_role == "seller"
                 message_parts = [
-                    "It looks like you don't have a Seller profile linked to your account.",
+                    "It looks like you don't have a Seller profile linked to this mobile number.",
                     "Would you like to register as a Seller to continue?",
                     "",
                     "1. Register as Seller",
