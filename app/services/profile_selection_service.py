@@ -1576,7 +1576,7 @@ class ProfileSelectionService:
             if not filtered_profiles:
                 # No profiles found for this role - offer registration
                 message_parts = [
-                    f"You don't have any {role_filter.title()} profiles linked to your account.",
+                    f"You don't have any {role_filter.title()} profiles linked to this mobile number.",
                     f"Would you like to register as a {role_filter.title()}?",
                     "",
                     f"1. Register as {role_filter.title()}",
