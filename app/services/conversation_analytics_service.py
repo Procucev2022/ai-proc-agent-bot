@@ -668,6 +668,10 @@ Session IDs to process: {', '.join(session_ids)}
                         'analysis_reasoning'
                     ]
                     joined_buyer_df = joined_buyer_df[[col for col in relevant_cols if col in joined_buyer_df.columns]]
+                    joined_buyer_df['bfs_products_searched_list'] = (
+                        joined_buyer_df['bfs_products_searched_list']
+                        .apply(json.dumps)
+                    )
 
                     
                     # Dump joined buyer DataFrame to database
@@ -855,7 +859,7 @@ Session IDs to process: {', '.join(session_ids)}
                     bfs_stock_products_bid_placed_count=int(row.get('bfs_stock_products_bid_placed_count', 0)) if pd.notna(
                         row.get('bfs_stock_products_bid_placed_count')) else 0,
                     bfs_products_searched_list=row.get('bfs_products_searched_list'),
-                    org_id=str(row.get('org_uuid', '')) if pd.notna(row.get('org_uuid')) else None,
+                org_id=str(row.get('org_uuid', '')) if pd.notna(row.get('org_uuid')) else None,
                     uuid=str(row.get('user_uuid', '')) if pd.notna(row.get('user_uuid')) else None,
                     ai_reasoning=str(row.get('analysis_reasoning', '')) if pd.notna(row.get('analysis_reasoning')) else None
                 )
@@ -1911,8 +1915,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2026, 2, 1).date()
-        end_date = datetime(2026, 2, 4).date()
+        start_date = datetime(2026, 1, 7).date()
+        end_date = datetime(2026, 1, 7).date()
         
         current_date = start_date
         while current_date <= end_date:
