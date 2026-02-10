@@ -546,7 +546,11 @@ class EnhancedExcelReportService:
     email,
     phone_number,
     searched_keywords AS "Products Searched For",
-    searched_result AS "Searched Products Results",
+    REPLACE(
+        REGEXP_REPLACE(searched_result, '[^[:print:]]', ''),
+        '  ',
+        ' '
+    ) AS "Searched Products Results",
     CASE action_taken
         WHEN 'viewed_only' THEN 'Viewed Only'
         WHEN 'bid_placed' THEN 'Bid Placed'
@@ -554,7 +558,8 @@ class EnhancedExcelReportService:
         WHEN 'raise_rfq_clicked' THEN 'Raise RFQ Clicked'
         ELSE action_taken
     END AS "Action Taken"
-FROM bfs_search_details 
+
+FROM bfs_search_details
 WHERE date BETWEEN :start_date AND :target_date
 ORDER BY date DESC, email;
 

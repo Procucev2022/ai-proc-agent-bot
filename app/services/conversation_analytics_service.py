@@ -213,7 +213,7 @@ class ConversationAnalyticsService:
                         'email': email,
                         'phone_number': phone_number,
                         'searched_keywords': search_keyword,
-                        'searched_result': ', '.join(results_found),
+                        'searched_result': ', '.join(str(r) for r in results_found if r),
                         'action_taken': action_taken
                     })
         
@@ -1915,8 +1915,8 @@ if __name__ == "__main__":
         from datetime import timedelta
         
 
-        start_date = datetime(2026, 1, 7).date()
-        end_date = datetime(2026, 1, 7).date()
+        start_date = datetime(2026, 2, 6).date()
+        end_date = datetime(2026, 2, 11).date()
         
         current_date = start_date
         while current_date <= end_date:

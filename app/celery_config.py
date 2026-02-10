@@ -132,7 +132,7 @@ if ENABLE_BFS_NOTIFICATION:
 if ENABLE_WHATSAPP_REPORT_AUTOMATION:
     beat_schedule['whatsapp-report-automation-task'] = {
         'task': 'app.tasks.whatsapp_report_automation_task.run_whatsapp_report_automation',
-        'schedule': crontab(minute=12, hour=4),  # Daily at 11:00 AM IST (01:30 AM UTC)
+        'schedule': crontab(minute=20, hour=5),  # Daily at 11:00 AM IST (01:30 AM UTC)
         'options': {
             'expires': 7200,
             'queue': 'report_automation'
