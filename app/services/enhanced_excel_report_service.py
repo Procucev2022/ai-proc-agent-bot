@@ -70,22 +70,6 @@ class EnhancedExcelReportService:
         # Replacing invalid characters with an empty string ('') effectively removes them
         cleaned_text = re.sub(r'[\x00-\x1F\x7F-\x9F]', '', str(text))
         return cleaned_text
-    
-    def sanitize_sheet_name(self, name):
-        """
-        Sanitize worksheet name to comply with Excel restrictions:
-        - Max 31 characters
-        - Cannot contain: \ / ? * [ ] :
-        """
-        if name is None:
-            return 'Sheet'
-        # Remove invalid characters
-        name = re.sub(r'[\\/*?\[\]:]', '', str(name))
-        # Truncate to 31 characters
-        if len(name) > 31:
-            name = name[:31]
-        # Ensure not empty
-        return name if name else 'Sheet'
         
     def generate_report(self, target_date: date = None, output_file: str = None, send_email: bool = False) -> str:
         """
@@ -166,8 +150,7 @@ class EnhancedExcelReportService:
                 logger.warning(f"buyer_daily_metrics table not found or error: {e}. Using conversation_sessions fallback.")
             
             # Write to Excel
-            sheet_name = self.sanitize_sheet_name('Buyer Details (Last 30D)')
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            df.to_excel(writer, sheet_name='Buyer Details (Last 30D)', index=False)
             
             logger.info(f"Buyer Details sheet created with {len(df)} rows")
     
@@ -230,8 +213,7 @@ class EnhancedExcelReportService:
                 logger.warning(f"seller_daily_metrics table not found or error: {e}. Using conversation_sessions fallback.")
             
             # Write to Excel
-            sheet_name = self.sanitize_sheet_name('Seller Details (Last 30D)')
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            df.to_excel(writer, sheet_name='Seller Details (Last 30D)', index=False)
             
             logger.info(f"Seller Details sheet created with {len(df)} rows")
     
@@ -291,8 +273,7 @@ class EnhancedExcelReportService:
                 logger.warning(f"category_aggregates table not found or error: {e}. Using daily_aggregated_metrics fallback.")
             
             # Write to Excel
-            sheet_name = self.sanitize_sheet_name('Category Details (Last 30D)')
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            df.to_excel(writer, sheet_name='Category Details (Last 30D)', index=False)
             
             logger.info(f"Category Details sheet created with {len(df)} rows")
     
@@ -397,8 +378,7 @@ class EnhancedExcelReportService:
         df = pd.DataFrame(summary_data, columns=columns)
         
         # Write to Excel
-        sheet_name = self.sanitize_sheet_name('Buyer Summary')
-        df.to_excel(writer, sheet_name=sheet_name, index=False)
+        df.to_excel(writer, sheet_name='Buyer Summary', index=False)
         
         logger.info(f"Buyer Summary sheet created with {len(df)} rows")
     
@@ -452,8 +432,7 @@ class EnhancedExcelReportService:
         df = pd.DataFrame(summary_data, columns=columns)
         
         # Write to Excel
-        sheet_name = self.sanitize_sheet_name('Seller Summary')
-        df.to_excel(writer, sheet_name=sheet_name, index=False)
+        df.to_excel(writer, sheet_name='Seller Summary', index=False)
         
         logger.info(f"Seller Summary sheet created with {len(df)} rows")
     
@@ -550,8 +529,7 @@ class EnhancedExcelReportService:
             except Exception as e:
                 logger.warning(f"Category summary query failed: {e}. Using sample data.")
             # Write to Excel
-            sheet_name = self.sanitize_sheet_name('Category Summary (Last 30D)')
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            df.to_excel(writer, sheet_name='Category Summary (Last 30D)', index=False)
             
     def _generate_aggregate_sheet_90d(self, writer: pd.ExcelWriter, target_date: date):
         """Generate Aggregate Sheet (Last 90D) using buyer_daily_metrics for last 90 days."""
@@ -597,8 +575,7 @@ ORDER BY date DESC, email;
                 df = pd.DataFrame(columns=['date', 'email', 'phone_number', 'user_searched_products', 'bfs_products_searched_list', 'have_placed_bids'])
             
             # Write to Excel
-            sheet_name = self.sanitize_sheet_name('Aggregate Sheet(Last 90D)')
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            df.to_excel(writer, sheet_name='Aggregate Sheet(Last 90D)', index=False)
             
             logger.info(f"Aggregate Sheet (Last 90D) created with {len(df)} rows")
     
