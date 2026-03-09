@@ -110,7 +110,7 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
         logger.info(f"Message received on server at: {server_receipt_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
         body = await request.body()
-        logger.debug(f"Received webhook payload: {body.decode()}")
+        logger.info(f"Received webhook payload: {body.decode()}")
 
         # Parse webhook data
         webhook_data = await parse_webhook_data(request)
