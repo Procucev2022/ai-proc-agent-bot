@@ -33,10 +33,10 @@ class BFSAPIService:
         Search BFS items by product descriptions.
 
         Args:
-            products: List of products with description arrays.
+            products: List of products with category and description arrays.
                 Example: [
-                    {"description": ["laptop", "notebook"]},
-                    {"description": ["phone", "mobile"]}
+                    {"category": ["steels"], "description": ["Alloy Steel plate"]},
+                    {"category": ["electronics"], "description": ["laptop"]}
                 ]
 
         Returns:

@@ -198,14 +198,13 @@ class BFSSearchHandler:
         user_id: str,
         session_id: str
     ) -> List[Dict]:
-        """Build API payload with categorization (description array format)."""
+        """Build API payload with separate category and description fields."""
         payload = []
 
         for product in products:
             description = product.get("description", "")
 
-            # Build description array with original description and category
-            description_array = [description]
+            category_array = []
             try:
                 cat_result = await self.auto_categorization_service.categorize_item(
                     item_description=description,
@@ -214,22 +213,20 @@ class BFSSearchHandler:
                 )
                 logger.info(f"[BFS] Categorization result for '{description}': {cat_result}")
                 if cat_result.get("success"):
-                    # Add category as synonym (skip "Other" - use description only)
                     category = cat_result.get("category", "")
-                    if category and category.lower() != "other" and category.lower() != description.lower():
-                        description_array.append(category)
-                        logger.info(f"[BFS] Added category '{category}' to description array")
+                    if category and category.lower() != "other":
+                        category_array.append(category)
+                        logger.info(f"[BFS] Added category '{category}' to category array")
                     elif category.lower() == "other":
-                        logger.info(f"[BFS] Category is 'Other', using description only without category")
-                    else:
-                        logger.info(f"[BFS] Category '{category}' same as description or empty, not added")
+                        logger.info(f"[BFS] Category is 'Other', skipping")
                 else:
                     logger.warning(f"[BFS] Categorization not successful: {cat_result.get('reason', 'unknown')}")
             except Exception as e:
                 logger.warning(f"[BFS] Categorization failed: {e}")
 
             payload.append({
-                "description": description_array
+                "category": category_array,
+                "description": [description]
             })
 
         return payload
