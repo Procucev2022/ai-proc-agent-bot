@@ -193,7 +193,7 @@ class AutoCategorizationService:
             if settings.enable_remote_categorization:
                 logger.warning("Remote categorization failed, attempting fallback to local data")
                 try:
-                    settings.enable_remote_categorization = False  # Temporarily disable
+                    # settings.enable_remote_categorization = False  # Temporarily disable
                     return self.populate_embeddings_from_db()
                 except Exception as fallback_error:
                     logger.error(f"Fallback to local data also failed: {str(fallback_error)}")
