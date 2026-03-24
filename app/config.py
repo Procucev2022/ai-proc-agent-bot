@@ -49,7 +49,7 @@ class Settings:
         self.client_database_url = os.getenv("CLIENT_DATABASE_URL")
         self.remote_database_url = os.getenv("REMOTE_DATABASE_URL")
         self.database_mode = os.getenv("DATABASE_MODE", "local")
-        self.enable_remote_categorization = os.getenv("ENABLE_REMOTE_CATEGORIZATION", "").lower() == "true"
+        self.enable_remote_categorization = os.getenv("ENABLE_REMOTE_CATEGORIZATION").lower() == "true"
         self.sql_debug = os.getenv("SQL_DEBUG", "false").lower() == "true"
         
         # OpenAI configuration
