@@ -1771,8 +1771,8 @@ Analyze their response to determine their true choice.
             prompt += f"User message: '{context.get('user_message', '')}'\n"
             
             if context.get('extracted_entities'):
-                prompt += f"Current entities: {json.dumps(context['extracted_entities'])}\n"
-            
+                prompt += f"Current entities: {json.dumps(self._strip_base64_from_entities(context['extracted_entities']))}\n"
+
             if base_questions:
                 prompt += f"Questions from data model: {base_questions}\n"
 
@@ -1927,7 +1927,7 @@ Analyze their response to determine their true choice.
             prompt += f"User message: '{context.get('user_message', '')}'\n"
 
             if context.get('extracted_entities'):
-                prompt += f"Current entities: {json.dumps(context['extracted_entities'])}\n"
+                prompt += f"Current entities: {json.dumps(self._strip_base64_from_entities(context['extracted_entities']))}\n"
 
             response = await self.client.responses.create(
                 model=self.default_model,
@@ -2143,7 +2143,7 @@ Analyze their response to determine their true choice.
             User: {session_data.get('user_id', 'Unknown')}
             Workflow: {session_data.get('workflow_type', 'Unknown')}
             Outcome: {session_data.get('outcome', 'Unknown')}
-            Entities: {json.dumps(session_data.get('extracted_entities', {}), indent=2)}
+            Entities: {json.dumps(self._strip_base64_from_entities(session_data.get('extracted_entities', {})), indent=2)}
             RFQ IDs: {session_data.get('rfq_ids', [])}
             """
             
@@ -2956,6 +2956,7 @@ Determine the best category for the input item based on the similar items and th
             context_text = "Generate RFQ confirmation for the following data:\n\n"
             # Clean RFQ data for JSON serialization and format dates
             clean_rfq_data = self._clean_for_json_serialization(rfq_data)
+            clean_rfq_data = self._strip_base64_from_entities(clean_rfq_data)
 
             # Truncate items to max 5 for display (WhatsApp 1024 char limit)
             MAX_DISPLAY_ITEMS = 5
@@ -3074,6 +3075,27 @@ Determine the best category for the input item based on the similar items and th
             logger.error(f"RFQ confirmation generation failed: {error_msg}")
             return "Here's a summary of your RFQ."
     
+    @staticmethod
+    def _strip_base64_from_entities(entities):
+        """Strip base64 file_content from attachments to avoid sending large payloads to OpenAI."""
+        if not entities:
+            return entities
+        if isinstance(entities, dict):
+            result = {}
+            for key, value in entities.items():
+                if key == "attachments" and isinstance(value, list):
+                    result[key] = [
+                        {k: ("[base64_data]" if k == "file_content" else v) for k, v in att.items()}
+                        if isinstance(att, dict) else att
+                        for att in value
+                    ]
+                else:
+                    result[key] = OpenAIService._strip_base64_from_entities(value)
+            return result
+        if isinstance(entities, list):
+            return [OpenAIService._strip_base64_from_entities(item) for item in entities]
+        return entities
+
     def _clean_for_json_serialization(self, obj):
         """Recursively clean object for JSON serialization."""
         from datetime import datetime, date
