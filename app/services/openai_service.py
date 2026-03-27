@@ -2747,15 +2747,35 @@ Determine the best category for the input item based on the similar items and th
             for i, cat in enumerate(deduplicated_categories, 1):
                 context_text += f"{i}. {cat['level_1_category']} > {cat['level_2_category']} (ID: {cat['id']})\n"
 
-            response = await self.client.responses.create(
-                model=self.default_model,
-                input=[{"role": "user", "content": context_text}],
-                instructions=self._load_prompt("seller_mapping", "_map_seller_to_existing_categories"),
-                tools=[mapping_tool],
-                tool_choice={"type": "function", "name": "select_existing_category"}
-            )
+            # Retry with exponential backoff for rate limits
+            max_retries = 5
+            response = None
+            for attempt in range(max_retries):
+                try:
+                    response = await self.client.responses.create(
+                        model=self.default_model,
+                        input=[{"role": "user", "content": context_text}],
+                        instructions=self._load_prompt("seller_mapping", "_map_seller_to_existing_categories"),
+                        tools=[mapping_tool],
+                        tool_choice={"type": "function", "name": "select_existing_category"}
+                    )
+                    break
+                except RateLimitError as e:
+                    wait_time = 2 ** attempt  # 1, 2, 4, 8, 16 seconds
+                    logger.warning(f"Rate limit hit (attempt {attempt + 1}/{max_retries}), waiting {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                    if attempt == max_retries - 1:
+                        raise
 
             processing_time = time.time() - start_time
+
+            # Log token usage
+            usage = getattr(response, 'usage', None)
+            if usage:
+                input_tokens = getattr(usage, 'input_tokens', 0)
+                output_tokens = getattr(usage, 'output_tokens', 0)
+                logger.info(f"[SELLER_MAPPING] Token usage for '{seller_category}': "
+                            f"input={input_tokens}, output={output_tokens}, total={input_tokens + output_tokens}")
 
             # Parse function call response
             if response.output and len(response.output) > 0:
@@ -2796,11 +2816,11 @@ Determine the best category for the input item based on the similar items and th
                 "error": "No function call in response",
                 "processing_time_ms": int(processing_time * 1000)
             }
-            
+
         except Exception as e:
             error_msg = str(e)
             processing_time = time.time() - start_time
-            
+
             logger.error(f"Seller category mapping failed: {error_msg}")
             return {
                 "success": False,
