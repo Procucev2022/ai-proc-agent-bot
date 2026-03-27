@@ -144,11 +144,13 @@ def _sync_category_mappings() -> Dict[str, Any]:
 
     logger.info(f"Fetched {len(remote_items)} items from remote item_category table")
 
-    # Group items by category
+    # Group items by category, skip nulls/empty
     category_items = {}
     for item in remote_items:
-        category = item['category']
-        item_name = item['item']
+        category = (item.get('category') or '').strip()
+        item_name = (item.get('item') or '').strip()
+        if not category or not item_name:
+            continue
         if category not in category_items:
             category_items[category] = []
         category_items[category].append(item_name)
