@@ -1,6 +1,6 @@
 {
   "scenario_id": "whatsapp_insight_report",
-  "subject": "B2B WhatsApp Insights - Daily Report {parsed_Date}",
+  "subject": "B2B WhatsApp Insights({environment}) - Daily Report {parsed_Date}",
   "to": "{WHATSAPP_REPORT_EMAILS}",
   "cc": "",
   "bcc": "",

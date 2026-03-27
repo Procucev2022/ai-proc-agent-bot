@@ -40,6 +40,7 @@ class Settings:
         self.app_version = os.getenv("APP_VERSION", "1.0.0")
         self.debug = os.getenv("DEBUG", "false").lower() == "true"
         self.log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+        self.environment = os.getenv("ENVIRONMENT", "Dev")
         
         # Project root directory (used for relative paths)
         self.PROJECT_ROOT = PROJECT_ROOT
