@@ -2719,23 +2719,33 @@ Determine the best category for the input item based on the similar items and th
             with open(self.tools_dir / "seller_existing_category_mapping.json", 'r') as f:
                 mapping_tool = json.load(f)
             
-            # Build context with existing categories
+            # Deduplicate to unique level_1 > level_2 pairs (level_3 is item name, not needed for seller mapping)
+            l1_l2_map = {}  # (level_1, level_2) -> first category with that pair
+            for cat in existing_categories:
+                key = (cat['level_1_category'], cat['level_2_category'])
+                if key not in l1_l2_map:
+                    l1_l2_map[key] = cat
+
+            deduplicated_categories = list(l1_l2_map.values())
+            logger.info(f"map_seller_category_to_existing_learning called "
+                        f"(deduplicated {len(existing_categories)} -> {len(deduplicated_categories)} unique L1>L2 pairs)")
+
+            # Build context with deduplicated categories
             context_text = f"Seller category to map: \"{seller_category}\"\n\n"
-            
+
             if seller_name:
                 context_text += f"Seller name: {seller_name}\n"
-            
+
             if location_info and isinstance(location_info, dict):
                 city = location_info.get('city', '')
                 state = location_info.get('state', '')
                 if city or state:
                     context_text += f"Location: {city}, {state}\n"
-            
-            # Add existing categories for selection
+
+            # Add deduplicated categories for selection
             context_text += "\nExisting Learning Categories to choose from:\n"
-            for i, cat in enumerate(existing_categories, 1):
-                category_path = f"{cat['level_1_category']} > {cat['level_2_category']} > {cat['level_3_category']}"
-                context_text += f"{i}. {category_path} (ID: {cat['id']})\n"
+            for i, cat in enumerate(deduplicated_categories, 1):
+                context_text += f"{i}. {cat['level_1_category']} > {cat['level_2_category']} (ID: {cat['id']})\n"
 
             response = await self.client.responses.create(
                 model=self.default_model,
@@ -2744,24 +2754,24 @@ Determine the best category for the input item based on the similar items and th
                 tools=[mapping_tool],
                 tool_choice={"type": "function", "name": "select_existing_category"}
             )
-            
+
             processing_time = time.time() - start_time
-            
+
             # Parse function call response
             if response.output and len(response.output) > 0:
                 function_call = response.output[0]
                 if function_call.type == "function_call":
                     args = json.loads(function_call.arguments)
-                    
+
                     # Find the selected category by ID
                     selected_category_id = args.get("selected_category_id")
                     selected_category = None
-                    
+
                     for cat in existing_categories:
                         if cat['id'] == selected_category_id:
                             selected_category = cat
                             break
-                    
+
                     if selected_category:
                         result = {
                             "success": True,
@@ -2770,7 +2780,7 @@ Determine the best category for the input item based on the similar items and th
                             "reasoning": args.get("reasoning", ""),
                             "processing_time_ms": int(processing_time * 1000)
                         }
-                        
+
                         category_path = f"{selected_category['level_1_category']} > {selected_category['level_2_category']} > {selected_category['level_3_category']}"
                         logger.debug(f"Mapped seller category '{seller_category}' to existing: {category_path}")
                         return result
@@ -2780,7 +2790,7 @@ Determine the best category for the input item based on the similar items and th
                             "error": f"Selected category ID {selected_category_id} not found",
                             "processing_time_ms": int(processing_time * 1000)
                         }
-            
+
             return {
                 "success": False,
                 "error": "No function call in response",

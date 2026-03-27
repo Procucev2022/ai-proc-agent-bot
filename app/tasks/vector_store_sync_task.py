@@ -323,11 +323,32 @@ async def _async_map_sellers_to_categories(batch_size: int = 10) -> Dict[str, An
             "processed_count": 0,
             "created_mappings": 0,
             "existing_mappings": 0,
+            "cached_mappings": 0,
             "errors": []
         }
 
         start_time = time.time()
         batch_count = 0
+
+        # Cache: seller_category_name -> mapping_result (avoids duplicate OpenAI calls)
+        category_mapping_cache: Dict[str, Dict] = {}
+
+        # Load all learning categories once (not per-seller)
+        all_learning_categories = db.query(LearningCategory).all()
+        if not all_learning_categories:
+            logger.warning("No learning categories found! Run build_3_level_taxonomy.py first")
+            return {"success": False, "error": "No learning categories found", "processed_count": 0}
+
+        categories_for_ai = [
+            {
+                "id": cat.id,
+                "level_1_category": cat.level_1_category,
+                "level_2_category": cat.level_2_category,
+                "level_3_category": cat.level_3_category
+            }
+            for cat in all_learning_categories
+        ]
+        logger.info(f"Loaded {len(categories_for_ai)} learning categories for mapping")
 
         for i, seller in enumerate(sellers):
             try:
@@ -340,7 +361,7 @@ async def _async_map_sellers_to_categories(batch_size: int = 10) -> Dict[str, An
 
                 for category in seller_categories:
                     try:
-                        # Check if mapping already exists
+                        # Check if mapping already exists in DB
                         existing_mapping = db.query(SellerLearningMapping).filter(
                             and_(
                                 SellerLearningMapping.seller_id == seller.seller_id,
@@ -353,33 +374,24 @@ async def _async_map_sellers_to_categories(batch_size: int = 10) -> Dict[str, An
                             results["existing_mappings"] += 1
                             continue
 
-                        # Get existing learning categories
-                        existing_categories = db.query(LearningCategory).all()
+                        # Check in-memory cache first (same category already mapped this run)
+                        if category in category_mapping_cache:
+                            mapping_result = category_mapping_cache[category]
+                            logger.info(f"  Category '{category}' resolved from cache")
+                            results["cached_mappings"] += 1
+                        else:
+                            logger.info(f"  Mapping '{category}' using OpenAI (async)...")
 
-                        if not existing_categories:
-                            logger.warning("No learning categories found! Run build_3_level_taxonomy.py first")
-                            continue
+                            # ASYNC CALL - properly await the OpenAI service
+                            mapping_result = await openai_service.map_seller_category_to_existing_learning(
+                                seller_category=category,
+                                existing_categories=categories_for_ai,
+                                seller_name=seller.seller_name,
+                                location_info=seller.location
+                            )
 
-                        # Convert to list for OpenAI
-                        categories_for_ai = [
-                            {
-                                "id": cat.id,
-                                "level_1_category": cat.level_1_category,
-                                "level_2_category": cat.level_2_category,
-                                "level_3_category": cat.level_3_category
-                            }
-                            for cat in existing_categories
-                        ]
-
-                        logger.info(f"  Mapping '{category}' using OpenAI (async)...")
-
-                        # ASYNC CALL - properly await the OpenAI service
-                        mapping_result = await openai_service.map_seller_category_to_existing_learning(
-                            seller_category=category,
-                            existing_categories=categories_for_ai,
-                            seller_name=seller.seller_name,
-                            location_info=seller.location
-                        )
+                            # Cache the result for this category name
+                            category_mapping_cache[category] = mapping_result
 
                         if mapping_result.get("success"):
                             selected_category = mapping_result["selected_category"]
@@ -445,6 +457,7 @@ async def _async_map_sellers_to_categories(batch_size: int = 10) -> Dict[str, An
         logger.info(f"Processed: {results['processed_count']}/{results['total_sellers']}")
         logger.info(f"New mappings: {results['created_mappings']}")
         logger.info(f"Existing: {results['existing_mappings']}")
+        logger.info(f"Cached (no OpenAI call): {results['cached_mappings']}")
         logger.info(f"Errors: {len(results['errors'])}")
         logger.info("=" * 60)
 
