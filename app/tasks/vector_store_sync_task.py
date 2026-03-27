@@ -324,6 +324,10 @@ async def _async_map_sellers_to_categories(batch_size: int = 10) -> Dict[str, An
             "created_mappings": 0,
             "existing_mappings": 0,
             "cached_mappings": 0,
+            "openai_calls": 0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_tokens": 0,
             "errors": []
         }
 
@@ -382,6 +386,10 @@ async def _async_map_sellers_to_categories(batch_size: int = 10) -> Dict[str, An
                         else:
                             logger.info(f"  Mapping '{category}' using OpenAI (async)...")
 
+                            # Rate limit: wait 2s between OpenAI calls
+                            if results["openai_calls"] > 0:
+                                await asyncio.sleep(2)
+
                             # ASYNC CALL - properly await the OpenAI service
                             mapping_result = await openai_service.map_seller_category_to_existing_learning(
                                 seller_category=category,
@@ -390,8 +398,16 @@ async def _async_map_sellers_to_categories(batch_size: int = 10) -> Dict[str, An
                                 location_info=seller.location
                             )
 
-                            # Cache the result for this category name
-                            category_mapping_cache[category] = mapping_result
+                            # Track token usage
+                            token_usage = mapping_result.get("token_usage", {})
+                            results["openai_calls"] += 1
+                            results["total_input_tokens"] += token_usage.get("input_tokens", 0)
+                            results["total_output_tokens"] += token_usage.get("output_tokens", 0)
+                            results["total_tokens"] += token_usage.get("total_tokens", 0)
+
+                            # Only cache successful results
+                            if mapping_result.get("success"):
+                                category_mapping_cache[category] = mapping_result
 
                         if mapping_result.get("success"):
                             selected_category = mapping_result["selected_category"]

@@ -2742,10 +2742,10 @@ Determine the best category for the input item based on the similar items and th
                 if city or state:
                     context_text += f"Location: {city}, {state}\n"
 
-            # Add deduplicated categories for selection
+            # Add deduplicated categories for selection (no line numbers to avoid ID confusion)
             context_text += "\nExisting Learning Categories to choose from:\n"
-            for i, cat in enumerate(deduplicated_categories, 1):
-                context_text += f"{i}. {cat['level_1_category']} > {cat['level_2_category']} (ID: {cat['id']})\n"
+            for cat in deduplicated_categories:
+                context_text += f"- {cat['level_1_category']} > {cat['level_2_category']} (ID: {cat['id']})\n"
 
             # Retry with exponential backoff for rate limits
             max_retries = 5
@@ -2792,13 +2792,16 @@ Determine the best category for the input item based on the similar items and th
                             selected_category = cat
                             break
 
+                    token_usage = {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total_tokens}
+
                     if selected_category:
                         result = {
                             "success": True,
                             "selected_category": selected_category,
                             "similarity_score": args.get("similarity_score", 0.8),
                             "reasoning": args.get("reasoning", ""),
-                            "processing_time_ms": int(processing_time * 1000)
+                            "processing_time_ms": int(processing_time * 1000),
+                            "token_usage": token_usage
                         }
 
                         category_path = f"{selected_category['level_1_category']} > {selected_category['level_2_category']} > {selected_category['level_3_category']}"
@@ -2808,13 +2811,15 @@ Determine the best category for the input item based on the similar items and th
                         return {
                             "success": False,
                             "error": f"Selected category ID {selected_category_id} not found",
-                            "processing_time_ms": int(processing_time * 1000)
+                            "processing_time_ms": int(processing_time * 1000),
+                            "token_usage": token_usage
                         }
 
             return {
                 "success": False,
                 "error": "No function call in response",
-                "processing_time_ms": int(processing_time * 1000)
+                "processing_time_ms": int(processing_time * 1000),
+                "token_usage": {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total_tokens}
             }
 
         except Exception as e:
