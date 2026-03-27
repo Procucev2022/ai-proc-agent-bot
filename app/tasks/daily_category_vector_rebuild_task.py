@@ -1,9 +1,13 @@
 """
 Daily Category Vector Store Rebuild Task.
 
-This Celery periodic task rebuilds the AutoCategorizationService vector store
-(chroma_db/category_items collection) daily by fetching fresh data from the
-remote item_category table.
+This Celery periodic task syncs remote item_category data to the local
+category_mappings table, then rebuilds the AutoCategorizationService vector
+store (chroma_db/category_items collection).
+
+The category_mappings sync ensures the local table stays up-to-date with the
+remote item_category data, which is required for FK constraints when building
+the 3-level taxonomy (ClientCategoryMapping → CategoryMapping).
 
 The vector store is used by AutoCategorizationService to perform semantic
 similarity search for auto-categorizing RFQ items.
@@ -12,6 +16,7 @@ Schedule: Daily at 2:00 AM (configurable in celery_config.py)
 """
 
 import logging
+import uuid
 from typing import Dict, Any
 from celery import shared_task
 from datetime import datetime
@@ -52,6 +57,17 @@ def rebuild_category_vector_store(self) -> Dict[str, Any]:
 
         start_time = datetime.utcnow()
 
+        # STEP 0: Sync remote item_category → local category_mappings
+        logger.info("Step 0: Syncing remote item_category to local category_mappings...")
+        sync_result = _sync_category_mappings()
+        if sync_result.get("success"):
+            logger.info(f"SUCCESS: Synced {sync_result['inserted_count']} new category mappings "
+                        f"({sync_result['total_remote_items']} remote items, "
+                        f"{sync_result['unique_categories']} unique categories)")
+        else:
+            logger.warning(f"Category mappings sync failed: {sync_result.get('error')} — continuing with rebuild")
+
+        # STEP 1: Rebuild vector store
         # Import here to avoid circular imports and ensure fresh instance
         from app.services.auto_categorization_service import AutoCategorizationService
 
@@ -102,6 +118,87 @@ def rebuild_category_vector_store(self) -> Dict[str, Any]:
             "error": str(e),
             "timestamp": datetime.utcnow().isoformat()
         }
+
+
+def _sync_category_mappings() -> Dict[str, Any]:
+    """
+    Sync remote item_category data into the local category_mappings table.
+
+    This ensures the local table has matching records for FK constraints
+    when build_3_level_taxonomy creates ClientCategoryMapping cross-references.
+    """
+    from app.database import get_db_session, get_remote_item_categories, test_remote_connection
+    from app.models import CategoryMapping
+
+    settings = get_settings()
+
+    if not settings.enable_remote_categorization:
+        return {"success": False, "error": "Remote categorization disabled"}
+
+    if not test_remote_connection():
+        return {"success": False, "error": "Remote database connection failed"}
+
+    remote_items = get_remote_item_categories()
+    if not remote_items:
+        return {"success": False, "error": "No items returned from remote database"}
+
+    logger.info(f"Fetched {len(remote_items)} items from remote item_category table")
+
+    # Group items by category
+    category_items = {}
+    for item in remote_items:
+        category = item['category']
+        item_name = item['item']
+        if category not in category_items:
+            category_items[category] = []
+        category_items[category].append(item_name)
+
+    logger.info(f"Found {len(category_items)} unique categories")
+
+    db = get_db_session()
+    try:
+        # Bulk-load all existing (category, item) pairs to avoid per-row SELECTs
+        existing_pairs = set(
+            db.query(CategoryMapping.category, CategoryMapping.item).all()
+        )
+        logger.info(f"Found {len(existing_pairs)} existing category mappings locally")
+
+        total_inserted = 0
+        batch = []
+
+        for category, items in category_items.items():
+            for item_name in items:
+                if (category, item_name) not in existing_pairs:
+                    batch.append(CategoryMapping(
+                        id=str(uuid.uuid4()),
+                        category=category,
+                        item=item_name
+                    ))
+                    total_inserted += 1
+
+                    if len(batch) >= 500:
+                        db.add_all(batch)
+                        db.commit()
+                        batch = []
+
+        if batch:
+            db.add_all(batch)
+            db.commit()
+
+        logger.info(f"Inserted {total_inserted} new category mappings")
+
+        return {
+            "success": True,
+            "total_remote_items": len(remote_items),
+            "unique_categories": len(category_items),
+            "inserted_count": total_inserted
+        }
+
+    except Exception as e:
+        db.rollback()
+        return {"success": False, "error": str(e)}
+    finally:
+        db.close()
 
 
 def trigger_category_vector_rebuild() -> Dict[str, Any]:
