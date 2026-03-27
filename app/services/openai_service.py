@@ -2769,13 +2769,13 @@ Determine the best category for the input item based on the similar items and th
 
             processing_time = time.time() - start_time
 
-            # Log token usage
+            # Extract token usage
             usage = getattr(response, 'usage', None)
-            if usage:
-                input_tokens = getattr(usage, 'input_tokens', 0)
-                output_tokens = getattr(usage, 'output_tokens', 0)
-                logger.info(f"[SELLER_MAPPING] Token usage for '{seller_category}': "
-                            f"input={input_tokens}, output={output_tokens}, total={input_tokens + output_tokens}")
+            input_tokens = getattr(usage, 'input_tokens', 0) if usage else 0
+            output_tokens = getattr(usage, 'output_tokens', 0) if usage else 0
+            total_tokens = input_tokens + output_tokens
+            logger.info(f"[SELLER_MAPPING] Token usage for '{seller_category}': "
+                        f"input={input_tokens}, output={output_tokens}, total={total_tokens}")
 
             # Parse function call response
             if response.output and len(response.output) > 0:
