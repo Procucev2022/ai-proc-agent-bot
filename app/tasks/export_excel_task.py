@@ -95,7 +95,8 @@ async def _send_excel_email_reports(excel_files: list, parsed_date: date) -> Dic
             "parsed_Date": parsed_date.strftime('%Y-%m-%d'),
             "sender_email": settings.email_report_sender or "priyasoniy17@gmail.com",
             "support_email": settings.support_email or "support@procucev.com",
-            "WHATSAPP_REPORT_EMAILS": os.getenv('WHATSAPP_REPORT_EMAILS', 'priyasoniy17@gmail.com,shubham@mohap.ai')
+            "WHATSAPP_REPORT_EMAILS": os.getenv('WHATSAPP_REPORT_EMAILS', 'priyasoniy17@gmail.com,shubham@mohap.ai'),
+            "environment": settings.environment
         }
         
         logger.info(f"Sending {len(attachments)} Excel files for {parsed_date}")
