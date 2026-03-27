@@ -332,12 +332,8 @@ async def _async_map_sellers_to_categories(batch_size: int = 10) -> Dict[str, An
         }
 
         start_time = time.time()
-        batch_count = 0
 
-        # Cache: seller_category_name -> mapping_result (avoids duplicate OpenAI calls)
-        category_mapping_cache: Dict[str, Dict] = {}
-
-        # Load all learning categories once (not per-seller)
+        # Load all learning categories once
         all_learning_categories = db.query(LearningCategory).all()
         if not all_learning_categories:
             logger.warning("No learning categories found! Run build_3_level_taxonomy.py first")
@@ -354,118 +350,118 @@ async def _async_map_sellers_to_categories(batch_size: int = 10) -> Dict[str, An
         ]
         logger.info(f"Loaded {len(categories_for_ai)} learning categories for mapping")
 
+        # ── Phase 1: Collect unique unmapped category strings ──
+        already_mapped_pairs = set()  # (seller_id, category)
+        unmapped_categories = set()
+
+        for seller in sellers:
+            seller_categories = seller.categories if isinstance(seller.categories, list) else []
+            for category in seller_categories:
+                existing = db.query(SellerLearningMapping).filter(
+                    and_(
+                        SellerLearningMapping.seller_id == seller.seller_id,
+                        SellerLearningMapping.original_category == category
+                    )
+                ).first()
+                if existing:
+                    already_mapped_pairs.add((seller.seller_id, category))
+                    results["existing_mappings"] += 1
+                else:
+                    unmapped_categories.add(category)
+
+        logger.info(f"Found {len(unmapped_categories)} unique unmapped categories to process via OpenAI")
+        logger.info(f"Already mapped: {results['existing_mappings']} seller-category pairs")
+
+        # ── Phase 2: Map all unique categories in parallel ──
+        category_mapping_cache: Dict[str, Dict] = {}
+        concurrency_limit = 3  # max parallel OpenAI calls
+        semaphore = asyncio.Semaphore(concurrency_limit)
+
+        async def _map_single_category(cat_name: str) -> None:
+            async with semaphore:
+                logger.info(f"  Mapping '{cat_name}' using OpenAI (async)...")
+                mapping_result = await openai_service.map_seller_category_to_existing_learning(
+                    seller_category=cat_name,
+                    existing_categories=categories_for_ai
+                )
+
+                # Track token usage
+                token_usage = mapping_result.get("token_usage", {})
+                results["openai_calls"] += 1
+                results["total_input_tokens"] += token_usage.get("input_tokens", 0)
+                results["total_output_tokens"] += token_usage.get("output_tokens", 0)
+                results["total_tokens"] += token_usage.get("total_tokens", 0)
+
+                if mapping_result.get("success"):
+                    category_mapping_cache[cat_name] = mapping_result
+                    logger.info(f"  Mapped '{cat_name}' -> {mapping_result['selected_category']['level_1_category']} > {mapping_result['selected_category']['level_2_category']}")
+                else:
+                    error_msg = f"Failed to map '{cat_name}': {mapping_result.get('error', 'Unknown error')}"
+                    logger.error(f"  ERROR: {error_msg}")
+                    results["errors"].append(error_msg)
+
+        # Run all mappings concurrently (semaphore limits to N at a time)
+        if unmapped_categories:
+            tasks = [_map_single_category(cat) for cat in unmapped_categories]
+            await asyncio.gather(*tasks)
+
+        logger.info(f"Phase 2 complete: {len(category_mapping_cache)} categories mapped successfully, {results['openai_calls']} OpenAI calls")
+
+        # ── Phase 3: Apply cached results to all sellers (DB only, fast) ──
         for i, seller in enumerate(sellers):
             try:
-                logger.info(f"Processing seller {i+1}/{len(sellers)}: {seller.seller_name}")
-
                 seller_categories = seller.categories if isinstance(seller.categories, list) else []
                 if not seller_categories:
-                    logger.warning(f"No categories for seller {seller.seller_name}")
                     continue
 
                 for category in seller_categories:
-                    try:
-                        # Check if mapping already exists in DB
-                        existing_mapping = db.query(SellerLearningMapping).filter(
-                            and_(
-                                SellerLearningMapping.seller_id == seller.seller_id,
-                                SellerLearningMapping.original_category == category
-                            )
-                        ).first()
+                    if (seller.seller_id, category) in already_mapped_pairs:
+                        continue
 
-                        if existing_mapping:
-                            logger.info(f"  Category '{category}' already mapped")
-                            results["existing_mappings"] += 1
-                            continue
+                    mapping_result = category_mapping_cache.get(category)
+                    if not mapping_result:
+                        continue
 
-                        # Check in-memory cache first (same category already mapped this run)
-                        if category in category_mapping_cache:
-                            mapping_result = category_mapping_cache[category]
-                            logger.info(f"  Category '{category}' resolved from cache")
-                            results["cached_mappings"] += 1
-                        else:
-                            logger.info(f"  Mapping '{category}' using OpenAI (async)...")
+                    selected_category = mapping_result["selected_category"]
+                    learning_category = db.query(LearningCategory).filter(
+                        LearningCategory.id == selected_category["id"]
+                    ).first()
 
-                            # Rate limit: wait 2s between OpenAI calls
-                            if results["openai_calls"] > 0:
-                                await asyncio.sleep(2)
-
-                            # ASYNC CALL - properly await the OpenAI service
-                            mapping_result = await openai_service.map_seller_category_to_existing_learning(
-                                seller_category=category,
-                                existing_categories=categories_for_ai,
-                                seller_name=seller.seller_name,
-                                location_info=seller.location
-                            )
-
-                            # Track token usage
-                            token_usage = mapping_result.get("token_usage", {})
-                            results["openai_calls"] += 1
-                            results["total_input_tokens"] += token_usage.get("input_tokens", 0)
-                            results["total_output_tokens"] += token_usage.get("output_tokens", 0)
-                            results["total_tokens"] += token_usage.get("total_tokens", 0)
-
-                            # Only cache successful results
-                            if mapping_result.get("success"):
-                                category_mapping_cache[category] = mapping_result
-
-                        if mapping_result.get("success"):
-                            selected_category = mapping_result["selected_category"]
-
-                            learning_category = db.query(LearningCategory).filter(
-                                LearningCategory.id == selected_category["id"]
-                            ).first()
-
-                            if learning_category:
-                                category_path = f"{learning_category.level_1_category} > {learning_category.level_2_category} > {learning_category.level_3_category}"
-                                logger.info(f"  SUCCESS: Mapped to: {category_path}")
-
-                                # Update usage frequency
-                                learning_category.usage_frequency += 1
-
-                                # Create mapping
-                                seller_mapping = SellerLearningMapping(
-                                    mapping_id=str(uuid.uuid4()),
-                                    seller_id=seller.seller_id,
-                                    original_category=category,
-                                    learning_category_id=learning_category.id,
-                                    level_1_category=learning_category.level_1_category,
-                                    level_2_category=learning_category.level_2_category,
-                                    level_3_category=learning_category.level_3_category,
-                                    confidence_score=mapping_result.get("similarity_score", 0.8),
-                                    ai_reasoning=mapping_result.get("reasoning", ""),
-                                    mapping_method="openai_async_category_selection"
-                                )
-                                db.add(seller_mapping)
-                                results["created_mappings"] += 1
-                            else:
-                                error_msg = f"Learning category {selected_category['id']} not found"
-                                logger.error(f"  ERROR: {error_msg}")
-                                results["errors"].append(error_msg)
-                        else:
-                            error_msg = f"Failed to map '{category}': {mapping_result.get('error', 'Unknown error')}"
-                            logger.error(f"  ERROR: {error_msg}")
-                            results["errors"].append(error_msg)
-
-                    except Exception as e:
-                        error_msg = f"Exception mapping '{category}': {str(e)}"
+                    if learning_category:
+                        seller_mapping = SellerLearningMapping(
+                            mapping_id=str(uuid.uuid4()),
+                            seller_id=seller.seller_id,
+                            original_category=category,
+                            learning_category_id=learning_category.id,
+                            level_1_category=learning_category.level_1_category,
+                            level_2_category=learning_category.level_2_category,
+                            level_3_category=learning_category.level_3_category,
+                            confidence_score=mapping_result.get("similarity_score", 0.8),
+                            ai_reasoning=mapping_result.get("reasoning", ""),
+                            mapping_method="openai_async_category_selection"
+                        )
+                        db.add(seller_mapping)
+                        results["created_mappings"] += 1
+                        results["cached_mappings"] += 1
+                    else:
+                        error_msg = f"Learning category {selected_category['id']} not found for seller {seller.seller_id}"
                         logger.error(f"  ERROR: {error_msg}")
                         results["errors"].append(error_msg)
 
                 results["processed_count"] += 1
-                db.commit()
 
-                batch_count += 1
-                if batch_count >= batch_size:
-                    logger.info(f"Completed batch of {batch_size} sellers. Pausing...")
-                    await asyncio.sleep(3)  # Async sleep for rate limiting
-                    batch_count = 0
+                # Commit in batches
+                if results["processed_count"] % batch_size == 0:
+                    db.commit()
+                    logger.info(f"Committed batch — {results['processed_count']}/{len(sellers)} sellers processed")
 
             except Exception as e:
                 error_msg = f"Exception processing seller {seller.seller_id}: {str(e)}"
                 logger.error(f"ERROR: {error_msg}")
                 results["errors"].append(error_msg)
                 db.rollback()
+
+        db.commit()  # Final commit
 
         results["processing_time_ms"] = int((time.time() - start_time) * 1000)
 
@@ -474,6 +470,8 @@ async def _async_map_sellers_to_categories(batch_size: int = 10) -> Dict[str, An
         logger.info(f"New mappings: {results['created_mappings']}")
         logger.info(f"Existing: {results['existing_mappings']}")
         logger.info(f"Cached (no OpenAI call): {results['cached_mappings']}")
+        logger.info(f"OpenAI calls: {results['openai_calls']}")
+        logger.info(f"Total tokens: {results['total_tokens']} (input: {results['total_input_tokens']}, output: {results['total_output_tokens']})")
         logger.info(f"Errors: {len(results['errors'])}")
         logger.info("=" * 60)
 
