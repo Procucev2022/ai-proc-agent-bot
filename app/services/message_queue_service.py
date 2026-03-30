@@ -126,6 +126,9 @@ class MessageQueueService:
         self.please_wait_threshold = settings.please_wait_threshold_seconds  # Default: 15s
         self.max_please_wait_count = settings.max_please_wait_count  # Default: 3
         self.monitoring_poll_interval = settings.monitoring_poll_interval_seconds  # Default: 5s
+        self.response_ready_ttl = max(60, self.please_wait_threshold * 4)
+        self.monitor_lock_ttl = 180
+        self.please_wait_interval_ttl = 600
         
         # WhatsApp service for direct sending (ack, please-wait)
         from app.services.whatsapp_service import WhatsAppService
@@ -138,7 +141,9 @@ class MessageQueueService:
             f"[INIT] MessageQueueService initialized: "
             f"batch_window={self.batch_window}s, "
             f"please_wait_threshold={self.please_wait_threshold}s, "
-            f"monitoring_poll_interval={self.monitoring_poll_interval}s"
+            f"monitoring_poll_interval={self.monitoring_poll_interval}s, "
+            f"response_ready_ttl={self.response_ready_ttl}s, "
+            f"monitor_lock_ttl={self.monitor_lock_ttl}s"
         )
 
     # ========================================================================
@@ -171,6 +176,10 @@ class MessageQueueService:
 
     def _key_lock_monitor_log(self, user_phone: str) -> str:
         return f"{user_phone}:lock:monitor_log"
+
+    def _key_please_wait_interval(self, user_phone: str, interval: int) -> str:
+        """Redis key to dedupe please-wait sends per interval across workers."""
+        return f"{user_phone}:please_wait:interval:{interval}"
 
     def _key_response_ready(self, user_phone: str) -> str:
         """Redis key for response ready flag (prevents late please-wait)."""
@@ -449,11 +458,12 @@ class MessageQueueService:
                                     lock_key,
                                     "1",
                                     nx=True,
-                                    ex=5
+                                    ex=self.monitor_lock_ttl
                                 )
                                 
                                 if lock_acquired:
                                     # This worker won the race - double-check and send
+                                    interval_key = None
                                     try:
                                         # CRITICAL: Double-check response_ready INSIDE lock (race condition prevention)
                                         response_ready_recheck = await self.redis.get(response_ready_key)
@@ -485,6 +495,21 @@ class MessageQueueService:
                                                 f"by another worker for {user_phone}"
                                             )
                                             continue
+
+                                        # Claim this interval once across all workers.
+                                        interval_key = self._key_please_wait_interval(user_phone, intervals_passed)
+                                        interval_claimed = await self.redis.set(
+                                            interval_key,
+                                            "1",
+                                            nx=True,
+                                            ex=self.please_wait_interval_ttl
+                                        )
+                                        if not interval_claimed:
+                                            logger.debug(
+                                                f"[MONITOR] Interval {intervals_passed} already claimed "
+                                                f"for {user_phone}, skipping duplicate send"
+                                            )
+                                            continue
                                         
                                         logger.debug(
                                             f"[MONITOR] Sending please-wait #{session_check.please_wait_sent_count + 1} "
@@ -496,12 +521,22 @@ class MessageQueueService:
                                         # Update session with counter and timestamp
                                         session_check.please_wait_sent_count += 1
                                         session_check.please_wait_last_sent = time.time()
-                                        await self.redis.setex(
-                                            key,
-                                            60,  # Refresh TTL
-                                            session_check.to_json()
-                                        )
+                                        session_still_exists = await self.redis.exists(key)
+                                        if session_still_exists:
+                                            await self.redis.setex(
+                                                key,
+                                                60,  # Refresh TTL
+                                                session_check.to_json()
+                                            )
+                                        else:
+                                            logger.debug(
+                                                f"[MONITOR] Session removed during send for {user_phone}, "
+                                                f"skipping session rewrite"
+                                            )
                                     except Exception as send_error:
+                                        if interval_key:
+                                            # Release interval claim on failure so a later cycle can retry.
+                                            await self.redis.delete(interval_key)
                                         logger.error(
                                             f"[MONITOR] Error sending please-wait to {user_phone}: {send_error}",
                                             exc_info=True
@@ -836,7 +871,7 @@ class MessageQueueService:
                 try:
                     # Mark response as ready before sending (prevents late please-wait)
                     response_ready_key = self._key_response_ready(user_phone)
-                    await self.redis.setex(response_ready_key, 10, "1")  # 10s TTL
+                    await self.redis.setex(response_ready_key, self.response_ready_ttl, "1")
                     
                     # Calculate processing time for logging
                     processing_time = time.time() - session.started_at
@@ -939,6 +974,19 @@ class MessageQueueService:
             await self.redis.delete(processing_key)
             await self.redis.delete(session_key)
             await self.redis.delete(response_ready_key)
+
+            # Remove interval dedupe markers for this user.
+            cursor = 0
+            while True:
+                cursor, interval_keys = await self.redis.scan(
+                    cursor=cursor,
+                    match=f"{user_phone}:please_wait:interval:*",
+                    count=100
+                )
+                if interval_keys:
+                    await self.redis.delete(*interval_keys)
+                if cursor == 0:
+                    break
             
             logger.debug(f"[CLEANUP] Cleared processing state and response ready flag for {user_phone}")
             

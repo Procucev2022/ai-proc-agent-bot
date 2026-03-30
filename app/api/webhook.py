@@ -419,6 +419,9 @@ async def cleanup_direct_processing_session(user_phone: str) -> None:
         await redis_service.delete(session_key)
         await redis_service.delete(processing_key)
         await redis_service.delete(response_ready_key)
+
+        # Remove interval dedupe markers used by monitor loop.
+        await redis_service.delete_pattern(f"{user_phone}:please_wait:interval:*")
         
         logger.info(f"[SESSION] Cleaned up direct processing session for {user_phone}")
         
