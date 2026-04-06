@@ -996,7 +996,8 @@ Session IDs to process: {', '.join(session_ids)}
         """Query remote database for RFQ analytics data."""
         try:
             remote_db = get_remote_db_session()
-            query = """
+            procucev_db = self.settings.procucev_db_name
+            query = f"""
             SELECT
     DATE(rfh.created_ts) AS date,
     u.username,
@@ -1013,7 +1014,7 @@ JOIN rfq_header rfh
     ON u.uuid = rfh.user
 LEFT JOIN rfq_items ri 
     ON ri.rfq_uuid = rfh.uuid
-LEFT JOIN development_gmtbfs.gmt_rfq_vendors grv
+LEFT JOIN {procucev_db}.gmt_rfq_vendors grv
     ON grv.rfq_uuid = rfh.uuid
 WHERE 
     DATE(rfh.created_ts) = :target_date
@@ -1043,7 +1044,8 @@ ORDER BY
         """Query remote database for seller RFQ data with quotations."""
         try:
             remote_db = get_remote_db_session()
-            query = """
+            procucev_db = self.settings.procucev_db_name
+            query = f"""
             SELECT 
                 DATE(rfqv.created_ts) AS rfq_date,
                 u.uuid,
@@ -1051,7 +1053,7 @@ ORDER BY
                 u.username,
                 u.phone ,
                 COUNT(DISTINCT rfqv.rfq_uuid) AS total_rfq_responsed
-            FROM development_gmtbfs.gmt_rfq_vendors rfqv
+            FROM {procucev_db}.gmt_rfq_vendors rfqv
             LEFT JOIN user u 
                 ON u.org_uuid = rfqv.vendor_uuid
             WHERE u.self_client=0 AND u.is_active=1 and u.source_type='W'
@@ -1072,7 +1074,8 @@ ORDER BY
         """Query remote database for seller RFQ data with quotations."""
         try:
             remote_db = get_remote_db_session()
-            query = """
+            procucev_db = self.settings.procucev_db_name
+            query = f"""
             SELECT 
     DATE(bu.created_ts) AS date,bu.status_uuid,u.username,u.phone as phone_number,
     SUM(
@@ -1090,8 +1093,8 @@ ORDER BY
         THEN 1
         ELSE 0
     END ) AS counter_offer_accepted
-FROM development_gmtbfs.bfs_users bu
-JOIN development_gmtbfs.bfs_items bi
+FROM {procucev_db}.bfs_users bu
+JOIN {procucev_db}.bfs_items bi
     ON bi.uuid = bu.items_uuid
 LEFT join user u on u.org_uuid= bi.org_uuid and u.self_client=0 and u.is_active=1
 WHERE DATE(bu.created_ts)= :target_date
@@ -1322,7 +1325,8 @@ WHERE DATE(bu.created_ts)= :target_date
         
         try:
             remote_db = get_remote_db_session()
-            query = """
+            procucev_db = self.settings.procucev_db_name
+            query = f"""
         SELECT
     bc.rfq_date,
     bc.category,
@@ -1340,7 +1344,7 @@ FROM
     FROM (
         SELECT DISTINCT COALESCE(category, :null_replacement) AS category FROM rfq_items
         UNION
-        SELECT DISTINCT COALESCE(category, :null_replacement) AS category FROM development_gmtbfs.bfs_items
+        SELECT DISTINCT COALESCE(category, :null_replacement) AS category FROM {procucev_db}.bfs_items
     ) all_categories
 ) bc
 LEFT JOIN (
@@ -1361,7 +1365,7 @@ LEFT JOIN (
         DATE(rfqv.created_ts) AS rfq_date,
         COALESCE(ri.category, :null_replacement) AS category,
         COUNT(DISTINCT rfqv.rfq_uuid) AS rfqs_with_quotations
-    FROM development_gmtbfs.gmt_rfq_vendors rfqv
+    FROM {procucev_db}.gmt_rfq_vendors rfqv
     JOIN rfq_items ri ON rfqv.rfq_uuid = ri.rfq_uuid
     JOIN rfq_header rh ON ri.rfq_uuid = rh.uuid
     JOIN user u ON u.org_uuid = rfqv.vendor_uuid
@@ -1400,8 +1404,8 @@ LEFT JOIN (
                 THEN 1
             END
         ) AS bfs_counter_offer_accepted_by_seller
-    FROM development_gmtbfs.bfs_users bu
-    JOIN development_gmtbfs.bfs_items bi
+    FROM {procucev_db}.bfs_users bu
+    JOIN {procucev_db}.bfs_items bi
         ON bu.items_uuid = bi.uuid
     WHERE DATE(bu.created_ts) = :target_date
     GROUP BY DATE(bu.created_ts), COALESCE(bi.category, :null_replacement)
@@ -1421,11 +1425,12 @@ ORDER BY bc.category;
                 return
 
             # Get total_rfqs_intimated from rfq_notification_fact table
-            intimated_query = text("""
+            whatsapp_db = self.settings.whatsapp_db
+            intimated_query = text(f"""
                 SELECT
                     category,
                     COUNT(DISTINCT rfq_id) AS total_rfqs_intimated
-                FROM procurement_db.rfq_notification_fact
+                FROM {whatsapp_db}.rfq_notification_fact
                 WHERE date = :target_date
                 GROUP BY category
             """)
@@ -1583,9 +1588,10 @@ ORDER BY bc.category;
             placeholders = ','.join([f':product{i}' for i in range(len(products))])
             like_conditions = ' OR '.join([f'description LIKE :like{i}' for i in range(len(products))])
             
+            procucev_db = self.settings.procucev_db_name
             query = text(f"""
                 SELECT DISTINCT category, description 
-                FROM development_gmtbfs.bfs_items 
+                FROM {procucev_db}.bfs_items 
                 WHERE description IN ({placeholders}) OR {like_conditions}
             """)
             
