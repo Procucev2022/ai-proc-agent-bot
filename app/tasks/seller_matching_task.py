@@ -21,9 +21,10 @@ from typing import List, Dict, Any, Set, Tuple
 from celery import shared_task
 from datetime import datetime, timedelta
 
-from app.database import execute_remote_query, get_remote_db_session
+from app.database import execute_remote_query, get_remote_db_session, get_db_session
 from app.services.seller_recommendation_service import SellerRecommendationService
 from app.services.seller_notification_service import SellerNotificationService
+from app.models import RFQSellerNotification, NotificationType
 from app.config import get_settings
 from app.tasks.task_utils import get_users_active_in_last_24hrs, normalize_phone_for_comparison
 
@@ -518,6 +519,9 @@ async def process_single_rfq_matching(
                 f"{notification_results['sent']} sent, {notification_results['failed']} failed"
             )
 
+            # Record successful notifications in rfq_seller_notifications table
+            record_rfq_seller_notifications(rfq_id, notification_results.get('results', []))
+
             return {
                 "rfq_id": rfq_id,
                 "success": True,
@@ -652,6 +656,42 @@ def log_selected_sellers_to_remote(rfq_uuid: str, rfq_id: str, sellers: List[Dic
     except Exception as e:
         logger.error(f"Error logging selected sellers for RFQ {rfq_id}: {e}")
         return False
+
+
+def record_rfq_seller_notifications(rfq_id: str, notification_results: List[Dict[str, Any]]) -> None:
+    """
+    Record successfully sent notifications in rfq_seller_notifications table.
+
+    Only records sellers where the WhatsApp notification was actually sent.
+
+    Args:
+        rfq_id: The RFQ ID
+        notification_results: Per-seller results from SellerNotificationService.send_rfq_notifications()
+    """
+    successful = [r for r in notification_results if r.get('success')]
+
+    if not successful:
+        return
+
+    db = get_db_session()
+    try:
+        for result in successful:
+            notification = RFQSellerNotification(
+                rfq_id=rfq_id,
+                seller_id=result['seller_id'],
+                notification_type=NotificationType.initial_notification,
+                sent_at=datetime.utcnow()
+            )
+            db.add(notification)
+
+        db.commit()
+        logger.info(f"Recorded {len(successful)} notifications in rfq_seller_notifications for RFQ {rfq_id}")
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to record rfq_seller_notifications for RFQ {rfq_id}: {e}")
+    finally:
+        db.close()
 
 
 def _build_item_description_for_rfq(rfq_data: Dict[str, Any]) -> str:

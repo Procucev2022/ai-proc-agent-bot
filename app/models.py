@@ -678,7 +678,6 @@ class Seller(Base):
     updated_at = Column(TIMESTAMP, default=func.current_timestamp(), onupdate=func.current_timestamp())
     
     # Relationships
-    notifications = relationship("RFQSellerNotification", back_populates="seller")
     interactions = relationship("SellerRFQInteraction", back_populates="seller")
     subscriptions = relationship("SellerSubscription", back_populates="seller")
     # learning_mappings removed - now handled by SellerDataAdapter for remote sellers
@@ -694,16 +693,13 @@ class RFQSellerNotification(Base):
     
     notification_id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     rfq_id = Column(CHAR(36), nullable=False)
-    seller_id = Column(CHAR(36), ForeignKey("sellers.seller_id"), nullable=False)
+    seller_id = Column(CHAR(36), nullable=False)
     notification_type = Column(Enum(NotificationType), default=NotificationType.initial_notification)
     sent_at = Column(TIMESTAMP, default=func.current_timestamp())
     delivered_at = Column(TIMESTAMP, nullable=True)
     read_at = Column(TIMESTAMP, nullable=True)
     responded_at = Column(TIMESTAMP, nullable=True)
     response_type = Column(Enum(ResponseType), nullable=True)
-    
-    # Relationships
-    seller = relationship("Seller", back_populates="notifications")
 
 class SellerRFQInteraction(Base):
     """
