@@ -658,6 +658,31 @@ def log_selected_sellers_to_remote(rfq_uuid: str, rfq_id: str, sellers: List[Dic
         return False
 
 
+_fk_dropped = False
+
+def _ensure_seller_id_fk_dropped(db) -> None:
+    """Drop the sellers FK constraint from rfq_seller_notifications if it still exists."""
+    global _fk_dropped
+    if _fk_dropped:
+        return
+
+    try:
+        from sqlalchemy import text, inspect
+        inspector = inspect(db.bind)
+        fks = inspector.get_foreign_keys('rfq_seller_notifications')
+        fk_names = [fk['name'] for fk in fks]
+
+        if 'rfq_seller_notifications_ibfk_1' in fk_names:
+            db.execute(text('ALTER TABLE rfq_seller_notifications DROP FOREIGN KEY rfq_seller_notifications_ibfk_1'))
+            db.commit()
+            logger.info("Dropped FK constraint rfq_seller_notifications_ibfk_1")
+
+        _fk_dropped = True
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Could not drop FK constraint on rfq_seller_notifications: {e}")
+
+
 def record_rfq_seller_notifications(rfq_id: str, notification_results: List[Dict[str, Any]]) -> None:
     """
     Record successfully sent notifications in rfq_seller_notifications table.
@@ -675,6 +700,8 @@ def record_rfq_seller_notifications(rfq_id: str, notification_results: List[Dict
 
     db = get_db_session()
     try:
+        _ensure_seller_id_fk_dropped(db)
+
         for result in successful:
             notification = RFQSellerNotification(
                 rfq_id=rfq_id,
