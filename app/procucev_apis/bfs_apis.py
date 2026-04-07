@@ -9,14 +9,14 @@ import logging
 from typing import Dict, Any, List
 
 from app.procucev_apis.procucev_api_client import get_procucev_api_client
-
+from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 # BFS API endpoints
-BFS_SEARCH_URL = "https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net/rest/bfs/getBfsItemsByCategory"
-BFS_REQUEST_ITEM_URL = "https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net/rest/bfs/requestBfsItem"
-BFS_ACCEPT_BID_URL = "https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net/rest/bfs/acceptBfsItemBySeller"
-BFS_REJECT_BID_URL = "https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net/rest/bfs/rejectBfsItemBySeller"
+BFS_SEARCH_URL = f"{get_settings().gmt_base_url}/rest/bfs/getBfsItemsByCategory"
+BFS_REQUEST_ITEM_URL = f"{get_settings().gmt_base_url}/rest/bfs/requestBfsItem"
+BFS_ACCEPT_BID_URL = f"{get_settings().gmt_base_url}/rest/bfs/acceptBfsItemBySeller"
+BFS_REJECT_BID_URL = f"{get_settings().gmt_base_url}/rest/bfs/rejectBfsItemBySeller"
 
 
 class BFSAPIService:
