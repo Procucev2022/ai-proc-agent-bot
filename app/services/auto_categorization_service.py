@@ -144,30 +144,42 @@ class AutoCategorizationService:
             ids = []
             
             for item in items_data:
+                item_name = item.get('item') or ''
+                category_name = item.get('category') or ''
+
+                # Skip entries with no item or category
+                if not item_name or not category_name:
+                    continue
+
                 # Simple document text: item + category for better matching
-                doc_text = f"{item['item']} {item['category']}"
+                doc_text = f"{item_name} {category_name}"
                 documents.append(doc_text)
 
                 # Metadata includes division for remote data but isn't used in search
                 metadata = {
-                    "category": item['category'],
-                    "item": item['item'],
+                    "category": category_name,
+                    "item": item_name,
                     "mapping_id": item['id']
                 }
 
                 # Add division for remote data (stored but not used in search)
-                if 'division' in item:
+                # Skip None values — ChromaDB cannot serialize null metadata
+                if item.get('division') is not None:
                     metadata["division"] = item['division']
-                if 'serial_no' in item:
+                if item.get('serial_no') is not None:
                     metadata["serial_no"] = item['serial_no']
 
                 metadatas.append(metadata)
                 ids.append(item['id'])
 
+            if not documents:
+                logger.warning("No valid category data after filtering nulls")
+                return 0
+
             # Add to ChromaDB collection in batches to avoid max batch size error
             # ChromaDB has a max batch size limit, so we process in chunks
             batch_size = 5000  # Safe batch size for ChromaDB
-            total_items = len(items_data)
+            total_items = len(documents)
 
             for i in range(0, total_items, batch_size):
                 end_idx = min(i + batch_size, total_items)
