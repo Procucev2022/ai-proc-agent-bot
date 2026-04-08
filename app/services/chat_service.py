@@ -741,6 +741,9 @@ class ChatService:
             from app.services.user_cache_service import get_user_cache_service
             user_cache_service = get_user_cache_service()
 
+            last_meaningful = None
+            last_meaningful_intent = None
+
             if session.workflow_state:
                 last_meaningful = session.workflow_state.get("last_meaningful_message")
                 last_meaningful_intent = session.workflow_state.get("last_meaningful_intent_result")
