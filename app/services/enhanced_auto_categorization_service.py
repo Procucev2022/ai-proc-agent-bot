@@ -898,6 +898,69 @@ class EnhancedAutoCategorizationService:
                 # No good matches found through hierarchical search
                 logger.info(f"Hierarchical search failed: {hierarchical_result.get('reason', 'Unknown reason')}")
 
+            # Step 1.5: If hierarchical search failed, try category-name search
+            # The category_names collection may still match even when no similar items exist
+            if not hierarchical_result["success"]:
+                CATEGORY_NAME_THRESHOLD = 0.45
+                cat_name_results = self._search_by_category_name(item_description, top_k=3)
+
+                if cat_name_results.get("success") and cat_name_results.get("best_match"):
+                    best_cat = cat_name_results["best_match"]
+                    if best_cat["similarity"] >= CATEGORY_NAME_THRESHOLD:
+                        selected_category = best_cat["category_name"]
+                        cat_similarity = best_cat["similarity"]
+                        logger.info(
+                            f"Category-name search matched '{selected_category}' "
+                            f"(sim={cat_similarity:.3f}) when hierarchical search failed"
+                        )
+
+                        # Use OpenAI to confirm the category-name match
+                        cat_matches = [
+                            {
+                                "item": cm["category_name"],
+                                "category": cm["category_name"],
+                                "similarity_score": round(cm["similarity"], 4),
+                                "matched_level": "category_name",
+                            }
+                            for cm in cat_name_results["matches"]
+                            if cm["similarity"] >= 0.1
+                        ]
+                        available_categories = [cm["category"] for cm in cat_matches]
+
+                        openai_result = await self.openai_service.categorize_with_similar_items(
+                            item_description, cat_matches, available_categories
+                        )
+
+                        processing_time = int((time.time() - start_time) * 1000)
+
+                        if openai_result.get("success") and openai_result.get("category") != "Other":
+                            final_category = openai_result["category"]
+                            confidence = openai_result.get("confidence", 0.7)
+
+                            self._log_fallback_categorization(
+                                input_description=item_description,
+                                user_id=user_id,
+                                session_id=session_id,
+                                rfq_id=rfq_id,
+                                predicted_category=final_category,
+                                confidence_score=confidence,
+                                method="enhanced_category_name_openai",
+                                processing_time=processing_time,
+                                fallback_reason="Hierarchical search failed, category-name search + OpenAI used",
+                            )
+
+                            return {
+                                "success": True,
+                                "method": "enhanced_category_name_openai",
+                                "client_category": final_category,
+                                "confidence_score": confidence,
+                                "similarity_score": cat_similarity,
+                                "processing_time_ms": processing_time,
+                                "reasoning": openai_result.get("reasoning", ""),
+                                "openai_reasoning": openai_result.get("reasoning", ""),
+                                "category_name_matches": cat_name_results["matches"],
+                            }
+
             # Step 2: Try learning service before fallback
             logger.info("Trying learning categorization service before fallback")
             learning_service_completed = False
