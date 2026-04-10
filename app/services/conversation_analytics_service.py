@@ -1056,7 +1056,7 @@ ORDER BY
             FROM {procucev_db}.gmt_rfq_vendors rfqv
             LEFT JOIN user u 
                 ON u.org_uuid = rfqv.vendor_uuid
-            WHERE u.self_client=0 AND u.is_active=1 and u.source_type='W'
+            WHERE u.self_client=0 AND u.is_active=1 and u.source_type='W' and rfqv.created_by is null
               AND DATE(rfqv.created_ts) = :target_date
             GROUP BY DATE(rfqv.created_ts), u.uuid
             """
