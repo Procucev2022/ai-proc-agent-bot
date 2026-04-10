@@ -151,8 +151,8 @@ class AutoCategorizationService:
                 if not item_name or not category_name:
                     continue
 
-                # Simple document text: item + category for better matching
-                doc_text = f"{item_name} {category_name}"
+                # Document text: item only — category is in metadata, not the embedding
+                doc_text = item_name
                 documents.append(doc_text)
 
                 # Metadata includes division for remote data but isn't used in search
@@ -287,8 +287,8 @@ class AutoCategorizationService:
                 metadata = results['metadatas'][0][i]
                 distance = results['distances'][0][i]
                 
-                # Convert distance to similarity score (1 - distance for cosine similarity)
-                similarity_score = 1.0 - distance
+                # Convert L2 distance to similarity (normalized vectors: L2 range 0-2)
+                similarity_score = max(0.0, min(1.0, 1.0 - (distance / 2.0)))
                 
                 similar_items.append({
                     "item_description": doc,
@@ -305,12 +305,12 @@ class AutoCategorizationService:
             raise
     
     def _get_similar_items(self, item_description: str) -> List[Dict]:
-        """Get top 3 similar items from ChromaDB and re-rank by similarity."""
+        """Get top 5 similar items from ChromaDB and re-rank by similarity."""
         try:
             # ChromaDB automatically generates embeddings for the query text
             results = self.collection.query(
-                query_texts=[item_description],  # Use query_texts instead of query_embeddings
-                n_results=3,
+                query_texts=[item_description],
+                n_results=5,
                 include=['documents', 'metadatas', 'distances']
             )
             
@@ -321,7 +321,7 @@ class AutoCategorizationService:
             similar_items = []
             for i in range(len(results['distances'][0])):
                 distance = results['distances'][0][i]
-                similarity_score = 1 - distance  # Convert distance to similarity
+                similarity_score = max(0.0, min(1.0, 1.0 - (distance / 2.0)))
                 metadata = results['metadatas'][0][i]
                 
                 similar_items.append({
@@ -379,12 +379,21 @@ class AutoCategorizationService:
                 )
 
             # HIGH CONFIDENCE SHORTCUT: If top match similarity >= 0.75 and category is not "Other", skip LLM call
+            # Use majority voting across top matches to avoid trusting a single wrong mapping
             HIGH_SIMILARITY_THRESHOLD = 0.75
             top_match = similar_items[0]
             if top_match["similarity_score"] >= HIGH_SIMILARITY_THRESHOLD and top_match["category"] != "Other":
+                # Majority vote: pick the most common category among high-similarity matches
+                from collections import Counter
+                high_sim_items = [s for s in similar_items if s["similarity_score"] >= HIGH_SIMILARITY_THRESHOLD * 0.9]
+                category_votes = Counter(s["category"] for s in high_sim_items if s["category"] != "Other")
+                if category_votes:
+                    selected_category = category_votes.most_common(1)[0][0]
+                else:
+                    selected_category = top_match["category"]
+
                 processing_time = int((time.time() - start_time) * 1000)
-                selected_category = top_match["category"]
-                logger.info(f"High similarity ({top_match['similarity_score']:.3f} >= {HIGH_SIMILARITY_THRESHOLD}), skipping LLM call. Using category: '{selected_category}'")
+                logger.info(f"High similarity ({top_match['similarity_score']:.3f} >= {HIGH_SIMILARITY_THRESHOLD}), skipping LLM call. Using category: '{selected_category}' (votes: {dict(category_votes)})")
 
                 result = {
                     "success": True,
@@ -500,7 +509,7 @@ class AutoCategorizationService:
             
             # Add to ChromaDB - embeddings generated automatically by ChromaDB
             doc_id = mapping_id
-            doc_text = f"{item} {category}"
+            doc_text = item
             
             self.collection.upsert(
                 documents=[doc_text],
@@ -534,7 +543,7 @@ class AutoCategorizationService:
     
     def add_item_embedding(self, item_id: str, category: str, item: str):
         """Add a single item embedding to ChromaDB."""
-        doc_text = f"{item} {category}"
+        doc_text = item
         
         self.collection.upsert(
             documents=[doc_text],

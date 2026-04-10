@@ -83,10 +83,10 @@ def create_unified_vector_store(clear_existing: bool = False):
             category = item.learning_category
             category_path = f"{category.level_1_category} > {category.level_2_category} > {category.level_3_category}"
             
-            # Document for embedding - use simple format for better similarity matching
-            # Category path is stored in metadata for filtering/display, not in document
-            # This avoids query-document asymmetry (queries don't include category paths)
-            doc_text = f"{item.item_description} {item.client_category_name or ''}"
+            # Document for embedding - item description only
+            # Category info is in metadata, not the embedding — avoids query-document
+            # asymmetry since queries are plain item descriptions
+            doc_text = item.item_description
             documents.append(doc_text)
             
             # Metadata for search results

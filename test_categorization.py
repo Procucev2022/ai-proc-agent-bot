@@ -70,20 +70,32 @@ def banner(title: str):
 async def test_item(service: EnhancedAutoCategorizationService, description: str):
     banner(f'INPUT: "{description}"')
 
-    # ── 1. Taxonomy retrieval (item-based hierarchical search) ──────────
+    # ── Step 1: Keyword lookup ─────────────────────────────────────────
+    kw = service._keyword_lookup_source_of_truth(description, top_k=5)
+
+    print("\n  [1] KEYWORD LOOKUP (item_category table)")
+    if kw.get("success"):
+        print(f"      Best category  : {kw['category']}")
+        print(f"      Consensus      : {kw['consensus']:.2f}")
+        print(f"      Source         : {kw.get('match_source', 'N/A')}")
+        if kw.get("all_categories"):
+            print(f"      All votes      : {kw['all_categories']}")
+    else:
+        print(f"      No keyword matches")
+
+    # ── Step 2: Taxonomy lookup ────────────────────────────────────────
     hier = service._search_hierarchical_levels(description, similarity_threshold=0.75, top_k=5)
 
-    print("\n  [1] TAXONOMY RETRIEVAL (Item-Based Cosine Similarity)")
+    print("\n  [2] TAXONOMY LOOKUP (learning_taxonomy)")
     if hier["success"]:
         best = hier["best_match"]
-        print(f"      Best match level : {hier['matched_level']}")
         print(f"      Client category  : {best.get('client_category_name', 'N/A')}")
-        print(f"      Category path    : {best.get('category_path', 'N/A')}")
         print(f"      Similarity       : {hier['similarity_score']:.4f}")
+        print(f"      Level            : {hier['matched_level']}")
 
         matches = hier.get("all_level_matches", [])
         if matches:
-            headers = ["#", "Item Description", "Client Category", "Category Path", "Similarity", "Level"]
+            headers = ["#", "Item Description", "Client Category", "Similarity"]
             rows = []
             for i, m in enumerate(matches, 1):
                 meta = m["metadata"]
@@ -91,47 +103,14 @@ async def test_item(service: EnhancedAutoCategorizationService, description: str
                     str(i),
                     (meta.get("item_description") or "")[:50],
                     meta.get("client_category_name", "N/A"),
-                    meta.get("category_path", "N/A"),
                     f"{m['similarity_score']:.4f}",
-                    m["matched_level"],
                 ])
             print()
             print(fmt_table(headers, rows))
     else:
-        print(f"      No taxonomy match found: {hier.get('reason', 'N/A')}")
+        print(f"      No taxonomy match")
 
-    # ── 2. Category-name retrieval (hybrid search) ──────────────────────
-    cat_results = service._search_by_category_name(description, top_k=5)
-
-    print("\n  [2] CATEGORY-NAME RETRIEVAL (Hybrid Search)")
-    if cat_results.get("success") and cat_results.get("matches"):
-        headers = ["#", "Category Name", "Similarity", "Item Count"]
-        rows = []
-        for i, m in enumerate(cat_results["matches"], 1):
-            rows.append([
-                str(i),
-                m["category_name"],
-                f"{m['similarity']:.4f}",
-                str(m.get("item_count", "N/A")),
-            ])
-        print(fmt_table(headers, rows))
-
-        # Show hybrid re-ranking decision if taxonomy match exists
-        if hier["success"]:
-            hybrid = service._hybrid_category_selection(
-                item_based_category=hier["best_match"]["client_category_name"],
-                item_based_similarity=hier["similarity_score"],
-                category_based_results=cat_results,
-            )
-            print(f"\n      Hybrid decision  : {hybrid['method']}")
-            print(f"      Agreement        : {hybrid['agreement']}")
-            print(f"      Final category   : {hybrid['final_category']}")
-            print(f"      Confidence boost : +{hybrid.get('confidence_boost', 0):.2f}")
-            print(f"      Reasoning        : {hybrid['reasoning']}")
-    else:
-        print(f"      No category-name matches: {cat_results.get('reason', 'N/A')}")
-
-    # ── 3. Full categorize_item call (includes LLM decision) ────────────
+    # ── Step 3: Final result (categorize_item) ─────────────────────────
     start = time.time()
     result = await service.categorize_item(
         item_description=description,

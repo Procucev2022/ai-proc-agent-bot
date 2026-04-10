@@ -260,19 +260,17 @@ async def process_category_mappings(batch_size: int = 50, start_from: int = 0, u
         }
         
         start_time = time.time()
-        batch_count = 0
-        
-        for i, mapping in enumerate(category_mappings):
+
+        async def process_single(mapping, index):
+            """Process a single mapping item."""
             try:
-                logger.info(f"Processing mapping {start_from + i + 1}/{total_mappings}: {mapping['category']} - {mapping['item']}")
+                logger.info(f"Processing {index + 1}/{len(category_mappings)}: {mapping['category']} - {mapping['item']}")
 
-                # Create item description combining item and category
-                item_description = f"{mapping['item']} {mapping['category']}"
+                # Use item description only — category is stored in metadata
+                item_description = mapping['item']
 
-                # Create fresh service instance for each call to avoid connection issues
                 learning_service = LearningCategorizationService()
 
-                # Create 3-level category using learning service (async)
                 learning_result = await learning_service.create_3_level_category(
                     item_description=item_description,
                     client_category=mapping['category'],
@@ -281,35 +279,49 @@ async def process_category_mappings(batch_size: int = 50, start_from: int = 0, u
                     session_id=f"build_taxonomy_{int(time.time())}"
                 )
 
-                # Rate limiting delay after each LLM call
-                await asyncio.sleep(delay)
-
                 if learning_result.get("success"):
-                    results["processed_count"] += 1
                     if learning_result.get("existing"):
-                        results["existing_categories"] += 1
                         logger.info(f"  → Used existing category")
+                        return "existing"
                     else:
-                        results["created_categories"] += 1
                         learning_cat = learning_result.get("learning_category", {})
                         logger.info(f"  → Created: {learning_cat.get('level_1_category')} > {learning_cat.get('level_2_category')} > {learning_cat.get('level_3_category')}")
+                        return "created"
                 else:
                     error_msg = f"Failed to process mapping {mapping['id']}: {learning_result.get('error', 'Unknown error')}"
                     logger.error(f"  → {error_msg}")
-                    results["errors"].append(error_msg)
+                    return ("error", error_msg)
 
-                batch_count += 1
-
-                # Longer pause between batches
-                if batch_count >= batch_size:
-                    logger.info(f"Completed batch of {batch_size} items. Pausing for 5 seconds...")
-                    await asyncio.sleep(5)  # Longer pause between batches
-                    batch_count = 0
-                
             except Exception as e:
                 error_msg = f"Exception processing mapping {mapping['id']}: {str(e)}"
                 logger.error(f"  → {error_msg}")
-                results["errors"].append(error_msg)
+                return ("error", error_msg)
+
+        # Process in parallel batches
+        PARALLEL_SIZE = min(batch_size, 5)  # Cap concurrent requests
+        for batch_start in range(0, len(category_mappings), PARALLEL_SIZE):
+            batch = category_mappings[batch_start:batch_start + PARALLEL_SIZE]
+            logger.info(f"Processing parallel batch {batch_start // PARALLEL_SIZE + 1} ({len(batch)} items)...")
+
+            tasks = [
+                process_single(mapping, batch_start + j)
+                for j, mapping in enumerate(batch)
+            ]
+            batch_results = await asyncio.gather(*tasks)
+
+            for r in batch_results:
+                if r == "created":
+                    results["processed_count"] += 1
+                    results["created_categories"] += 1
+                elif r == "existing":
+                    results["processed_count"] += 1
+                    results["existing_categories"] += 1
+                elif isinstance(r, tuple) and r[0] == "error":
+                    results["errors"].append(r[1])
+
+            # Brief pause between batches to avoid rate limiting
+            if batch_start + PARALLEL_SIZE < len(category_mappings):
+                await asyncio.sleep(delay)
         
         results["processing_time_ms"] = int((time.time() - start_time) * 1000)
         

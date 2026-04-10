@@ -2443,7 +2443,8 @@ Determine the best category for the input item based on the similar items and th
                 input=[{"role": "user", "content": prompt}],
                 instructions=self._load_prompt("auto_categorization", "_get_auto_categorization_system_prompt"),
                 tools=[categorization_tool],
-                tool_choice={"type": "function", "name": "categorize_item"}
+                tool_choice={"type": "function", "name": "categorize_item"},
+                temperature=0,
             )
             
             processing_time = time.time() - start_time
