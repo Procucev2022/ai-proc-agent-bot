@@ -949,6 +949,19 @@ class EnhancedAutoCategorizationService:
                                 fallback_reason="Hierarchical search failed, category-name search + OpenAI used",
                             )
 
+                            # Update learning taxonomy so future queries hit hierarchical search
+                            learning_updated = False
+                            try:
+                                learning_updated = await self._update_learning_taxonomy(
+                                    item_description=item_description,
+                                    client_category=final_category,
+                                    user_id=user_id,
+                                )
+                                if learning_updated:
+                                    logger.info(f"Learning taxonomy updated with category-name result: '{final_category}' for '{item_description[:50]}'")
+                            except Exception as e:
+                                logger.warning(f"Learning taxonomy update failed (non-critical): {e}")
+
                             return {
                                 "success": True,
                                 "method": "enhanced_category_name_openai",
@@ -959,6 +972,7 @@ class EnhancedAutoCategorizationService:
                                 "reasoning": openai_result.get("reasoning", ""),
                                 "openai_reasoning": openai_result.get("reasoning", ""),
                                 "category_name_matches": cat_name_results["matches"],
+                                "learning_updated": learning_updated,
                             }
 
             # Step 2: Try learning service before fallback
