@@ -31,8 +31,8 @@ from app.tasks.task_utils import get_users_active_in_last_24hrs, normalize_phone
 logger = logging.getLogger(__name__)
 
 # Target seller counts per RFQ
-TARGET_SUBSCRIBED_SELLERS = 5    # Sellers with rfq_credits > 0
-TARGET_UNSUBSCRIBED_SELLERS = 10  # Sellers with rfq_credits = 0
+TARGET_SUBSCRIBED_SELLERS = 10    # Sellers with rfq_credits > 0
+TARGET_UNSUBSCRIBED_SELLERS = 25  # Sellers with rfq_credits = 0
 
 
 def get_rfq_notification_progress(rfq_uuid: str) -> Dict[str, int]:
@@ -188,7 +188,7 @@ def get_rfqs_needing_seller_matching(limit: int = 50) -> List[Dict[str, Any]]:
     Returns:
         List of RFQ records that need more sellers
     """
-    cutoff_date = datetime.utcnow() - timedelta(days=7)
+    cutoff_date = datetime.utcnow() - timedelta(hours=2)
 
     # Get RFQs that need more sellers
     # Uses subquery to count current subscribed/unsubscribed notifications
@@ -225,6 +225,7 @@ def get_rfqs_needing_seller_matching(limit: int = 50) -> List[Dict[str, Any]]:
         AND h.created_ts > :cutoff_date
         AND (h.rfq_closing_date IS NULL OR h.rfq_closing_date > NOW())
         AND h.quotation_received = 0
+        AND h.status_uuid = '23'
         AND (
             COALESCE(progress.subscribed_count, 0) < :target_subscribed
             OR COALESCE(progress.unsubscribed_count, 0) < :target_unsubscribed
@@ -396,7 +397,6 @@ async def process_single_rfq_matching(
                     enhanced_result = await enhanced_service.find_sellers_for_item(
                         item_description=item_description,
                         delivery_location=rfq_data.get('delivery_location'),
-                        max_distance_km=500,
                         max_sellers=100,
                         similarity_threshold=0.3,
                         ranking_priority=False

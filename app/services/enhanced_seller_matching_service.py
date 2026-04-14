@@ -76,7 +76,7 @@ class EnhancedSellerMatchingService:
         self,
         item_description: str,
         delivery_location: Optional[Dict[str, Any]] = None,
-        max_distance_km: int = 200,
+        max_distance_km: Optional[int] = None,
         max_sellers: int = 10,
         similarity_threshold: float = 0.0,
         ranking_priority: bool = True
@@ -162,8 +162,8 @@ class EnhancedSellerMatchingService:
                             seller_location["lng"]
                         )
                         
-                        # Check if within max distance
-                        if distance_km > max_distance_km:
+                        # Check if within max distance (skip if no limit set)
+                        if max_distance_km is not None and distance_km > max_distance_km:
                             within_coverage = False
                             continue  # Skip sellers outside max distance
                     
