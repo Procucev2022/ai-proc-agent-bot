@@ -1498,6 +1498,8 @@ Analyze their response to determine their true choice.
                 kwargs['support_email'] = self.settings.support_email
             if 'support_info_email' not in kwargs:
                 kwargs['support_info_email'] = self.settings.support_contact_info
+            if 'portal_url' not in kwargs:
+                kwargs['portal_url'] = self.settings.PROCUCEV_PORTAL_URL
             # Handle seller end-of-flow reminder prompts
             if prompt_name == "_get_seller_common_response_prompt":
                 workflow_state = kwargs.get("workflow_state", "")

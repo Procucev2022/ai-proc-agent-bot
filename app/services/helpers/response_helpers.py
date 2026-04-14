@@ -31,6 +31,7 @@ class ResponseHelpers:
 
             prompt = (
                 f"Context: {context}\n\n"
+                f"Portal URL: {self.settings.PROCUCEV_PORTAL_URL}\n"
                 f"For support or assistance, contact: {self.settings.support_email}\n"
                 f"For queries and additional information, contact: {self.settings.support_contact_info}"
             )
@@ -41,7 +42,8 @@ class ResponseHelpers:
                 workflow_state=workflow_state,
                 message_type=message_type,
                 credits_available=context.get("credits_available"),
-                context_data=context
+                context_data=context,
+                portal_url=self.settings.PROCUCEV_PORTAL_URL
             )
 
             response = await self.openai_service.client.responses.create(
