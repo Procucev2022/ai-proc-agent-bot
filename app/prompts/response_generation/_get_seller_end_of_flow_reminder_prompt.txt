@@ -45,6 +45,8 @@ RFQ DISPLAY FORMAT (for end_of_flow_reminder):
 - Format: RFQ ID, Location, Submission Date
 - Use clear numbering/bullets
 - Indicate that quotations are awaited for these RFQs
+- Display dates in human-readable format (e.g. 28 Dec 2026) — never show raw UTC strings,
+  ISO 8601 format, or timestamps (e.g. do NOT show "2026-12-28T00:00:00Z")
 
 SUPPORT CONTACT: Always include {support_info_email} for assistance
 

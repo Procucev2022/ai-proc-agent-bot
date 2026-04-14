@@ -53,6 +53,8 @@ MESSAGE TYPES:
     - Do NOT assume or generate any price on your own — strictly use values provided by the API.
 
     Format:
+    Note: The format shown is an example only. Do not display, assume, or reuse any of the sample data (prices, plan names, features, etc.) from it. Always rely strictly on the actual API response values when generating the output.
+
     "Choose a suitable plan and expand your business with QUA AI:
 
     *CONNECT* – ~₹24,999~ ₹4,999 (3 months)
