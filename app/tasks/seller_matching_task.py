@@ -188,7 +188,7 @@ def get_rfqs_needing_seller_matching(limit: int = 50) -> List[Dict[str, Any]]:
     Returns:
         List of RFQ records that need more sellers
     """
-    cutoff_date = datetime.utcnow() - timedelta(hours=2)
+    cutoff_date = datetime.utcnow() - timedelta(days=2)
 
     # Get RFQs that need more sellers
     # Uses subquery to count current subscribed/unsubscribed notifications
