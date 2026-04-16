@@ -82,9 +82,9 @@ if ENABLE_VECTOR_STORE_SYNC:
 if ENABLE_SELLER_MATCHING:
     beat_schedule['seller-matching-task'] = {
         'task': 'app.tasks.seller_matching_task.process_seller_matching',
-        'schedule': crontab(minute=0, hour='*/1'),
+        'schedule': crontab(minute=0, hour='*/2'),
         'options': {
-            'expires': 3600,
+            'expires': 7200,
             'queue': 'seller_matching'
         }
     }
