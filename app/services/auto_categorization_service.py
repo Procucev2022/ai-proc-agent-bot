@@ -304,39 +304,60 @@ class AutoCategorizationService:
             logger.error(f"Error finding similar items: {str(e)}")
             raise
     
+    def _refresh_collection(self):
+        """Re-fetch the collection handle after it was recreated by a rebuild task."""
+        logger.info("Refreshing stale 'category_items' collection reference")
+        self.collection = self.chroma_client.get_or_create_collection(
+            name="category_items",
+            embedding_function=self.embedding_function
+        )
+
     def _get_similar_items(self, item_description: str) -> List[Dict]:
         """Get top 5 similar items from ChromaDB and re-rank by similarity."""
         try:
-            # ChromaDB automatically generates embeddings for the query text
-            results = self.collection.query(
-                query_texts=[item_description],
-                n_results=5,
-                include=['documents', 'metadatas', 'distances']
-            )
-            
+            results = self._query_collection(item_description)
+
             if not results['distances'][0]:
                 return []
-            
+
             # Convert distances to similarity scores and format
             similar_items = []
             for i in range(len(results['distances'][0])):
                 distance = results['distances'][0][i]
                 similarity_score = max(0.0, min(1.0, 1.0 - (distance / 2.0)))
                 metadata = results['metadatas'][0][i]
-                
+
                 similar_items.append({
                     "item": metadata["item"],
                     "category": metadata["category"],
                     "similarity_score": round(similarity_score, 4)
                 })
-            
+
             # Re-rank by similarity score (should already be sorted, but ensure)
             similar_items.sort(key=lambda x: x["similarity_score"], reverse=True)
-            
+
             return similar_items
-            
+
         except Exception as e:
             raise Exception(f"Failed to get similar items: {str(e)}")
+
+    def _query_collection(self, item_description: str) -> Dict:
+        """Query the collection, retrying once with a fresh handle on 404."""
+        try:
+            return self.collection.query(
+                query_texts=[item_description],
+                n_results=5,
+                include=['documents', 'metadatas', 'distances']
+            )
+        except Exception as e:
+            if "does not exist" not in str(e) and "404" not in str(e):
+                raise
+            self._refresh_collection()
+            return self.collection.query(
+                query_texts=[item_description],
+                n_results=5,
+                include=['documents', 'metadatas', 'distances']
+            )
     
     def _handle_no_similar_items(self, item_description: str, user_id: str,
                                 session_id: Optional[str], rfq_id: Optional[str],
