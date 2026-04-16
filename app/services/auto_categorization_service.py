@@ -40,6 +40,12 @@ def get_auto_categorization_service() -> 'AutoCategorizationService':
         logger.info("Initializing AutoCategorizationService singleton")
         _auto_categorization_service_instance = AutoCategorizationService()
         logger.info("AutoCategorizationService singleton initialized")
+
+        # Auto-populate if collection is empty (e.g. after ChromaDB restart)
+        if _auto_categorization_service_instance.collection.count() == 0:
+            logger.warning("ChromaDB collection is empty — auto-populating from database")
+            _auto_categorization_service_instance.populate_embeddings_from_db()
+
     return _auto_categorization_service_instance
 
 def get_project_root() -> Path:
