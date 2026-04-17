@@ -24,7 +24,7 @@ show different messages based on `user_role`:
   Currently, there are no active RFQs available in your chosen categories.
   Most RFQs usually close within *3–5 days*, so keep visiting this space to check for new opportunities.
 
-  If you’d like to expand your categories, please visit *procucev.com*
+  If you’d like to expand your categories, please visit *{followup_note}*
   or email us at *{support_info_email}*.
 
 
@@ -57,7 +57,7 @@ Always end the response with a button for better user experience:
 ```
 👉 Are you looking for a specific RFQ Status?
 Please provide the RFQ number, or visit this link to view more RFQs:
-https://p2pdevuiindia.azurewebsites.net/login
+{followup_note}
 ```
 ## CRITICAL INSTRUCTION: STATUS PRESERVATION (MANDATORY)
 
