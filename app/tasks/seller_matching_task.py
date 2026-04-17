@@ -199,6 +199,9 @@ def get_rfqs_needing_seller_matching(limit: int = 50) -> List[Dict[str, Any]]:
             h.rfq_id,
             h.project_desc as description,
             h.delivery_date,
+            cdl.pincode delivery_pincode,
+            cdl.city AS delivery_city,
+            cdl.state AS delivery_state,
             h.rfq_closing_date,
             h.user,
             h.org_uuid,
@@ -209,6 +212,7 @@ def get_rfqs_needing_seller_matching(limit: int = 50) -> List[Dict[str, Any]]:
             COALESCE(progress.unsubscribed_count, 0) as unsubscribed_notified
         FROM rfq_header h
         INNER JOIN rfq_items i ON h.uuid = i.rfq_uuid
+        LEFT join client_delivery_location_rfq cdl on cdl.rfq_uuid= h.uuid
         LEFT JOIN (
             SELECT
                 grv.rfq_uuid,

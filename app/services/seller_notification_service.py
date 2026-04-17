@@ -236,6 +236,7 @@ class SellerNotificationService:
             List of parameter values in order:
                 [rfq_id, delivery_date, delivery_location, description, portal_link]
         """
+        logger.info(f"rfq_data:{rfq_data}")
         # {{1}} - RFQ ID
         rfq_id = str(rfq_data.get('rfq_id', 'N/A'))
 
