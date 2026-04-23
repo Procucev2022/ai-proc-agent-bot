@@ -672,8 +672,9 @@ class InactivityTimeoutService:
             if session_data:
                 try:
                     # Reset workflow_state but keep auth token
+                    # NOTE: workflow_state matches the new-session shape (see inactivity reset above).
                     session_data['workflow_type'] = None
-                    session_data['workflow_state'] = {}
+                    session_data['workflow_state'] = {"extracted_entities": [], "last_activity_at": utc_now().isoformat()}
                     session_data['extracted_entities'] = {}
                     session_data['outcome'] = None
                     
@@ -844,7 +845,11 @@ class InactivityTimeoutService:
                     now_iso = utc_now().isoformat()
                     
                     # Reset workflow data for fresh start (matching CancelService._clear_workflow_state)
-                    session_data['workflow_state'] = {}
+                    # NOTE: workflow_state matches the new-session shape from
+                    # session_management_service.get_conversation_context so post-timeout intent
+                    # classification sees the same truthy workflow_state (with Conversation Stage
+                    # signal) as a fresh session.
+                    session_data['workflow_state'] = {"extracted_entities": [], "last_activity_at": now_iso}
                     session_data['extracted_entities'] = {}
                     session_data['conversation_history'] = {"messages": [], "metadata": [], "openai_messages": []}
                     session_data['workflow_type'] = None
