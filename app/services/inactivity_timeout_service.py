@@ -591,6 +591,7 @@ class InactivityTimeoutService:
         Steps:
         1. Get session from Redis (preserve conversation history)
         2. Set outcome = ConversationOutcome.abandoned (system error)
+        2b. Append worker timeout message to conversation history before persist
         3. Persist to database (audit trail)
         4. Clear all message queues
         5. Reset session in Redis (preserves auth)
@@ -617,7 +618,14 @@ class InactivityTimeoutService:
                 logger.error(f"[WORKER_TIMEOUT] Error retrieving session from Redis: {redis_error}")
                 session_data = None
             
-            # 2-3. Set outcome and persist to database (if session exists)
+            # Worker timeout message is a constant — define it here so it can be appended
+            # to the conversation history BEFORE the DB persist.
+            worker_timeout_message = (
+                "Sorry, your request is taking longer than expected due to high traffic. "
+                "Please try sending your message again in some time."
+            )
+            
+            # 2-3. Set outcome, append worker timeout message to conversation history, persist to DB
             if session_data:
                 try:
                     from app.database import DatabaseManager
@@ -626,6 +634,34 @@ class InactivityTimeoutService:
                     # Mark as abandoned (system-side error)
                     session_data['outcome'] = ConversationOutcome.abandoned.value
                     session_data['completed_at'] = utc_now().isoformat()
+                    
+                    # Append worker timeout notification to conversation history before persisting
+                    conv_history = session_data.get('conversation_history', {})
+                    if not isinstance(conv_history, dict):
+                        conv_history = {}
+                    for _key in ("messages", "openai_messages", "metadata"):
+                        if not isinstance(conv_history.get(_key), list):
+                            conv_history[_key] = []
+                    now_iso = utc_now().isoformat()
+                    conv_history["messages"].append({
+                        "role": "assistant",
+                        "content": worker_timeout_message,
+                        "timestamp": now_iso,
+                        "sender": "assistant",
+                        "type": "text"
+                    })
+                    conv_history["openai_messages"].append({
+                        "role": "assistant",
+                        "content": worker_timeout_message
+                    })
+                    conv_history["metadata"].append({
+                        "timestamp": now_iso,
+                        "sender": "assistant",
+                        "type": "text",
+                        "role": "assistant"
+                    })
+                    session_data['conversation_history'] = conv_history
+                    logger.debug(f"[WORKER_TIMEOUT] Appended worker timeout message to conversation history")
                     
                     # Persist to database
                     db_manager = DatabaseManager()
@@ -696,11 +732,6 @@ class InactivityTimeoutService:
                 logger.error(f"[WORKER_TIMEOUT] Error cleaning up keys: {cleanup_error}")
             
             # 7. Send worker timeout notification (system-side error message)
-            worker_timeout_message = (
-                "Sorry, your request is taking longer than expected due to high traffic. "
-                "Please try sending your message again in some time."
-            )
-            
             try:
                 await self.whatsapp_service.send_message(
                     recipient_id=user_phone,
@@ -726,8 +757,9 @@ class InactivityTimeoutService:
         Steps:
         1. Get session from Redis (preserve conversation history)
         2. Double-check activity (race condition protection)
+        2b. Pre-generate timeout message (needed before DB persist)
         3. Set outcome = ConversationOutcome.timeout
-        4. Persist to database (audit trail)
+        4. Append timeout message to conversation history, persist to database (audit trail)
         5. Clear all message queues
         6. Reset session in Redis (preserves auth, like CancelService)
         7. Clean up activity key
@@ -766,7 +798,31 @@ class InactivityTimeoutService:
                 except Exception as e:
                     logger.warning(f"[TIMEOUT_SERVICE] Error checking latest activity: {e}")
             
-            # 3-4. Set outcome and persist to database (if session exists)
+            # 2b. Pre-generate timeout message BEFORE DB persist so it can be included in
+            #     the persisted conversation history. Uses the original (un-wiped) session_data.
+            normalized_phone = user_phone.lstrip('+')
+            user_type = None
+            timeout_message = None
+            user_details = None
+            try:
+                from app.redis_db import get_auth_redis_service
+                auth_redis = get_auth_redis_service()
+                user_details = await auth_redis.retrieve(normalized_phone)
+                logger.info(f"[TIMEOUT_SERVICE] Retrieved user from auth token: {bool(user_details)} {user_details}")
+                if user_details and not isinstance(user_details, list):
+                    user_details = [user_details]
+                timeout_message = await self._generate_timeout_message(user_details, session_data)
+                logger.debug(f"[TIMEOUT_SERVICE] Pre-generated timeout message: {timeout_message[:100]}...")
+                # Also capture user_type for logging
+                if user_details:
+                    first_user = user_details[0] if isinstance(user_details, list) else user_details
+                    if first_user:
+                        self_client = getattr(first_user, 'self_client', None)
+                        user_type = "buyer" if self_client is True else "seller" if self_client is False else None
+            except Exception as msg_gen_error:
+                logger.warning(f"[TIMEOUT_SERVICE] Failed to pre-generate timeout message: {msg_gen_error}")
+            
+            # 3-4. Set outcome, append timeout message to conversation history, and persist to database
             if session_data:
                 try:
                     from app.models import ConversationOutcome
@@ -781,14 +837,42 @@ class InactivityTimeoutService:
                     workflow_state["timeout_completed"] = True
                     workflow_state["timeout_timestamp"] = utc_now().isoformat()
                     
-                    # Prepare timeout session data (preserves conversation history)
+                    # Build conversation history that includes the timeout notification
+                    conv_history = session_data.get('conversation_history', {})
+                    if not isinstance(conv_history, dict):
+                        conv_history = {}
+                    for _key in ("messages", "openai_messages", "metadata"):
+                        if not isinstance(conv_history.get(_key), list):
+                            conv_history[_key] = []
+                    if timeout_message:
+                        now_iso = utc_now().isoformat()
+                        conv_history["messages"].append({
+                            "role": "assistant",
+                            "content": timeout_message,
+                            "timestamp": now_iso,
+                            "sender": "assistant",
+                            "type": "text"
+                        })
+                        conv_history["openai_messages"].append({
+                            "role": "assistant",
+                            "content": timeout_message
+                        })
+                        conv_history["metadata"].append({
+                            "timestamp": now_iso,
+                            "sender": "assistant",
+                            "type": "text",
+                            "role": "assistant"
+                        })
+                        logger.debug(f"[TIMEOUT_SERVICE] Appended timeout message to conversation history")
+                    
+                    # Prepare timeout session data (preserves conversation history + timeout msg)
                     timeout_session_data = {
                         'session_id': session_id,
                         'external_user_id': user_phone,
                         'workflow_type': session_data.get('workflow_type'),
                         'outcome': ConversationOutcome.timeout.value,
                         'workflow_state': workflow_state,
-                        'conversation_history': session_data.get('conversation_history', {}),
+                        'conversation_history': conv_history,
                         'extracted_entities': session_data.get('extracted_entities', {}),
                         'retention_date': session_data.get('retention_date'),
                         'completed_at': utc_now().isoformat(),
@@ -809,7 +893,6 @@ class InactivityTimeoutService:
                     logger.error(f"[TIMEOUT_SERVICE] Error preparing/persisting timeout data: {persist_error}")
             
             # 5. Clear all message queue keys (if user has any)
-            normalized_phone = user_phone.lstrip('+')
             queue_keys = [
                 f"{normalized_phone}:incoming",
                 f"{normalized_phone}:outgoing",
@@ -824,22 +907,10 @@ class InactivityTimeoutService:
             logger.debug(f"[TIMEOUT_SERVICE] Cleared {deleted_count} queue keys for {user_phone}")
             
             # 6. Reset session in Redis instead of deleting (preserves auth, like CancelService)
-            
-            # Extract user_type BEFORE resetting workflow_state (needed for timeout message)
-            user_type = None
-            
-            if session_data:
-                workflow_state = session_data.get('workflow_state', {})
-                if isinstance(workflow_state, dict):
-                    user_type = workflow_state.get('user_type')
-            
             if session_data:
                 try:
                     from app.utils.datetime_utils import utc_now
                     from app.services.helpers.session_helpers import SessionHelpers
-
-                    # Save Session object for building remiander msg
-                    remainder_session = session_data
                     
                     # Get current timestamp
                     now_iso = utc_now().isoformat()
@@ -892,32 +963,20 @@ class InactivityTimeoutService:
                 logger.error(f"[TIMEOUT_SERVICE] Failed to clean activity key for {user_phone}: {cleanup_error}")
             
             # 8. Send timeout notification LAST (after all cleanup complete)
-            # Generate user-type-specific timeout message
-            logger.debug(f"[TIMEOUT_SERVICE] Generating timeout message for {user_phone}")
+            # Use the message pre-generated in step 2b; fall back to a generic message if generation
+            # failed for any reason so the user always receives something.
+            if not timeout_message:
+                logger.warning(f"[TIMEOUT_SERVICE] No pre-generated message available, using fallback for {user_phone}")
+                timeout_message = (
+                    "Looks like you're away for a bit. "
+                    "Thank you for using QUA AI! "
+                    "You can resume anytime by saying 'Hi.'"
+                )
             
-            # Get user details from auth token
-            from app.redis_db import get_auth_redis_service
-            auth_redis = get_auth_redis_service()
-            normalized_phone = user_phone.lstrip('+')
-            user_details = await auth_redis.retrieve(normalized_phone)
-            logger.info(f"[TIMEOUT_SERVICE] Retrieved user from auth token: {bool(user_details)} {user_details}")
-            
-            # Convert to list format for _generate_timeout_message compatibility
-            if user_details and not isinstance(user_details, list):
-                user_details = [user_details]
-
-            # Always prefer original session snapshot for constructing reminder
-            session_snapshot = remainder_session or session_data
-            timeout_session_data = session_snapshot
-            logger.debug(f"[TIMEOUT_SERVICE] Using session snapshot: {bool(timeout_session_data)}")
-            
-            timeout_message = await self._generate_timeout_message(user_details, timeout_session_data)
-            logger.debug(f"[TIMEOUT_SERVICE] Generated timeout message: {timeout_message[:100]}...")
-            
+            logger.debug(f"[TIMEOUT_SERVICE] Sending timeout notification to {user_phone}")
             try:
-                logger.debug(f"[TIMEOUT_SERVICE] Sending timeout notification to {user_phone}")
                 await self.whatsapp_service.send_message(
-                    user_phone, 
+                    user_phone,
                     timeout_message,
                     skip_concatenation=True
                 )

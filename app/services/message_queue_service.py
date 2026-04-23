@@ -1102,13 +1102,24 @@ class MessageQueueService:
                 
                 # Send acknowledgment
                 recipient_id = f"+{user_phone}" if not user_phone.startswith('+') else user_phone
+                ack_message = "Got it. Please wait while we process your request, we will be back shortly."
                 
                 await self.whatsapp_service.send_message(
                     recipient_id=recipient_id,
-                    message="Got it. Please wait while we process your request, we will be back shortly.",
+                    message=ack_message,
                     clear_pending_reply=False,
                     skip_concatenation=True  
                 )
+                
+                # Persist acknowledgment to the conversation session history in Redis
+                try:
+                    from app.redis_db import get_session_redis_service
+                    from app.services.helpers.session_helpers import SessionHelpers
+                    session_id = SessionHelpers.generate_session_id(user_phone, "daily")
+                    redis_session = get_session_redis_service()
+                    await redis_session.append_message_to_history(session_id, "assistant", ack_message, "text")
+                except Exception as track_error:
+                    logger.debug(f"[ACK] Could not persist ack to conversation history: {track_error}")
                 
                 logger.debug(f"[ACK] Sent acknowledgment to {user_phone} (pending_reply flag preserved)")
         
@@ -1124,14 +1135,25 @@ class MessageQueueService:
         Called by monitoring loop when processing exceeds threshold.
         """
         try:
+            please_wait_message = "We are working on your request. Please wait while we process it."
             recipient_id = f"+{user_phone}" if not user_phone.startswith('+') else user_phone
             
             await self.whatsapp_service.send_message(
                 recipient_id=recipient_id,
-                message="We are working on your request. Please wait while we process it.",
+                message=please_wait_message,
                 clear_pending_reply=False,  # Don't clear flag for acknowledgment
                 skip_concatenation=True  # Don't prepend irrelevant responses to system messages
             )
+            
+            # Persist please-wait message to the conversation session history in Redis
+            try:
+                from app.redis_db import get_session_redis_service
+                from app.services.helpers.session_helpers import SessionHelpers
+                session_id = SessionHelpers.generate_session_id(user_phone, "daily")
+                redis_session = get_session_redis_service()
+                await redis_session.append_message_to_history(session_id, "assistant", please_wait_message, "text")
+            except Exception as track_error:
+                logger.debug(f"[PLEASE_WAIT] Could not persist please-wait to conversation history: {track_error}")
             
             logger.debug(f"[PLEASE_WAIT] Sent to {user_phone}")
         
