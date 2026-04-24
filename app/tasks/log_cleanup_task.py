@@ -34,7 +34,8 @@ class LogCleanupManager:
 
     # Patterns for date-based log files
     LOG_PATTERNS = [
-        r'^app_\d{4}-\d{2}-\d{2}\.log$',
+        r'^app_\d{4}-\d{2}-\d{2}\.log$',          # legacy: app_YYYY-MM-DD.log
+        r'^app\.log\.\d{4}-\d{2}-\d{2}$',         # current: app.log.YYYY-MM-DD (ConcurrentTimedRotatingFileHandler suffix)
         r'^chromadb_\d{4}-\d{2}-\d{2}\.log$',
         r'^api_health_monitor_\d{4}-\d{2}-\d{2}\.log$',
         r'^whatsapp_media_\d{4}-\d{2}-\d{2}\.log$',
@@ -140,9 +141,11 @@ class LogCleanupManager:
         cutoff_date = datetime.now() - timedelta(days=self.log_retention_days)
         old_logs: Dict[str, List[Path]] = {}
 
-        # Search main log directory
+        # Search main log directory.
+        # Glob '*.log*' catches both legacy (foo_YYYY-MM-DD.log) and
+        # current-style (app.log.YYYY-MM-DD) rotated files.
         for pattern in self.LOG_PATTERNS:
-            for log_file in self.log_dir.glob('*.log'):
+            for log_file in self.log_dir.glob('*.log*'):
                 if re.match(pattern, log_file.name):
                     if self._should_exclude(log_file.name):
                         logger.debug(f"Excluded (pattern match): {log_file.name}")

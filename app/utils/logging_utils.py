@@ -3,6 +3,8 @@ Simple logging utilities for the AI Procurement Agent.
 """
 
 import logging
+import os
+from concurrent_log_handler import ConcurrentTimedRotatingFileHandler
 from typing import Dict, Any, Optional
 from datetime import datetime
 from functools import wraps
@@ -102,19 +104,30 @@ class UserPhoneContext:
 
 
 def setup_basic_logging(level: str = "INFO"):
-    """Setup basic logging configuration with custom formatter."""
-    # Remove existing handlers
+    """Setup logging: single app.log rotated daily at midnight, multi-process safe."""
     root_logger = logging.getLogger()
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
-    # Create console handler with custom formatter
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(CustomFormatter())
+    formatter = CustomFormatter()
 
-    # Configure root logger
+    log_dir = os.getenv("LOG_DIR", "/app/logs/app")
+    os.makedirs(log_dir, exist_ok=True)
+
+    file_handler = ConcurrentTimedRotatingFileHandler(
+        filename=os.path.join(log_dir, "app.log"),
+        when="midnight",
+        interval=1,
+        backupCount=int(os.getenv("LOG_BACKUP_COUNT", "30")),
+        encoding="utf-8",
+        utc=False,
+        delay=True,
+    )
+    file_handler.suffix = "%Y-%m-%d"
+    file_handler.setFormatter(formatter)
+
     root_logger.setLevel(getattr(logging, level))
-    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
 
     # Silence noisy third-party loggers
     noisy_loggers = [
