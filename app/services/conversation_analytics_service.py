@@ -1005,7 +1005,7 @@ Session IDs to process: {', '.join(session_ids)}
     u.org_uuid,
     u.uuid AS user_uuid,
     COUNT(DISTINCT rfh.rfq_id) AS total_rfqs_raised,
-    COUNT(DISTINCT(ri.uuid)) AS total_items_in_rfqs,
+    COUNT(ri.uuid) AS total_items_in_rfqs,
     COUNT(DISTINCT CONCAT(rfh.rfq_id, '_', ri.category)) AS total_distinct_rfq_category,
     COUNT(DISTINCT grv.rfq_uuid) AS rfqs_with_seller_responses,
     u.org_uuid AS org_id
