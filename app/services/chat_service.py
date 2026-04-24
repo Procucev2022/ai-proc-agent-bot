@@ -562,10 +562,18 @@ class ChatService:
 
                 if button_id.startswith("confirm_exit") or button_id.startswith("decline_exit"):
                     logger.info(f"Exit buttons clicked in auth workflow  - handling immediately to prevent loop")
+                    button_title = "Yes, Exit" if button_id.startswith("confirm_exit") else "No, Continue"
+                    self.session_manager.add_message_to_history(
+                        session, "user", f"[Button: {button_title}]", "interactive"
+                    )
                     exit_result = await self.exit_service.handle_exit_intent(user_phone, session,message=message_content)
                     return exit_result
                 if button_id.startswith("confirm_cancel") or button_id.startswith("'decline_cancel") or button_id.startswith("cancel_no_credits"):
                     logger.info(f"Cancel buttons clicked in auth workflow  - handling immediately to prevent loop")
+                    button_title = "Yes, Cancel" if button_id.startswith("confirm_cancel") else "No, Continue"
+                    self.session_manager.add_message_to_history(
+                        session, "user", f"[Button: {button_title}]", "interactive"
+                    )
                     cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message_content)
                     await self.session_manager.save_session(session, session.workflow_type)
                     return cancel_result
