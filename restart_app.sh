@@ -15,7 +15,7 @@ CHROMA_PORT="8100"
 CHROMA_PATH="$APP_DIR/chroma_db"
 
 # Worker configuration (override with: WORKERS=8 ./restart_app.sh)
-export WORKERS=${WORKERS:-auto}
+export WORKERS=${WORKERS:-2}
 
 # Read by app/utils/logging_utils.py setup_basic_logging
 export LOG_DIR="$LOG_BASE/app"
