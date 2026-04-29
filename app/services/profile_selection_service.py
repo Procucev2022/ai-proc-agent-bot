@@ -896,12 +896,9 @@ class ProfileSelectionService:
                 logger.info(f"User {user_phone} has existing auth token - skipping verification")
                 verification_check = {"access_granted": True, "user_data": user_data}
             else:
-                # Save session to Redis BEFORE verification check so OTP message tracking works
-                if self.authentication_service.session_manager:
-                    await self.authentication_service.session_manager.save_session(session, persist_to_db=False)
                 # No existing token - perform verification check
                 verification_check = await self.authentication_service.verification_check_service.check_and_enforce_verification(
-                    user_phone, user_data, session
+                    user_phone, user_data,session
                 )
 
             if not verification_check.get("access_granted"):
