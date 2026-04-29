@@ -166,6 +166,13 @@ logconfig_dict = {
             "qualname": "gunicorn.access",
         },
     },
+    # Must override gunicorn's default root - CONFIG_DEFAULTS['root'] references a
+    # 'console' handler that our shallow-merged handlers dict no longer contains,
+    # which crashes dictConfig with KeyError: 'console'.
+    "root": {
+        "level": "INFO",
+        "handlers": [],
+    },
 }
 
 # ============================================================================
