@@ -32,7 +32,10 @@ class ImageMessageProcessor:
             # Check if user needs registration
             if not user.is_registered:
                 return await self._handle_registration_required(user)
-            
+
+            if not self._is_attachment_relevant(session):
+                return await self._handle_irrelevant_attachment(user, session)
+
             # Extract image information based on ICS V3.1 documentation format
             # ICS sends flat JSON structure: {"mime_type": "...", "id": "...", "filename": "..."}
             # NOT nested like {"image": {"link": "...", ...}}
@@ -167,6 +170,62 @@ class ImageMessageProcessor:
         )
         await self.whatsapp_service.send_message(user.phone_number, registration_response)
         return {"status": "handled", "response": "registration_required"}
+
+    def _is_attachment_relevant(self, session: ConversationSession) -> bool:
+        state = session.workflow_state or {}
+        return bool(
+            state.get("pending_optional_rfq")
+            or state.get("pending_optional_combined_rfq")
+            or state.get("pending_combined_rfq")
+            or state.get("pending_rfq")
+            or state.get("incomplete_products")
+        )
+
+    def _get_last_bot_message(self, session: ConversationSession) -> Any:
+        history = session.conversation_history or {}
+        for entry in reversed(history.get("messages", [])):
+            if entry.get("role") == "assistant":
+                return entry.get("content")
+        return None
+
+    async def _handle_irrelevant_attachment(self, user: User, session: ConversationSession) -> Dict[str, Any]:
+        last_bot_message = self._get_last_bot_message(session)
+
+        if isinstance(last_bot_message, dict):
+            body_obj = last_bot_message.get("body") or {}
+            body = body_obj.get("text") if isinstance(body_obj, dict) else body_obj
+            header_obj = last_bot_message.get("header") or {}
+            header = header_obj.get("text") if isinstance(header_obj, dict) else header_obj
+            footer_obj = last_bot_message.get("footer") or {}
+            footer = footer_obj.get("text") if isinstance(footer_obj, dict) else footer_obj
+            buttons = (last_bot_message.get("action") or {}).get("buttons") or []
+
+            buttons_config = []
+            for btn in buttons:
+                if isinstance(btn, dict):
+                    if "reply" in btn:
+                        buttons_config.append({"id": btn["reply"].get("id"), "title": btn["reply"].get("title")})
+                    elif "title" in btn:
+                        buttons_config.append(btn)
+
+            if buttons_config:
+                await self.whatsapp_service.send_configurable_buttons(
+                    recipient_id=user.phone_number,
+                    body=body,
+                    buttons_config=buttons_config,
+                    header=header,
+                    footer=footer,
+                )
+            elif body:
+                await self.whatsapp_service.send_message(user.phone_number, body)
+            else:
+                await self.whatsapp_service.send_message(user.phone_number, "How can I help you?")
+        elif isinstance(last_bot_message, str) and last_bot_message:
+            await self.whatsapp_service.send_message(user.phone_number, last_bot_message)
+        else:
+            await self.whatsapp_service.send_message(user.phone_number, "How can I help you?")
+
+        return {"status": "handled", "response": "attachment_ignored"}
     
     async def _handle_no_file_data(self, user: User) -> Dict[str, Any]:
         """Handle case where no file data is found."""

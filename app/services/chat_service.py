@@ -1540,9 +1540,11 @@ class ChatService:
             # Check if sectioned RFQ workflow is active
             has_sectioned_rfq_active = WorkflowManager.is_sectioned_rfq_active(session)
 
+            is_seller = (user.role.value if hasattr(user.role, "value") else user.role) == "seller"
+
             # has_excel_confirmation_pending already defined above for early use in intent handling
             print(
-                f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}, has_excel_confirmation_pending={has_excel_confirmation_pending}, has_sectioned_rfq_active={has_sectioned_rfq_active}")
+                f"ChatService: has_existing_data={has_existing_data}, has_incomplete_products={has_incomplete_products}, has_pending_confirmations={has_pending_confirmations}, has_pending_optional={has_pending_optional}, has_pending_attachment_decision={has_pending_attachment_decision}, has_excel_confirmation_pending={has_excel_confirmation_pending}, has_sectioned_rfq_active={has_sectioned_rfq_active}, is_seller={is_seller}")
 
             # Debug logging for optional fields state
 
@@ -1610,7 +1612,7 @@ class ChatService:
             # Check for intent switch during pending optional/confirmation states BEFORE handling them
             # Note: Excel confirmation should not be interrupted by intent switches
             if (
-                    has_pending_optional or has_pending_confirmations) and not has_excel_confirmation_pending and await self.intent_switch_handler.should_handle_intent_switch(
+                    has_pending_optional or has_pending_confirmations) and not has_excel_confirmation_pending and not is_seller and await self.intent_switch_handler.should_handle_intent_switch(
                     session, intent, confidence, intent_result.get('context_analysis')):
                 result = await self.intent_switch_handler.handle_intent_switch_choice(user, session, message, intent,
                                                                                       intent_result)
@@ -1761,7 +1763,7 @@ class ChatService:
                 return result
 
             # If sectioned RFQ is active, always route to it regardless of intent
-            if has_sectioned_rfq_active:
+            if has_sectioned_rfq_active and not is_seller:
                 logger.info("Sectioned RFQ workflow active - routing to sectioned RFQ handler")
                 # Clear any preserved meaningful message - we want the actual current message
                 if session.workflow_state:
@@ -1769,8 +1771,13 @@ class ChatService:
                     session.workflow_state.pop("last_meaningful_intent_result", None)
                 return await self.purchase_intent_handler.handle_purchase_intent(user, session, message, None,
                                                                                  self._should_use_summary_aware_extraction)
+            elif has_sectioned_rfq_active and is_seller:
+                logger.warning(f"Seller {user.phone_number} has sectioned_rfq state - clearing and routing to seller flow")
+                session.workflow_state.pop("sectioned_rfq", None)
+                session.workflow_state.pop("extracted_entities", None)
+                session.workflow_type = None
 
-            if has_existing_data or has_incomplete_products:
+            if (has_existing_data or has_incomplete_products) and not is_seller:
                 # Check for intent switch during active workflow BEFORE continuing
                 # Note: Excel confirmation should not be interrupted by intent switches
                 if not has_excel_confirmation_pending and await self.intent_switch_handler.should_handle_intent_switch(session, intent, confidence, intent_result.get('context_analysis')):
