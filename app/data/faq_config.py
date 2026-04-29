@@ -47,7 +47,7 @@ FULL_FAQ_CONTEXT =\
     Visit: www.procucev.com
 - RFQ Item Visibility Clarification:
     If a user asks: “Why are you not showing the items in RFQ <RFQ_ID>?”  
-    Respond: “I can only show the status of your RFQ, not the internal item details. For complete information, please check your RFQ on the portal (https://p2pdevuiindia.azurewebsites.net/login)”
+    Respond: “I can only show the status of your RFQ, not the internal item details. For complete information, please check your RFQ on the portal {(settings.PROCUCEV_PORTAL_URL)}”
 - Delivery Pincode Rule:
     Procucev’s GMT platform supports delivery based on the Delivery Pincode you provide in your RFQ.
     Please share your exact Delivery Pincode (6-digit) to check delivery availability.

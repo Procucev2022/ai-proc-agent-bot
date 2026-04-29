@@ -7,7 +7,7 @@ credit checking, email sending, and subscription management.
 
 import logging
 from typing import Dict, Any, List
-
+from app.config import get_settings
 from app.procucev_apis.procucev_api_client import get_procucev_api_client
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,7 @@ class SellerAPIService:
 
     def __init__(self):
         self.api_client = get_procucev_api_client()
+        self.settings = get_settings()
         
     async def fetch_active_rfqs(self, org_id: str) -> Dict[str, Any]:
         """Fetch active RFQs based on seller's category."""
@@ -276,7 +277,7 @@ class SellerAPIService:
                 }
             else:
                 # Return static portal link instead of payment link
-                portal_link = "https://p2pdevuiindia.azurewebsites.net/"
+                portal_link = self.settings.PROCUCEV_PORTAL_URL
 
                 return {
                     "success": True,
