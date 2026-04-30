@@ -1026,7 +1026,7 @@ class ProfileSelectionService:
                 menu_message = f" You're now using your Seller profile ({email})."
                 header = f"Hi {name} ! What would you like to do today?"
                 buttons_config = [
-                    {"id": "rfq_status", "title": "Check RFQs Status"},
+                    {"id": "rfq_status", "title": "My quoTe Status"},
                     {"id": "contact_support", "title": "Contact Support"}
                 ]
 

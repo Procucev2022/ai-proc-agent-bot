@@ -2477,7 +2477,7 @@ class ChatService:
                     ]
                 else:
                     buttons_config = [
-                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "rfq_status", "title": "My quoTe Status"},
                         {"id": "get_support", "title": "Get Support Info"}
                     ]
                 
@@ -2908,7 +2908,7 @@ class ChatService:
 
             elif user_role == "seller":
                 buttons_config = [
-                    {"id": "rfq_status", "title": "Check RFQ status"},
+                    {"id": "rfq_status", "title": "My quoTe Status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
                 profile_message = f"Let's continue with your seller account ({user.email})"
@@ -2935,7 +2935,7 @@ class ChatService:
                         header = f"Hi {first_name}! What can I assist you with today?"
                     elif actual_role == "seller":
                         buttons_config = [
-                            {"id": "rfq_status", "title": "Check RFQs Status"},
+                            {"id": "rfq_status", "title": "My quoTe Status"},
                             {"id": "contact_support", "title": "Contact Support"}
                         ]
                         profile_message = f"Let's continue with your seller account ({user.email})"
@@ -3049,7 +3049,7 @@ class ChatService:
             elif user_role == "seller":
                 buttons_config = [
                     {"id": "view_rfqs", "title": "Other Active RFQs"},
-                    {"id": "rfq_status", "title": "Show RFQ status"},
+                    {"id": "rfq_status", "title": "My quoTe Status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
                 header = "What else would you like to do?"
@@ -3098,7 +3098,7 @@ class ChatService:
             elif user_role == "seller":
                 # Seller fallback with buttons
                 buttons_config = [
-                    {"id": "rfq_status", "title": "Check RFQ status"},
+                    {"id": "rfq_status", "title": "My quoTe Status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
                 await self.whatsapp_service.send_configurable_buttons(
@@ -3119,7 +3119,7 @@ class ChatService:
                     ]
                 elif user_role == "seller":
                     buttons_config = [
-                        {"id": "rfq_status", "title": "Check RFQs Status"},
+                        {"id": "rfq_status", "title": "My quoTe Status"},
                         {"id": "contact_support", "title": "Contact Support"}
                     ]
                 else:
@@ -3165,8 +3165,8 @@ class ChatService:
             elif user_role == "seller":
                 # Seller fallback with buttons
                 buttons_config = [
-                    {"id": "rfq_status", "title": "🔍 Check RFQ status"},
-                    {"id": "get_support", "title": "💬 Get Support Info"}
+                    {"id": "rfq_status", "title": "My quoTe Status"},
+                    {"id": "get_support", "title": "Get Support Info"}
                 ]
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
@@ -3186,7 +3186,7 @@ class ChatService:
                     ]
                 elif user_role == "seller":
                     buttons_config = [
-                        {"id": "rfq_status", "title": "Check RFQs Status"},
+                        {"id": "rfq_status", "title": "My quoTe Status"},
                         {"id": "contact_support", "title": "Contact Support"}
                     ]
                 else:
@@ -3878,7 +3878,7 @@ class ChatService:
             # Handle display_rfqs_to_seller workflow step with buttons
             if result.get("workflow_step") in ["display_rfqs_to_seller" , "general_seller_response","awaiting_plan_selection"] :
                 buttons_config = [
-                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "rfq_status", "title": "My quoTe Status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
                 
@@ -3898,7 +3898,7 @@ class ChatService:
 
                 buttons_config = [
                     {"id": "view_rfqs", "title": "Other Active RFQs"},
-                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "rfq_status", "title": "My quoTe Status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
 
@@ -3917,7 +3917,7 @@ class ChatService:
 
                 buttons_config = [
                     {"id": "view_rfqs", "title": "Other Active RFQs"},
-                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "rfq_status", "title": "My quoTe Status"},
                     {"id": "get_support", "title": "Get Support Info"}
                 ]
 

@@ -726,7 +726,7 @@ class BFSSearchHandler:
             else:
                 buttons = [
                     {"id": "view_rfqs", "title": "View Open RFQs"},
-                    {"id": "quote_status", "title": "Check Quote Status"},
+                    {"id": "quote_status", "title": "My quoTe Status"},
                     {"id": "search_bfs", "title": "Search Ready Stocks"}
                 ]
 
@@ -843,7 +843,7 @@ class BFSSearchHandler:
             # Seller menu
             buttons = [
                 {"id": "view_rfqs", "title": "View Open RFQs"},
-                {"id": "quote_status", "title": "Check Quote Status"},
+                {"id": "quote_status", "title": "My quoTe Status"},
                 {"id": "search_bfs", "title": "Search Ready Stocks"}
             ]
 

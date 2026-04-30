@@ -430,7 +430,7 @@ class SellerAuthMixin:
         elif user_type == "seller":
             buttons_config = [
                 {"id": "view_rfqs", "title": "Other Active RFQs"},
-                {"id": "rfq_status", "title": "Check RFQs Status"},
+                {"id": "rfq_status", "title": "My quoTe Status"},
                 {"id": "contact_support", "title": "Contact Support"}
             ]
             await self.whatsapp_service.send_configurable_buttons(

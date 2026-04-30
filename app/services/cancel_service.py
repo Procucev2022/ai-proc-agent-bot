@@ -342,7 +342,7 @@ class CancelService:
             elif is_seller:
                 buttons_config = [
                     {"id": "view_rfqs", "title": "Other Active RFQs"},
-                    {"id": "rfq_status", "title": "Check RFQs Status"},
+                    {"id": "rfq_status", "title": "My quoTe Status"},
                     {"id": "contact_support", "title": "Contact Support"}
                 ]
                 logger.info(f"Sending cancellation with seller buttons to {user_phone}")

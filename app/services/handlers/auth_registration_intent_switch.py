@@ -532,7 +532,7 @@ Analyze their response and return only:
                     )
                     
                     buttons_config = [
-                        {"id": "rfq_status", "title": "Check RFQ status"},
+                        {"id": "rfq_status", "title": "My quoTe Status"},
                         {"id": "contact_support", "title": "Get other support"}
                     ]
                     
@@ -624,7 +624,7 @@ Analyze their response and return only:
                     )
                     
                     buttons_config = [
-                        {"id": "rfq_status", "title": "Check RFQ status"},
+                        {"id": "rfq_status", "title": "My quoTe Status"},
                         {"id": "contact_support", "title": "Get other support"}
                     ]
                     
@@ -722,7 +722,7 @@ Analyze their response and return only:
                     )
                     
                     buttons_config = [
-                        {"id": "rfq_status", "title": "Check RFQ status"},
+                        {"id": "rfq_status", "title": "My quoTe Status"},
                         {"id": "contact_support", "title": "Get other support"}
                     ]
                     

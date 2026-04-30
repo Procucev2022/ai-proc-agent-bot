@@ -385,7 +385,7 @@ class ResponseHelpers:
             return {"message": message, "buttons": buttons_config}
         elif user_role and user_role.lower() == "seller":
             buttons_config = [
-                {"id": "rfq_status", "title": "Show RFQ status"},
+                {"id": "rfq_status", "title": "My quoTe Status"},
                 {"id": "get_support", "title": "Get Support Info"}
             ]
             message = (
