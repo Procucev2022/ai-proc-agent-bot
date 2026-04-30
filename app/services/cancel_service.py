@@ -108,7 +108,7 @@ class CancelService:
                 await self.session_manager.save_session(session, session.workflow_type)
 
             # Send confirmation message
-            confirmation_sent = await self._send_confirmation_message(user_phone)
+            confirmation_sent = await self._send_confirmation_message(user_phone,session=session)
             logger.info(f"Confirmation message sent: {confirmation_sent}")
 
             return {
@@ -264,7 +264,7 @@ class CancelService:
             logger.error(f"Error clearing workflow state: {e}")
             return False
 
-    async def _send_confirmation_message(self, user_phone: str) -> bool:
+    async def _send_confirmation_message(self, user_phone: str,session=None) -> bool:
         """
         Send confirmation prompt to user with Yes/No buttons.
 
@@ -287,7 +287,8 @@ class CancelService:
             result = await self.whatsapp_service.send_configurable_buttons(
                 recipient_id=user_phone,
                 body=confirmation_message,
-                buttons_config=buttons
+                buttons_config=buttons,
+                session_id=session
             )
 
             logger.info(f"Confirmation buttons sent to {user_phone}: {result.success}")
