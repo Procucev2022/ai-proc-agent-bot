@@ -96,7 +96,7 @@ class ExitService:
                 await self.session_manager.save_session(session, session.workflow_type)
 
             # Send confirmation message with buttons
-            confirmation_sent = await self._send_exit_confirmation_message(user_phone)
+            confirmation_sent = await self._send_exit_confirmation_message(user_phone,session=session)
             logger.info(f"Exit confirmation message sent: {confirmation_sent}")
 
             return {
@@ -238,7 +238,7 @@ class ExitService:
             logger.error(f"Error clearing session data: {e}")
             return False
 
-    async def _send_goodbye_message(self, user_phone: str) -> bool:
+    async def _send_goodbye_message(self, user_phone: str,session=None) -> bool:
         """
         Send goodbye/thank you message to user.
 
@@ -253,7 +253,7 @@ class ExitService:
                f"Thank you for using QUA! I’ll be here whenever you need procurement support.\n\n Procucev is also a pioneer in providing Digital Procurement Services, proCPX, and Procurement Consulting Services. For further details visit {self.settings.procucev_link}"
             )
 
-            await self.whatsapp_service.send_message(user_phone, goodbye_message)
+            await self.whatsapp_service.send_message(user_phone, goodbye_message,session_id=session)
             logger.info(f"Goodbye message sent to {user_phone}")
             return True
 
@@ -295,7 +295,7 @@ class ExitService:
                 # Step 3: Send goodbye message only if show_message is True
                 goodbye_sent = False
                 if show_message:
-                    goodbye_sent = await self._send_goodbye_message(user_phone)
+                    goodbye_sent = await self._send_goodbye_message(user_phone,session=session)
                     logger.info(f"Goodbye message sent: {goodbye_sent}")
 
 
@@ -338,7 +338,7 @@ class ExitService:
                 "message": "Error during exit confirmation handling"
             }
 
-    async def _send_exit_confirmation_message(self, user_phone: str) -> bool:
+    async def _send_exit_confirmation_message(self, user_phone: str, session=None) -> bool:
         """
         Send exit confirmation prompt to user with Yes/No buttons.
 
@@ -361,7 +361,8 @@ class ExitService:
             result = await self.whatsapp_service.send_configurable_buttons(
                 recipient_id=user_phone,
                 body=confirmation_message,
-                buttons_config=buttons
+                buttons_config=buttons,
+                session_id=session
             )
 
             logger.info(f"Exit confirmation buttons sent to {user_phone}: {result.success}")
