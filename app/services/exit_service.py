@@ -96,7 +96,7 @@ class ExitService:
                 await self.session_manager.save_session(session, session.workflow_type)
 
             # Send confirmation message with buttons
-            confirmation_sent = await self._send_exit_confirmation_message(user_phone)
+            confirmation_sent = await self._send_exit_confirmation_message(user_phone,session=session)
             logger.info(f"Exit confirmation message sent: {confirmation_sent}")
 
             return {
@@ -338,7 +338,7 @@ class ExitService:
                 "message": "Error during exit confirmation handling"
             }
 
-    async def _send_exit_confirmation_message(self, user_phone: str) -> bool:
+    async def _send_exit_confirmation_message(self, user_phone: str, session=None) -> bool:
         """
         Send exit confirmation prompt to user with Yes/No buttons.
 
@@ -361,7 +361,8 @@ class ExitService:
             result = await self.whatsapp_service.send_configurable_buttons(
                 recipient_id=user_phone,
                 body=confirmation_message,
-                buttons_config=buttons
+                buttons_config=buttons,
+                session_id=session
             )
 
             logger.info(f"Exit confirmation buttons sent to {user_phone}: {result.success}")

@@ -508,7 +508,7 @@ Session IDs to process: {', '.join(session_ids)}
 
 
     def _extract_chat_sequence(self, conversation_data):
-        """Extract user and assistant messages in a simple format."""
+        """Extract user and assistant messages in a simple format with timestamps."""
         chat_lines = []
         
         if isinstance(conversation_data, dict) and 'messages' in conversation_data:
@@ -517,6 +517,7 @@ Session IDs to process: {', '.join(session_ids)}
                 
                 if role in ['user', 'assistant']:
                     content = message.get('content', '')
+                    timestamp = message.get('timestamp', '')
                     
                     if isinstance(content, dict):
                         if 'body' in content:
@@ -529,7 +530,8 @@ Session IDs to process: {', '.join(session_ids)}
                             content = str(content)
                     
                     label = "User" if role == "user" else "Assistant"
-                    chat_lines.append(f'{label}: {content}')
+                    prefix = f'[{timestamp}] ' if timestamp else ''
+                    chat_lines.append(f'{prefix}{label}: {content}')
 
         
         return '\n'.join(chat_lines)
