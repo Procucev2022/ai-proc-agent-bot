@@ -656,7 +656,7 @@ class SellerService:
             seller_id = user.id
 
 
-            # Send acknowledgment
+            # Send acknowledgment message
             ack_context = {
                 "workflow_state": "rfq_email_processing",
                 "selected_rfq_ids": selected_rfq_ids,
@@ -664,8 +664,7 @@ class SellerService:
             }
 
             ack_message = await self.response_helpers.generate_seller_contextual_response(ack_context)
-            await self.whatsapp_service.send_message(user.phone_number, ack_message)
-
+           
             # Send batch RFQ email request
             try:
                 batch_result = await self.seller_api_service.send_rfq_email(
@@ -762,6 +761,10 @@ class SellerService:
             session.workflow_state["seller_workflow_state"] = "completed"
             session.workflow_state["email_results"] = email_results
             session.workflow_state["error_analysis"] = error_analysis
+
+
+            # Send status message
+            await self.whatsapp_service.send_message(user.phone_number, ack_message)
 
             await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
 

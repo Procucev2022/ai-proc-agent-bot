@@ -11,6 +11,7 @@ from datetime import datetime
 from app.utils.datetime_utils import utc_now
 import asyncio
 from app.models import ConversationSession
+from app.redis_db import get_redis_service
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +68,14 @@ class SummarizationHelpers:
                 logger.error(f"[CONVERSATION-HISTORY] Cannot store coroutine in conversation history: {message}")
                 return
             
+            # Get atomic message index using Redis counter to prevent race conditions
+            message_index = SummarizationHelpers._get_atomic_message_index(session.session_id)
+            
             # Add to OpenAI-native message format
             session.conversation_history["openai_messages"].append({
                 "role": role,
-                "content": message
+                "content": message,
+                "message_index": message_index  # Add atomic index for debugging
             })
 
             # Add to legacy messages format for compatibility
@@ -79,7 +84,8 @@ class SummarizationHelpers:
                 "content": message,
                 "timestamp": utc_now().isoformat(),
                 "sender": sender,
-                "type": message_type
+                "type": message_type,
+                "message_index": message_index  # Add atomic index
             }
 
             # Add intent data for user messages if provided
@@ -95,10 +101,9 @@ class SummarizationHelpers:
                 "timestamp": utc_now().isoformat(),
                 "sender": sender,
                 "type": message_type,
-                "role": role
+                "role": role,
+                "message_index": message_index  # Add atomic index
             })
-
-            message_count = len(session.conversation_history["openai_messages"])
 
             # Handle non-string message content for preview
             if isinstance(message, dict):
@@ -112,9 +117,10 @@ class SummarizationHelpers:
             else:
                 content_preview = str(message)[:100] + ('...' if len(str(message)) > 100 else '')
 
-            logger.info(f"[CONVERSATION-HISTORY] Stored message {message_count}: {role} -> {content_preview}")
+            logger.info(f"[CONVERSATION-HISTORY] Stored message {message_index}: {role} -> {content_preview}")
 
             # Keep only last 50 messages to avoid database bloat
+            message_count = len(session.conversation_history["openai_messages"])
             if message_count > 50:
                 session.conversation_history["openai_messages"] = session.conversation_history["openai_messages"][-50:]
                 session.conversation_history["messages"] = session.conversation_history["messages"][-50:]
@@ -123,6 +129,41 @@ class SummarizationHelpers:
 
         except Exception as e:
             logger.error(f"Error adding to conversation history: {e}")
+    
+    @staticmethod
+    def _get_atomic_message_index(session_id: str) -> int:
+        """
+        Get atomic message index using Redis INCR to prevent race conditions.
+        
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            Atomic message index
+        """
+        try:
+            # Use Redis INCR for atomic counter - this prevents race conditions
+            counter_key = f"msg_counter:{session_id}"
+            
+            # Use synchronous Redis call since this is called from sync context
+            import redis
+            from app.config import get_settings
+            settings = get_settings()
+            
+            # Create sync Redis client for atomic operations
+            sync_redis = redis.from_url(settings.redis_url, decode_responses=True)
+            message_index = sync_redis.incr(counter_key)
+            
+            # Set expiry on counter (24 hours)
+            sync_redis.expire(counter_key, 86400)
+            
+            return message_index
+            
+        except Exception as e:
+            logger.error(f"Error getting atomic message index: {e}")
+            # Fallback to timestamp-based index if Redis fails
+            import time
+            return int(time.time() * 1000) % 100000  # Last 5 digits of timestamp
     
     @staticmethod
     def extract_rich_entities_for_summary(session: ConversationSession) -> Dict[str, Any]:
