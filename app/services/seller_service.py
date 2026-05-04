@@ -656,7 +656,7 @@ class SellerService:
             seller_id = user.id
 
 
-            # Send acknowledgment
+            # Send acknowledgment with clear_pending_reply=False to prevent early batch release
             ack_context = {
                 "workflow_state": "rfq_email_processing",
                 "selected_rfq_ids": selected_rfq_ids,
@@ -664,7 +664,7 @@ class SellerService:
             }
 
             ack_message = await self.response_helpers.generate_seller_contextual_response(ack_context)
-            await self.whatsapp_service.send_message(user.phone_number, ack_message)
+            await self.whatsapp_service.send_message(user.phone_number, ack_message, clear_pending_reply=False)
 
             # Send batch RFQ email request
             try:
