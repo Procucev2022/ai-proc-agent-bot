@@ -166,8 +166,12 @@ class UserSelectionTool:
             'five': 5, 'fifth': 5, '5th': 5
         }
         
+        # Whole-token match. Substring or `\b`-bounded matches falsely pick "first"
+        # inside emails like "bhavin@firstmarketingservices.in" or
+        # "john.first@firstaid.org" — only equality against a stripped token is safe.
+        tokens = {re.sub(r'^\W+|\W+$', '', t) for t in re.split(r'\s+', user_input) if t}
         for word, num in word_numbers.items():
-            if word in user_input:
+            if word in tokens:
                 if any(opt.get('number') == num for opt in profile_options):
                     register_type = self._detect_registration_intent(user_input)
                     return {
