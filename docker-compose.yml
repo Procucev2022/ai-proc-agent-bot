@@ -112,6 +112,12 @@ services:
         reservations:
           cpus: '0.5'
           memory: 1G
+    healthcheck:
+      test: ["CMD", "celery", "-A", "app.celery_app", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   celery_beat:
     container_name: procucev_celery_beat_dev
@@ -138,6 +144,12 @@ services:
     networks:
       - procucev_network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "celery", "-A", "app.celery_app", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 # ====================================================================
 # PERSISTENT STORAGE
