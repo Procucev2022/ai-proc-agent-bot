@@ -1,0 +1,66 @@
+{
+    "type": "function",
+    "name": "extract_entities",
+    "description": "Extract structured entities from user message for RFQ creation workflow. Can handle multiple products in a single message. Delivery location and date are GLOBAL fields that apply to all products. Focus only on entity extraction - completeness checking is handled by the data model.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "products": {
+                "type": "array",
+                "description": "Array of product entities extracted from the message. Each product contains item-specific fields only.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "description": {
+                            "type": "string",
+                            "description": "Item description. Use empty string if not provided."
+                        },
+                        "quantity": {
+                            "type": ["number", "null"],
+                            "description": "HOW MANY items/units the user wants. Extract only when explicitly stated. IMPORTANT: '500m cable' has NO quantity stated (500m is product specification, like '1000ml bottle'). '100kg rice' has NO quantity (100kg is bag size). Only extract when clearly stated: '5 cables' -> 5, '100 bottles' -> 100, '10 bags' -> 10. If not explicitly stated, use null. Examples: '500m cable Polycab' -> null (need to ask: how many 500m cables?), '1000ml bottles' -> null (need to ask: how many bottles?), '5 laptops' -> 5, '10 bags of rice' -> 10."
+                        },
+                        "unitofMeasures": {
+                            "type": "string",
+                            "description": "Unit of measurement INCLUDING the numeric value for measured items. CRITICAL PRIORITY RULES: (1) If weight/volume/length measurement exists (kg, liters, meters, ml, sq mtr), ALWAYS use the measurement as UOM regardless of container type. (2) DO NOT use container names (bags, boxes, bottles) as UOM when measurements exist. (3) DO NOT normalize units - preserve exact unit. (4) Only use 'unit(s)' when NO unit or measurement is mentioned. Examples: '10 pcs laptops' -> 'pcs', '700 salt bags 50kg each' -> '50 kg' (NOT 'Bags'), '500 laptop bags 40 liter capacity' -> '40 liter' (NOT 'Bags'), '200kg steel bars' -> '200 kg', '25 meters cable' -> '25 meters', '100 water bottles 50ml each' -> '50 ml' (NOT 'unit(s)'), '100 laptops' -> 'unit(s)' (no unit mentioned), '5 boxes of screws' -> 'unit(s)' (no measurement). EXCEPTION: Electrical ratings (KV, mAh, watts, ampere) are SPECIFICATIONS not measurements - those go to remarks. Use empty string if no unit is mentioned."
+                        },
+                        "brand": {
+                            "type": "string",
+                            "description": "Preferred brand name for this item. Use empty string if not provided."
+                        },
+                        "remarks": {
+                            "type": "string",
+                            "description": "Item-specific remarks, requirements, or technical specifications. Include: (1) Electrical ratings like KV, mAh, watts, ampere (e.g., '1000KV', '5000mAh'); (2) Technical specifications like 'FR-LSH 4Cx10sqmm 1100V', '3Cx2.5sqmm+1Cx1.5sqmm(E)', '16GB RAM', '2TB SSD'; (3) Physical properties like thickness, density, material; (4) Other requirements. NOTE: Weight/length/volume/area measurements (kg, meters, ml, sq mtr) go to unitofMeasures field, NOT here. Examples: 'Laptop 16GB RAM' -> '16GB RAM', 'cable FR-LSH 4Cx10sqmm 1100V' -> 'FR-LSH 4Cx10sqmm 1100V', 'motors 1000KV' -> '1000KV', 'vinyl 7.5mm thick' -> '7.5mm thick'. Use empty string if no specifications provided."
+                        }
+                    },
+                    "required": ["description", "quantity", "unitofMeasures", "brand", "remarks"],
+                    "additionalProperties": false
+                }
+            },
+            "deliveryDate": {
+                "type": "string",
+                "description": "Required delivery date (applies to all products). Use empty string if not provided."
+            },
+            "state": {
+                "type": "string",
+                "description": "Delivery state for all products (e.g., Karnataka, Maharashtra, etc.). Use empty string if not provided."
+            },
+            "city": {
+                "type": "string",
+                "description": "Delivery city for all products (e.g., Bangalore, Mumbai, etc.). Use empty string if not provided."
+            },
+            "pincode": {
+                "type": "string",
+                "description": "Delivery pincode for all products (6-digit postal code). Use empty string if not provided."
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Confidence in the entity extraction accuracy"
+            }
+        },
+        "required": ["products", "deliveryDate", "state", "city", "pincode", "confidence"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

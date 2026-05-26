@@ -1,0 +1,6 @@
+2026-05-25 10:45:07 - ERROR - _health_check_cycle:342 - API health check: status=CRITICAL, error=Client error: 400
+2026-05-25 10:47:46 - ERROR - _health_check_cycle:342 - API health check: status=CRITICAL, error=Client error: 400
+2026-05-25 10:49:18 - ERROR - _health_check_cycle:342 - API health check: status=CRITICAL, error=Client error: 400
+2026-05-25 10:54:23 - ERROR - _health_check_cycle:342 - API health check: status=CRITICAL, error=Client error: 400
+2026-05-25 11:00:36 - ERROR - _health_check_cycle:342 - API health check: status=CRITICAL, error=Client error: 400
+2026-05-25 11:05:08 - ERROR - _health_check_cycle:342 - API health check: status=CRITICAL, error=Client error: 400

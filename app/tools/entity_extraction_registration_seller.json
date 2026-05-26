@@ -1,0 +1,70 @@
+{
+    "type": "function",
+    "name": "extract_seller_registration_entities",
+    "description": "Extract and validate seller registration information from user message with validation errors for invalid or multiple values",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "entities": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": ["string", "null"],
+                        "description": "Full name of the seller"
+                    },
+                    "companyName": {
+                        "type": ["string", "null"],
+                        "description": "Company or organization name"
+                    },
+                    "email": {
+                        "type": ["string", "null"],
+                        "description": "Business email address"
+                    },
+                    "address1": {
+                        "type": ["string", "null"],
+                        "description": "Company location/address"
+                    },
+                    "zipCode": {
+                        "type": ["string", "null"],
+                        "description": "6-digit Indian pincode"
+                    },
+                    "gstin": {
+                        "type": ["string", "null"],
+                        "description": "15-character GSTIN number"
+                    },
+                    "details": {
+                        "type": ["string", "null"],
+                        "description": "Products or services offered"
+                    }
+                },
+                "required": ["name", "companyName", "email", "address1", "zipCode", "gstin", "details"],
+                "additionalProperties": false
+            },
+            "completeness": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Percentage of required fields successfully extracted"
+            },
+            "missing_fields": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of required fields not found in user input"
+            },
+            "validation_errors": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of validation errors for invalid or multiple values (not for missing fields)"
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Overall confidence score for extraction accuracy"
+            }
+        },
+        "required": ["entities", "completeness", "missing_fields", "validation_errors", "confidence"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

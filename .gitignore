@@ -1,0 +1,39 @@
+*.pyc
+/.idea
+.sonar
+.scannerwork
+venv/
+documentation/
+# Environment files (production branch includes .env)
+.env
+.env.local
+.env.*.local
+!.env.example
+# Ignore OpenAI interaction logs
+app/logs/openai_interactions/*.jsonl
+app/logs/procucev_api_interactions/*.jsonl
+chroma_db
+unified_chroma_db
+azure_key.pem
+DigiCertGlobalRootCA.crt.pem
+/logs
+VMconnection.txt
+WhatsappIntegrationDoc.md
+database_explorer.py
+/documentation
+
+# Celery files
+celerybeat-schedule
+celerybeat.pid
+celerybeat-schedule
+./__pycache__
+ai-proc-agent_key.pem
+Server Details.txt
+Remote Database.session.sql
+certs
+list_selectable_sellers.py   
+whatsapp_logs
+Client DB.session.sql
+Remote DB.session.sql
+*.md
+.vscode

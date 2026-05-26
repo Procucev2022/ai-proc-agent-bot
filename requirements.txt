@@ -1,0 +1,61 @@
+# AI Procurement Agent Dependencies
+# Core web framework and API
+fastapi
+uvicorn
+gunicorn
+python-dateutil
+pytz
+jinja2
+# Database and ORM
+sqlalchemy
+PyMySQL
+alembic
+
+# Data validation and serialization
+pydantic
+
+# OpenAI integration
+openai
+
+# HTTP requests and API clients
+requests
+httpx
+aiohttp
+
+# Environment and configuration
+python-dotenv
+
+# Caching and session management
+redis
+slowapi
+
+# Testing framework
+pytest
+pytest-asyncio
+
+# Excel processing
+pandas
+openpyxl
+xlrd
+
+# Multi-process-safe log rotation (10 gunicorn workers share app.log)
+concurrent-log-handler
+
+# Vector database for auto-categorization
+chromadb
+sentence-transformers
+
+# Background job processing for seller recommendation system
+celery
+redis
+
+# Geographic calculations for seller location matching
+geopy
+pgeocode
+
+
+# Development tools
+black
+flake8
+isort
+python-multipart

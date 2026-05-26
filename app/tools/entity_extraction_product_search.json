@@ -1,0 +1,82 @@
+{
+    "type": "function",
+    "name": "extract_entities",
+    "description": "Extract structured entities from user message for BFS product search workflow based on actual BFS API fields",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "entities": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": ["string", "null"],
+                        "description": "Product description as required by BFS API (REQUIRED for search)"
+                    },
+                    "specification": {
+                        "type": ["string", "null"],
+                        "description": "Technical specifications as required by BFS API (REQUIRED for search)"
+                    },
+                    "category": {
+                        "type": ["string", "null"],
+                        "description": "Product category from BFS API categories: Agriculture Equipments, Air Logistics, Automotive, Batteries & UPS, etc. (REQUIRED)"
+                    },
+                    "location": {
+                        "type": ["string", "null"],
+                        "description": "Geographic location where product is needed (REQUIRED - city name as used in BFS API)"
+                    },
+                    "unitofMeasures": {
+                        "type": ["string", "null"],
+                        "description": "Unit of measurement: pcs, kg, liters, etc. (REQUIRED for BFS API)"
+                    },
+                    "ageOfAsset": {
+                        "type": ["string", "null"],
+                        "description": "Age requirement in years: '3', '5', 'new' (OPTIONAL - can be estimated)"
+                    },
+                    "quantity": {
+                        "type": ["number", "null"],
+                        "description": "Quantity needed - numeric value (OPTIONAL - can be asked later)"
+                    },
+                    "buyPrice": {
+                        "type": ["number", "null"],
+                        "description": "Budget or max price willing to pay (OPTIONAL - may not be defined initially)"
+                    },
+                    "bfsGroup": {
+                        "type": ["string", "null"],
+                        "description": "BFS group: CAPEX - Equipment & Machinery, Admin & IT, etc. (OPTIONAL - can be derived from category)"
+                    },
+                    "availability_check": {
+                        "type": "boolean",
+                        "description": "Whether this is availability inquiry (true) or purchase intent (false)"
+                    }
+                },
+                "required": ["availability_check"],
+                "additionalProperties": false
+            },
+            "completeness": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Percentage of BFS API required fields (description, specification, category, location, unitofMeasures) that have values"
+            },
+            "missing_required_fields": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of required BFS API fields that are missing: description, specification, category, location, unitofMeasures"
+            },
+            "missing_optional_fields": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of optional BFS API fields that could be helpful: ageOfAsset, quantity, buyPrice, bfsGroup"
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Confidence in the entity extraction accuracy"
+            }
+        },
+        "required": ["entities", "completeness", "missing_required_fields", "missing_optional_fields", "confidence"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

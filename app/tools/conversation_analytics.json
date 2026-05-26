@@ -1,0 +1,362 @@
+{
+  "type": "function",
+  "name": "analyze_conversations",
+  "description": "Analyze conversation sessions and return session details with metrics tracked PER IDENTITY. A single session may involve MULTIPLE buyer emails and MULTIPLE seller emails. Metrics MUST be calculated per email identity and NEVER merged across different emails.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "date": {
+        "type": "string",
+        "description": "Analysis date in YYYY-MM-DD format"
+      },
+      "total_sessions": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Total number of conversation sessions analyzed"
+      },
+      "sessions": {
+        "type": "array",
+        "description": "List of analyzed sessions with separated metrics per identity",
+        "items": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "description": "Unique session identifier"
+            },
+            "user_type": {
+              "type": "string",
+              "enum": ["buyer", "seller", "hybrid", "unknown"],
+              "description": "User role: buyer/seller/hybrid/unknown"
+            },
+            "phone_number": {
+              "type": "string",
+              "description": "External user id from session data"
+            },
+            "confidence_score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "Classification confidence (0-100)"
+            },
+            "buyer_identities": {
+              "type": "array",
+              "description": "Each buyer email is a SEPARATE identity. When 'Let's continue with your Buyer profile (email)' appears, that email becomes ACTIVE. All subsequent actions attributed to that email only. If email changes, START NEW buyer identity object. NEVER merge metrics across emails.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "buyer_email": {
+                    "type": "string",
+                    "description": "Buyer email - PRIMARY KEY for all metrics"
+                  },
+                  "buyer_metrics": {
+                    "type": "object",
+                    "description": "Metrics ONLY for this buyer_email",
+                    "properties": {
+                      "number_of_buyer_chats": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Chats where user acted as seller"
+                      },
+                      "incomplete_rfqs": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Started but not completed. Look for 'Exit', 'Restart', abandonment without success"
+                      },
+                      "buyers_started_but_not_raised_rfq": {
+                        "type": "integer",
+                        "enum": [0, 1],
+                        "description": "1 if: initiated buying action (Buy/Create RFQ/check status/search BFS) AND zero successful RFQs. 0 if: never started OR completed at least one RFQ"
+                      },
+                      "bfs_searches": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "BFS searches by THIS buyer. Look for 'bfs_search' intent or 'Search Ready Stocks' clicks"
+                      },
+                      "products_bid_for": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Distinct products from '*Bids Placed Successfully!*' confirmations only"
+                      },
+                      "no_of_products_searched": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Count of distinct product keywords searched in BFS"
+                      },
+
+                      "bfs_stock_products_bid_placed_count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "SEQUENCE ONLY: (1)Create RFQ (2)Click 'Check Ready Stocks' (3)BFS results shown (4)Click 'Place Bid'(id='bfs_negotiate') (5)Bid confirmation. Count products from confirmation."
+                      },
+                      "bfs_products_searched_list": {
+                        "type": "array",
+                        "description": "Extract from '*X item(s) in stock:*'. Product = text BEFORE first '--'. Example: '1. GASKET -- details' extracts 'GASKET'",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "bfs_search_details": {
+                        "type": "array",
+                        "description": "Detailed tracking of each BFS search with results and outcomes",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "search_keyword": {
+                              "type": "string",
+                              "description": "The product keyword searched by user"
+                            },
+                            "results_count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "description": "Number of products returned in search results"
+                            },
+                            "results_found": {
+                              "type": "array",
+                              "description": "List of product names found in search (text before '--')",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "action_taken": {
+                              "type": "string",
+                              "enum": [
+                                "viewed_only",
+                                "bid_placed",
+                                "no_stock_available",
+                                "raise_rfq_clicked"
+                              ],
+                              "description": "Action user took after seeing search results"
+                            },
+                            "bid_details": {
+                              "type": "object",
+                              "description": "Present only if action_taken involves bidding",
+                              "properties": {
+                                "products_bid": {
+                                  "type": "array",
+                                  "description": "List of products user successfully bid on",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "bid_count": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "description": "Number of successful bids placed"
+                                },
+                                "attempts": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "description": "Number of bid attempts made"
+                                },
+                                "failure_reason": {
+                                  "type": "string",
+                                  "enum": ["format_error", "max_attempts_reached", "otp_failed", "cancelled"],
+                                  "description": "Reason for bid failure if applicable"
+                                }
+                              }
+                            }
+                          },
+                          "required": ["search_keyword", "search_timestamp", "results_count", "results_found", "action_taken"]
+                        }
+                      }
+                    },
+                    "required": [
+                      "number_of_buyer_chats",
+                      "incomplete_rfqs",
+                      "buyers_started_but_not_raised_rfq",
+                      "bfs_searches",
+                      "products_bid_for",
+                      "no_of_products_searched",
+                      "bfs_stock_products_bid_placed_count",
+                      "bfs_products_searched_list",
+                      "bfs_search_details"
+                    ]
+                  }
+                },
+                "required": ["buyer_email", "buyer_metrics"]
+              }
+            },
+            "seller_identities": {
+              "type": "array",
+              "description": "Seller metrics per email. If email switches, start NEW metrics bucket",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "seller_email": {
+                    "type": "string",
+                    "description": "Seller email - PRIMARY KEY"
+                  },
+                  "seller_metrics": {
+                    "type": "object",
+                    "properties": {
+                      "number_of_seller_chats": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Chats where user acted as seller"
+                      },
+                      "subscription_plans_requested": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "User-initiated plan/pricing inquiries. Look for: questions about plans, 'how to buy credits', 'View Plans' clicks. NOT automated messages"
+                      },
+                      "zero_credit_rfq_attempt": {
+                        "type": "integer",
+                        "enum": [0, 1],
+                        "description": "1 if: 'You do not have enough credits' message OR zero-credit warning when viewing/requesting RFQs. 0 otherwise"
+                      },
+                      "rfq_requested_ai": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "All RFQ request attempts. Count: 'Other Active RFQs', 'View RFQs', '[Button: Request RFQ]' clicks. Regardless of success"
+                      },
+                      "bids_accepted_ai": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Bids accepted by seller. Look for '[Button: Accept Bid]' or acceptance confirmations"
+                      }
+                    },
+                    "required": [
+                      "number_of_seller_chats",
+                      "subscription_plans_requested",
+                      "zero_credit_rfq_attempt",
+                      "rfq_requested_ai",
+                      "bids_accepted_ai"
+                    ]
+                  }
+                },
+                "required": ["seller_email", "seller_metrics"]
+              }
+            },
+            "unknown_user_metrics": {
+              "type": "object",
+              "description": "Metrics for users without registration or clear buyer/seller actions",
+              "properties": {
+                "unregistered_seller_initiated_chat": {
+                  "type": "integer",
+                  "enum": [0, 1],
+                  "description": "1 if unregistered user showed seller intent in at least one chat, else 0"
+                },
+                "unregistered_seller_requested_rfq": {
+                  "type": "integer",
+                  "enum": [0, 1],
+                  "description": "1 if unregistered seller attempted to view/access/request RFQs at least once, else 0"
+                },
+                "unregistered_buyer_bfs_only": {
+                  "type": "integer",
+                  "enum": [0, 1],
+                  "description": "1 if unregistered user chose not to register and continued browsing/searching without initiating RFQ, else 0"
+                },
+                "number_of_faq_or_general_queries": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "FAQ or general query message count"
+                },
+                "bfs_products_searched_by_unregistered": {
+                  "type": "array",
+                  "description": "Products from '*X item(s) in stock:*' shown to UNREGISTERED users (NO buyer profile). Extract text BEFORE first '--'. Example: '1. GASKET -- details' = 'GASKET'",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "unregistered_seller_initiated_chat",
+                "unregistered_seller_requested_rfq",
+                "unregistered_buyer_bfs_only",
+                "number_of_faq_or_general_queries",
+                "bfs_products_searched_by_unregistered"
+              ]
+            },
+            "seller_rfq_interest_event": {
+              "type": "array",
+              "description": "STRICT FILTER: Extract ONLY when message matches exact format '[Button: I'm Interested] RFQ: {number} SellerID:{uuid}'.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "rfq_id": {
+                    "type": "string",
+                    "pattern": "^RFQ[0-9]+$",
+                    "description": "Extract ONLY from the explicit 'RFQ:' token present in '[Button: I'm Interested] RFQ: {number} SellerID:{uuid}'"
+                  },
+                  "seller_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Extract ONLY from the explicit 'SellerID:' token present in '[Button: I'm Interested] RFQ: {number} SellerID:{uuid}'"
+
+                  },
+                  "response_date": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "User message timestamp when button clicked"
+                  },
+                  "rfq_notified_at": {
+                    "type": "string",
+                    "description": "RFQ notification timestamp (ISO format)"
+                  },
+                  "seller_response_at": {
+                    "type": "string",
+                    "description": "Seller interest click timestamp (ISO format)"
+                  }
+                },
+                "required": ["rfq_id", "seller_id", "response_date","rfq_notified_at","seller_response_at"]
+              }
+            },
+            "registration_metrics": {
+              "type": "object",
+              "description": "Registration outcomes by user type",
+              "properties": {
+                "buyer_successful_registration": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Successful buyer registrations"
+                },
+                "buyer_failed_registration": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Failed buyer registration attempts"
+                },
+                "seller_successful_registration": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Successful seller registrations"
+                },
+                "seller_failed_registration": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Failed seller registration attempts"
+                }
+              },
+              "required": [
+                "buyer_successful_registration",
+                "buyer_failed_registration",
+                "seller_successful_registration",
+                "seller_failed_registration"
+              ]
+            },
+            "analysis_reasoning": {
+              "type": "string",
+              "description": "Explain how metrics were inferred from conversation"
+            }
+          },
+          "required": [
+            "session_id",
+            "user_type",
+            "confidence_score",
+            "buyer_identities",
+            "seller_identities",
+            "unknown_user_metrics",
+            "seller_rfq_interest_event",
+            "registration_metrics",
+            "analysis_reasoning"
+          ]
+        }
+      }
+    },
+    "required": [
+      "date",
+      "total_sessions",
+      "sessions"
+    ]
+  }
+}

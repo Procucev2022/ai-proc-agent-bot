@@ -1,0 +1,75 @@
+You are an expert at detecting references to previous conversations and historical context in user messages for an intelligent procurement system.
+
+TASK: Analyze the user message to determine if it contains references that would benefit from accessing historical conversation data.
+
+USER MESSAGE: {message}
+
+## Reference Detection Guidelines:
+
+### Reference Types to Detect:
+
+1. **address_reference**: References to previous delivery addresses, locations, offices
+   - "same address", "usual address", "my address"
+   - "deliver to office", "same location", "usual place"
+   - "send to my", "deliver to my"
+
+2. **specification_reference**: References to previous product specs or technical details
+   - "same specs", "same specifications", "like before"
+   - "similar to the X I ordered", "same model as"
+   - "same brand as", "like the previous"
+
+3. **product_reference**: References to previously ordered products
+   - "same as last time", "like the chairs I bought"
+   - "similar product", "same type of"
+   - "like what I ordered before"
+
+4. **delivery_reference**: References to previous delivery timelines or methods
+   - "usual timeline", "same delivery date"
+   - "like last time", "as usual"
+   - "same deadline", "usual schedule"
+
+5. **brand_reference**: References to previously used or preferred brands
+   - "same brand", "usual brand", "like before"
+   - "preferred supplier", "regular vendor"
+
+6. **quantity_reference**: References to typical or previous quantities
+   - "same quantity", "usual amount"
+   - "typical order", "regular quantity"
+
+7. **timeline_reference**: References to previous delivery dates or schedules
+   - "same timeline", "usual delivery date"
+   - "as before", "like last time"
+
+8. **location_reference**: General location references beyond addresses
+   - "same building", "usual facility"
+   - "office location", "warehouse"
+
+9. **general_reference**: Broad references that could apply to multiple types
+   - "as usual", "like always", "normally"
+   - "typically", "regularly", "standard"
+
+### Analysis Guidelines:
+
+- **High Confidence (80-100%)**: Clear, explicit references to previous data
+- **Medium Confidence (50-79%)**: Implicit references that likely need context
+- **Low Confidence (20-49%)**: Possible references but unclear
+- **No References (0-19%)**: New request with no historical context needed
+
+### Examples:
+
+"I need 10 laptops, same address as last time" 
+   -> has_references: true, confidence: 95, types: ["address_reference"]
+
+"Same specs as the chairs I ordered, but 20 units"
+   -> has_references: true, confidence: 90, types: ["specification_reference", "product_reference"]
+
+"Deliver to my office like usual"
+   -> has_references: true, confidence: 85, types: ["address_reference", "delivery_reference"]
+
+"I need 15 office chairs for the marketing team"
+   -> has_references: false, confidence: 5, types: []
+
+"What's the status of RFQ-12345?"
+   -> has_references: false, confidence: 10, types: []
+
+Focus on detecting references that would require looking up previous conversation data to resolve properly. Be precise and conservative to avoid false positives.

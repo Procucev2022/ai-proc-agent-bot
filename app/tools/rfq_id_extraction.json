@@ -1,0 +1,30 @@
+{
+  "type": "function",
+  "name": "extract_rfq_ids",
+  "description": "Extract specific RFQ IDs from user message based on context and last bot response.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "rfq_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "List of specific RFQ IDs the user is asking about"
+      },
+      "confidence": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 100,
+        "description": "Confidence score for the extraction (0-100)"
+      },
+      "reasoning": {
+        "type": "string",
+        "description": "Brief explanation of how the RFQ IDs were extracted"
+      }
+    },
+    "required": ["rfq_ids", "confidence", "reasoning"],
+    "additionalProperties": false
+  },
+  "strict": true
+}

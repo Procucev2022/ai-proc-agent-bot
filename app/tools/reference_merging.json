@@ -1,0 +1,100 @@
+{
+    "type": "function",
+    "name": "merge_resolved_references",
+    "description": "Intelligently merge resolved references into product entities by mapping reference values to appropriate entity fields.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "updated_products": {
+                "type": "array",
+                "description": "Updated product entities with resolved references merged into appropriate fields",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "projectDesc": {
+                            "type": ["string", "null"],
+                            "description": "Project description for the RFQ"
+                        },
+                        "description": {
+                            "type": ["string", "null"],
+                            "description": "Item description"
+                        },
+                        "quantity": {
+                            "type": ["number", "null"],
+                            "description": "Required quantity - numeric value"
+                        },
+                        "unitofMeasures": {
+                            "type": ["string", "null"],
+                            "description": "Unit of measurement: pcs, kg, meters, etc."
+                        },
+                        "deliveryDate": {
+                            "type": ["string", "null"],
+                            "description": "Required delivery date"
+                        },
+                        "division": {
+                            "type": ["string", "null"],
+                            "description": "Division: Admin & IT, CAPEX - Equipment & Machinery, Civil & Electrical Works, etc."
+                        },
+                        "brand": {
+                            "type": ["string", "null"],
+                            "description": "Preferred brand name"
+                        },
+                        "state": {
+                            "type": ["string", "null"],
+                            "description": "Delivery state (e.g., Karnataka, Maharashtra, etc.)"
+                        },
+                        "city": {
+                            "type": ["string", "null"],
+                            "description": "Delivery city (e.g., Bangalore, Mumbai, etc.)"
+                        },
+                        "pincode": {
+                            "type": ["string", "null"],
+                            "description": "Delivery pincode (6-digit postal code)"
+                        },
+                        "remarks": {
+                            "type": ["string", "null"],
+                            "description": "Additional remarks or requirements"
+                        }
+                    },
+                    "required": ["projectDesc", "description", "quantity", "unitofMeasures", "deliveryDate", "division", "brand", "state", "city", "pincode", "remarks"],
+                    "additionalProperties": false
+                }
+            },
+            "merge_actions": {
+                "type": "array",
+                "description": "List of merge actions taken to apply resolved references",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "reference_phrase": {
+                            "type": "string",
+                            "description": "Original reference phrase that was resolved"
+                        },
+                        "resolved_value": {
+                            "type": "string",
+                            "description": "The resolved value from summaries"
+                        },
+                        "applied_to_fields": {
+                            "type": "array",
+                            "description": "List of entity fields that were updated",
+                            "items": {"type": "string"}
+                        },
+                        "action_description": {
+                            "type": "string",
+                            "description": "Description of how the reference was applied"
+                        }
+                    },
+                    "required": ["reference_phrase", "resolved_value", "applied_to_fields", "action_description"],
+                    "additionalProperties": false
+                }
+            },
+            "success": {
+                "type": "boolean",
+                "description": "Whether the merge operation was successful"
+            }
+        },
+        "required": ["updated_products", "merge_actions", "success"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

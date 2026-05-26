@@ -1,0 +1,43 @@
+{
+    "type": "function",
+    "name": "validate_delivery_date",
+    "description": "Validate and normalize delivery dates with intelligent parsing. Handles ordinal numbers (30th sept), relative dates (tomorrow), and applies intelligent year assumptions.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "is_valid": {
+                "type": "boolean",
+                "description": "Whether the date is valid for delivery (must be today or a future date). If the user provides a full date including a year (e.g., '1 December 2025'), it must not be in the past—otherwise it is invalid. If the user provides a date without a year (e.g., '2 Dec'), interpret it as the next upcoming occurrence, which may fall in the next year."
+
+            },
+            "normalized_date": {
+                "type": ["string", "null"],
+                "description": "The final normalized date in YYYY-MM-DD format. Should be provided if is_valid is true, null only if the date cannot be parsed or is invalid."
+            },
+            "validation_issues": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "List of validation issues found (empty if valid)"
+            },
+            "user_friendly_message": {
+                "type": "string",
+                "description": "User-friendly message explaining the validation result or the parsed date"
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Confidence in the date interpretation and validation (0-100)"
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation of how the date was parsed and validated"
+            }
+        },
+        "required": ["is_valid", "normalized_date", "validation_issues", "user_friendly_message", "confidence", "reasoning"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

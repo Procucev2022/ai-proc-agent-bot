@@ -1,0 +1,136 @@
+{
+  "type": "function",
+  "name": "process_excel_to_rfqs",
+  "description": "Process Excel DataFrame directly to multiple RFQ format. Returns structured data ready for RFQ creation.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "rfqs": {
+        "type": "array",
+        "description": "Array of RFQ objects extracted from Excel data",
+        "items": {
+          "type": "object",
+          "properties": {
+            "products": {
+              "type": "array",
+              "description": "Array of product entities for this RFQ",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "description": {
+                    "type": "string",
+                    "description": "Product description/name"
+                  },
+                  "quantity": {
+                    "type": "number",
+                    "description": "Required quantity - numeric value"
+                  },
+                  "unitofMeasures": {
+                    "type": "string",
+                    "description": "Unit of measurement: pcs, kg, meters, etc."
+                  },
+                  "brand": {
+                    "type": "string",
+                    "description": "Brand name or specification details"
+                  },
+                  "remarks": {
+                    "type": "string",
+                    "description": "Additional remarks or specifications"
+                  }
+                },
+                "required": ["description", "quantity", "unitofMeasures", "brand", "remarks"],
+                "additionalProperties": false
+              }
+            },
+            "deliveryDate": {
+              "type": ["string", "null"],
+              "description": "Required delivery date"
+            },
+            "state": {
+              "type": ["string", "null"],
+              "description": "Delivery state"
+            },
+            "city": {
+              "type": ["string", "null"],
+              "description": "Delivery city"
+            },
+            "pincode": {
+              "type": ["string", "null"],
+              "description": "Delivery pincode"
+            }
+          },
+          "required": ["products", "deliveryDate", "state", "city", "pincode"],
+          "additionalProperties": false
+        }
+      },
+      "processing_summary": {
+        "type": "object",
+        "description": "Summary of processing results",
+        "properties": {
+          "total_rows_processed": {
+            "type": "integer",
+            "description": "Total number of rows read from the Excel file (including metadata)"
+          },
+          "total_products": {
+            "type": "integer",
+            "description": "Rows identified as valid for RFQ creation (exclude blank and metadata-only rows)"
+          },
+          "total_products_extracted": {
+            "type": "integer",
+            "description": "Number of identified rows successfully extracted into RFQ products"
+          },
+          "header_row_detected": {
+            "type": "integer",
+            "description": "Row index where headers were detected"
+          },
+          "skipped_rows": {
+            "type": "integer",
+            "description": "Number of rows skipped from total_products (calculated as total_products - total_products_extracted)"
+          },
+          "skipped_items": {
+            "type": "array",
+            "description": "Details of actual product rows that failed validation (do NOT include non-product rows)",
+            "items": {
+              "type": "object",
+              "properties": {
+                "row_number": {
+                  "type": "integer",
+                  "description": "Row number of the skipped item"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Item description if available, or content from the row"
+                },
+                "reason": {
+                  "type": "string",
+                  "description": "Reason why this item was skipped (e.g., 'not a product row', 'missing quantity', 'empty row', 'invalid data')"
+                }
+              },
+              "required": ["row_number", "description", "reason"],
+              "additionalProperties": false
+            }
+          },
+          "skipped_items_summary": {
+            "type": "string",
+            "description": "Summary of only actual product validation failures (exclude non-product rows from summary)"
+          }
+        },
+        "required": ["total_rows_processed", "total_products", "total_products_extracted", "header_row_detected", "skipped_rows", "skipped_items", "skipped_items_summary"],
+        "additionalProperties": false
+      },
+      "confidence": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 100,
+        "description": "Overall confidence in processing accuracy"
+      },
+      "combined_error": {
+        "type": ["string", "null"],
+        "description": "Combined error message when file processing is incomplete or should be rejected"
+      }
+    },
+    "required": ["rfqs", "processing_summary", "confidence", "combined_error"],
+    "additionalProperties": false
+  },
+  "strict": true
+}

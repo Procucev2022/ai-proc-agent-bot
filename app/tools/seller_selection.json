@@ -1,0 +1,26 @@
+{
+  "type": "function",
+  "name": "select_best_sellers",
+  "description": "Select and rank the best sellers for the item based on category match, location, and seller quality",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "selected_seller_ids": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Array of seller IDs, ranked from best to worst based on analysis"
+      },
+      "reasoning": {
+        "type": "string",
+        "description": "Detailed explanation of why these sellers were selected and how they were ranked"
+      },
+      "confidence_score": {
+        "type": "number",
+        "minimum": 0.0,
+        "maximum": 1.0,
+        "description": "Confidence in the seller selection quality (0.0-1.0)"
+      }
+    },
+    "required": ["selected_seller_ids", "reasoning", "confidence_score"]
+  }
+}

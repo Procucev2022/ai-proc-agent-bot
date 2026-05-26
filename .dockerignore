@@ -1,0 +1,157 @@
+# Git and version control
+.git
+.gitignore
+.github
+
+# Documentation
+*.md
+documentation/
+
+# Development files
+.env.example
+*.pem
+.vishwa/
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.pytest_cache
+.coverage
+
+# Virtual environments
+venv
+env
+ENV
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Logs
+logs/*
+*.log
+
+# Data
+data/*
+*.db
+*.sqlite
+
+# Docker
+.dockerignore
+Dockerfile*
+docker-compose*.yml
+
+# Documentation
+*.md
+documentation/
+
+# Tests
+tests/
+test_*.py
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs (mounted as volume)
+logs/
+app/logs/
+whatsapp_logs/
+*.log
+
+# Environment files
+.env
+.env.*
+
+# Docker files
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Documentation
+documentation/
+*.md
+!README.md
+
+# Tests
+tests/
+test_*.py
+*_test.py
+pytest_cache/
+.pytest_cache/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Database files (if local)
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Shell scripts (exclude management scripts, include entrypoints)
+*.sh
+!docker_entrypoint_*.sh
+
+# License
+license/
+
+# Vector databases
+chroma_db/
+unified_chroma_db/
+simple_vector_store/
+
+# Certificates
+certs/
+*.pem
+*.crt
+# Keep DigiCertGlobalRootCA.crt.pem for SSL
+!DigiCertGlobalRootCA.crt.pem
+
+# ML Models and cache (prevent large model files from being copied)
+*.pkl
+*.h5
+*.pt
+*.pth
+*.onnx
+*.pb
+models/
+wandb/
+mlruns/
+
+# Data files (prevent large data files from being copied)
+*.csv
+*.parquet
+*.xlsx
+*.xls
+data/
+datasets/
+
+# Build tracking files
+.version
+.base_image_built
+.build_metrics.csv
+
+# Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/

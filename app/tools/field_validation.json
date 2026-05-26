@@ -1,0 +1,41 @@
+{
+    "type": "function",
+    "name": "validate_field",
+    "description": "Validate RFQ field values using business logic and semantic understanding",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "is_valid": {
+                "type": "boolean",
+                "description": "Whether the field value is valid and acceptable"
+            },
+            "validation_score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Validation confidence score (0-100)"
+            },
+            "suggestions": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Specific suggestions for improvement if field is invalid or could be better"
+            },
+            "reason": {
+                "type": "string",
+                "description": "Detailed explanation of validation result and any issues found"
+            },
+            "normalized_value": {
+                "type": ["string", "null"],
+                "description": "Suggested normalized/corrected version of the value if applicable"
+            },
+            "severity": {
+                "type": "string",
+                "enum": ["error", "warning", "info"],
+                "description": "Severity level of any issues found"
+            }
+        },
+        "required": ["is_valid", "validation_score", "suggestions", "reason", "normalized_value", "severity"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

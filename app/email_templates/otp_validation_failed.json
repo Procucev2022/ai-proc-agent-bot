@@ -1,0 +1,11 @@
+{
+  "scenario_id": 2,
+  "to": "support@procucev.com",
+  "cc": "{user_email}",
+  "bcc": "",
+  "subject": "Action Required - OTP Validation Failed",
+  "body": "Dear {full_name},\n\nWe were unable to validate your OTP during the authentication/registration process.\n\nFull Name: {full_name}\nEmail: {email}\nContact Number: {contact_number}\n\nOur support team will connect with you soon. In case of any urgent requirement, please drop an email at support@procucev.com.\n\n",
+  "signature": "Regards\nQUA",
+  "supports_buyer": true,
+  "supports_seller": true
+}

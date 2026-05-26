@@ -1,0 +1,367 @@
+"""
+Helper utilities for ChatService.
+
+Contains pure utility methods that don't modify state and can be
+extracted from the main ChatService class for better organization.
+"""
+
+import logging
+from typing import Dict, Any
+from datetime import datetime, date, timedelta
+from dateutil import parser as date_parser
+from app.models import ConversationSession
+from app.schemas.rfq import RFQValidationSchema
+
+logger = logging.getLogger(__name__)
+
+logger = logging.getLogger(__name__)
+
+
+class ChatServiceHelpers:
+    """Pure utility methods extracted from ChatService."""
+    
+    @staticmethod
+    def serialize_products_for_session(products_list):
+        """Serialize products list for JSON storage by converting only datetime objects to strings."""
+        from datetime import datetime
+        
+        def serialize_obj(obj):
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            elif isinstance(obj, dict):
+                return {k: serialize_obj(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [serialize_obj(item) for item in obj]
+            else:
+                return obj
+        
+        return serialize_obj(products_list)
+    
+    @staticmethod
+    def transform_entities_to_schema(entities: dict) -> dict:
+        """Transform extracted entities to RFQValidationSchema format."""
+        schema_data = {}
+        
+        # Map entity extraction fields to schema fields
+        if entities.get("projectDesc") or entities.get("description"):
+            schema_data["project_desc"] = entities.get("projectDesc") or entities.get("description")
+        
+        if entities.get("deliveryDate"):
+            # Handle both string and datetime objects
+            try:
+                delivery_date = entities["deliveryDate"]
+                if isinstance(delivery_date, datetime):
+                    # Already a datetime object, use as-is
+                    schema_data["delivery_date"] = delivery_date
+                else:
+                    # Parse natural language dates using dateutil
+                    parsed_date = date_parser.parse(str(delivery_date))
+                    schema_data["delivery_date"] = parsed_date
+            except Exception as e:
+                # If parsing fails, log and leave as None
+                logger.warning(f"Failed to parse delivery date '{entities['deliveryDate']}': {e}")
+                pass
+        
+        if entities.get("division"):
+            schema_data["division"] = entities["division"]
+        
+        # Handle items
+        if entities.get("description") or entities.get("quantity"):
+            item = {}
+            if entities.get("description"):
+                item["description"] = entities["description"]
+            if entities.get("quantity"):
+                item["quantity"] = entities["quantity"]
+            # Always set unit_of_measures with consistent default "unit(s)"
+            item["unit_of_measures"] = entities.get("unitofMeasures") or "unit(s)"
+
+            if item:
+                schema_data["items"] = [item]
+        
+        # Handle delivery locations
+        if entities.get("state") or entities.get("city") or entities.get("pincode"):
+            location_data = {
+                "state": entities.get("state", ""),
+                "city": entities.get("city", ""),
+                "pincode": entities.get("pincode", "")
+            }
+            schema_data["delivery_locations"] = [location_data]
+        
+        # Optional fields
+        if entities.get("remarks"):
+            schema_data["remarks"] = entities["remarks"]
+        if entities.get("brand"):
+            schema_data["preferred_brand"] = entities["brand"]
+
+        # Handle attachments
+        if entities.get("attachments"):
+            schema_data["attachments"] = entities["attachments"]
+
+        return schema_data
+    
+    @staticmethod
+    def create_rfq_schema_from_entities(entities: dict, openai_service=None):
+        """Create RFQValidationSchema from entities with division auto-population."""
+        schema_data = ChatServiceHelpers.transform_entities_to_schema(entities)
+        
+        # Check for date validation errors in entities
+        has_date_validation_error = bool(entities.get("date_validation_error"))
+        if has_date_validation_error:
+            schema_data["date_validation_error"] = True
+        
+        schema = RFQValidationSchema(**schema_data)
+        
+        # Debug logging for optional questions
+        logger.info(f"Schema data: preferred_brand={schema.preferred_brand}, remarks={schema.remarks}, items={bool(schema.items)}, entire_schena_data={schema_data}")
+        optional_questions = schema.get_optional_questions()
+        logger.info(f"Optional questions generated: {optional_questions}")
+        
+        return schema
+    
+    @staticmethod
+    def create_combined_rfq_schema_from_multiple_products(products_list: list):
+        """Create a single RFQValidationSchema from multiple product entities."""
+        if not products_list:
+            return None
+        
+        # Use the first product's common fields (delivery, project desc, etc.)
+        base_entities = products_list[0]["entities"]
+        schema_data = ChatServiceHelpers.transform_entities_to_schema(base_entities)
+        
+        # Check for date validation errors in any product
+        has_date_validation_error = False
+        for prod in products_list:
+            entities = prod["entities"]
+            if entities.get("date_validation_error"):
+                has_date_validation_error = True
+                break
+        
+        if has_date_validation_error:
+            schema_data["date_validation_error"] = True
+        
+        # Combine all products into items array
+        combined_items = []
+        for prod in products_list:
+            entities = prod["entities"]
+            if entities.get("description") or entities.get("quantity"):
+                item = {}
+                if entities.get("description"):
+                    item["description"] = entities["description"]
+                if entities.get("quantity"):
+                    item["quantity"] = entities["quantity"]
+                # Always set unit_of_measures with consistent default "unit(s)"
+                item["unit_of_measures"] = entities.get("unitofMeasures") or "unit(s)"
+                if entities.get("brand"):
+                    item["brand"] = entities["brand"]
+                if entities.get("remarks"):
+                    item["remarks"] = entities["remarks"]
+
+                if item:
+                    combined_items.append(item)
+        
+        # Update schema with combined items
+        schema_data["items"] = combined_items
+        
+        # Use the project description from the first product or create a combined one
+        if not schema_data.get("project_desc") and combined_items:
+            descriptions = [item.get("description", "") for item in combined_items]
+            schema_data["project_desc"] = f"RFQ for {', '.join(descriptions)}"
+        
+        return RFQValidationSchema(**schema_data)
+    
+    @staticmethod
+    def build_context(stage: str, message: str = "", entities: dict = None, completeness: int = 0, **kwargs) -> dict:
+        """Build standard context dictionary for response generation."""
+        context = {
+            "conversation_stage": stage,
+            "user_message": message,
+            "extracted_entities": entities or {},
+            "missing_fields": [],
+        }
+        # Don't include completeness to avoid showing percentages to users
+        context.update(kwargs)
+        return context
+
+    @staticmethod
+    async def build_conversation_context(session: ConversationSession, current_message: str) -> dict:
+        """
+        Build optimized conversation context for intent classification.
+
+        Optimized to reduce token usage while maintaining all necessary context
+        for accurate intent classification. Only includes essential fields.
+
+        Args:
+            session: Current conversation session
+            current_message: Current user message
+
+        Returns:
+            Dict containing essential conversation context for intent classification
+        """
+        # Extract bot's last message from conversation history for intent classification
+        bot_last_message = None
+        conversation_history = session.conversation_history or {"openai_messages": [], "metadata": []}
+
+        # Look through recent messages to find the last bot message
+        if conversation_history.get("metadata"):
+            for msg_data in reversed(conversation_history["metadata"]):
+                if msg_data.get("role") == "assistant":
+                    bot_last_message = msg_data.get("content", "")
+                    break
+
+        # Determine conversation stage using centralized logic
+        conversation_stage = ChatServiceHelpers.determine_conversation_stage(session)
+
+        workflow_state = session.workflow_state or {}
+
+        # Fetch user role from Redis for better intent classification
+        user_role = None
+        if session.external_user_id:
+            try:
+                from app.redis_db import get_auth_redis_service
+                auth_service = get_auth_redis_service()
+                # Use auth:{phone_number} format as specified
+                user_data = await auth_service.get(f"auth:{session.external_user_id}", as_json=True)
+                if user_data:
+                    user_role = user_data.get("role")
+            except Exception as e:
+                logger.warning(f"Failed to fetch user role from Redis: {e}")
+
+        # Minimal session_status with only the critical flag used by intent_service fallback
+        # has_incomplete_products is used in intent_service.py line 121
+        return {
+            'workflow_type': session.workflow_type,
+            'conversation_history': conversation_history,
+            'bot_last_message': bot_last_message,
+            'workflow_state': workflow_state,
+            'conversation_stage': conversation_stage,  # Pre-computed stage for OpenAI context
+            'user_role': user_role,  # Add user role for better intent classification
+            'session_status': {
+                'has_incomplete_products': bool(
+                    workflow_state.get("incomplete_products") and
+                    len(workflow_state.get("incomplete_products", [])) > 0
+                )
+            },
+            # Pass session for Track 2 checks in intent_service
+            'session': session
+        }
+    
+    @staticmethod
+    def determine_conversation_stage(session: ConversationSession) -> str:
+        """Determine current conversation stage based on session state.
+
+        Note: Order matters! Check more specific/advanced stages first.
+        """
+        workflow_state = session.workflow_state or {}
+
+        # SECTIONED RFQ: Check if sectioned RFQ workflow is active (highest priority)
+        sectioned_rfq = workflow_state.get("sectioned_rfq", {})
+        if sectioned_rfq.get("active"):
+            current_section = sectioned_rfq.get("current_section", "date_location")
+            # Map section to stage for intent classification context
+            section_to_stage = {
+                "date_location": "collecting_delivery",
+                "items": "collecting_items",
+                "attachments": "collecting_attachments",
+                "final_confirmation": "confirming"
+            }
+            stage = section_to_stage.get(current_section, "collecting")
+            logger.debug(f"Sectioned RFQ active - section: {current_section}, stage: {stage}")
+            return stage
+
+        # Confirmation stage - highest priority (final stage before submission)
+        if workflow_state.get("pending_combined_rfq") or workflow_state.get("pending_rfq"):
+            return "confirming"
+        # Optional fields stage - check before incomplete_products because incomplete_products
+        # may still exist when asking for optional fields (it gets cleared after optional fields)
+        elif (workflow_state.get("pending_optional_rfq") or
+              workflow_state.get("pending_optional_combined_rfq") or
+              workflow_state.get("awaiting_attachment_decision")):
+            return "optional_fields"
+        # Incomplete products - check after optional fields
+        # Note: incomplete_products can be [] (empty list), so check if it has items
+        elif workflow_state.get("incomplete_products") and len(workflow_state.get("incomplete_products", [])) > 0:
+            return "collecting_details"
+        elif workflow_state.get("extracted_entities"):
+            entities = workflow_state["extracted_entities"]
+            if isinstance(entities, list):
+                if entities:  # Non-empty list
+                    logger.debug(f"Conversation stage: processing_multiple with {len(entities)} entities")
+                    return "processing_multiple"
+                else:  # Empty list
+                    logger.warning("extracted_entities is an empty list, returning collecting stage")
+                    return "collecting"
+            elif isinstance(entities, dict):
+                if entities:  # Non-empty dict
+                    logger.debug("Conversation stage: processing_single with entity dict")
+                    return "processing_single"
+                else:  # Empty dict
+                    logger.warning("extracted_entities is an empty dict, returning collecting stage")
+                    return "collecting"
+            else:
+                # Unexpected type for extracted_entities
+                logger.error(f"extracted_entities has unexpected type: {type(entities).__name__}, value: {entities}")
+                return "collecting"
+        elif session.outcome:
+            return "completed"
+        else:
+            return "collecting"
+
+    @staticmethod
+    def find_most_relevant_message_after_auth(session: ConversationSession,
+                                             current_message: str, auth_result: dict = None) -> str:
+        """
+        Find the most relevant message to process after authentication/registration completion.
+
+        Priority:
+        1. Last message with 'buy_something' or 'sell_something' intent
+        2. Fall back to original_message from auth_result or session
+        3. Fall back to current_message
+
+        Args:
+            session: Current conversation session
+            current_message: Current user message
+            auth_result: Authentication result containing potential original_message
+
+        Returns:
+            str: The most relevant message to process
+        """
+        try:
+            # Get original message from auth result or session
+            original_message = None
+            if isinstance(auth_result, dict):
+                original_message = auth_result.get("original_message")
+            if not original_message and session.workflow_state:
+                original_message = session.workflow_state.get("original_message")
+
+            # Get conversation history
+            conversation_history = getattr(session, 'conversation_history', {})
+            messages = conversation_history.get('messages', []) if conversation_history else []
+
+            if not messages:
+                logger.info("No conversation history - using original or current message")
+                return original_message if original_message else current_message
+
+            # Look for last user message with buy_something or sell_something intent (newest first)
+            target_intents = ["buy_something", "sell_something"]
+
+            for message in reversed(messages):
+                if (message.get("sender") == "user" and
+                    message.get("intent") in target_intents):
+                    logger.info(f"Found message with {message.get('intent')} intent: {message.get('content')[:50]}...")
+                    return message.get("content")
+
+            # No buy/sell intent found - fall back to original message
+            if original_message:
+                logger.info(f"No buy/sell intent found - using original message: {original_message[:50]}...")
+                return original_message
+
+            # Final fallback to current message
+            logger.info(f"No original message - using current message: {current_message[:50]}...")
+            return current_message
+
+        except Exception as e:
+            logger.error(f"Error finding most relevant message after auth: {e}")
+            # Safe fallback
+            if original_message:
+                return original_message
+            return current_message

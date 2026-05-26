@@ -1,0 +1,16 @@
+{
+  "type": "function",
+  "name": "generate_contextual_response",
+  "description": "Generate a structured contextual response for RFQ collection conversations",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "next_question": {
+        "type": "string",
+        "description": "Request the most important missing information in a clear, professional manner. Use proper formatting for readability."
+      }
+    },
+    "required": ["next_question"],
+    "additionalProperties": false
+  }
+}

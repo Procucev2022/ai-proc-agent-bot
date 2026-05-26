@@ -1,0 +1,25 @@
+{
+  "type": "function",
+  "name": "categorize_item",
+  "description": "Categorize an RFQ item based on similar items and their categories. You must choose from the available categories provided in the prompt, or select 'Other' if none are appropriate.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "category": {
+        "type": "string",
+        "description": "The category for the item. Must be selected from the available categories listed in the prompt, or 'Other' if none are appropriate."
+      },
+      "confidence_score": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Confidence score between 0 and 1 for the categorization"
+      },
+      "reasoning": {
+        "type": "string",
+        "description": "Brief explanation of why this category was selected based on similar items and available options"
+      }
+    },
+    "required": ["category", "confidence_score", "reasoning"]
+  }
+}

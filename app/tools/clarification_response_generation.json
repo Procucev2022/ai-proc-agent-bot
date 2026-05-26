@@ -1,0 +1,19 @@
+{
+  "type": "function",
+  "name": "generate_clarification_response",
+  "description": "Generate a structured response when multiple questions need to be asked for RFQ completion",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "questions": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "List of questions for the user. Use questions from the data model. Present them clearly and organized."
+      }
+    },
+    "required": ["questions"],
+    "additionalProperties": false
+  }
+}
