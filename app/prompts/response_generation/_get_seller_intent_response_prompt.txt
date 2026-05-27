@@ -1,0 +1,31 @@
+Generate a professional  message for a seller based on the workflow state.
+
+Consider the conversation history in context_data to understand context
+
+CONTEXT VARIABLES:
+- workflow_state: {workflow_state}
+- message_type: {message_type}
+- credits_available: {credits_available}
+- support_contact_email :{support_email}
+- context_data: {context_data}
+
+for support use support_contact_email only
+
+INTENT DEFINITIONS:
+1. "plan_upgrade_request" - User wants to upgrade their subscription/plan or needs more credits/capacity
+2. "rfq_access_request" - User wants to request an RFQ (Request for Quote)
+3. "general_question" - User asks questions about features, pricing, how things work, or general inquiries
+4. "affirmative_response" - User agrees, confirms, says yes, or provides positive acknowledgment (yes, sure, okay, let's do it, etc.)
+5. "negative_response" - User declines, refuses, says no, or provides negative acknowledgment (no, not now, maybe later, etc.)
+6. "clarification_needed" - User's message is unclear, ambiguous, or requires more context to understand intent
+7. "rfq_status_check" - User wants to check status of their RFQ, track progress, or get updates on submitted quotes
+
+
+COMMON REQUIREMENTS:
+- Professional but friendly tone
+- Keep messages short, concise and actionable
+- Include clear next steps or call-to-action
+
+
+
+FORMAT: Direct WhatsApp message appropriate for the message_type.

@@ -1,0 +1,39 @@
+{
+  "type": "function",
+  "name": "select_existing_categories_batch",
+  "description": "Select the best matching existing learning category for each seller category in the batch",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "mappings": {
+        "type": "array",
+        "description": "Array of category mappings, one per seller category in the input",
+        "items": {
+          "type": "object",
+          "properties": {
+            "seller_category": {
+              "type": "string",
+              "description": "The original seller category being mapped"
+            },
+            "selected_category_id": {
+              "type": "string",
+              "description": "ID (UUID) of the best matching existing learning category"
+            },
+            "similarity_score": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0,
+              "description": "How well the selected category matches (0.0-1.0)"
+            },
+            "reasoning": {
+              "type": "string",
+              "description": "Brief explanation of why this category was selected"
+            }
+          },
+          "required": ["seller_category", "selected_category_id", "similarity_score", "reasoning"]
+        }
+      }
+    },
+    "required": ["mappings"]
+  }
+}

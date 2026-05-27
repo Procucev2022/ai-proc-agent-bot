@@ -1,0 +1,11 @@
+{
+  "scenario_id": 8,
+  "to": "support@procucev.com",
+  "cc": "",
+  "bcc": "",
+  "subject": "OTP Validation Failed During Bid Submission",
+  "body": "Dear Support Team,\n\nA user was trying to submit a bid however could not be completed due to OTP validation failure. Please connect with the user to sort the issue and help to submit the bid. Details for the user,\nName: {full_name}\nEmail: {email}\nPhone Number: {phone_number}",
+  "signature": "Regards\nQUA",
+  "supports_buyer": false,
+  "supports_seller": true
+}

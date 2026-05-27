@@ -1,0 +1,104 @@
+{
+    "type": "function",
+    "name": "extract_modification_values",
+    "description": "Extract modification operations from user message. Analyze the user's intent and identify which existing products to modify, add new products, or remove products. Delivery date and location are GLOBAL fields that apply to all products - extract them at the top level. You will be provided with all existing products - use this context to make intelligent decisions.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "deliveryDate": {
+                "type": "string",
+                "description": "NEW delivery date if user wants to change it (applies to all products). Use empty string if not being modified."
+            },
+            "state": {
+                "type": "string",
+                "description": "NEW delivery state if user wants to change it (applies to all products). Use empty string if not being modified."
+            },
+            "city": {
+                "type": "string",
+                "description": "NEW delivery city if user wants to change it (applies to all products). Use empty string if not being modified."
+            },
+            "pincode": {
+                "type": "string",
+                "description": "NEW delivery pincode if user wants to change it (applies to all products). Use empty string if not being modified."
+            },
+            "modifications": {
+                "type": "array",
+                "description": "Array of modification operations to perform on existing products. Only include product-specific changes here (quantity, description, brand, etc). Delivery location and date go in the global fields above.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "operation_type": {
+                            "type": "string",
+                            "enum": ["modify", "add", "remove"],
+                            "description": "Type of operation: 'modify' updates an existing product, 'add' creates a new product, 'remove' deletes an existing product"
+                        },
+                        "target_product_index": {
+                            "type": ["number", "null"],
+                            "description": "Index of the existing product to modify or remove (0-based). Required for 'modify' and 'remove' operations. Null for 'add' operations. Use product context provided to determine the correct index."
+                        },
+                        "target_product_description": {
+                            "type": ["string", "null"],
+                            "description": "Description of the product being targeted (for logging and validation). Helps verify the correct product is being modified."
+                        },
+                        "field_type": {
+                            "type": ["string", "null"],
+                            "enum": ["quantity", "description", "division", "brand", "project_desc", "unit_of_measures", "remarks", null],
+                            "description": "Primary field being modified (product-specific fields only). Null for 'remove' operations or when modifying multiple fields. Note: delivery fields are global and should not be listed here."
+                        },
+                        "new_project_desc": {
+                            "type": ["string", "null"],
+                            "description": "NEW project description - only if user provided a new one for this specific product"
+                        },
+                        "new_description": {
+                            "type": ["string", "null"],
+                            "description": "NEW item description - only if user provided a new one for this specific product"
+                        },
+                        "new_quantity": {
+                            "type": ["number", "null"],
+                            "description": "NEW quantity - only if user provided a new quantity for this specific product"
+                        },
+                        "new_unit_of_measures": {
+                            "type": ["string", "null"],
+                            "description": "NEW unit of measurement - only if user provided a new one for this specific product"
+                        },
+                        "new_division": {
+                            "type": ["string", "null"],
+                            "description": "NEW division - only if user provided a new division for this specific product"
+                        },
+                        "new_brand": {
+                            "type": ["string", "null"],
+                            "description": "NEW preferred brand - only if user provided a new brand for this specific product"
+                        },
+                        "new_remarks": {
+                            "type": ["string", "null"],
+                            "description": "NEW remarks - only if user provided new remarks for this specific product"
+                        },
+                        "reasoning": {
+                            "type": ["string", "null"],
+                            "description": "Brief explanation of why this operation was chosen and which product is being targeted"
+                        }
+                    },
+                    "required": ["operation_type", "target_product_index", "target_product_description", "field_type", "new_project_desc", "new_description", "new_quantity", "new_unit_of_measures", "new_division", "new_brand", "new_remarks", "reasoning"],
+                    "additionalProperties": false
+                }
+            },
+            "has_new_values": {
+                "type": "boolean",
+                "description": "True if user provided actual new values OR clear add/remove intent (including remove operations). False ONLY if user expressed vague modification intent without specifying what to change. Examples: 'remove laptop'->true, 'change quantity to 15'->true, 'change delivery'->false (no new value)"
+            },
+            "modification_intent": {
+                "type": ["string", "null"],
+                "description": "What the user wants to modify (e.g., 'delivery address', 'quantity', 'add new product', 'remove product') even if no new values provided"
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Confidence in the modification extraction accuracy"
+            }
+        },
+        "required": ["deliveryDate", "state", "city", "pincode", "modifications", "has_new_values", "modification_intent", "confidence"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

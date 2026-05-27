@@ -1,0 +1,40 @@
+{
+    "type": "function",
+    "name": "analyze_intent_switch_response",
+    "description": "Analyze user's response to intent switch choice prompt to determine if they want to continue current workflow or switch to new intent",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "chosen_action": {
+                "type": "string",
+                "enum": ["continue_current", "switch_to_new"],
+                "description": "The user's chosen action based on their response"
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Confidence score as percentage (0-100) for the classification"
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation of why this action was chosen based on the user's message"
+            },
+            "detected_keywords": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "Key words or phrases that influenced the decision"
+            },
+            "ambiguity_level": {
+                "type": "string",
+                "enum": ["clear", "moderate", "high"],
+                "description": "Level of ambiguity in the user's response"
+            }
+        },
+        "required": ["chosen_action", "confidence", "reasoning", "detected_keywords", "ambiguity_level"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

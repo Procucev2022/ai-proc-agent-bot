@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Procurement Agent - Chat Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f2f5;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .chat-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            width: 95%;
+            max-width: 1700px;
+            height: 95vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            background: #075e54;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .chat-header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .chat-header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .messages-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: #e5ddd5;
+        }
+
+        .controls-section {
+            width: 500px;
+            background: #f8f9fa;
+            border-left: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+            align-items: flex-start;
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message-bubble {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+
+        .message.user .message-bubble {
+            background: #dcf8c6;
+            color: #333;
+        }
+
+        .message.bot .message-bubble {
+            background: white;
+            color: #333;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+        }
+
+        .message-time {
+            font-size: 11px;
+            color: #999;
+            margin-top: 5px;
+            text-align: right;
+        }
+
+        .chat-input-container {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .controls-content {
+            padding: 20px;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .chat-input-form {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .chat-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid #ddd;
+            border-radius: 25px;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        .chat-input:focus {
+            border-color: #075e54;
+        }
+
+        .send-button {
+            background: #075e54;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+
+        .send-button:hover {
+            background: #064943;
+        }
+
+        .send-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .file-upload-section {
+            margin-top: 15px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border: 2px dashed #ddd;
+        }
+
+        .file-upload-form {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .file-input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+
+        .upload-button {
+            background: #25d366;
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            transition: background-color 0.3s;
+        }
+
+        .upload-button:hover {
+            background: #22c55e;
+        }
+
+        .upload-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .file-upload-title {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #075e54;
+        }
+
+        .typing-indicator {
+            display: none;
+            padding: 10px;
+            font-style: italic;
+            color: #666;
+        }
+
+        .debug-info {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 10px;
+            margin-top: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #6c757d;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+
+        .debug-dropdown {
+            margin-top: 10px;
+        }
+
+        .debug-toggle {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            transition: background-color 0.3s;
+        }
+
+        .debug-toggle:hover {
+            background: #5a6268;
+        }
+
+        .debug-content {
+            display: none;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 10px;
+            margin-top: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #6c757d;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+
+        .phone-display {
+            background: #f8f9fa;
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #6c757d;
+            margin-bottom: 10px;
+        }
+
+        .interactive-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .interactive-button {
+            background: #f0f2f5;
+            border: 1px solid #075e54;
+            color: #075e54;
+            padding: 10px 15px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 14px;
+            text-align: center;
+            transition: all 0.3s;
+        }
+
+        .interactive-button:hover {
+            background: #075e54;
+            color: white;
+        }
+
+        .interactive-button:disabled {
+            background: #ccc;
+            border-color: #ccc;
+            color: #666;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>AI Procurement Agent</h1>
+        </div>
+        
+        <div class="main-content">
+            <div class="messages-section">
+                <div class="chat-messages" id="chatMessages">
+                    <div class="message bot">
+                        <div class="message-bubble">
+                            Welcome! I'm your AI Procurement Assistant. I can help you create RFQs and check product availability. What would you like to procure today?
+                            <div class="message-time" id="welcomeTime"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="typing-indicator" id="typingIndicator">
+                    Bot is typing...
+                </div>
+            </div>
+            
+            <div class="controls-section">
+                <div class="controls-content">
+                    <!-- Text Input Section -->
+                    <div class="file-upload-section">
+                        <div class="file-upload-title">Send Message</div>
+                        <form class="chat-input-form" id="chatForm">
+                            <input 
+                                type="text" 
+                                class="chat-input" 
+                                id="messageInput" 
+                                placeholder="Type your message here..." 
+                                autocomplete="off"
+                                required
+                            >
+                            <button type="submit" class="send-button" id="sendButton">Send</button>
+                        </form>
+                    </div>
+                    
+                    <!-- Excel Upload Section -->
+                    <div class="file-upload-section">
+                        <div class="file-upload-title">Upload Excel File for RFQ</div>
+                        <form class="file-upload-form" id="fileUploadForm" enctype="multipart/form-data">
+                            <input
+                                type="file"
+                                class="file-input"
+                                id="fileInput"
+                                accept=".xlsx,.xls,.xlsm"
+                                required
+                            >
+                            <button type="submit" class="upload-button" id="uploadButton">Upload Excel</button>
+                        </form>
+                    </div>
+                    
+                    <!-- Image Upload Section -->
+                    <div class="file-upload-section">
+                        <div class="file-upload-title">Upload Image/Document for RFQ</div>
+                        <form class="file-upload-form" id="imageUploadForm" enctype="multipart/form-data">
+                            <input
+                                type="file"
+                                class="file-input"
+                                id="imageInput"
+                                accept=".jpg,.jpeg,.png,.gif,.pdf"
+                                required
+                            >
+                            <button type="submit" class="upload-button" id="imageUploadButton">Upload Image</button>
+                        </form>
+                        <div style="font-size: 12px; color: #666; margin-top: 5px;">
+                            Supported: JPG, PNG, GIF, PDF (max 10MB)
+                        </div>
+                    </div>
+
+                    <!-- RFQ Notification Simulator Section -->
+                    <div class="file-upload-section" style="border-color: #ff9800;">
+                        <div class="file-upload-title" style="color: #ff9800;">Simulate RFQ Notification (Test Auth Flow)</div>
+                        <form class="file-upload-form" id="rfqNotificationForm">
+                            <input
+                                type="text"
+                                class="file-input"
+                                id="testRfqId"
+                                placeholder="RFQ ID (e.g., RFQ_12345)"
+                                value="RFQ_TEST_001"
+                                required
+                            >
+                            <input
+                                type="text"
+                                class="file-input"
+                                id="testSellerId"
+                                placeholder="Seller ID (e.g., 123)"
+                                value="6035d449-c336-41b8-9e1f-5796f1499f94"
+                                required
+                            >
+                            <button type="submit" class="upload-button" style="background: #ff9800;" id="simulateRfqButton">
+                                Simulate RFQ Notification
+                            </button>
+                        </form>
+                        <div style="font-size: 11px; color: #666; margin-top: 8px;">
+                            This simulates a seller receiving an RFQ notification.<br>
+                            Click "I'm Interested" to test the Post-Recommendation Auth flow.
+                        </div>
+                    </div>
+
+                    <!-- BFS Bid Notification Simulator Section -->
+                    <div class="file-upload-section" style="border-color: #2196f3;">
+                        <div class="file-upload-title" style="color: #2196f3;">Simulate BFS Bid Notification (Test Accept/Reject)</div>
+                        <form class="file-upload-form" id="bfsNotificationForm">
+                            <input
+                                type="text"
+                                class="file-input"
+                                id="testBfsUserUuid"
+                                placeholder="BFS User UUID"
+                                value="test-bfs-user-uuid-001"
+                                required
+                            >
+                            <input
+                                type="text"
+                                class="file-input"
+                                id="testBfsSellerId"
+                                placeholder="Seller ID (Organization UUID)"
+                                value="01c92642-52b0-4bd8-a86e-dd087df271e5"
+                                required
+                            >
+                            <input
+                                type="text"
+                                class="file-input"
+                                id="testBfsItemName"
+                                placeholder="Item Name"
+                                value="Steel Pipes 2 inch"
+                            >
+                            <input
+                                type="number"
+                                class="file-input"
+                                id="testBfsBuyPrice"
+                                placeholder="Listed Price"
+                                value="50000"
+                            >
+                            <input
+                                type="number"
+                                class="file-input"
+                                id="testBfsAskPrice"
+                                placeholder="Buyer's Offer"
+                                value="45000"
+                            >
+                            <button type="submit" class="upload-button" style="background: #2196f3;" id="simulateBfsButton">
+                                Simulate BFS Bid Notification
+                            </button>
+                        </form>
+                        <div style="font-size: 11px; color: #666; margin-top: 8px;">
+                            This simulates a seller receiving a BFS bid notification.<br>
+                            Click "Accept Bid" or "Reject Bid" to test the seller auth + response flow.
+                        </div>
+                    </div>
+
+                    <!-- Custom Button Section -->
+                    <!-- <div class="file-upload-section">
+                        <div class="file-upload-title">Send Custom Interactive Button</div>
+                        <form class="file-upload-form" id="customButtonForm">
+                            <input
+                                type="text"
+                                class="file-input"
+                                id="buttonId"
+                                placeholder="Button ID (e.g., btn_1)"
+                                style="margin-bottom: 5px;"
+                                required
+                            >
+                            <input
+                                type="text"
+                                class="file-input"
+                                id="buttonText"
+                                placeholder="Button Text (e.g., Yes)"
+                                required
+                            >
+                            <button type="submit" class="upload-button" id="customButtonSubmit">Send Button</button>
+                        </form>
+                    </div> -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const PHONE_NUMBER = '919511876403';
+        //7666834062
+        // Set welcome message time
+        document.getElementById('welcomeTime').textContent = new Date().toLocaleTimeString();
+
+        const chatMessages = document.getElementById('chatMessages');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const typingIndicator = document.getElementById('typingIndicator');
+        const chatForm = document.getElementById('chatForm');
+
+        function addMessage(content, isUser = false, showDebug = false, debugInfo = null, buttons = null) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user' : 'bot'}`;
+            
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.className = 'message-bubble';
+            bubbleDiv.textContent = content;
+            
+            const timeDiv = document.createElement('div');
+            timeDiv.className = 'message-time';
+            timeDiv.textContent = new Date().toLocaleTimeString();
+            
+            bubbleDiv.appendChild(timeDiv);
+
+            // Add interactive buttons if provided
+            if (buttons && buttons.length > 0) {
+                const buttonsContainer = document.createElement('div');
+                buttonsContainer.className = 'interactive-buttons';
+                
+                buttons.forEach(button => {
+                    const buttonElement = document.createElement('button');
+                    buttonElement.className = 'interactive-button';
+                    buttonElement.textContent = button.title;
+                    buttonElement.onclick = () => handleButtonClick(button.id, button.title, buttonsContainer);
+                    buttonsContainer.appendChild(buttonElement);
+                });
+                
+                bubbleDiv.appendChild(buttonsContainer);
+                
+                // Log for debugging
+                console.log('Added interactive buttons:', buttons);
+            }
+            
+            if (showDebug && debugInfo) {
+                const debugDropdown = document.createElement('div');
+                debugDropdown.className = 'debug-dropdown';
+                
+                const toggleButton = document.createElement('button');
+                toggleButton.className = 'debug-toggle';
+                toggleButton.textContent = 'Show Debug Info ▼';
+                
+                const debugContent = document.createElement('div');
+                debugContent.className = 'debug-content';
+                debugContent.textContent = JSON.stringify(debugInfo, null, 2);
+                
+                toggleButton.addEventListener('click', function() {
+                    if (debugContent.style.display === 'none' || debugContent.style.display === '') {
+                        debugContent.style.display = 'block';
+                        toggleButton.textContent = 'Hide Debug Info ▲';
+                    } else {
+                        debugContent.style.display = 'none';
+                        toggleButton.textContent = 'Show Debug Info ▼';
+                    }
+                });
+                
+                debugDropdown.appendChild(toggleButton);
+                debugDropdown.appendChild(debugContent);
+                bubbleDiv.appendChild(debugDropdown);
+            }
+            
+            messageDiv.appendChild(bubbleDiv);
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function showTyping() {
+            typingIndicator.style.display = 'block';
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function hideTyping() {
+            typingIndicator.style.display = 'none';
+        }
+
+        async function sendMessage(message) {
+            if (!message.trim()) return;
+
+            // Add user message
+            addMessage(message, true);
+            
+            // Show typing indicator
+            showTyping();
+            sendButton.disabled = true;
+            sendButton.textContent = 'Sending...';
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        phone: PHONE_NUMBER
+                    })
+                });
+
+                const data = await response.json();
+                
+                // Debug logging
+                console.log('Chat API Response:', data);
+                console.log('Interactive buttons:', data.interactive_buttons);
+                
+                if (data.success && data.responses) {
+                    // Add bot responses with interactive buttons if present
+                    data.responses.forEach((botResponse, index) => {
+                        const buttons = data.interactive_buttons && data.interactive_buttons[index] ? data.interactive_buttons[index] : null;
+                        console.log(`Message ${index}: "${botResponse}", Buttons:`, buttons);
+                        addMessage(botResponse, false, true, data.debug_info, buttons);
+                    });
+                } else {
+                    addMessage(data.error || 'Sorry, there was an error processing your message.', false);
+                }
+                
+            } catch (error) {
+                console.error('Error:', error);
+                addMessage('Sorry, there was a connection error.', false);
+            } finally {
+                hideTyping();
+                sendButton.disabled = false;
+                sendButton.textContent = 'Send';
+            }
+        }
+
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = messageInput.value;
+            messageInput.value = '';
+            await sendMessage(message);
+        });
+
+        // Focus on input when page loads
+        messageInput.focus();
+
+        // Handle Enter key
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                chatForm.dispatchEvent(new Event('submit'));
+            }
+        });
+
+        // File upload functionality
+        const fileUploadForm = document.getElementById('fileUploadForm');
+        const fileInput = document.getElementById('fileInput');
+        const uploadButton = document.getElementById('uploadButton');
+
+        async function uploadFile(file) {
+            uploadButton.disabled = true;
+            uploadButton.textContent = 'Uploading...';
+            
+            try {
+                // Add file upload message to chat
+                addMessage(`Uploading Excel file: ${file.name}`, true);
+                
+                // Show typing indicator
+                typingIndicator.style.display = 'block';
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                // Create form data
+                const formData = new FormData();
+                formData.append('phone', PHONE_NUMBER);
+                formData.append('file', file);
+
+                const response = await fetch('/api/upload-excel', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                
+                // Hide typing indicator
+                typingIndicator.style.display = 'none';
+
+                if (data.success) {
+                    // Add responses from the bot with interactive buttons if present
+                    data.responses.forEach((response, index) => {
+                        const buttons = data.interactive_buttons && data.interactive_buttons[index] ? data.interactive_buttons[index] : null;
+                        addMessage(response, false, true, data.debug_info, buttons);
+                    });
+                } else {
+                    addMessage(`Error: ${data.error}`, false);
+                }
+
+            } catch (error) {
+                typingIndicator.style.display = 'none';
+                addMessage(`Upload failed: ${error.message}`, false);
+                console.error('Upload error:', error);
+            } finally {
+                uploadButton.disabled = false;
+                uploadButton.textContent = 'Upload Excel';
+                fileInput.value = ''; // Clear file input
+            }
+        }
+
+        // Handle file upload form submission
+        fileUploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const file = fileInput.files[0];
+            if (file) {
+                await uploadFile(file);
+            }
+        });
+
+        // Custom button functionality - COMMENTED OUT (HTML form is also commented out)
+        // const customButtonForm = document.getElementById('customButtonForm');
+        // const buttonIdInput = document.getElementById('buttonId');
+        // const buttonTextInput = document.getElementById('buttonText');
+        // const buttonIdInput2 = document.getElementById('buttonId2');
+        // const buttonTextInput2 = document.getElementById('buttonText2');
+        // const customButtonSubmit = document.getElementById('customButtonSubmit');
+
+        // customButtonForm.addEventListener('submit', (e) => {
+        //     e.preventDefault();
+        //     const buttonId = buttonIdInput.value.trim();
+        //     const buttonText = buttonTextInput.value.trim();
+        //     const buttonId2 = buttonIdInput2.value.trim();
+        //     const buttonText2 = buttonTextInput2.value.trim();
+        //
+        //     const customButtons = [];
+        //     if (buttonId && buttonText) {
+        //         customButtons.push({ id: buttonId, title: buttonText });
+        //     }
+        //     if (buttonId2 && buttonText2) {
+        //         customButtons.push({ id: buttonId2, title: buttonText2 });
+        //     }
+        //
+        //     if (customButtons.length > 0) {
+        //         addMessage(`Custom buttons created`, false, false, null, customButtons);
+        //
+        //         // Clear inputs
+        //         buttonIdInput.value = '';
+        //         buttonTextInput.value = '';
+        //         buttonIdInput2.value = '';
+        //         buttonTextInput2.value = '';
+        //     }
+        // });
+
+        // RFQ Notification Simulator
+        const rfqNotificationForm = document.getElementById('rfqNotificationForm');
+        const testRfqIdInput = document.getElementById('testRfqId');
+        const testSellerIdInput = document.getElementById('testSellerId');
+
+        rfqNotificationForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const rfqId = testRfqIdInput.value.trim();
+            const sellerId = testSellerIdInput.value.trim();
+
+            if (rfqId && sellerId) {
+                // Create mock RFQ notification message
+                const mockNotificationMessage =
+                    `*RFQ ID:* ${rfqId}\n` +
+                    `*Category:* Test Category\n` +
+                    `*Delivery Date:* 15-Dec-2024\n` +
+                    `*Delivery Location:* Mumbai, Maharashtra\n` +
+                    `*Project Description:* Test RFQ for local auth flow testing`;
+
+                // Create buttons with proper IDs (matching the real format)
+                const mockButtons = [
+                    { id: `rfq_check_details_${rfqId}_${sellerId}`, title: 'Check Details' },
+                    { id: `rfq_interested_${rfqId}_${sellerId}`, title: "I'm Interested" }
+                ];
+
+                // Add the notification message to chat
+                addMessage(`[SIMULATED RFQ NOTIFICATION]\n\n${mockNotificationMessage}`, false, false, null, mockButtons);
+
+                console.log('Simulated RFQ notification with buttons:', mockButtons);
+            }
+        });
+
+        // BFS Bid Notification Simulator
+        const bfsNotificationForm = document.getElementById('bfsNotificationForm');
+        const testBfsUserUuidInput = document.getElementById('testBfsUserUuid');
+        const testBfsSellerIdInput = document.getElementById('testBfsSellerId');
+        const testBfsItemNameInput = document.getElementById('testBfsItemName');
+        const testBfsBuyPriceInput = document.getElementById('testBfsBuyPrice');
+        const testBfsAskPriceInput = document.getElementById('testBfsAskPrice');
+
+        bfsNotificationForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const bfsUserUuid = testBfsUserUuidInput.value.trim();
+            const sellerId = testBfsSellerIdInput.value.trim();
+            const itemName = testBfsItemNameInput.value.trim() || 'Test Item';
+            const buyPrice = parseFloat(testBfsBuyPriceInput.value) || 50000;
+            const askPrice = parseFloat(testBfsAskPriceInput.value) || 45000;
+
+            if (bfsUserUuid && sellerId) {
+                // Create mock BFS bid notification message
+                const mockNotificationMessage =
+                    `*Item:* ${itemName}\n` +
+                    `*Your Listed Price:* Rs.${buyPrice.toLocaleString()}\n` +
+                    `*Buyer's Offer:* Rs.${askPrice.toLocaleString()}\n` +
+                    `*Quantity:* 1`;
+
+                // Create buttons with proper IDs (matching format: bfs_seller_accept_{bfs_user_uuid}_{seller_id})
+                const mockButtons = [
+                    { id: `bfs_seller_accept_${bfsUserUuid}_${sellerId}`, title: 'Accept Bid' },
+                    { id: `bfs_seller_reject_${bfsUserUuid}_${sellerId}`, title: 'Reject Bid' }
+                ];
+
+                // Add the notification message to chat
+                addMessage(`[SIMULATED BFS BID NOTIFICATION]\n\n${mockNotificationMessage}`, false, false, null, mockButtons);
+
+                console.log('Simulated BFS notification with buttons:', mockButtons);
+            }
+        });
+
+        // Handle interactive button clicks
+        async function handleButtonClick(buttonId, buttonTitle, buttonsContainer) {
+            // Disable all buttons in this container
+            const buttons = buttonsContainer.querySelectorAll('.interactive-button');
+            buttons.forEach(btn => {
+                btn.disabled = true;
+                if (btn.textContent === buttonTitle) {
+                    btn.style.background = '#075e54';
+                    btn.style.color = 'white';
+                }
+            });
+
+            // Add user message showing button selection
+            addMessage(`Selected: ${buttonTitle}`, true);
+
+            // Send interactive message to backend
+            await sendInteractiveMessage(buttonId, buttonTitle);
+        }
+
+        async function sendInteractiveMessage(buttonId, buttonTitle) {
+            showTyping();
+            sendButton.disabled = true;
+            sendButton.textContent = 'Processing...';
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: {
+                            type: 'button_reply',
+                            button_reply: {
+                                id: buttonId,
+                                title: buttonTitle
+                            }
+                        },
+                        phone: PHONE_NUMBER
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.success && data.responses) {
+                    // Add bot responses with interactive buttons if present
+                    data.responses.forEach((botResponse, index) => {
+                        const buttons = data.interactive_buttons && data.interactive_buttons[index] ? data.interactive_buttons[index] : null;
+                        addMessage(botResponse, false, true, data.debug_info, buttons);
+                    });
+                } else {
+                    addMessage(data.error || 'Sorry, there was an error processing your selection.', false);
+                }
+                
+            } catch (error) {
+                console.error('Error:', error);
+                addMessage('Sorry, there was a connection error.', false);
+            } finally {
+                hideTyping();
+                sendButton.disabled = false;
+                sendButton.textContent = 'Send';
+            }
+        }
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+# ====================================================================
+# OPTIMIZED CELERY DOCKERFILE - Multi-stage with Layer Caching
+# ====================================================================
+FROM procucev-base:local AS base
+
+WORKDIR /app
+
+# ====================================================================
+# STAGE 1: Application Code (changes frequently)
+# ====================================================================
+FROM base AS application
+
+WORKDIR /app
+
+# Copy application code
+COPY app/ ./app/
+COPY Setup/ ./Setup/
+COPY docker_entrypoint_celery.sh ./
+COPY .env* ./
+
+# Make entrypoint executable
+RUN chmod +x docker_entrypoint_celery.sh
+
+# Create logs directory
+RUN mkdir -p logs/celery_worker logs/celery_beat
+
+# ====================================================================
+# FINAL STAGE: Runtime
+# ====================================================================
+FROM application AS runtime
+
+# Set environment variables for Celery
+ENV CELERY_APP=app.celery_app
+ENV C_FORCE_ROOT=1
+
+# Healthcheck - verifies all worker pools are responsive
+# Checks every 30s, times out in 10s, starts after 60s, allows 3 retries before unhealthy
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD celery -A app.celery_app inspect ping -d critical_pool@$(hostname) && \
+        celery -A app.celery_app inspect ping -d operations_pool@$(hostname) && \
+        celery -A app.celery_app inspect ping -d bulk_pool@$(hostname) || exit 1
+
+CMD ["./docker_entrypoint_celery.sh"]

@@ -1,0 +1,14 @@
+Generate a friendly email confirmation message for a user named "{username}".
+
+Context: User is trying to authenticate and needs to confirm their email address.
+
+Email options:
+{email_text}
+
+Generate a warm, professional message that:
+1. Greets the user by name
+2. Asks them to confirm their email
+3. Includes the email options
+4. Is concise and clear
+
+Example format: "Hi {username}! Could you please confirm your email address to proceed to the next step?"

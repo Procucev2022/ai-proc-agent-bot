@@ -1,0 +1,21 @@
+{
+  "type": "function",
+  "name": "generate_completion_response",
+  "description": "Generate a structured response when RFQ collection is complete",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "confirmation": {
+        "type": "string",
+        "description": "Acknowledge the user's RFQ completion professionally and concisely."
+      },
+      "summary": {
+        "type": "string",
+        "description": "Well-formatted summary using bullet points to show key details like:\n• Item/Product\n• Quantity\n• Delivery location\n• Delivery date\nMake it easy to scan and verify."
+
+      }
+    },
+    "required": ["confirmation", "summary"],
+    "additionalProperties": false
+  }
+}

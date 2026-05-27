@@ -1,0 +1,82 @@
+{
+    "type": "function",
+    "name": "select_division",
+    "description": "Select the most appropriate division from predefined list based on RFQ extracted data analysis",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "selected_division": {
+                "type": "string",
+                "enum": [
+                    "Admin & IT",
+                    "CAPEX - Equipment & Machinery", 
+                    "Civil & Electrical Works",
+                    "Electrical - Engineering Items",
+                    "Logistics",
+                    "Mechanical - Engineering Items",
+                    "Occupational Safety & Health",
+                    "Packing Material",
+                    "Professional Services",
+                    "Raw Materials"
+                ],
+                "description": "The most appropriate division for this procurement request based on product analysis"
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Confidence score as percentage (0-100) for the division selection"
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Detailed explanation of why this division was selected based on product descriptions, specifications, and procurement category analysis"
+            },
+            "alternative_divisions": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "Admin & IT",
+                        "CAPEX - Equipment & Machinery", 
+                        "Civil & Electrical Works",
+                        "Electrical - Engineering Items",
+                        "Logistics",
+                        "Mechanical - Engineering Items",
+                        "Occupational Safety & Health",
+                        "Packing Material",
+                        "Professional Services",
+                        "Raw Materials"
+                    ]
+                },
+                "maxItems": 3,
+                "description": "Up to 3 alternative divisions that could also be suitable, ordered by relevance"
+            },
+            "product_category_analysis": {
+                "type": "object",
+                "properties": {
+                    "primary_category": {
+                        "type": "string",
+                        "description": "Primary category of products being procured (e.g., electronics, machinery, materials)"
+                    },
+                    "key_characteristics": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 5,
+                        "description": "Key characteristics that led to division selection (e.g., electrical components, safety equipment, raw materials)"
+                    },
+                    "complexity_level": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high"],
+                        "description": "Complexity level of the procurement items"
+                    }
+                },
+                "required": ["primary_category", "key_characteristics", "complexity_level"],
+                "additionalProperties": false,
+                "description": "Analysis of product categories and characteristics"
+            }
+        },
+        "required": ["selected_division", "confidence", "reasoning", "alternative_divisions", "product_category_analysis"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

@@ -1,0 +1,31 @@
+{
+  "type": "function",
+  "name": "analyze_domain_match",
+  "description": "Analyze if an email domain matches or is related to a company name for user verification",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "score": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100,
+        "description": "Match score from 0-100. Exact match: 90-100, Strong partial: 70-89, Moderate: 50-69, Weak: 30-49, No match: 0-29"
+      },
+      "match_type": {
+        "type": "string",
+        "enum": ["exact", "strong", "moderate", "weak", "none"],
+        "description": "Type of match found between domain and company"
+      },
+      "confidence": {
+        "type": "string",
+        "enum": ["high", "medium", "low"],
+        "description": "Confidence level in the analysis"
+      },
+      "reasoning": {
+        "type": "string",
+        "description": "Brief explanation of why this score was assigned"
+      }
+    },
+    "required": ["score", "match_type", "confidence", "reasoning"]
+  }
+}

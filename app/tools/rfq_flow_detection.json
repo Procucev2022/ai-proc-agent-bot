@@ -1,0 +1,78 @@
+{
+    "type": "function",
+    "name": "detect_rfq_flow",
+    "description": "Analyze user message to detect which RFQ creation flow they prefer: turn-by-turn (one item at a time), bulk text (multiple items), excel upload, or unclear",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "flow_type": {
+                "type": "string",
+                "enum": ["turn_by_turn", "bulk_text", "excel_upload", "general_inquiry", "unclear"],
+                "description": "The detected RFQ creation flow preference"
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Confidence score as percentage (0-100) for the flow detection"
+            },
+            "flow_scores": {
+                "type": "object",
+                "properties": {
+                    "turn_by_turn": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100,
+                        "description": "Confidence score for turn-by-turn flow (single item description, one at a time, up to 3 items)"
+                    },
+                    "bulk_text": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100,
+                        "description": "Confidence score for bulk text flow (multiple items in one message, up to 10)"
+                    },
+                    "excel_upload": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100,
+                        "description": "Confidence score for excel upload flow"
+                    },
+                    "general_inquiry": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100,
+                        "description": "Confidence score for general inquiry flow (questions about RFQ process, requirements, etc.)"
+                    }
+                },
+                "required": ["turn_by_turn", "bulk_text", "excel_upload", "general_inquiry"],
+                "additionalProperties": false,
+                "description": "Confidence scores for all RFQ flow types"
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation of why this flow was detected and key indicators in the message"
+            },
+            "detected_indicators": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Specific words or phrases that indicated the flow choice"
+            },
+            "suggested_response": {
+                "type": ["string", "null"],
+                "description": "If unclear, suggest what clarification or next step message to send to user"
+            },
+            "contains_item_details": {
+                "type": "boolean",
+                "description": "Whether the message contains actual item details (quantities, descriptions, etc.) vs just flow preference"
+            },
+            "estimated_item_count": {
+                "type": ["number", "null"],
+                "minimum": 1,
+                "description": "If contains item details, estimated number of items mentioned in the message"
+            }
+        },
+        "required": ["flow_type", "confidence", "flow_scores", "reasoning", "detected_indicators", "suggested_response", "contains_item_details", "estimated_item_count"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

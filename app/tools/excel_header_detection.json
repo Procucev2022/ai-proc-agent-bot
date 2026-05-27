@@ -1,0 +1,33 @@
+{
+  "type": "function",
+  "name": "detect_header_row",
+  "description": "Detect which row contains column headers in Excel data for RFQ processing",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "header_row_index": {
+        "type": "integer",
+        "description": "0-based index of the row containing headers (0 = first row, 1 = second row, etc.). Return -1 if no clear header row exists.",
+        "minimum": -1
+      },
+      "confidence": {
+        "type": "integer", 
+        "description": "Confidence percentage (0-100) in the header row detection",
+        "minimum": 0,
+        "maximum": 100
+      },
+      "reasoning": {
+        "type": "string",
+        "description": "Brief explanation of why this row was chosen as the header row"
+      },
+      "detected_columns": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "List of column headers found in the detected header row"
+      }
+    },
+    "required": ["header_row_index", "confidence", "reasoning"]
+  }
+}

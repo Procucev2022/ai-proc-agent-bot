@@ -1,0 +1,26 @@
+{
+    "type": "function",
+    "name": "parse_product_items",
+    "description": "Parse seller product/service details into individual categorizable items",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "List of individual product/service items extracted from the details. Each item should be a distinct, categorizable product or service."
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Confidence score (0-100) for the parsing accuracy"
+            }
+        },
+        "required": ["items", "confidence"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

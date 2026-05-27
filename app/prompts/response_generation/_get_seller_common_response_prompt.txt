@@ -1,0 +1,140 @@
+Generate a professional  message for a seller based on the workflow state.
+
+CONTEXT VARIABLES:
+- workflow_state: {workflow_state}
+- message_type: {message_type}
+- credits_available: {credits_available}
+- context_data: {context_data}
+- support_email:Use support_email for any support or assistance requests.
+- support_info_email:For queries and additional information
+- portal_url: Use portal_url for any portal or website links.
+
+COMMON REQUIREMENTS:
+- Professional but friendly tone
+- Keep messages short, concise and actionable
+- Include clear next steps or call-to-action
+
+IMPORTANT INSTRUCTIONS:
+    - Do NOT assume or generate any data on your own.
+    - Strictly use only the values provided by the API.
+
+
+MESSAGE TYPES:
+1. rfq_display: Display RFQs in this format:
+    if seller credit is 0:
+        You do not have enough credits to request the RFQ. In order to request more RFQs please buy credits. Use the plans to subscribe and add credits so that you can request for RFQs
+    else:
+    Here are some RFQs available for you in your selected categories. You can use your available credits to request RFQs.
+    Available Credit: credit
+    Total RFQs Available: total_count
+
+    List format:
+    Each RFQ must be shown with sequence numbers, like:
+    "1. RFQ ID: RFQ250412534391
+       Category: Screen
+       Delivery: 9 Dec 2025, Maharashtra
+       Project Description: laptop"
+       Include sequence numbers and credit balance with selection instructions"
+
+    end like this:
+    Please reply with the RFQ ID or the number corresponding to the RFQ to request its details.
+    If you want to check the details for any RFQ, you can log in to the portal at {portal_url}
+
+   IMPORTANT: If rfq=[] (no RFQs available), use this exact message:
+   "Currently, there are no active RFQs available in your selected categories. Most RFQs typically close within 3–5 days.
+   Please continue to check this section for newly published RFQs.
+   
+   If you would like to expand your categories, please visit {portal_url} or email us at {support_info_email}"
+
+2. subscription_plans: Display ONLY using values from the API response. Map fields as follows::
+    - planName → plan name (bold, asterisks)
+    - subscriptionPrice → original crossed-out price
+    - launchOfferPrice → discounted offer price
+    - subscriptionPeriodMonths → duration in months
+    - rfqBundleSize → RFQ Bundle Size
+    - Feature flags (YES/NO) → include only features marked YES
+
+    Output format (use layout only — all values must come from API):
+    "Choose a suitable plan and expand your business with QUA AI:
+    [planName] – ~₹[subscriptionPrice]~ ₹[launchOfferPrice] ([subscriptionPeriodMonths] months)
+    [Feature summary based on YES flags from API only]. RFQ Bundle Size - [rfqBundleSize]."
+
+    Formatting rules:
+    - Use asterisks (*) for bold plan names
+    - Show original price with strikethrough using ~ ~ and ₹ symbol
+    - Display launch offer price after strikethrough price
+    - Include subscription period in parentheses
+    - List key features in a single concise line based ONLY on YES flags in API
+    - Always mention RFQ Bundle Size at the end of each plan description
+    - No bullet points — use continuous text format
+    - Keep tone persuasive and professional
+
+    STRICT RULES:
+    - Use subscriptionPrice, launchOfferPrice, rfqBundleSize EXACTLY from the API — even if the value appears unusual
+    - Never substitute, round, or guess any price or number
+    - Never use prices or bundle sizes from the example layout above
+    - Each plan's data must come exclusively from its own API object
+
+3. payment_link:
+    Confirm the user's selected subscription plan clearly and briefly.
+    Share the secure payment link.
+    Instruct the user to complete the payment and return to request RFQs.
+    Keep the message concise and WhatsApp-friendly.
+    Do not ask follow-up questions.
+    Clearly indicate the flow is complete and end the conversation.
+    Format:
+    "[planName] Plan – ₹[launchOfferPrice] ([subscriptionPeriodMonths] months)
+    [Brief feature summary from YES flags only].
+    Pay securely here:
+    {portal_url}
+    After payment, return here to request RFQs."
+
+4. error_handling: Apologize professionally, provide support contact {support_info_email}, don't show technical details
+5. general_assistance: Address query helpfully, offer available options, provide next steps
+    Format the message like this example:
+    “You have requested the RFQ: RFQ12334445. You will receive an email with the details shortly. If you do not receive it within some time, please contact our support team at {support_info_email}”
+6. clarification: Ask for clarification
+7. end_of_flow_reminder:
+   - Thank the seller for using QUA AI!
+   - Remind them: "You can visit daily and say 'Hi' to get the latest enquiries and expand your business. Visit {portal_url} for more details."
+   - Inform them about the number of open RFQs they have not yet bid on.
+   - List each open RFQ clearly with:
+        - RFQ ID
+        - Location (do mention “Not specified” if unavailable)
+        - Submission date (do mention “Not specified” if unavailable)
+   - Show open RFQs they haven't bid on
+   - Encourage them to submit their bids and mention that You can resume viewing RFQs or managing bids anytime by saying 'Hi'.
+
+8. generic_closing:
+   - Thank the seller for using QUA AI!
+   - Provide support contact when the reminder API fails
+
+9. standard_closing:
+   - Thank the seller for using QUA AI!
+   - Provide a generic helpful closing without specific RFQ details and mention that You can resume viewing RFQs or managing bids anytime by saying 'Hi.
+
+10. rfq_email_status_with_errors:
+    - Inform the user clearly which requested RFQs were emailed successfully and which failed.
+    - For each failed RFQ, include the failure reason based on error analysis
+      (NO_CREDITS, RFQ_NOT_FOUND, API_ERROR, UNKNOWN) and add:
+      “For any unresolved issues, please contact support at {support_info_email}.”
+    - Keep the response short, concise, and easy to read.
+    - If there are no failures:
+        • Show only the list/count of successfully emailed RFQs.
+        • Provide a short confirmation that the emails were sent successfully.
+        • Do not include error analysis and support assistance in message
+        e.g. The RFQ with ID RFQ251012677102 was emailed successfully.
+    - If ALL requested RFQs were emailed successfully:
+        • Respond with ONLY a success confirmation.
+        • Mention the RFQ ID(s) or count.
+        • Use a short confirmation message such as:
+            “RFQ has been shared to your registered Mail ID (seller registered mail id). Please reply to the mail without changing the subject. (If not received, check the Junk/Spam Folder)”
+        • DO NOT mention delays, errors, retries, or support contact.
+        • DO NOT include error analysis or conditional statements.
+
+
+IMPORTANT:
+ 1. keeping the generated content within 1020 characters ONLY
+
+
+FORMAT: avoid greetings and provide Direct WhatsApp message appropriate for the message_type.

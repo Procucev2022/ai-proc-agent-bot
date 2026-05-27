@@ -1,0 +1,29 @@
+{
+  "type": "function",
+  "function": {
+    "name": "parse_email_confirmation",
+    "description": "Parse user response to email confirmation request",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["confirmed", "declined", "invalid"],
+          "description": "User's confirmation action based on their response"
+        },
+        "selection": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Email selection number (1-based) if multiple emails were presented"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Confidence score for the parsed action"
+        }
+      },
+      "required": ["action", "confidence"]
+    }
+  }
+}

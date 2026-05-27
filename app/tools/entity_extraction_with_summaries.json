@@ -1,0 +1,101 @@
+{
+    "type": "function",
+    "name": "extract_entities_with_summaries",
+    "description": "Extract entities from current message while resolving references to previous conversations using chat summaries. Handle phrases like 'same as last time', 'usual address', 'like before', 'same specs as X'.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "products": {
+                "type": "array",
+                "description": "Resolved product entities with references replaced by actual values from summaries",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "projectDesc": {
+                            "type": ["string", "null"],
+                            "description": "Project description for the RFQ"
+                        },
+                        "description": {
+                            "type": ["string", "null"],
+                            "description": "Item description"
+                        },
+                        "quantity": {
+                            "type": ["number", "null"],
+                            "description": "Required quantity - numeric value"
+                        },
+                        "unitofMeasures": {
+                            "type": ["string", "null"],
+                            "description": "Unit of measurement: pcs, kg, meters, etc."
+                        },
+                        "deliveryDate": {
+                            "type": ["string", "null"],
+                            "description": "Required delivery date"
+                        },
+                        "division": {
+                            "type": ["string", "null"],
+                            "description": "Division: Admin & IT, CAPEX - Equipment & Machinery, Civil & Electrical Works, etc."
+                        },
+                        "brand": {
+                            "type": ["string", "null"],
+                            "description": "Preferred brand name"
+                        },
+                        "state": {
+                            "type": ["string", "null"],
+                            "description": "Delivery state (e.g., Karnataka, Maharashtra, etc.)"
+                        },
+                        "city": {
+                            "type": ["string", "null"],
+                            "description": "Delivery city (e.g., Bangalore, Mumbai, etc.)"
+                        },
+                        "pincode": {
+                            "type": ["string", "null"],
+                            "description": "Delivery pincode (6-digit postal code)"
+                        },
+                        "remarks": {
+                            "type": ["string", "null"],
+                            "description": "Additional remarks or requirements"
+                        }
+                    },
+                    "required": ["projectDesc", "description", "quantity", "unitofMeasures", "deliveryDate", "division", "brand", "state", "city", "pincode", "remarks"],
+                    "additionalProperties": false
+                }
+            },
+            "resolved_references": {
+                "type": "array",
+                "description": "List of references that were resolved using historical data from summaries",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "reference_phrase": {
+                            "type": "string",
+                            "description": "Original phrase from user message like 'same as last time', 'usual address'"
+                        },
+                        "resolved_field": {
+                            "type": "string",
+                            "description": "Which field was resolved (e.g., 'delivery_address', 'specifications', 'brand')"
+                        },
+                        "resolved_value": {
+                            "type": "string",
+                            "description": "Actual value found in summaries that replaced the reference"
+                        },
+                        "source_summary_date": {
+                            "type": "string",
+                            "description": "Date of the summary that provided the data"
+                        }
+                    },
+                    "required": ["reference_phrase", "resolved_field", "resolved_value", "source_summary_date"],
+                    "additionalProperties": false
+                }
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Confidence in the entity extraction and reference resolution accuracy"
+            }
+        },
+        "required": ["products", "resolved_references", "confidence"],
+        "additionalProperties": false
+    },
+    "strict": true
+}

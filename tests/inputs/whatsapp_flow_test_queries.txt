@@ -1,0 +1,29 @@
+# WhatsApp Flow Test Queries
+# Format: user_phone|message|expected_flow_stage
+
+# Complete RFQ in single message
+919999999999|I need 50 office chairs delivered to Mumbai by next Friday|purchase_intent_complete
+
+# Gradual RFQ collection
+917777777777|I need laptops|purchase_intent_partial
+917777777777|20 laptops|clarification_response
+917777777777|Dell or HP preferred|clarification_response
+917777777777|Delivered to Bangalore|clarification_response
+917777777777|Within 2 weeks|clarification_response
+
+# General inquiries
+916666666666|What services do you provide?|general_inquiry
+916666666666|How does this work?|general_inquiry
+
+# Ambiguous messages
+915555555555|Hi there|clarification_needed
+915555555555|I want something|clarification_needed
+915555555555|I need help with procurement|general_inquiry
+
+# Multi-step complex RFQ
+914444444444|We need industrial equipment|purchase_intent_partial
+914444444444|Manufacturing machines|clarification_response
+914444444444|5 units|clarification_response
+914444444444|CNC machines|clarification_response
+914444444444|Pune, Maharashtra|clarification_response
+914444444444|By end of March|clarification_response
