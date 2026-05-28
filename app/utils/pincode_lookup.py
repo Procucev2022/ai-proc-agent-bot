@@ -26,7 +26,8 @@ def get_pincode_details(pincode, max_retries=3, timeout=10):
 
     for attempt in range(max_retries):
         try:
-            response = requests.get(url, headers=headers, timeout=timeout, verify=True)
+            response = requests.get(url, headers=headers, timeout=timeout, verify=False)
+            # response = requests.get(url, headers=headers, timeout=timeout, verify=True)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.ConnectionError as e:
