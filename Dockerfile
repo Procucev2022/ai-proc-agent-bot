@@ -1,6 +1,4 @@
-# ====================================================================
-# OPTIMIZED APP DOCKERFILE - Azure Container Apps Production
-# ====================================================================
+# Default Dockerfile points to Dockerfile.app for application deployments
 FROM python:3.11-slim AS base
 
 WORKDIR /app

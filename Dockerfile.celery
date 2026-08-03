@@ -1,43 +1,38 @@
 # ====================================================================
-# OPTIMIZED CELERY DOCKERFILE - Multi-stage with Layer Caching
+# OPTIMIZED CELERY WORKER DOCKERFILE - Azure Container Apps Production
 # ====================================================================
-FROM procucev-base:local AS base
+FROM python:3.11-slim AS base
 
 WORKDIR /app
 
-# ====================================================================
-# STAGE 1: Application Code (changes frequently)
-# ====================================================================
-FROM base AS application
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Pre-download sentence transformer model so it's cached in the image
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 # Copy application code
 COPY app/ ./app/
-COPY Setup/ ./Setup/
+COPY templates/ ./templates/
 COPY docker_entrypoint_celery.sh ./
-COPY .env* ./
 
 # Make entrypoint executable
 RUN chmod +x docker_entrypoint_celery.sh
 
 # Create logs directory
-RUN mkdir -p logs/celery_worker logs/celery_beat
-
-# ====================================================================
-# FINAL STAGE: Runtime
-# ====================================================================
-FROM application AS runtime
-
-# Set environment variables for Celery
-ENV CELERY_APP=app.celery_app
-ENV C_FORCE_ROOT=1
-
-# Healthcheck - verifies all worker pools are responsive
-# Checks every 30s, times out in 10s, starts after 60s, allows 3 retries before unhealthy
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD celery -A app.celery_app inspect ping -d critical_pool@$(hostname) && \
-        celery -A app.celery_app inspect ping -d operations_pool@$(hostname) && \
-        celery -A app.celery_app inspect ping -d bulk_pool@$(hostname) || exit 1
+RUN mkdir -p logs/celery_worker
 
 CMD ["./docker_entrypoint_celery.sh"]

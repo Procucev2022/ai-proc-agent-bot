@@ -1,0 +1,92 @@
+name: Deploy Prod - Azure Container Apps
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: prod-deployment
+  cancel-in-progress: false
+
+env:
+  RESOURCE_GROUP: rg-aiproc-prod
+  ACR_NAME: acraiprocprod
+  LOCATION: eastus
+  ENVIRONMENT: prod
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy to Production (ACA)
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to Azure Container Registry (ACR)
+        run: |
+          az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Get ACR Server
+        id: acr
+        run: |
+          SERVER=$(az acr show --name ${{ env.ACR_NAME }} --query loginServer -o tsv)
+          echo "server=$SERVER" >> $GITHUB_OUTPUT
+
+      - name: Build & Push Container Images to ACR
+        run: |
+          VERSION=${GITHUB_REF_NAME//\//-}
+          TAG_APP="aiproc-app:prod-${VERSION}"
+          TAG_CELERY="aiproc-celery:prod-${VERSION}"
+          
+          echo "Building App Container Image ($TAG_APP)..."
+          az acr build --registry ${{ env.ACR_NAME }} --image $TAG_APP --image "aiproc-app:latest" --file Dockerfile.app .
+          
+          echo "Building Celery Container Image ($TAG_CELERY)..."
+          az acr build --registry ${{ env.ACR_NAME }} --image $TAG_CELERY --image "aiproc-celery:latest" --file Dockerfile.celery .
+          
+          echo "TAG_APP=$TAG_APP" >> $GITHUB_ENV
+          echo "TAG_CELERY=$TAG_CELERY" >> $GITHUB_ENV
+
+      - name: Deploy Azure Infrastructure & Container Apps (Bicep)
+        uses: azure/arm-deploy@v2
+        with:
+          subscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          resourceGroupName: ${{ env.RESOURCE_GROUP }}
+          template: ./infra/main.bicep
+          parameters: >
+            environment=${{ env.ENVIRONMENT }}
+            location=${{ env.LOCATION }}
+            baseName=aiproc
+            acrServer=${{ steps.acr.outputs.server }}
+            appImageTag=${{ env.TAG_APP }}
+            celeryImageTag=${{ env.TAG_CELERY }}
+            databaseUrl="${{ secrets.PROD_DATABASE_URL }}"
+            azureOpenAiEndpoint="${{ secrets.AZURE_OPENAI_ENDPOINT }}"
+            azureOpenAiKey="${{ secrets.AZURE_OPENAI_API_KEY }}"
+            whatsappApiKey="${{ secrets.WHATSAPP_API_KEY }}"
+
+      - name: Get Production URL & Verify Health Endpoint
+        run: |
+          APP_URL=$(az containerapp show --name aiproc-app-prod --resource-group ${{ env.RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv)
+          echo "Production Application URL: https://${APP_URL}"
+          
+          echo "Running Smoke Test on Health Endpoint..."
+          curl -f --retry 5 --retry-delay 10 "https://${APP_URL}/health" || exit 1
+          echo "✓ Production Deployment Successfully Verified!"
