@@ -34,8 +34,9 @@ COPY gunicorn_config.py ./
 COPY docker_entrypoint_app.sh ./
 COPY docker_entrypoint_celery.sh ./
 
-# Make entrypoint scripts executable
-RUN chmod +x docker_entrypoint_app.sh docker_entrypoint_celery.sh
+# Convert line endings to Unix format and make scripts executable
+RUN sed -i 's/\r$//' docker_entrypoint_app.sh docker_entrypoint_celery.sh && \
+    chmod +x docker_entrypoint_app.sh docker_entrypoint_celery.sh
 
 # Create log directories
 RUN mkdir -p logs/app logs/celery_worker
