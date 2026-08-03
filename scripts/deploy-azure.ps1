@@ -4,12 +4,12 @@
 .PARAMETER Environment
     Target environment: dev or prod (Default: dev)
 .PARAMETER Location
-    Azure Region (Default: eastus)
+    Azure Region (Default: centralindia)
 #>
 
 param(
     [string]$Environment = "dev",
-    [string]$Location = "eastus"
+    [string]$Location = "centralindia"
 )
 
 $ErrorActionPreference = "Stop"

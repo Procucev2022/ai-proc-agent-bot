@@ -19,7 +19,7 @@ concurrency:
 env:
   RESOURCE_GROUP: rg-aiproc-prod
   ACR_NAME: acraiprocprod
-  LOCATION: eastus
+  LOCATION: centralindia
   ENVIRONMENT: prod
 
 jobs:

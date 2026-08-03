@@ -19,7 +19,7 @@ concurrency:
 env:
   RESOURCE_GROUP: rg-aiproc-dev
   ACR_NAME: acraiprocdev
-  LOCATION: eastus
+  LOCATION: centralindia
   ENVIRONMENT: dev
 
 jobs:

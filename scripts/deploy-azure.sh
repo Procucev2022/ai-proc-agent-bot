@@ -7,7 +7,7 @@ set -e
 
 # Parameters / Defaults
 ENV="${1:-dev}"
-LOCATION="${2:-eastus}"
+LOCATION="${2:-centralindia}"
 RESOURCE_GROUP="rg-aiproc-${ENV}"
 ACR_NAME="acraiproc${ENV}"
 BASE_NAME="aiproc"
