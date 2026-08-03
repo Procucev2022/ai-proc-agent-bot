@@ -5,6 +5,7 @@ on:
     branches:
       - develop
       - 'feature/*'
+      - main
   workflow_dispatch:
 
 permissions:
@@ -54,6 +55,19 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Ensure Azure Resource Group & ACR Exist
+        run: |
+          echo "Ensuring Resource Group '${{ env.RESOURCE_GROUP }}' exists in '${{ env.LOCATION }}'..."
+          az group create --name ${{ env.RESOURCE_GROUP }} --location ${{ env.LOCATION }} --output table
+
+          echo "Ensuring Azure Container Registry '${{ env.ACR_NAME }}' exists..."
+          if ! az acr show --name ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} &>/dev/null; then
+            echo "ACR '${{ env.ACR_NAME }}' not found. Creating basic ACR..."
+            az acr create --resource-group ${{ env.RESOURCE_GROUP }} --name ${{ env.ACR_NAME }} --sku Basic --admin-enabled true --output table
+          else
+            echo "✓ ACR '${{ env.ACR_NAME }}' already exists."
+          fi
+
       - name: Log in to Azure Container Registry (ACR)
         run: |
           az acr login --name ${{ env.ACR_NAME }}
@@ -70,11 +84,11 @@ jobs:
           TAG_APP="aiproc-app:dev-${SHORT_SHA}"
           TAG_CELERY="aiproc-celery:dev-${SHORT_SHA}"
           
-          echo "Building App Container Image..."
+          echo "Building App Container Image ($TAG_APP)..."
           az acr build --registry ${{ env.ACR_NAME }} --image $TAG_APP --file Dockerfile.app .
           
-          echo "Building Celery Container Image..."
-          az acr build --registry ${{ env.ACR_NAME }} --image $TAG_CELERY --file Dockerfile.file.celery || az acr build --registry ${{ env.ACR_NAME }} --image $TAG_CELERY --file Dockerfile.celery .
+          echo "Building Celery Container Image ($TAG_CELERY)..."
+          az acr build --registry ${{ env.ACR_NAME }} --image $TAG_CELERY --file Dockerfile.celery .
           
           echo "TAG_APP=$TAG_APP" >> $GITHUB_ENV
           echo "TAG_CELERY=$TAG_CELERY" >> $GITHUB_ENV
@@ -82,7 +96,6 @@ jobs:
       - name: Deploy Azure Infrastructure & Container Apps (Bicep)
         uses: azure/arm-deploy@v2
         with:
-          subscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           resourceGroupName: ${{ env.RESOURCE_GROUP }}
           template: ./infra/main.bicep
           parameters: >
