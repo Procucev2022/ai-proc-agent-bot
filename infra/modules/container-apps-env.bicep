@@ -7,12 +7,9 @@ param environment string
 @description('Base name for resources')
 param baseName string
 
-@description('Storage Account Name (3-24 lowercase alphanumeric chars)')
-@minLength(3)
-@maxLength(24)
-param storageAccountName string = take(replace('st${baseName}${environment}${uniqueString(resourceGroup().id)}', '-', ''), 24)
-
 var logAnalyticsName = 'law-${baseName}-${environment}'
+var uniqueSuffix = substring(uniqueString(resourceGroup().id), 0, 8)
+var storageAccountName = 'st${replace(baseName, '-', '')}${environment}${uniqueSuffix}'
 var fileShareName = 'chroma-data'
 var envName = 'cae-${baseName}-${environment}'
 
