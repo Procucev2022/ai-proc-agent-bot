@@ -138,6 +138,9 @@ jobs:
           APP_URL=$(az containerapp show --name aiproc-app-dev --resource-group ${{ env.RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv)
           echo "App URL: https://${APP_URL}"
           
+          echo "Warming up application (waiting 20s for serverless cold start)..."
+          sleep 20
+          
           echo "Testing Health Endpoint..."
-          curl -f --retry 5 --retry-delay 10 "https://${APP_URL}/health" || exit 1
+          curl -f --max-time 30 --retry 10 --retry-delay 10 --retry-connrefused "https://${APP_URL}/health" || exit 1
           echo "✓ Dev Deployment Successfully Verified!"
