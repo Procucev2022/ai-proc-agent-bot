@@ -30,9 +30,26 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Azure Login via OIDC
+      - name: Verify Azure Secrets Present
+        run: |
+          if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ] && [ -z "${{ secrets.AZURE_CLIENT_ID }}" ]; then
+            echo "::error title=Missing Azure Secrets::No Azure authentication secrets found!"
+            echo "--------------------------------------------------------------------------------"
+            echo "To fix this issue, please add one of the following secret configurations in GitHub:"
+            echo "Option 1 (OIDC - Recommended):"
+            echo "  - AZURE_CLIENT_ID"
+            echo "  - AZURE_TENANT_ID"
+            echo "  - AZURE_SUBSCRIPTION_ID"
+            echo "Option 2 (Service Principal JSON):"
+            echo "  - AZURE_CREDENTIALS (Output of: az ad sp create-for-rbac --sdk-auth)"
+            echo "--------------------------------------------------------------------------------"
+            exit 1
+          fi
+
+      - name: Azure Login (Supports OIDC or Service Principal JSON)
         uses: azure/login@v2
         with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -57,7 +74,7 @@ jobs:
           az acr build --registry ${{ env.ACR_NAME }} --image $TAG_APP --file Dockerfile.app .
           
           echo "Building Celery Container Image..."
-          az acr build --registry ${{ env.ACR_NAME }} --image $TAG_CELERY --file Dockerfile.celery .
+          az acr build --registry ${{ env.ACR_NAME }} --image $TAG_CELERY --file Dockerfile.file.celery || az acr build --registry ${{ env.ACR_NAME }} --image $TAG_CELERY --file Dockerfile.celery .
           
           echo "TAG_APP=$TAG_APP" >> $GITHUB_ENV
           echo "TAG_CELERY=$TAG_CELERY" >> $GITHUB_ENV
