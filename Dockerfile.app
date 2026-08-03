@@ -1,5 +1,5 @@
 # ====================================================================
-# UNIFIED UNIFIED DOCKERFILE - Azure Container Apps Production
+# UNIFIED DOCKERFILE - Azure Container Apps Production (Optimized CPU)
 # ====================================================================
 FROM python:3.11-slim AS base
 
@@ -16,9 +16,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy and install Python dependencies
+# Copy requirements
 COPY requirements.txt .
+
+# Install CPU-only PyTorch first to avoid downloading 5GB+ of unneeded CUDA/NVIDIA wheels
 RUN pip install --upgrade pip && \
+    pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
 # Pre-download sentence transformer model so it's cached in the image
