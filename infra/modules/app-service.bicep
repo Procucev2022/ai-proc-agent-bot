@@ -117,6 +117,14 @@ resource appContainer 'Microsoft.App/containerApps@2023-05-01' = {
               value: '1'
             }
             {
+              name: 'WORKERS'
+              value: environment == 'dev' ? '1' : '2'
+            }
+            {
+              name: 'WORKER_THREADS'
+              value: '2'
+            }
+            {
               name: 'LOG_LEVEL'
               value: 'DEBUG'
             }
