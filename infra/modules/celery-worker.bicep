@@ -10,6 +10,13 @@ param environmentId string
 @description('Container Registry Server')
 param acrServer string
 
+@description('Container Registry Username')
+param acrUsername string = ''
+
+@description('Container Registry Password')
+@secure()
+param acrPassword string = ''
+
 @description('Container Image Name & Tag')
 param imageTag string
 
@@ -41,6 +48,24 @@ var appName = 'aiproc-celery-${environment}'
 var dbUrlSecret = empty(databaseUrl) ? 'placeholder_db_url' : databaseUrl
 var openAiKeySecret = empty(azureOpenAiKey) ? 'placeholder_openai_key' : azureOpenAiKey
 
+var baseSecrets = [
+  {
+    name: 'database-url'
+    value: dbUrlSecret
+  }
+  {
+    name: 'azure-openai-key'
+    value: openAiKeySecret
+  }
+]
+
+var acrSecret = !empty(acrPassword) ? [
+  {
+    name: 'acr-password'
+    value: acrPassword
+  }
+] : []
+
 resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: appName
   location: location
@@ -49,22 +74,19 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
     configuration: {
       activeRevisionsMode: 'Single'
       ingress: null // Background worker has no HTTP ingress
-      registries: [
+      registries: !empty(acrPassword) ? [
+        {
+          server: acrServer
+          username: acrUsername
+          passwordSecretRef: 'acr-password'
+        }
+      ] : [
         {
           server: acrServer
           identity: 'system'
         }
       ]
-      secrets: [
-        {
-          name: 'database-url'
-          value: dbUrlSecret
-        }
-        {
-          name: 'azure-openai-key'
-          value: openAiKeySecret
-        }
-      ]
+      secrets: concat(baseSecrets, acrSecret)
     }
     template: {
       containers: [

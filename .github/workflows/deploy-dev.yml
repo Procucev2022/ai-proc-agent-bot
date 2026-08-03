@@ -84,15 +84,17 @@ jobs:
             echo "✓ ACR '${{ env.ACR_NAME }}' already exists."
           fi
 
-      - name: Log in to Azure Container Registry (ACR)
-        run: |
-          az acr login --name ${{ env.ACR_NAME }}
-
-      - name: Get ACR Server
+      - name: Log in to Azure Container Registry (ACR) & Get Credentials
         id: acr
         run: |
+          az acr login --name ${{ env.ACR_NAME }}
           SERVER=$(az acr show --name ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query loginServer -o tsv)
+          USER=$(az acr credential show --name ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query username -o tsv)
+          PASS=$(az acr credential show --name ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query "passwords[0].value" -o tsv)
+          echo "::add-mask::$PASS"
           echo "server=$SERVER" >> $GITHUB_OUTPUT
+          echo "ACR_USER=$USER" >> $GITHUB_ENV
+          echo "ACR_PASS=$PASS" >> $GITHUB_ENV
 
       - name: Build & Push Container Images to ACR (Unified Build)
         run: |
@@ -116,11 +118,14 @@ jobs:
         with:
           resourceGroupName: ${{ env.RESOURCE_GROUP }}
           template: ./infra/main.bicep
+          failOnStdErr: false
           parameters: >
             environment=${{ env.ENVIRONMENT }}
             location=${{ env.LOCATION }}
             baseName=aiproc
             acrServer=${{ steps.acr.outputs.server }}
+            acrUsername="${{ env.ACR_USER }}"
+            acrPassword="${{ env.ACR_PASS }}"
             appImageTag=${{ env.TAG_APP }}
             celeryImageTag=${{ env.TAG_CELERY }}
             databaseUrl="${{ secrets.DEV_DATABASE_URL }}"

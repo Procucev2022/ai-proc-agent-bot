@@ -14,6 +14,13 @@ param baseName string = 'aiproc'
 @description('Container Registry Server')
 param acrServer string
 
+@description('ACR Admin Username')
+param acrUsername string = ''
+
+@description('ACR Admin Password')
+@secure()
+param acrPassword string = ''
+
 @description('App Image Name and Tag (e.g., aiproc-app:dev-12345)')
 param appImageTag string
 
@@ -73,6 +80,8 @@ module appModule 'modules/app-service.bicep' = {
     environment: environment
     environmentId: environmentModule.outputs.environmentId
     acrServer: acrServer
+    acrUsername: acrUsername
+    acrPassword: acrPassword
     imageTag: appImageTag
     minReplicas: environment == 'dev' ? 0 : 1
     maxReplicas: environment == 'dev' ? 3 : 10
@@ -93,6 +102,8 @@ module celeryModule 'modules/celery-worker.bicep' = {
     environment: environment
     environmentId: environmentModule.outputs.environmentId
     acrServer: acrServer
+    acrUsername: acrUsername
+    acrPassword: acrPassword
     imageTag: celeryImageTag
     minReplicas: environment == 'dev' ? 0 : 1
     maxReplicas: environment == 'dev' ? 3 : 10
