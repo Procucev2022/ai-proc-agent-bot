@@ -95,6 +95,18 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
           image: '${acrServer}/${imageTag}'
           env: [
             {
+              name: 'PYTHONUNBUFFERED'
+              value: '1'
+            }
+            {
+              name: 'LOG_LEVEL'
+              value: 'DEBUG'
+            }
+            {
+              name: 'DATABASE_MODE'
+              value: 'client'
+            }
+            {
               name: 'CELERY_BROKER_URL'
               value: 'redis://${redisHost}:6379/1'
             }

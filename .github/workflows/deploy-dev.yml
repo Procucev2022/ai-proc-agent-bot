@@ -26,6 +26,7 @@ jobs:
   build-and-deploy:
     name: Build & Deploy to Dev (ACA)
     runs-on: ubuntu-latest
+    environment: development
 
     steps:
       - name: Checkout Code
@@ -128,7 +129,7 @@ jobs:
             acrPassword="${{ env.ACR_PASS }}"
             appImageTag=${{ env.TAG_APP }}
             celeryImageTag=${{ env.TAG_CELERY }}
-            databaseUrl="${{ secrets.DEV_DATABASE_URL }}"
+            databaseUrl="${{ secrets.DATABASE_URL || secrets.DEV_DATABASE_URL }}"
             azureOpenAiEndpoint="${{ secrets.AZURE_OPENAI_ENDPOINT }}"
             azureOpenAiKey="${{ secrets.AZURE_OPENAI_API_KEY }}"
             whatsappApiKey="${{ secrets.WHATSAPP_API_KEY }}"

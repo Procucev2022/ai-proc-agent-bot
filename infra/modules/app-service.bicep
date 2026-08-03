@@ -113,6 +113,18 @@ resource appContainer 'Microsoft.App/containerApps@2023-05-01' = {
               value: 'AI Procurement Agent (${environment})'
             }
             {
+              name: 'PYTHONUNBUFFERED'
+              value: '1'
+            }
+            {
+              name: 'LOG_LEVEL'
+              value: 'DEBUG'
+            }
+            {
+              name: 'DATABASE_MODE'
+              value: 'client'
+            }
+            {
               name: 'REDIS_URL'
               value: 'redis://${redisHost}:6379/0'
             }
