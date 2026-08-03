@@ -50,7 +50,7 @@ resource redisApp 'Microsoft.App/containerApps@2023-05-01' = {
   }
 }
 
-output redisHost string = '${appName}.${environmentId}'
+output redisHost string = appName
 output redisPort int = 6379
 output redisUrl string = 'redis://${appName}:6379/0'
 output celeryBrokerUrl string = 'redis://${appName}:6379/1'
