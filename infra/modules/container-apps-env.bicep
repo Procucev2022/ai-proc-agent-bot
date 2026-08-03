@@ -8,7 +8,8 @@ param environment string
 param baseName string
 
 var logAnalyticsName = 'law-${baseName}-${environment}'
-var storageAccountName = 'st${baseName}${environment}${uniqueString(resourceGroup().id)}'
+var cleanStorageName = replace('st${baseName}${environment}${uniqueString(resourceGroup().id)}', '-', '')
+var storageAccountName = take(cleanStorageName, 24)
 var fileShareName = 'chroma-data'
 var envName = 'cae-${baseName}-${environment}'
 
@@ -26,7 +27,7 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
 
 // Storage Account for Persistent Volume (ChromaDB)
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
-  name: take(replace(storageAccountName, '-', ''), 24)
+  name: storageAccountName
   location: location
   sku: {
     name: 'Standard_LRS'

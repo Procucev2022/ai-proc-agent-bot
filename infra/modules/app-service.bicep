@@ -42,6 +42,10 @@ param whatsappApiKey string = ''
 
 var appName = 'aiproc-app-${environment}'
 
+var dbUrlSecret = empty(databaseUrl) ? 'placeholder_db_url' : databaseUrl
+var openAiKeySecret = empty(azureOpenAiKey) ? 'placeholder_openai_key' : azureOpenAiKey
+var whatsappKeySecret = empty(whatsappApiKey) ? 'placeholder_whatsapp_key' : whatsappApiKey
+
 resource appContainer 'Microsoft.App/containerApps@2023-05-01' = {
   name: appName
   location: location
@@ -64,15 +68,15 @@ resource appContainer 'Microsoft.App/containerApps@2023-05-01' = {
       secrets: [
         {
           name: 'database-url'
-          value: databaseUrl
+          value: dbUrlSecret
         }
         {
           name: 'azure-openai-key'
-          value: azureOpenAiKey
+          value: openAiKeySecret
         }
         {
           name: 'whatsapp-api-key'
-          value: whatsappApiKey
+          value: whatsappKeySecret
         }
       ]
     }
