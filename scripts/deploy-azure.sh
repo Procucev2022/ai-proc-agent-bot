@@ -14,22 +14,32 @@ BASE_NAME="aiproc"
 
 echo "======================================================================"
 echo " Deploying AI Procurement Agent to Azure Container Apps ($ENV)"
-echo " Resource Group: $RESOURCE_GROUP | Region: $LOCATION"
+echo " Resource Group: $RESOURCE_GROUP | Target Region: $LOCATION"
 echo "======================================================================"
 
-# 1. Create Resource Group
-echo "--> Creating Resource Group if not exists..."
-az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output table
+# 1. Create or query Resource Group
+echo "--> Checking Resource Group..."
+if ! az group show --name "$RESOURCE_GROUP" &>/dev/null; then
+  echo "Creating Resource Group '$RESOURCE_GROUP' in '$LOCATION'..."
+  az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output table
+else
+  LOCATION=$(az group show --name "$RESOURCE_GROUP" --query location -o tsv)
+  echo "✓ Resource Group '$RESOURCE_GROUP' already exists in location '$LOCATION'."
+fi
 
 # 2. Create Azure Container Registry (ACR)
-echo "--> Creating Azure Container Registry ($ACR_NAME)..."
-az acr create --resource-group "$RESOURCE_GROUP" --name "$ACR_NAME" --sku Basic --admin-enabled true --output table
+echo "--> Checking Azure Container Registry ($ACR_NAME)..."
+if ! az acr show --name "$ACR_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
+  az acr create --resource-group "$RESOURCE_GROUP" --name "$ACR_NAME" --sku Basic --admin-enabled true --output table
+else
+  echo "✓ ACR '$ACR_NAME' already exists."
+fi
 
 # 3. Log in to ACR
 echo "--> Logging into ACR..."
 az acr login --name "$ACR_NAME"
 
-# 4. Build and Push App Image
+# 4. Build and Push Container Images
 IMAGE_TAG_APP="aiproc-app:${ENV}-latest"
 IMAGE_TAG_CELERY="aiproc-celery:${ENV}-latest"
 

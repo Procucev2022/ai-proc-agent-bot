@@ -66,8 +66,15 @@ jobs:
 
       - name: Ensure Azure Resource Group & ACR Exist
         run: |
-          echo "Ensuring Resource Group '${{ env.RESOURCE_GROUP }}' exists in '${{ env.LOCATION }}'..."
-          az group create --name ${{ env.RESOURCE_GROUP }} --location ${{ env.LOCATION }} --output table
+          echo "Checking Resource Group '${{ env.RESOURCE_GROUP }}'..."
+          if ! az group show --name ${{ env.RESOURCE_GROUP }} &>/dev/null; then
+            echo "Creating Resource Group '${{ env.RESOURCE_GROUP }}' in location '${{ env.LOCATION }}'..."
+            az group create --name ${{ env.RESOURCE_GROUP }} --location ${{ env.LOCATION }} --output table
+          else
+            RG_LOC=$(az group show --name ${{ env.RESOURCE_GROUP }} --query location -o tsv)
+            echo "✓ Resource Group '${{ env.RESOURCE_GROUP }}' already exists in location '$RG_LOC'."
+            echo "LOCATION=$RG_LOC" >> $GITHUB_ENV
+          fi
 
           echo "Ensuring Azure Container Registry '${{ env.ACR_NAME }}' exists..."
           if ! az acr show --name ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} &>/dev/null; then
