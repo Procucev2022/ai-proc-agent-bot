@@ -1,4 +1,6 @@
-# Default Dockerfile points to Dockerfile.app for application deployments
+# ====================================================================
+# UNIFIED DOCKERFILE - Azure Container Apps Production
+# ====================================================================
 FROM python:3.11-slim AS base
 
 WORKDIR /app
@@ -22,17 +24,18 @@ RUN pip install --upgrade pip && \
 # Pre-download sentence transformer model so it's cached in the image
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
-# Copy application code
+# Copy application code and entrypoint scripts
 COPY app/ ./app/
 COPY templates/ ./templates/
 COPY gunicorn_config.py ./
 COPY docker_entrypoint_app.sh ./
+COPY docker_entrypoint_celery.sh ./
 
-# Make entrypoint executable
-RUN chmod +x docker_entrypoint_app.sh
+# Make entrypoint scripts executable
+RUN chmod +x docker_entrypoint_app.sh docker_entrypoint_celery.sh
 
-# Create logs directory
-RUN mkdir -p logs/app
+# Create log directories
+RUN mkdir -p logs/app logs/celery_worker
 
 EXPOSE 8005
 

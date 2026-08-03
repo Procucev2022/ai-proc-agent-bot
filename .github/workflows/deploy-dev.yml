@@ -91,20 +91,22 @@ jobs:
       - name: Get ACR Server
         id: acr
         run: |
-          SERVER=$(az acr show --name ${{ env.ACR_NAME }} --query loginServer -o tsv)
+          SERVER=$(az acr show --name ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query loginServer -o tsv)
           echo "server=$SERVER" >> $GITHUB_OUTPUT
 
-      - name: Build & Push Container Images to ACR
+      - name: Build & Push Container Images to ACR (Unified Build)
         run: |
           SHORT_SHA=$(git rev-parse --short HEAD)
           TAG_APP="aiproc-app:dev-${SHORT_SHA}"
           TAG_CELERY="aiproc-celery:dev-${SHORT_SHA}"
           
-          echo "Building App Container Image ($TAG_APP)..."
-          az acr build --registry ${{ env.ACR_NAME }} --image $TAG_APP --file Dockerfile.app .
-          
-          echo "Building Celery Container Image ($TAG_CELERY)..."
-          az acr build --registry ${{ env.ACR_NAME }} --image $TAG_CELERY --file Dockerfile.celery .
+          echo "Building single image and tagging as '$TAG_APP' and '$TAG_CELERY'..."
+          az acr build \
+            --registry ${{ env.ACR_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image "$TAG_APP" \
+            --image "$TAG_CELERY" \
+            --file Dockerfile.app .
           
           echo "TAG_APP=$TAG_APP" >> $GITHUB_ENV
           echo "TAG_CELERY=$TAG_CELERY" >> $GITHUB_ENV
