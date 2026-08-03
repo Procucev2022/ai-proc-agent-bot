@@ -84,8 +84,7 @@ async def lifespan(app: FastAPI):
         init_database()
         logger.info("Database initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize database: {e}")
-        raise
+        logger.warning(f"Database initialization deferred/failed: {e}")
 
     # Initialize global ProcucevAPIClient
     try:
@@ -93,9 +92,7 @@ async def lifespan(app: FastAPI):
         await init_procucev_api_client()
         logger.info("ProcucevAPIClient initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize ProcucevAPIClient: {e}")
-        # Continue without failing startup - API calls will fail gracefully
-        raise
+        logger.warning(f"Failed to initialize ProcucevAPIClient: {e}")
 
     # Start message queue background tasks
     message_queue_tasks = []
@@ -113,8 +110,7 @@ async def lifespan(app: FastAPI):
         logger.info("Message queue monitoring loop started")
 
     except Exception as e:
-        logger.error(f"Failed to start message queue background tasks: {e}")
-        raise
+        logger.warning(f"Failed to start message queue background tasks: {e}")
 
     # Start webhook health monitoring
     webhook_monitor_task = None
