@@ -133,6 +133,10 @@ jobs:
             azureOpenAiEndpoint="${{ secrets.AZURE_OPENAI_ENDPOINT }}"
             azureOpenAiKey="${{ secrets.AZURE_OPENAI_API_KEY }}"
             whatsappApiKey="${{ secrets.WHATSAPP_API_KEY }}"
+            gmtBaseUrl="${{ secrets.GMT_BASE_URL || 'https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net' }}"
+            gmtUsername="${{ secrets.GMT_USERNAME || 'clientinitiator@procucev.com' }}"
+            gmtPassword="${{ secrets.GMT_PASSWORD || 'Clientinitiator@123' }}"
+            gmtPhone="${{ secrets.GMT_PHONE || '919876543229' }}"
 
       - name: Get App URL & Run Health Check Probe
         run: |

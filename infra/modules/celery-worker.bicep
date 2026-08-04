@@ -43,10 +43,30 @@ param azureOpenAiEndpoint string = ''
 @secure()
 param azureOpenAiKey string = ''
 
+@description('GMT Base URL')
+param gmtBaseUrl string = 'https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net'
+
+@description('GMT Client ID')
+param gmtClientId string = 'procucev'
+
+@description('GMT Client Secret')
+param gmtClientSecret string = 'procucev'
+
+@description('GMT Username')
+param gmtUsername string = 'clientinitiator@procucev.com'
+
+@description('GMT Password')
+@secure()
+param gmtPassword string = 'Clientinitiator@123'
+
+@description('GMT Phone')
+param gmtPhone string = '919876543229'
+
 var appName = 'aiproc-celery-${environment}'
 
 var dbUrlSecret = empty(databaseUrl) ? 'placeholder_db_url' : databaseUrl
 var openAiKeySecret = empty(azureOpenAiKey) ? 'placeholder_openai_key' : azureOpenAiKey
+var gmtPasswordSecret = empty(gmtPassword) ? 'Clientinitiator@123' : gmtPassword
 
 var baseSecrets = [
   {
@@ -56,6 +76,10 @@ var baseSecrets = [
   {
     name: 'azure-openai-key'
     value: openAiKeySecret
+  }
+  {
+    name: 'gmt-password'
+    value: gmtPasswordSecret
   }
 ]
 
@@ -137,6 +161,30 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
             {
               name: 'AZURE_OPENAI_API_KEY'
               secretRef: 'azure-openai-key'
+            }
+            {
+              name: 'GMT_BASE_URL'
+              value: gmtBaseUrl
+            }
+            {
+              name: 'GMT_CLIENT_ID'
+              value: gmtClientId
+            }
+            {
+              name: 'GMT_CLIENT_SECRET'
+              value: gmtClientSecret
+            }
+            {
+              name: 'GMT_USERNAME'
+              value: gmtUsername
+            }
+            {
+              name: 'GMT_PASSWORD'
+              secretRef: 'gmt-password'
+            }
+            {
+              name: 'GMT_PHONE'
+              value: gmtPhone
             }
           ]
           resources: {

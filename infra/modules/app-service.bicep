@@ -47,11 +47,31 @@ param azureOpenAiKey string = ''
 @secure()
 param whatsappApiKey string = ''
 
+@description('GMT Base URL')
+param gmtBaseUrl string = 'https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net'
+
+@description('GMT Client ID')
+param gmtClientId string = 'procucev'
+
+@description('GMT Client Secret')
+param gmtClientSecret string = 'procucev'
+
+@description('GMT Username')
+param gmtUsername string = 'clientinitiator@procucev.com'
+
+@description('GMT Password')
+@secure()
+param gmtPassword string = 'Clientinitiator@123'
+
+@description('GMT Phone')
+param gmtPhone string = '919876543229'
+
 var appName = 'aiproc-app-${environment}'
 
 var dbUrlSecret = empty(databaseUrl) ? 'placeholder_db_url' : databaseUrl
 var openAiKeySecret = empty(azureOpenAiKey) ? 'placeholder_openai_key' : azureOpenAiKey
 var whatsappKeySecret = empty(whatsappApiKey) ? 'placeholder_whatsapp_key' : whatsappApiKey
+var gmtPasswordSecret = empty(gmtPassword) ? 'Clientinitiator@123' : gmtPassword
 
 var baseSecrets = [
   {
@@ -65,6 +85,10 @@ var baseSecrets = [
   {
     name: 'whatsapp-api-key'
     value: whatsappKeySecret
+  }
+  {
+    name: 'gmt-password'
+    value: gmtPasswordSecret
   }
 ]
 
@@ -171,6 +195,30 @@ resource appContainer 'Microsoft.App/containerApps@2023-05-01' = {
             {
               name: 'WHATSAPP_API_KEY'
               secretRef: 'whatsapp-api-key'
+            }
+            {
+              name: 'GMT_BASE_URL'
+              value: gmtBaseUrl
+            }
+            {
+              name: 'GMT_CLIENT_ID'
+              value: gmtClientId
+            }
+            {
+              name: 'GMT_CLIENT_SECRET'
+              value: gmtClientSecret
+            }
+            {
+              name: 'GMT_USERNAME'
+              value: gmtUsername
+            }
+            {
+              name: 'GMT_PASSWORD'
+              secretRef: 'gmt-password'
+            }
+            {
+              name: 'GMT_PHONE'
+              value: gmtPhone
             }
           ]
           resources: {

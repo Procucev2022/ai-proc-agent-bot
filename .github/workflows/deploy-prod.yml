@@ -135,6 +135,10 @@ jobs:
             azureOpenAiEndpoint="${{ secrets.AZURE_OPENAI_ENDPOINT }}"
             azureOpenAiKey="${{ secrets.AZURE_OPENAI_API_KEY }}"
             whatsappApiKey="${{ secrets.WHATSAPP_API_KEY }}"
+            gmtBaseUrl="${{ secrets.GMT_BASE_URL }}"
+            gmtUsername="${{ secrets.GMT_USERNAME }}"
+            gmtPassword="${{ secrets.GMT_PASSWORD }}"
+            gmtPhone="${{ secrets.GMT_PHONE }}"
 
       - name: Get Production URL & Verify Health Endpoint
         run: |

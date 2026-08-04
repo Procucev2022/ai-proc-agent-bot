@@ -1,30 +1,26 @@
-@description('Target environment: dev or prod')
-@allowed([
-  'dev'
-  'prod'
-])
-param environment string = 'dev'
+@description('Environment name (dev or prod)')
+param environment string
 
 @description('Azure Region')
-param location string = resourceGroup().location
+param location string
 
-@description('Base application name')
+@description('Base Resource Name')
 param baseName string = 'aiproc'
 
 @description('Container Registry Server')
 param acrServer string
 
-@description('ACR Admin Username')
+@description('Container Registry Username')
 param acrUsername string = ''
 
-@description('ACR Admin Password')
+@description('Container Registry Password')
 @secure()
 param acrPassword string = ''
 
-@description('App Image Name and Tag (e.g., aiproc-app:dev-12345)')
+@description('App Image Tag')
 param appImageTag string
 
-@description('Celery Worker Image Name and Tag (e.g., aiproc-celery:dev-12345)')
+@description('Celery Image Tag')
 param celeryImageTag string
 
 @description('Database URL')
@@ -41,6 +37,19 @@ param azureOpenAiKey string = ''
 @description('WhatsApp API Key')
 @secure()
 param whatsappApiKey string = ''
+
+@description('GMT Base URL')
+param gmtBaseUrl string = 'https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net'
+
+@description('GMT Username')
+param gmtUsername string = 'clientinitiator@procucev.com'
+
+@description('GMT Password')
+@secure()
+param gmtPassword string = 'Clientinitiator@123'
+
+@description('GMT Phone')
+param gmtPhone string = '919876543229'
 
 // Container Apps Environment
 module environmentModule 'modules/container-apps-env.bicep' = {
@@ -91,6 +100,10 @@ module appModule 'modules/app-service.bicep' = {
     azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiKey: azureOpenAiKey
     whatsappApiKey: whatsappApiKey
+    gmtBaseUrl: gmtBaseUrl
+    gmtUsername: gmtUsername
+    gmtPassword: gmtPassword
+    gmtPhone: gmtPhone
   }
 }
 
@@ -112,6 +125,10 @@ module celeryModule 'modules/celery-worker.bicep' = {
     databaseUrl: databaseUrl
     azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiKey: azureOpenAiKey
+    gmtBaseUrl: gmtBaseUrl
+    gmtUsername: gmtUsername
+    gmtPassword: gmtPassword
+    gmtPhone: gmtPhone
   }
 }
 
