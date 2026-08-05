@@ -1061,6 +1061,9 @@ class ChatService:
                     await self.exit_service.handle_exit_intent(user_phone, session,show_message=False)
 
                     return auth_result
+                elif auth_status in ("new_user_registration_sent", "new_user_registration_retry_sent", "new_user_registration"):
+                    logger.info(f"Auth flow sent registration options for {user_phone} (status: {auth_status})")
+                    return auth_result
                 else:
                     logger.error(f"Unexpected auth_result dict with status: {auth_status}")
                     return {"status": "error", "error": "Authentication failed"}

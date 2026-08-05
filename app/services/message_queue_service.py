@@ -377,6 +377,9 @@ class MessageQueueService:
                         await poller_lock.release()
                 
                 except Exception as e:
+                    if not self._running:
+                        logger.debug(f"[POLLER] Poller cycle interrupted during shutdown: {e}")
+                        break
                     logger.error(f"[POLLER] Error in poll cycle: {e}", exc_info=True)
         
         except asyncio.CancelledError:
@@ -579,6 +582,9 @@ class MessageQueueService:
                             logger.error(f"[MONITOR] Error checking session {key}: {e}")
                 
                 except Exception as e:
+                    if not self._running:
+                        logger.debug(f"[MONITOR] Monitor cycle interrupted during shutdown: {e}")
+                        break
                     logger.error(f"[MONITOR] Error in monitor cycle: {e}", exc_info=True)
         
         except asyncio.CancelledError:

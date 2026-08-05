@@ -54,12 +54,19 @@ param whatsappPassword string = ''
 @description('GMT Base URL')
 param gmtBaseUrl string = 'https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net'
 
+@description('GMT Client ID')
+param gmtClientId string = 'procucev'
+
+@description('GMT Client Secret')
+@secure()
+param gmtClientSecret string = ''
+
 @description('GMT Username')
 param gmtUsername string = 'clientinitiator@procucev.com'
 
 @description('GMT Password')
 @secure()
-param gmtPassword string = 'Clientinitiator@123'
+param gmtPassword string = ''
 
 @description('GMT Phone')
 param gmtPhone string = '919876543229'
@@ -118,6 +125,8 @@ module appModule 'modules/app-service.bicep' = {
     whatsappUsername: whatsappUsername
     whatsappPassword: whatsappPassword
     gmtBaseUrl: gmtBaseUrl
+    gmtClientId: gmtClientId
+    gmtClientSecret: gmtClientSecret
     gmtUsername: gmtUsername
     gmtPassword: gmtPassword
     gmtPhone: gmtPhone
@@ -148,6 +157,8 @@ module celeryModule 'modules/celery-worker.bicep' = {
     whatsappUsername: whatsappUsername
     whatsappPassword: whatsappPassword
     gmtBaseUrl: gmtBaseUrl
+    gmtClientId: gmtClientId
+    gmtClientSecret: gmtClientSecret
     gmtUsername: gmtUsername
     gmtPassword: gmtPassword
     gmtPhone: gmtPhone

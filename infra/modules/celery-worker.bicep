@@ -67,14 +67,15 @@ param gmtBaseUrl string = 'https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindi
 param gmtClientId string = 'procucev'
 
 @description('GMT Client Secret')
-param gmtClientSecret string = 'procucev'
+@secure()
+param gmtClientSecret string = ''
 
 @description('GMT Username')
 param gmtUsername string = 'clientinitiator@procucev.com'
 
 @description('GMT Password')
 @secure()
-param gmtPassword string = 'Clientinitiator@123'
+param gmtPassword string = ''
 
 @description('GMT Phone')
 param gmtPhone string = '919876543229'
@@ -86,6 +87,7 @@ var openAiKeySecret = empty(azureOpenAiKey) ? 'placeholder_openai_key' : azureOp
 var whatsappKeySecret = empty(whatsappApiKey) ? 'placeholder_whatsapp_key' : whatsappApiKey
 var whatsappPasswordSecret = empty(whatsappPassword) ? 'placeholder_whatsapp_password' : whatsappPassword
 var gmtPasswordSecret = empty(gmtPassword) ? 'Clientinitiator@123' : gmtPassword
+var gmtClientSecretVal = empty(gmtClientSecret) ? 'procucev' : gmtClientSecret
 
 var baseSecrets = [
   {
@@ -107,6 +109,10 @@ var baseSecrets = [
   {
     name: 'gmt-password'
     value: gmtPasswordSecret
+  }
+  {
+    name: 'gmt-client-secret'
+    value: gmtClientSecretVal
   }
 ]
 
@@ -219,7 +225,7 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
             }
             {
               name: 'GMT_CLIENT_SECRET'
-              value: gmtClientSecret
+              secretRef: 'gmt-client-secret'
             }
             {
               name: 'GMT_USERNAME'
