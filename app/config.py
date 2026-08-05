@@ -63,7 +63,7 @@ class Settings:
         # WhatsApp configuration
         self.WHATSAPP_USERNAME = os.getenv("WHATSAPP_USERNAME", "test_user")
         self.WHATSAPP_PASSWORD = os.getenv("WHATSAPP_PASSWORD", "test_password")
-        self.WHATSAPP_FROM_NUMBER = os.getenv("WHATSAPP_FROM_NUMBER", "918147745000")
+        self.WHATSAPP_FROM_NUMBER = os.getenv("WHATSAPP_FROM_NUMBER", "917996170801")
         self.WHATSAPP_BASE_URL = os.getenv("WHATSAPP_BASE_URL", "https://media.sendmsg.in")
         self.WHATSAPP_MEDIA_DOWNLOAD_URL = os.getenv("WHATSAPP_MEDIA_DOWNLOAD_URL", "https://download.sendmsg.in/whatsapp-mediadownloader")
         self.WHATSAPP_TEMPLATE_BASE_URL = os.getenv("WHATSAPP_TEMPLATE_BASE_URL", "https://wsapi.sendmsg.in")

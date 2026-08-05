@@ -43,6 +43,23 @@ param azureOpenAiEndpoint string = ''
 @secure()
 param azureOpenAiKey string = ''
 
+@description('WhatsApp API Key')
+@secure()
+param whatsappApiKey string = ''
+
+@description('WhatsApp From Number')
+param whatsappFromNumber string = '917996170801'
+
+@description('WhatsApp Mock Mode')
+param whatsappMockMode string = 'false'
+
+@description('WhatsApp Username')
+param whatsappUsername string = ''
+
+@description('WhatsApp Password')
+@secure()
+param whatsappPassword string = ''
+
 @description('GMT Base URL')
 param gmtBaseUrl string = 'https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net'
 
@@ -66,6 +83,8 @@ var appName = 'aiproc-celery-${environment}'
 
 var dbUrlSecret = empty(databaseUrl) ? 'placeholder_db_url' : databaseUrl
 var openAiKeySecret = empty(azureOpenAiKey) ? 'placeholder_openai_key' : azureOpenAiKey
+var whatsappKeySecret = empty(whatsappApiKey) ? 'placeholder_whatsapp_key' : whatsappApiKey
+var whatsappPasswordSecret = empty(whatsappPassword) ? 'placeholder_whatsapp_password' : whatsappPassword
 var gmtPasswordSecret = empty(gmtPassword) ? 'Clientinitiator@123' : gmtPassword
 
 var baseSecrets = [
@@ -76,6 +95,14 @@ var baseSecrets = [
   {
     name: 'azure-openai-key'
     value: openAiKeySecret
+  }
+  {
+    name: 'whatsapp-api-key'
+    value: whatsappKeySecret
+  }
+  {
+    name: 'whatsapp-password'
+    value: whatsappPasswordSecret
   }
   {
     name: 'gmt-password'
@@ -161,6 +188,26 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
             {
               name: 'AZURE_OPENAI_API_KEY'
               secretRef: 'azure-openai-key'
+            }
+            {
+              name: 'WHATSAPP_API_KEY'
+              secretRef: 'whatsapp-api-key'
+            }
+            {
+              name: 'WHATSAPP_FROM_NUMBER'
+              value: whatsappFromNumber
+            }
+            {
+              name: 'WHATSAPP_MOCK_MODE'
+              value: whatsappMockMode
+            }
+            {
+              name: 'WHATSAPP_USERNAME'
+              value: whatsappUsername
+            }
+            {
+              name: 'WHATSAPP_PASSWORD'
+              secretRef: 'whatsapp-password'
             }
             {
               name: 'GMT_BASE_URL'

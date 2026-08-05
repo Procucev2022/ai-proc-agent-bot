@@ -38,6 +38,19 @@ param azureOpenAiKey string = ''
 @secure()
 param whatsappApiKey string = ''
 
+@description('WhatsApp From Number')
+param whatsappFromNumber string = '917996170801'
+
+@description('WhatsApp Mock Mode')
+param whatsappMockMode string = 'false'
+
+@description('WhatsApp Username')
+param whatsappUsername string = ''
+
+@description('WhatsApp Password')
+@secure()
+param whatsappPassword string = ''
+
 @description('GMT Base URL')
 param gmtBaseUrl string = 'https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net'
 
@@ -100,6 +113,10 @@ module appModule 'modules/app-service.bicep' = {
     azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiKey: azureOpenAiKey
     whatsappApiKey: whatsappApiKey
+    whatsappFromNumber: whatsappFromNumber
+    whatsappMockMode: whatsappMockMode
+    whatsappUsername: whatsappUsername
+    whatsappPassword: whatsappPassword
     gmtBaseUrl: gmtBaseUrl
     gmtUsername: gmtUsername
     gmtPassword: gmtPassword
@@ -125,6 +142,11 @@ module celeryModule 'modules/celery-worker.bicep' = {
     databaseUrl: databaseUrl
     azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiKey: azureOpenAiKey
+    whatsappApiKey: whatsappApiKey
+    whatsappFromNumber: whatsappFromNumber
+    whatsappMockMode: whatsappMockMode
+    whatsappUsername: whatsappUsername
+    whatsappPassword: whatsappPassword
     gmtBaseUrl: gmtBaseUrl
     gmtUsername: gmtUsername
     gmtPassword: gmtPassword
