@@ -79,12 +79,13 @@ class IntentService:
                     }
 
                 # Fast-path 2: Numeric & Menu Choices (0.001s response time)
-                if msg_clean in ["1", "2", "3", "buy", "sell"]:
-                    target_intent = "buy_something" if msg_clean == "buy" else ("sell_something" if msg_clean == "sell" else "ambiguous")
+                if msg_clean in ["1", "2", "3", "buy", "sell", "create_rfq", "new_rfq", "raise_rfq", "create new rfq"]:
+                    is_rfq = msg_clean in ["buy", "create_rfq", "new_rfq", "raise_rfq", "create new rfq"]
+                    target_intent = "buy_something" if is_rfq else ("sell_something" if msg_clean == "sell" else "ambiguous")
                     logger.info(f"[FAST_PATH] Menu choice matched for '{message}' -> {target_intent}")
                     return {
                         "intent": target_intent,
-                        "confidence": 98,
+                        "confidence": 100 if is_rfq else 98,
                         "reasoning": f"Fast-path local matching: Menu option '{msg_clean}'",
                         "success": True,
                         "context_analysis": {}

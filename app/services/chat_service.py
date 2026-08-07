@@ -717,6 +717,11 @@ class ChatService:
                 if message_type == "excel_upload" and isinstance(message_content, dict):
                     # Create sanitized copy without base64 data for classification
                     classification_content = f"Excel file upload: {message_content.get('document', {}).get('filename', 'unknown')}"
+                elif message_type == "interactive" and isinstance(message_content, dict):
+                    button_reply = message_content.get("button_reply", {})
+                    button_id = button_reply.get("id", "")
+                    button_title = button_reply.get("title", "")
+                    classification_content = button_title or button_id or str(message_content)
 
                 conversation_context = await ChatServiceHelpers.build_conversation_context(session, classification_content)
                 # Now using async OpenAI service

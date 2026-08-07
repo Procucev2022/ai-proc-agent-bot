@@ -188,27 +188,33 @@ async def handle_delivery_callback(request: Request):
         redis_service = get_redis_service()
         await redis_service.set("webhook:last_callback_time", datetime.now().isoformat())
         
-        # Parse query parameters from URL
+        # Parse query parameters or body data
         query_params = dict(request.query_params)
+        
+        # Fallback to form data or json if empty query params
+        if not query_params:
+            try:
+                form_data = await request.form()
+                query_params = dict(form_data)
+            except Exception:
+                try:
+                    json_data = await request.json()
+                    if isinstance(json_data, dict):
+                        query_params = json_data
+                except Exception:
+                    pass
+
         # Extract ICS delivery callback fields
-        status = query_params.get("qStatus")
-        mobile = query_params.get("qMobile")
-        msg_ref = query_params.get("qMsgRef")
-        date_time = query_params.get("qDTime")
-        sms_msg_id = query_params.get("SMSMSGID")
-        sender_id = query_params.get("SENDERID")
-        notes = query_params.get("NOTES")
+        status = query_params.get("qStatus") or query_params.get("status")
+        mobile = query_params.get("qMobile") or query_params.get("mobile")
+        msg_ref = query_params.get("qMsgRef") or query_params.get("msg_ref") or query_params.get("mid")
+        date_time = query_params.get("qDTime") or query_params.get("timestamp")
+        notes = query_params.get("NOTES") or query_params.get("notes")
 
         if status and mobile and msg_ref:
-            # Log delivery status at DEBUG level to reduce noise (high volume endpoint)
             logger.debug(f"ICS delivery callback - Message {msg_ref[:20]}... to {mobile}: {status} at {date_time}")
-            if notes and notes != "NA":
-                logger.debug(f"Delivery notes: {notes}")
-
-            # Here you could update message status in database
-            # Example: await update_message_status(msg_ref, status, date_time)
         else:
-            logger.warning(f"Missing required delivery callback fields: status={status}, mobile={mobile}, msg_ref={msg_ref}")
+            logger.debug(f"Delivery callback received: status={status}, mobile={mobile}, msg_ref={msg_ref}")
 
         return JSONResponse(content={"status": "ok"})
 
