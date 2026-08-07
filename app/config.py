@@ -57,8 +57,8 @@ class Settings:
         
         # OpenAI configuration
         self.openai_api_key = os.getenv("AZURE_OPENAI_API_KEY")
-        self.openai_model_default = os.getenv("OPENAI_MODEL_DEFAULT", "gpt-4.1-mini")
-        self.openai_model_advanced = os.getenv("OPENAI_MODEL_ADVANCED", "gpt-4.1-mini")
+        self.openai_model_default = os.getenv("OPENAI_MODEL_DEFAULT", "gpt-5.4-mini")
+        self.openai_model_advanced = os.getenv("OPENAI_MODEL_ADVANCED", "gpt-5.4-mini")
         self.azure_openai_base_url = os.getenv("AZURE_OPENAI_ENDPOINT")
         # WhatsApp configuration
         self.WHATSAPP_USERNAME = os.getenv("WHATSAPP_USERNAME", "test_user")

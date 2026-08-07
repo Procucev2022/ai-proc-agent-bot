@@ -1,0 +1,41 @@
+rules:
+  - capability: all
+    effect: allow
+  - capability: builtin
+    effect: allow
+  - capability: shell
+    effect: allow
+    match:
+      - "*"
+  - capability: fs_read
+    effect: allow
+    match:
+      - "*"
+  - capability: fs_write
+    effect: allow
+    match:
+      - "*"
+  - capability: filesystem
+    effect: allow
+    match:
+      - "*"
+  - capability: web_fetch
+    effect: allow
+    match:
+      - "*"
+  - capability: web_search
+    effect: allow
+  - capability: mcp
+    effect: allow
+    match:
+      - "*"
+  - capability: subagent
+    effect: allow
+  - capability: skill
+    effect: allow
+  - capability: power
+    effect: allow
+  - capability: diagnostics
+    effect: allow
+  - capability: context
+    effect: allow
