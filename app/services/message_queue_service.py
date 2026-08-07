@@ -655,9 +655,17 @@ class MessageQueueService:
                 # Remove messages from incoming queue (atomic)
                 await self.redis.zrem(incoming_key, *message_data_list)
                 
-                # Create batch
+                # Create batch (deduplicate identical repeated lines e.g. ["Hi", "Hi", "Hi"])
                 batch_id = f"{user_phone}+{int(time.time() * 1000)}"
-                concatenated_content = "\n".join([msg.content for msg in messages])
+                seen_lines = set()
+                unique_lines = []
+                for msg in messages:
+                    c_clean = msg.content.strip()
+                    if c_clean and c_clean.lower() not in seen_lines:
+                        seen_lines.add(c_clean.lower())
+                        unique_lines.append(msg.content.strip())
+                
+                concatenated_content = "\n".join(unique_lines) if unique_lines else messages[-1].content
                 
                 batch = Batch(
                     batch_id=batch_id,
@@ -838,7 +846,7 @@ class MessageQueueService:
                     raise ValueError(f"{name} requires recipient_id")
                 
                 # Normalize phone (remove '+' for Redis key)
-                user_phone = recipient_id.lstrip('+') if isinstance(recipient_id, str) else recipient_id
+                user_phone = str(recipient_id).lstrip('+').strip()
                 
                 # Get session context
                 session_key = self._key_session(user_phone)
@@ -1013,8 +1021,15 @@ class MessageQueueService:
                     f"conversation session complete, cleared ack flag"
                 )
             
-            # Trigger next batch if available
-            await self._try_start_processing(user_phone)
+            # If new unbatched messages arrived during processing, merge them into a single batch now
+            if incoming_count > 0 and outgoing_count == 0:
+                logger.debug(
+                    f"[CLEANUP] Merging {incoming_count} pending incoming messages for {user_phone} into next batch"
+                )
+                await self._create_batch(user_phone)
+            else:
+                # Trigger next batch if available
+                await self._try_start_processing(user_phone)
         
         except Exception as e:
             logger.error(
