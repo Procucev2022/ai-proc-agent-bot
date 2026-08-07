@@ -531,15 +531,6 @@ async def process_message_async(webhook_data: Dict[str, Any]):
                     f"User {from_number} is already processing another message. "
                     f"Skipping {message_type} message to prevent concurrent processing conflicts."
                 )
-                # Send user notification that their message was received but will be processed after current operation
-                from app.services.whatsapp_service import WhatsAppService
-                whatsapp_service = WhatsAppService()
-                recipient_id = f"+{from_number}" if not from_number.startswith('+') else from_number
-                await whatsapp_service.send_message(
-                    recipient_id,
-                    "We're still processing your previous request. Please wait until it completes before sending a new one.",
-                    clear_pending_reply=False  # Don't clear flag - not the final response to original request
-                )
                 return  # Exit without processing to prevent concurrent execution
             
             # Log if allowing concurrent processing

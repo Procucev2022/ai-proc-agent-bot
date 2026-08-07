@@ -254,13 +254,17 @@ class MessageQueueService:
                 f"type={message_type}"
             )
             
-            # Check if should send acknowledgment
-            should_ack = await self._should_send_acknowledgment(user_phone)
-            if should_ack:
-                asyncio.create_task(self._send_acknowledgment(user_phone))
+            # Check if user is currently processing
+            processing_key = self._key_processing(user_phone)
+            is_processing = await self.redis.exists(processing_key)
             
-            # Start/refresh batch timer
-            await self._refresh_batch_timer(user_phone)
+            if not is_processing:
+                # User is idle: immediately create batch and start processing without 1-2s poller delay
+                logger.debug(f"[ENQUEUE] User {user_phone} is idle, creating batch immediately")
+                await self._create_batch(user_phone)
+            else:
+                # User is processing: refresh batch timer so pending messages get merged when current batch finishes
+                await self._refresh_batch_timer(user_phone)
             
             # NOTE: Background tasks are started in main.py lifespan
             # No need to ensure them here (prevents duplication)
@@ -1044,146 +1048,17 @@ class MessageQueueService:
     async def _should_send_acknowledgment(self, user_phone: str) -> bool:
         """
         Determine if acknowledgment should be sent.
-        
-        Returns True if:
-        - System is busy (processing, or queues not empty)
-        - AND acknowledgment not already sent this conversation session
-        
-        Note: Uses separate ack_sent flag (300s TTL) independent of batch session
-        to prevent duplicate acks across multiple batches in same conversation.
+        Disabled to prevent repetitive 'Got it. Please wait...' messages on WhatsApp.
         """
-        # Check if ack already sent in this conversation session
-        ack_sent_key = self._key_ack_sent(user_phone)
-        ack_already_sent = await self.redis.get(ack_sent_key)
-        
-        if ack_already_sent:
-            logger.debug(f"[ACK] Already sent in this conversation for {user_phone}")
-            return False
-        
-        # Check if system is busy
-        processing_key = self._key_processing(user_phone)
-        incoming_key = self._key_incoming(user_phone)
-        outgoing_key = self._key_outgoing(user_phone)
-        
-        is_processing = await self.redis.exists(processing_key)
-        incoming_count = await self.redis.zcard(incoming_key)
-        outgoing_count = await self.redis.llen(outgoing_key)
-        
-        # Busy if processing, or batches waiting, or multiple messages in incoming
-        is_busy = is_processing or outgoing_count > 0 or incoming_count > 1
-        
-        logger.debug(
-            f"[ACK] {user_phone}: processing={is_processing}, "
-            f"incoming={incoming_count}, outgoing={outgoing_count}, "
-            f"busy={is_busy}, ack_sent={bool(ack_already_sent)}"
-        )
-        
-        return is_busy
+        return False
 
     async def _send_acknowledgment(self, user_phone: str) -> None:
-        """
-        Send acknowledgment message with atomic flag claiming.
-        Uses lock to prevent duplicate sends across workers.
-        Sets separate ack_sent flag with 300s TTL (5 minutes) that persists
-        across multiple batches in the same conversation session.
-        """
-        lock_key = self._key_lock_ack(user_phone)
-        lock = self.redis.lock(lock_key, timeout=10, blocking_timeout=1)
-        
-        try:
-            async with lock:
-                # Double-check inside lock using separate ack_sent flag
-                ack_sent_key = self._key_ack_sent(user_phone)
-                ack_already_sent = await self.redis.get(ack_sent_key)
-                
-                if ack_already_sent:
-                    logger.debug(f"[ACK] Already sent (double-check) for {user_phone}")
-                    return
-                
-                # Set ack_sent flag with 300s TTL (5 minutes)
-                # This persists across batches in the same conversation
-                await self.redis.setex(ack_sent_key, 300, "1")
-                
-                # Also update session if it exists (for backward compatibility)
-                session_key = self._key_session(user_phone)
-                session_json = await self.redis.get(session_key)
-                
-                if session_json:
-                    session = ProcessingSession.from_json(session_json)
-                    session.ack_sent = True
-                    await self.redis.setex(session_key, 60, session.to_json())
-                else:
-                    # No session yet - create minimal session for ack tracking
-                    # This can happen if ack is sent before first batch starts processing
-                    session = ProcessingSession(
-                        batch_id="pending",
-                        started_at=time.time(),
-                        ack_sent=True
-                    )
-                    await self.redis.setex(session_key, 60, session.to_json())
-                
-                # Send acknowledgment
-                recipient_id = f"+{user_phone}" if not user_phone.startswith('+') else user_phone
-                ack_message = "Got it. Please wait while we process your request, we will be back shortly."
-                
-                await self.whatsapp_service.send_message(
-                    recipient_id=recipient_id,
-                    message=ack_message,
-                    clear_pending_reply=False,
-                    skip_concatenation=True  
-                )
-                
-                # Persist acknowledgment to the conversation session history in Redis
-                try:
-                    from app.redis_db import get_session_redis_service
-                    from app.services.helpers.session_helpers import SessionHelpers
-                    session_id = SessionHelpers.generate_session_id(user_phone, "daily")
-                    redis_session = get_session_redis_service()
-                    await redis_session.append_message_to_history(session_id, "assistant", ack_message, "text")
-                except Exception as track_error:
-                    logger.debug(f"[ACK] Could not persist ack to conversation history: {track_error}")
-                
-                logger.debug(f"[ACK] Sent acknowledgment to {user_phone} (pending_reply flag preserved)")
-        
-        except Exception as e:
-            logger.warning(
-                f"[ACK] Failed to send acknowledgment to {user_phone}: {e}",
-                exc_info=True
-            )
+        """Disabled auto-ack."""
+        pass
 
     async def _send_please_wait(self, user_phone: str) -> None:
-        """
-        Send please-wait message directly.
-        Called by monitoring loop when processing exceeds threshold.
-        """
-        try:
-            please_wait_message = "We are working on your request. Please wait while we process it."
-            recipient_id = f"+{user_phone}" if not user_phone.startswith('+') else user_phone
-            
-            await self.whatsapp_service.send_message(
-                recipient_id=recipient_id,
-                message=please_wait_message,
-                clear_pending_reply=False,  # Don't clear flag for acknowledgment
-                skip_concatenation=True  # Don't prepend irrelevant responses to system messages
-            )
-            
-            # Persist please-wait message to the conversation session history in Redis
-            try:
-                from app.redis_db import get_session_redis_service
-                from app.services.helpers.session_helpers import SessionHelpers
-                session_id = SessionHelpers.generate_session_id(user_phone, "daily")
-                redis_session = get_session_redis_service()
-                await redis_session.append_message_to_history(session_id, "assistant", please_wait_message, "text")
-            except Exception as track_error:
-                logger.debug(f"[PLEASE_WAIT] Could not persist please-wait to conversation history: {track_error}")
-            
-            logger.debug(f"[PLEASE_WAIT] Sent to {user_phone}")
-        
-        except Exception as e:
-            logger.warning(
-                f"[PLEASE_WAIT] Failed to send to {user_phone}: {e}",
-                exc_info=True
-            )
+        """Disabled intermediate please-wait messages to avoid chat spam."""
+        pass
 
     # ========================================================================
     # Utility Methods
