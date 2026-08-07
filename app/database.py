@@ -32,8 +32,10 @@ def _get_ssl_connect_args(settings) -> dict:
             "/data/procucev_project/procucev_proc_agent/ssl/DigiCertGlobalRootCA.crt.pem",
             os.path.join(settings.PROJECT_ROOT, "ssl/DigiCertGlobalRootCA.crt.pem"),
         ]
-        cert_path = next((p for p in cert_paths if os.path.exists(p)), cert_paths[0])
-        return {"ssl": {"ca": cert_path}}
+        existing_cert = next((p for p in cert_paths if os.path.exists(p)), None)
+        if existing_cert:
+            return {"ssl": {"ca": existing_cert}}
+        return {"ssl": {"ssl_disabled": False, "ssl_check_hostname": False, "ssl_verify_cert": False}}
     else:
         return {"ssl": {"ssl_disabled": False, "ssl_check_hostname": False, "ssl_verify_cert": False}}
 
