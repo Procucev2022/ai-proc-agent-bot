@@ -264,7 +264,7 @@ class Settings:
         self.rfq_fetch_limit: int = 3  # Used for buyer RFQ creation, seller uses seller_rfq_fetch_limit
 
         # Queue Configuration
-        self.batch_window_seconds: int = int(os.getenv("BATCH_WINDOW_SECONDS", "3"))
+        self.batch_window_seconds: int = int(os.getenv("BATCH_WINDOW_SECONDS", "1"))
         self.please_wait_threshold_seconds: int = int(os.getenv("PLEASE_WAIT_THRESHOLD_SECONDS", "15"))
         self.max_please_wait_count: int = int(os.getenv("MAX_PLEASE_WAIT_COUNT", "3"))
         self.monitoring_poll_interval_seconds: int = int(os.getenv("MONITORING_POLL_INTERVAL_SECONDS", "2"))

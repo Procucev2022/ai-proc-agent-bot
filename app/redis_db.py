@@ -212,6 +212,16 @@ class SessionRedisService(BaseRedisService):
         ttl = ttl or self.default_ttl
         return await self.set(key, session_data, ex=ttl)
 
+    async def save_session(self, session_data: Dict[str, Any], ttl: Optional[int] = None) -> bool:
+        """
+        Alias for store_session, accepting dictionary with session_id field or explicit session_id.
+        """
+        session_id = session_data.get('session_id') if isinstance(session_data, dict) else None
+        if not session_id:
+            logger.error("[REDIS] Cannot save session: missing session_id in session_data")
+            return False
+        return await self.store_session(session_id, session_data, ttl)
+
     async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """
         Retrieve session from Redis.

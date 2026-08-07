@@ -136,6 +136,7 @@ class MessageQueueService:
         
         # Background task handles (for lifecycle management)
         self._background_tasks: List[asyncio.Task] = []
+        self._running: bool = True
         
         logger.debug(
             f"[INIT] MessageQueueService initialized: "
