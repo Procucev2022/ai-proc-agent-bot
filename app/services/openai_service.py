@@ -74,6 +74,8 @@ class OpenAIService:
                 api_key=os.getenv("AZURE_OPENAI_API_KEY"),
                 base_url=os.getenv("AZURE_OPENAI_ENDPOINT"),
                 default_query={"api-version": "preview"},
+                timeout=15.0,
+                max_retries=1,
             )
             self._client_closed = False
             logger.debug("OpenAI client (re)initialized")
@@ -424,7 +426,8 @@ class OpenAIService:
                 input=input_messages,
                 instructions=system_prompt,
                 tools=[intent_tool],
-                tool_choice={"type": "function", "name": "classify_intent"}
+                tool_choice={"type": "function", "name": "classify_intent"},
+                max_output_tokens=100
             )
             api_call_time = time.time() - api_call_start
 

@@ -1299,29 +1299,17 @@ class ProfileSelectionService:
             logger.error(f"Error in AI intent detection: {e}")
             return None
     async def _detect_registration_intent(self, message: str) -> Optional[str]:
-        """Detect explicit registration intent from user message using user selection tool."""
+        """Detect explicit registration intent from user message using fast phrase matching, falling back to LLM for complex text."""
         try:
-            # Use the user selection tool to detect registration intent
-            if self.user_selection_tool:
-                # Create a dummy profile options list for the analysis
-                dummy_options = []
-                analysis_result = await self.user_selection_tool.analyze_user_selection(message, dummy_options)
-
-                # Extract registration intent from the analysis
-                register_info = analysis_result.get('register', {})
-                register_type = register_info.get('type')
-
-                if register_type in ['buyer', 'seller']:
-                    logger.info(f"User selection tool detected registration intent: {register_type}")
-                    return register_type
-
-            # Fallback to simple phrase matching - ONLY for explicit registration phrases
-            # Ensure message is a string
             if not isinstance(message, str):
                 message = str(message)
             message_lower = message.lower().strip()
 
-            # Only explicit registration phrases - removed generic 'buyer', 'buy', 'seller', 'sell'
+            # Fast-Path: Quick check for non-registration short messages (0ms response time)
+            if message_lower in ["hi", "hello", "hey", "hi!", "hello!", "start", "menu", "1", "2", "3", "buy", "sell"]:
+                return None
+
+            # Fast-Path: Local phrase matching FIRST
             buyer_registration_phrases = [
                 'register me as buyer', 'register as buyer', 'register me as a buyer',
                 'sign me up as buyer', 'sign up as buyer', 'create buyer account',
@@ -1336,16 +1324,27 @@ class ProfileSelectionService:
                 'new seller account', 'create new seller'
             ]
 
-            # Check for explicit registration phrases only
             for phrase in buyer_registration_phrases:
                 if phrase in message_lower:
-                    logger.info(f"Fallback: Matched buyer registration phrase '{phrase}' in message '{message}'")
+                    logger.info(f"[FAST_PATH] Matched buyer registration phrase '{phrase}' in message '{message}'")
                     return 'buyer'
 
             for phrase in seller_registration_phrases:
                 if phrase in message_lower:
-                    logger.info(f"Fallback: Matched seller registration phrase '{phrase}' in message '{message}'")
+                    logger.info(f"[FAST_PATH] Matched seller registration phrase '{phrase}' in message '{message}'")
                     return 'seller'
+
+            # Fallback to LLM user_selection_tool ONLY for long complex messages (>25 chars)
+            if self.user_selection_tool and len(message_lower) > 25:
+                dummy_options = []
+                analysis_result = await self.user_selection_tool.analyze_user_selection(message, dummy_options)
+
+                register_info = analysis_result.get('register', {})
+                register_type = register_info.get('type')
+
+                if register_type in ['buyer', 'seller']:
+                    logger.info(f"User selection tool detected registration intent: {register_type}")
+                    return register_type
 
             logger.info(f"No explicit registration intent detected for message: '{message}'")
             return None

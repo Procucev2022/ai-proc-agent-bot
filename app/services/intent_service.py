@@ -65,6 +65,31 @@ class IntentService:
             session = context.get('session') if context else None
 
             if isinstance(message, str):
+                msg_clean = message.strip().lower()
+
+                # Fast-path 1: Simple Greetings (0.001s response time)
+                if msg_clean in ["hi", "hello", "hey", "hi!", "hello!", "hey!", "start", "menu", "help"]:
+                    logger.info(f"[FAST_PATH] Simple greeting matched for '{message}'")
+                    return {
+                        "intent": "greeting",
+                        "confidence": 100,
+                        "reasoning": "Fast-path local matching: Simple greeting keyword",
+                        "success": True,
+                        "context_analysis": {"conversation_stage": "initial"}
+                    }
+
+                # Fast-path 2: Numeric & Menu Choices (0.001s response time)
+                if msg_clean in ["1", "2", "3", "buy", "sell"]:
+                    target_intent = "buy_something" if msg_clean == "buy" else ("sell_something" if msg_clean == "sell" else "ambiguous")
+                    logger.info(f"[FAST_PATH] Menu choice matched for '{message}' -> {target_intent}")
+                    return {
+                        "intent": target_intent,
+                        "confidence": 98,
+                        "reasoning": f"Fast-path local matching: Menu option '{msg_clean}'",
+                        "success": True,
+                        "context_analysis": {}
+                    }
+
                 # PRIORITY 2: Check for format modification (Track 2)
                 if session and self.detect_format_modification_intent(message, session):
                     return {

@@ -130,7 +130,7 @@ def init_database():
         pool_recycle=3600,  # Recycle connections after 1 hour (MySQL timeout is 8h)
         pool_size=10,
         max_overflow=20,
-        pool_timeout=60,
+        pool_timeout=15,
         echo_pool=False,  # Set to True for pool debugging
         isolation_level="READ COMMITTED"  # See latest committed data across workers
     )
