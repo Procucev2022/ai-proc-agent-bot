@@ -37,6 +37,20 @@ class PurchaseIntentHandler:
                                    should_use_summary_aware_extraction_func=None) -> Dict[str, Any]:
         """Handle purchase intent with data model driven orchestration."""
         try:
+            # Normalize message if passed as a dict (e.g. interactive button reply)
+            if isinstance(message, dict):
+                if "button_reply" in message:
+                    message = message["button_reply"].get("title", "") or message["button_reply"].get("id", "")
+                elif "text" in message:
+                    txt = message.get("text", "")
+                    message = txt.get("body", "") if isinstance(txt, dict) else str(txt)
+                elif "content" in message:
+                    message = str(message.get("content", ""))
+                else:
+                    message = str(message)
+            elif not isinstance(message, str):
+                message = str(message or "")
+
             # DEFENSIVE CLEANUP: Remove any lingering session_archive from timeout
             # This prevents old RFQ data from leaking into new workflows
             if session.workflow_state and 'session_archive' in session.workflow_state:
