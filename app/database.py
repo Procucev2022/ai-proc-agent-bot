@@ -136,75 +136,88 @@ def init_database():
     )
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
-    # Create all tables
-    Base.metadata.create_all(bind=engine)
+    # Create all tables (catch permission or DDL errors for read-only connections)
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database schema verified/created successfully")
+    except Exception as e:
+        logger.warning(
+            f"Database schema creation deferred or skipped (e.g. read-only user permissions or pre-existing schema): {e}"
+        )
 
     # Log initial pool status
     logger.info("Database engine initialized successfully")
     _log_pool_status("after init_database engine creation")
 
-    # Add sample data
-    db = SessionLocal()
+    # Add sample data if write permissions available and table is empty
     try:
-        # Check if data exists
-        if db.query(Vendor).count() == 0:
-            # Add sample categories from actual BFS API
-            categories = [
-                "Agriculture Equipments",
-                "Air Logistics",
-                "Automotive",
-                "Batteries & UPS",
-                "Bearings & Accessories",
-                "Building Works",
-                "Cables",
-                "CCTV & BMS",
-            ]
-            for cat in categories:
-                db.add(ProductCategory(category_name=cat))
+        db = SessionLocal()
+        try:
+            # Check if data exists
+            if db.query(Vendor).count() == 0:
+                # Add sample categories from actual BFS API
+                categories = [
+                    "Agriculture Equipments",
+                    "Air Logistics",
+                    "Automotive",
+                    "Batteries & UPS",
+                    "Bearings & Accessories",
+                    "Building Works",
+                    "Cables",
+                    "CCTV & BMS",
+                ]
+                for cat in categories:
+                    db.add(ProductCategory(category_name=cat))
 
-            # Add realistic vendors with API-based categories
-            vendors = [
-                Vendor(
-                    vendor_name="Chennai Motors & Equipment",
-                    geographic_coverage=["Chennai", "Bangalore", "Coimbatore"],
-                    vendor_services=[
-                        "Agriculture Equipments",
-                        "Automotive",
-                        "Bearings & Accessories",
-                    ],
-                ),
-                Vendor(
-                    vendor_name="Mumbai Industrial Solutions",
-                    geographic_coverage=["Mumbai", "Pune", "Nashik"],
-                    vendor_services=["Air Logistics", "Cables", "Building Works"],
-                ),
-                Vendor(
-                    vendor_name="Delhi Safety Systems",
-                    geographic_coverage=["Delhi", "Gurgaon", "Noida"],
-                    vendor_services=["CCTV & BMS", "Batteries & UPS"],
-                ),
-                Vendor(
-                    vendor_name="Hyderabad Tech Solutions",
-                    geographic_coverage=["Hyderabad", "Secunderabad", "Warangal"],
-                    vendor_services=["Agriculture Equipments", "CCTV & BMS", "Cables"],
-                ),
-                Vendor(
-                    vendor_name="Kolkata Engineering Works",
-                    geographic_coverage=["Kolkata", "Durgapur", "Asansol"],
-                    vendor_services=[
-                        "Automotive",
-                        "Building Works",
-                        "Bearings & Accessories",
-                    ],
-                ),
-            ]
-            for vendor in vendors:
-                db.add(vendor)
+                # Add realistic vendors with API-based categories
+                vendors = [
+                    Vendor(
+                        vendor_name="Chennai Motors & Equipment",
+                        geographic_coverage=["Chennai", "Bangalore", "Coimbatore"],
+                        vendor_services=[
+                            "Agriculture Equipments",
+                            "Automotive",
+                            "Bearings & Accessories",
+                        ],
+                    ),
+                    Vendor(
+                        vendor_name="Mumbai Industrial Solutions",
+                        geographic_coverage=["Mumbai", "Pune", "Nashik"],
+                        vendor_services=["Air Logistics", "Cables", "Building Works"],
+                    ),
+                    Vendor(
+                        vendor_name="Delhi Safety Systems",
+                        geographic_coverage=["Delhi", "Gurgaon", "Noida"],
+                        vendor_services=["CCTV & BMS", "Batteries & UPS"],
+                    ),
+                    Vendor(
+                        vendor_name="Hyderabad Tech Solutions",
+                        geographic_coverage=["Hyderabad", "Secunderabad", "Warangal"],
+                        vendor_services=["Agriculture Equipments", "CCTV & BMS", "Cables"],
+                    ),
+                    Vendor(
+                        vendor_name="Kolkata Engineering Works",
+                        geographic_coverage=["Kolkata", "Durgapur", "Asansol"],
+                        vendor_services=[
+                            "Automotive",
+                            "Building Works",
+                            "Bearings & Accessories",
+                        ],
+                    ),
+                ]
+                for vendor in vendors:
+                    db.add(vendor)
 
-            db.commit()
-    finally:
-        db.close()
-        _log_pool_status("after init_database completion")
+                db.commit()
+        except Exception as seed_err:
+            db.rollback()
+            logger.info(f"Sample data seeding skipped/deferred: {seed_err}")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.info(f"Could not connect to verify sample data: {e}")
+
+    _log_pool_status("after init_database completion")
 
 
 def get_db_session():

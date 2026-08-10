@@ -328,8 +328,10 @@ class MessageQueueService:
         logger.debug("[POLLER] Batch poller started")
         
         try:
-            while True:
+            while self._running:
                 await asyncio.sleep(1)  # Poll every second
+                if not self._running:
+                    break
                 
                 # Global poller lock - only one worker should poll at a time
                 global_poller_lock_key = "global:poller:lock"
@@ -357,11 +359,13 @@ class MessageQueueService:
                                 count=100
                             )
                             incoming_keys.extend(keys)
-                            if cursor == 0:
+                            if cursor == 0 or not self._running:
                                 break
                         
                         # Check each user for expired timer
                         for key in incoming_keys:
+                            if not self._running:
+                                break
                             user_phone = key.rsplit(":incoming", 1)[0]
                             
                             # Check if timer exists
@@ -378,8 +382,11 @@ class MessageQueueService:
                                     await self._create_batch(user_phone)
                     
                     finally:
-                        # Always release the global poller lock
-                        await poller_lock.release()
+                        # Always release the global poller lock safely
+                        try:
+                            await poller_lock.release()
+                        except Exception:
+                            pass
                 
                 except Exception as e:
                     if not self._running:
@@ -391,7 +398,10 @@ class MessageQueueService:
             logger.debug("[POLLER] Batch poller cancelled")
             raise
         except Exception as e:
-            logger.error(f"[POLLER] Batch poller failed: {e}", exc_info=True)
+            if not self._running:
+                logger.debug(f"[POLLER] Batch poller stopped during shutdown: {e}")
+            else:
+                logger.error(f"[POLLER] Batch poller failed: {e}", exc_info=True)
 
     async def run_monitoring_loop(self) -> None:
         """
@@ -405,8 +415,10 @@ class MessageQueueService:
         logger.debug("[MONITOR] Monitoring loop started")
         
         try:
-            while True:
+            while self._running:
                 await asyncio.sleep(self.monitoring_poll_interval)  # Configurable poll interval
+                if not self._running:
+                    break
                 
                 try:
                     # Find all active sessions
@@ -1225,6 +1237,7 @@ class MessageQueueService:
         Call this when shutting down the application.
         """
         logger.debug("[SHUTDOWN] Cancelling background tasks...")
+        self._running = False
         
         for task in self._background_tasks:
             if not task.done():
@@ -1233,8 +1246,12 @@ class MessageQueueService:
         # Wait for tasks to complete cancellation
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            self._background_tasks.clear()
         
-        # Close Redis connection
-        await self.redis.close()
+        # Close Redis connection safely
+        try:
+            await self.redis.close()
+        except Exception as e:
+            logger.debug(f"[SHUTDOWN] Redis connection close log: {e}")
         
         logger.debug("[SHUTDOWN] MessageQueueService shutdown complete")

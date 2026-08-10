@@ -125,7 +125,7 @@ class WebhookHealthMonitorService:
         
         # Check if email alerts are configured
         if not self.alert_recipients:
-            health_logger.warning(
+            health_logger.info(
                 "WEBHOOK_ALERT_RECIPIENTS not configured. "
                 "Health monitoring will continue but email alerts will be skipped and only logged."
             )
@@ -163,6 +163,15 @@ class WebhookHealthMonitorService:
             await self._session.close()
             self._session = None
     
+    async def _interruptible_sleep(self, seconds: float):
+        """Sleep in short increments to allow rapid shutdown response."""
+        end_time = asyncio.get_running_loop().time() + seconds
+        while self._running:
+            remaining = end_time - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(1.0, remaining))
+
     async def start_monitoring(self):
         """
         Start the health monitoring loop with leader election.
@@ -199,10 +208,13 @@ class WebhookHealthMonitorService:
                         health_logger.warning(f"{self.worker_id}: Lost leader lock, entering standby mode")
                         self.is_leader = False
                     
-                    await asyncio.sleep(self.check_interval)
+                    await self._interruptible_sleep(self.check_interval)
         
         finally:
-            await self._release_leader_lock()
+            try:
+                await self._release_leader_lock()
+            except Exception:
+                pass
             await self._close_session()
             health_logger.debug(f"{self.worker_id}: Health monitoring stopped")
     
@@ -299,7 +311,10 @@ class WebhookHealthMonitorService:
                 health_logger.debug(f"{self.worker_id}: Released leader lock")
         
         except Exception as e:
-            health_logger.error(f"{self.worker_id}: Error releasing leader lock: {e}")
+            if self._running:
+                health_logger.error(f"{self.worker_id}: Error releasing leader lock: {e}")
+            else:
+                health_logger.debug(f"{self.worker_id}: Leader lock release skipped during shutdown: {e}")
     
     async def _run_as_leader(self):
         """
@@ -318,11 +333,14 @@ class WebhookHealthMonitorService:
             # Perform health check cycle
             await self._health_check_cycle()
             
-            # Wait for next check interval
-            await asyncio.sleep(self.check_interval)
+            # Wait for next check interval interruptibly
+            await self._interruptible_sleep(self.check_interval)
         
         except Exception as e:
-            health_logger.error(f"{self.worker_id}: Error in leader monitoring: {e}", exc_info=True)
+            if not self._running:
+                health_logger.debug(f"{self.worker_id}: Leader monitoring stopped during shutdown: {e}")
+            else:
+                health_logger.error(f"{self.worker_id}: Error in leader monitoring: {e}", exc_info=True)
             self.is_leader = False
     
     async def _health_check_cycle(self):

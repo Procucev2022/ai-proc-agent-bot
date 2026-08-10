@@ -109,13 +109,17 @@ async def lifespan(app: FastAPI):
         from app.api.webhook import message_queue_service
 
         # Start batch poller (creates batches from incoming messages)
-        poller_task = asyncio.create_task(message_queue_service.run_batch_poller())
+        poller_task = asyncio.create_task(message_queue_service.run_batch_poller(), name="batch_poller")
         message_queue_tasks.append(poller_task)
+        if hasattr(message_queue_service, "_background_tasks"):
+            message_queue_service._background_tasks.append(poller_task)
         logger.info("[BOOT] ✓ Message queue batch poller started")
 
         # Start monitoring loop (acknowledgments and please-wait messages)
-        monitor_task = asyncio.create_task(message_queue_service.run_monitoring_loop())
+        monitor_task = asyncio.create_task(message_queue_service.run_monitoring_loop(), name="monitoring_loop")
         message_queue_tasks.append(monitor_task)
+        if hasattr(message_queue_service, "_background_tasks"):
+            message_queue_service._background_tasks.append(monitor_task)
         logger.info("[BOOT] ✓ Message queue monitoring loop started")
 
     except Exception as e:
