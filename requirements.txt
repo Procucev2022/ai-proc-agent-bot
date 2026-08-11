@@ -56,8 +56,11 @@ geopy
 pgeocode
 
 
-# Development tools
-black
-flake8
-isort
+# Static analysis (pinned: the PR quality gate compares finding counts against
+# quality-baseline.json, and those counts are only reproducible per tool version)
+black==26.5.1
+flake8==7.3.0
+isort==8.0.1
+mypy==2.3.0
+
 python-multipart

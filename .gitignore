@@ -4,6 +4,18 @@
 coverage.json
 htmlcov/
 .pytest_cache/
+.mypy_cache/
+# PR quality gate artifacts
+junit.xml
+pr-report.md
+pr-comment.md
+per-file-coverage.md
+aggregate-coverage.txt
+quality-table.md
+# Distribution artifacts from the gate's build step
+build/
+dist/
+*.egg-info/
 /.idea
 .sonar
 .scannerwork

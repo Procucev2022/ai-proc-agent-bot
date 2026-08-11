@@ -2,6 +2,16 @@
 requires = ["setuptools>=75.0.0"]
 build-backend = "setuptools.build_meta"
 
+[project]
+# Metadata only. Runtime dependencies are installed from requirements.txt by
+# both the Docker images and CI; this table exists so the declared setuptools
+# backend can actually produce a distribution, which is what the "Build" step
+# of the PR quality gate verifies.
+name = "ai-proc-agent-bot"
+version = "1.0.0"
+description = "AI procurement agent: WhatsApp-driven procurement automation service"
+requires-python = ">=3.11"
+
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
 python_files = ["test_*.py"]
@@ -16,6 +26,19 @@ markers = [
     "integration: tests requiring external services or infrastructure",
     "manual: scripts/tests intended for local, manual execution",
 ]
+
+[tool.mypy]
+python_version = "3.13"
+files = ["app"]
+# Third-party packages here (chromadb, celery, pgeocode, ...) ship no stubs and
+# the codebase is only partially annotated. The PR gate therefore blocks
+# *regressions* against quality-baseline.json instead of demanding a full
+# annotation pass. Tighten these settings as the baseline ratchets down.
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_configs = true
+show_error_codes = true
+exclude = ['^app/logs/']
 
 [tool.coverage.run]
 branch = true
