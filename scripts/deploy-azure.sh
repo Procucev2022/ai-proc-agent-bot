@@ -5,7 +5,7 @@
 
 set -e
 
-required_env=(DATABASE_URL AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_KEY WHATSAPP_API_KEY WHATSAPP_USERNAME WHATSAPP_PASSWORD GMT_BASE_URL GMT_USERNAME GMT_PASSWORD GMT_PHONE)
+required_env=(DATABASE_URL AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_KEY WHATSAPP_API_KEY WHATSAPP_USERNAME WHATSAPP_PASSWORD GMT_BASE_URL GMT_CLIENT_ID GMT_CLIENT_SECRET GMT_USERNAME GMT_PASSWORD GMT_PHONE)
 for name in "${required_env[@]}"; do
   if [[ -z "${!name:-}" ]]; then echo "Missing required environment variable: $name" >&2; exit 1; fi
 done
@@ -80,6 +80,8 @@ az deployment group create \
     whatsappUsername="$WHATSAPP_USERNAME" \
     whatsappPassword="$WHATSAPP_PASSWORD" \
     gmtBaseUrl="$GMT_BASE_URL" \
+    gmtClientId="$GMT_CLIENT_ID" \
+    gmtClientSecret="$GMT_CLIENT_SECRET" \
     gmtUsername="$GMT_USERNAME" \
     gmtPassword="$GMT_PASSWORD" \
     gmtPhone="$GMT_PHONE" \

@@ -17,7 +17,8 @@ $ErrorActionPreference = "Stop"
 $RequiredEnvironment = @(
     "DATABASE_URL", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY",
     "WHATSAPP_API_KEY", "WHATSAPP_USERNAME", "WHATSAPP_PASSWORD",
-    "GMT_BASE_URL", "GMT_USERNAME", "GMT_PASSWORD", "GMT_PHONE"
+    "GMT_BASE_URL", "GMT_CLIENT_ID", "GMT_CLIENT_SECRET", "GMT_USERNAME",
+    "GMT_PASSWORD", "GMT_PHONE"
 )
 foreach ($Name in $RequiredEnvironment) {
     if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($Name))) {
@@ -81,6 +82,8 @@ az deployment group create `
     whatsappUsername=$env:WHATSAPP_USERNAME `
     whatsappPassword=$env:WHATSAPP_PASSWORD `
     gmtBaseUrl=$env:GMT_BASE_URL `
+    gmtClientId=$env:GMT_CLIENT_ID `
+    gmtClientSecret=$env:GMT_CLIENT_SECRET `
     gmtUsername=$env:GMT_USERNAME `
     gmtPassword=$env:GMT_PASSWORD `
     gmtPhone=$env:GMT_PHONE `
