@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=75.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+timeout = 60
+timeout_method = "thread"
+addopts = ["-ra", "--strict-markers"]
+markers = [
+    "unit: deterministic tests that do not require external services",
+    "integration: tests requiring external services or infrastructure",
+    "manual: scripts/tests intended for local, manual execution",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+omit = [
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+precision = 2
+skip_empty = false
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
+
+[tool.coverage.json]
+pretty_print = true
+show_contexts = false
+
+[tool.setuptools.packages.find]
+include = ["app*"]

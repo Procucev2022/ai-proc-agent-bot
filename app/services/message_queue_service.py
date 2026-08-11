@@ -1102,7 +1102,7 @@ class MessageQueueService:
                     "started_at": session.started_at,
                     "duration": time.time() - session.started_at,
                     "ack_sent": session.ack_sent,
-                    "please_wait_sent": session.please_wait_sent,
+                    "please_wait_sent": session.please_wait_sent_count > 0,
                     "suppressed": session.suppressed
                 }
             except Exception as e:

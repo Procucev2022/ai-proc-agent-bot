@@ -23,8 +23,47 @@ env:
   ENVIRONMENT: dev
 
 jobs:
+  unit-tests:
+    name: Unit Tests & Coverage Gate
+    runs-on: ubuntu-latest
+    env:
+      AZURE_OPENAI_API_KEY: test-key
+      GMT_USERNAME: test-user
+      GMT_PHONE: '919876543229'
+      LOCAL_DATABASE_URL: sqlite:///:memory:
+      REMOTE_DATABASE_URL: sqlite:///:memory:
+      DATABASE_MODE: local
+      LICENSE_ENABLED: 'false'
+      WHATSAPP_MOCK_MODE: 'true'
+      PYTHONPATH: .
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install Dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run Unit Tests with Coverage
+        run: python -m coverage run --branch -m pytest
+
+      - name: Build Coverage Report
+        run: python -m coverage json -o coverage.json
+
+      - name: Enforce Per-File Coverage
+        run: python scripts/check_coverage.py --coverage-file coverage.json --threshold 90
+
+      - name: Enforce Aggregate Coverage
+        run: python -m coverage report --fail-under=90
+
   build-and-deploy:
-    name: Build & Deploy to Dev (ACA)
+    needs: unit-tests
     runs-on: ubuntu-latest
     environment: development
 
