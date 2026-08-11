@@ -20,11 +20,19 @@ class AsyncRedisConnectionManager:
         """Get or create async Redis client with connection pooling."""
         if cls._pool is None:
             settings = get_settings()
-            cls._pool = await aioredis.from_url(
-                settings.redis_url,
-                decode_responses=True,
-                max_connections=20
-            )
+            logger.info("[REDIS] Connecting to Redis pool")
+            try:
+                cls._pool = await aioredis.from_url(
+                    settings.redis_url,
+                    decode_responses=True,
+                    max_connections=20,
+                    socket_timeout=5.0,
+                    socket_connect_timeout=5.0
+                )
+                logger.info(f"[REDIS] ✓ Connected to Redis pool successfully")
+            except Exception as e:
+                logger.error(f"[REDIS] ⚠️ Failed to connect to Redis pool: {e}")
+                raise
         return cls._pool
 
 
@@ -203,6 +211,16 @@ class SessionRedisService(BaseRedisService):
         key = f"session:{session_id}"
         ttl = ttl or self.default_ttl
         return await self.set(key, session_data, ex=ttl)
+
+    async def save_session(self, session_data: Dict[str, Any], ttl: Optional[int] = None) -> bool:
+        """
+        Alias for store_session, accepting dictionary with session_id field or explicit session_id.
+        """
+        session_id = session_data.get('session_id') if isinstance(session_data, dict) else None
+        if not session_id:
+            logger.error("[REDIS] Cannot save session: missing session_id in session_data")
+            return False
+        return await self.store_session(session_id, session_data, ttl)
 
     async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """

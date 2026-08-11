@@ -1,0 +1,220 @@
+name: Deploy Prod - Azure Container Apps
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: prod-deployment
+  cancel-in-progress: false
+
+env:
+  RESOURCE_GROUP: rg-aiproc-prod
+  ACR_NAME: acraiprocprod
+  LOCATION: centralindia
+  ENVIRONMENT: prod
+
+jobs:
+  unit-tests:
+    name: Unit Tests & Coverage Gate
+    runs-on: ubuntu-latest
+    env:
+      AZURE_OPENAI_API_KEY: test-key
+      GMT_USERNAME: test-user
+      GMT_PHONE: '919876543229'
+      LOCAL_DATABASE_URL: sqlite:///:memory:
+      REMOTE_DATABASE_URL: sqlite:///:memory:
+      DATABASE_MODE: local
+      LICENSE_ENABLED: 'false'
+      WHATSAPP_MOCK_MODE: 'true'
+      PYTHONPATH: .
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install Dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run Unit Tests with Coverage
+        run: python -m coverage run --branch -m pytest
+
+      - name: Build Coverage Report
+        run: python -m coverage json -o coverage.json
+
+      - name: Enforce Per-File Coverage
+        run: python scripts/check_coverage.py --coverage-file coverage.json --threshold 90
+
+      - name: Enforce Aggregate Coverage
+        run: python -m coverage report --fail-under=90
+
+  build-and-deploy:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Verify Azure Secrets Present
+        env:
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          WHATSAPP_API_KEY: ${{ secrets.WHATSAPP_API_KEY }}
+          WHATSAPP_USERNAME: ${{ secrets.WHATSAPP_USERNAME }}
+          WHATSAPP_PASSWORD: ${{ secrets.WHATSAPP_PASSWORD }}
+          GMT_BASE_URL: ${{ secrets.GMT_BASE_URL }}
+          GMT_USERNAME: ${{ secrets.GMT_USERNAME }}
+          GMT_PASSWORD: ${{ secrets.GMT_PASSWORD }}
+          GMT_PHONE: ${{ secrets.GMT_PHONE }}
+          GMT_CLIENT_ID: ${{ secrets.GMT_CLIENT_ID }}
+          GMT_CLIENT_SECRET: ${{ secrets.GMT_CLIENT_SECRET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.PROD_DATABASE_URL }}
+        run: |
+          required=(AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_KEY WHATSAPP_API_KEY WHATSAPP_USERNAME WHATSAPP_PASSWORD GMT_BASE_URL GMT_USERNAME GMT_PASSWORD GMT_PHONE GMT_CLIENT_ID GMT_CLIENT_SECRET DATABASE_URL)
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then echo "::error::Missing required secret $name"; exit 1; fi
+          done
+          if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ] && [ -z "${{ secrets.AZURE_CLIENT_ID }}" ]; then
+            echo "::error title=Missing Azure Secrets::No Azure authentication secrets found!"
+            echo "--------------------------------------------------------------------------------"
+            echo "To fix this issue, please add one of the following secret configurations in GitHub:"
+            echo "Option 1 (OIDC - Recommended):"
+            echo "  - AZURE_CLIENT_ID"
+            echo "  - AZURE_TENANT_ID"
+            echo "  - AZURE_SUBSCRIPTION_ID"
+            echo "Option 2 (Service Principal JSON):"
+            echo "  - AZURE_CREDENTIALS (Output of: az ad sp create-for-rbac --sdk-auth)"
+            echo "--------------------------------------------------------------------------------"
+            exit 1
+          fi
+
+      - name: Azure Login (Supports OIDC or Service Principal JSON)
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Register Required Azure Resource Providers
+        run: |
+          echo "Checking and registering Azure Resource Providers..."
+          for provider in Microsoft.ContainerRegistry Microsoft.App Microsoft.OperationalInsights Microsoft.Storage; do
+            echo "Registering $provider..."
+            az provider register --namespace "$provider" --wait
+          done
+          echo "✓ All required Resource Providers are registered."
+
+      - name: Ensure Azure Resource Group & ACR Exist
+        run: |
+          echo "Checking Resource Group '${{ env.RESOURCE_GROUP }}'..."
+          if ! az group show --name ${{ env.RESOURCE_GROUP }} &>/dev/null; then
+            echo "Creating Resource Group '${{ env.RESOURCE_GROUP }}' in location '${{ env.LOCATION }}'..."
+            az group create --name ${{ env.RESOURCE_GROUP }} --location ${{ env.LOCATION }} --output table
+          else
+            RG_LOC=$(az group show --name ${{ env.RESOURCE_GROUP }} --query location -o tsv)
+            echo "✓ Resource Group '${{ env.RESOURCE_GROUP }}' already exists in location '$RG_LOC'."
+            echo "LOCATION=$RG_LOC" >> $GITHUB_ENV
+          fi
+
+          echo "Ensuring Azure Container Registry '${{ env.ACR_NAME }}' exists..."
+          if ! az acr show --name ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} &>/dev/null; then
+            echo "ACR '${{ env.ACR_NAME }}' not found. Creating basic ACR..."
+            az acr create --resource-group ${{ env.RESOURCE_GROUP }} --name ${{ env.ACR_NAME }} --sku Basic --admin-enabled true --output table
+          else
+            echo "✓ ACR '${{ env.ACR_NAME }}' already exists."
+          fi
+
+      - name: Log in to Azure Container Registry (ACR) & Get Credentials
+        id: acr
+        run: |
+          az acr login --name ${{ env.ACR_NAME }}
+          SERVER=$(az acr show --name ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query loginServer -o tsv)
+          USER=$(az acr credential show --name ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query username -o tsv)
+          PASS=$(az acr credential show --name ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query "passwords[0].value" -o tsv)
+          echo "::add-mask::$PASS"
+          echo "server=$SERVER" >> $GITHUB_OUTPUT
+          echo "ACR_USER=$USER" >> $GITHUB_ENV
+          echo "ACR_PASS=$PASS" >> $GITHUB_ENV
+
+      - name: Build & Push Container Images to ACR (Unified Build)
+        run: |
+          VERSION=${GITHUB_REF_NAME//\//-}
+          TAG_APP="aiproc-app:prod-${VERSION}"
+          TAG_CELERY="aiproc-celery:prod-${VERSION}"
+          
+          echo "Building application image '$TAG_APP'..."
+          az acr build \
+            --registry ${{ env.ACR_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image "$TAG_APP" \
+            --image "aiproc-app:latest" \
+            --file Dockerfile.app .
+          echo "Building Celery image '$TAG_CELERY'..."
+          az acr build \
+            --registry ${{ env.ACR_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image "$TAG_CELERY" \
+            --image "aiproc-celery:latest" \
+            --file Dockerfile.celery .
+          
+          echo "TAG_APP=$TAG_APP" >> $GITHUB_ENV
+          echo "TAG_CELERY=$TAG_CELERY" >> $GITHUB_ENV
+
+      - name: Deploy Azure Infrastructure & Container Apps (Bicep)
+        uses: azure/arm-deploy@v2
+        with:
+          resourceGroupName: ${{ env.RESOURCE_GROUP }}
+          template: ./infra/main.bicep
+          failOnStdErr: false
+          parameters: >
+            environment=${{ env.ENVIRONMENT }}
+            location=${{ env.LOCATION }}
+            baseName=aiproc
+            acrServer=${{ steps.acr.outputs.server }}
+            acrUsername="${{ env.ACR_USER }}"
+            acrPassword="${{ env.ACR_PASS }}"
+            appImageTag=${{ env.TAG_APP }}
+            celeryImageTag=${{ env.TAG_CELERY }}
+            databaseUrl="${{ secrets.DATABASE_URL || secrets.PROD_DATABASE_URL }}"
+            azureOpenAiEndpoint="${{ secrets.AZURE_OPENAI_ENDPOINT }}"
+            azureOpenAiKey="${{ secrets.AZURE_OPENAI_API_KEY }}"
+            whatsappApiKey="${{ secrets.WHATSAPP_API_KEY }}"
+            whatsappFromNumber="${{ secrets.WHATSAPP_FROM_NUMBER || '917996170801' }}"
+            whatsappMockMode="${{ secrets.WHATSAPP_MOCK_MODE || 'false' }}"
+            whatsappUsername="${{ secrets.WHATSAPP_USERNAME }}"
+            whatsappPassword="${{ secrets.WHATSAPP_PASSWORD }}"
+            gmtBaseUrl="${{ secrets.GMT_BASE_URL }}"
+            gmtUsername="${{ secrets.GMT_USERNAME }}"
+            gmtPassword="${{ secrets.GMT_PASSWORD }}"
+            gmtPhone="${{ secrets.GMT_PHONE }}"
+            gmtClientId="${{ secrets.GMT_CLIENT_ID }}"
+            gmtClientSecret="${{ secrets.GMT_CLIENT_SECRET }}"
+
+      - name: Get Production URL & Verify Health Endpoint
+        run: |
+          APP_URL=$(az containerapp show --name aiproc-app-prod --resource-group ${{ env.RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv)
+          echo "Production Application URL: https://${APP_URL}"
+          
+          echo "Warming up application (waiting 20s for container initialization)..."
+          sleep 20
+          
+          echo "Running Smoke Test on Health Endpoint..."
+          curl -f --max-time 30 --retry 10 --retry-delay 10 --retry-connrefused "https://${APP_URL}/health" || exit 1
+          echo "✓ Production Deployment Successfully Verified!"

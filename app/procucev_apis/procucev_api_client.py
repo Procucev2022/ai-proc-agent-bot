@@ -80,13 +80,13 @@ class ProcucevAPIClient:
         self.phone = self.settings.gmt_phone
         self.client_id = self.settings.gmt_client_id
         self.client_secret = self.settings.gmt_client_secret
-        self.max_retries = self.settings.gmt_max_retries or 3
-        self.retry_delay = self.settings.gmt_retry_delay or 1.0
+        self.max_retries = self.settings.gmt_max_retries
+        self.retry_delay = self.settings.gmt_retry_delay or 0.5
         
-        # Enhanced timeout configuration
-        self.connect_timeout = 10  # Connection timeout
-        self.read_timeout = 30     # Read timeout
-        self.total_timeout = 60    # Total request timeout
+        # Enhanced timeout configuration (tightened to prevent 1min+ hangs)
+        self.connect_timeout = 5   # Connection timeout
+        self.read_timeout = 10     # Read timeout
+        self.total_timeout = 15    # Total request timeout
 
         self.auth_token: Optional[str] = None
         self.token_expiry: Optional[datetime] = None
@@ -443,4 +443,3 @@ class ProcucevAPIClient:
             await handle_api_error("Procucev API", endpoint, error_message)
         except Exception as e:
             logger.error(f"Failed to handle timeout error notification: {e}")
-

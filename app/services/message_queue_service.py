@@ -136,6 +136,7 @@ class MessageQueueService:
         
         # Background task handles (for lifecycle management)
         self._background_tasks: List[asyncio.Task] = []
+        self._running: bool = True
         
         logger.debug(
             f"[INIT] MessageQueueService initialized: "
@@ -152,6 +153,9 @@ class MessageQueueService:
 
     def _key_incoming(self, user_phone: str) -> str:
         return f"{user_phone}:incoming"
+
+    def _key_message(self, user_phone: str, message_id: str) -> str:
+        return f"{user_phone}:message:{message_id}"
 
     def _key_outgoing(self, user_phone: str) -> str:
         return f"{user_phone}:outgoing"
@@ -243,22 +247,22 @@ class MessageQueueService:
             
             # Add to incoming queue
             incoming_key = self._key_incoming(user_phone)
-            await self.redis.zadd(
-                incoming_key,
-                {json.dumps(message.to_dict()): timestamp}
-            )
+            # Deduplicate retries by message_id while preserving identical content.
+            if not await self.redis.set(self._key_message(user_phone, message_id), "1", nx=True, ex=86400):
+                logger.debug(f"[ENQUEUE] Duplicate message_id='{message_id}', ignored")
+                return
+            await self.redis.zadd(incoming_key, {json.dumps(message.to_dict()): timestamp})
             
             logger.debug(
                 f"[ENQUEUE] message_id='{message_id}', user={user_phone}, "
                 f"type={message_type}"
             )
             
-            # Check if should send acknowledgment
-            should_ack = await self._should_send_acknowledgment(user_phone)
-            if should_ack:
-                asyncio.create_task(self._send_acknowledgment(user_phone))
+            # Check if user is currently processing
+            processing_key = self._key_processing(user_phone)
+            is_processing = await self.redis.exists(processing_key)
             
-            # Start/refresh batch timer
+            # Always allow the batching window to collect messages, including for idle users.
             await self._refresh_batch_timer(user_phone)
             
             # NOTE: Background tasks are started in main.py lifespan
@@ -323,8 +327,10 @@ class MessageQueueService:
         logger.debug("[POLLER] Batch poller started")
         
         try:
-            while True:
+            while self._running:
                 await asyncio.sleep(1)  # Poll every second
+                if not self._running:
+                    break
                 
                 # Global poller lock - only one worker should poll at a time
                 global_poller_lock_key = "global:poller:lock"
@@ -352,11 +358,13 @@ class MessageQueueService:
                                 count=100
                             )
                             incoming_keys.extend(keys)
-                            if cursor == 0:
+                            if cursor == 0 or not self._running:
                                 break
                         
                         # Check each user for expired timer
                         for key in incoming_keys:
+                            if not self._running:
+                                break
                             user_phone = key.rsplit(":incoming", 1)[0]
                             
                             # Check if timer exists
@@ -373,17 +381,26 @@ class MessageQueueService:
                                     await self._create_batch(user_phone)
                     
                     finally:
-                        # Always release the global poller lock
-                        await poller_lock.release()
+                        # Always release the global poller lock safely
+                        try:
+                            await poller_lock.release()
+                        except Exception:
+                            pass
                 
                 except Exception as e:
+                    if not self._running:
+                        logger.debug(f"[POLLER] Poller cycle interrupted during shutdown: {e}")
+                        break
                     logger.error(f"[POLLER] Error in poll cycle: {e}", exc_info=True)
         
         except asyncio.CancelledError:
             logger.debug("[POLLER] Batch poller cancelled")
             raise
         except Exception as e:
-            logger.error(f"[POLLER] Batch poller failed: {e}", exc_info=True)
+            if not self._running:
+                logger.debug(f"[POLLER] Batch poller stopped during shutdown: {e}")
+            else:
+                logger.error(f"[POLLER] Batch poller failed: {e}", exc_info=True)
 
     async def run_monitoring_loop(self) -> None:
         """
@@ -397,8 +414,10 @@ class MessageQueueService:
         logger.debug("[MONITOR] Monitoring loop started")
         
         try:
-            while True:
+            while self._running:
                 await asyncio.sleep(self.monitoring_poll_interval)  # Configurable poll interval
+                if not self._running:
+                    break
                 
                 try:
                     # Find all active sessions
@@ -579,6 +598,9 @@ class MessageQueueService:
                             logger.error(f"[MONITOR] Error checking session {key}: {e}")
                 
                 except Exception as e:
+                    if not self._running:
+                        logger.debug(f"[MONITOR] Monitor cycle interrupted during shutdown: {e}")
+                        break
                     logger.error(f"[MONITOR] Error in monitor cycle: {e}", exc_info=True)
         
         except asyncio.CancelledError:
@@ -648,9 +670,9 @@ class MessageQueueService:
                 # Remove messages from incoming queue (atomic)
                 await self.redis.zrem(incoming_key, *message_data_list)
                 
-                # Create batch
+                # Preserve every message; only message_id is used for deduplication.
                 batch_id = f"{user_phone}+{int(time.time() * 1000)}"
-                concatenated_content = "\n".join([msg.content for msg in messages])
+                concatenated_content = "\n".join(msg.content.strip() for msg in messages)
                 
                 batch = Batch(
                     batch_id=batch_id,
@@ -831,7 +853,7 @@ class MessageQueueService:
                     raise ValueError(f"{name} requires recipient_id")
                 
                 # Normalize phone (remove '+' for Redis key)
-                user_phone = recipient_id.lstrip('+') if isinstance(recipient_id, str) else recipient_id
+                user_phone = str(recipient_id).lstrip('+').strip()
                 
                 # Get session context
                 session_key = self._key_session(user_phone)
@@ -1006,8 +1028,15 @@ class MessageQueueService:
                     f"conversation session complete, cleared ack flag"
                 )
             
-            # Trigger next batch if available
-            await self._try_start_processing(user_phone)
+            # If new unbatched messages arrived during processing, merge them into a single batch now
+            if incoming_count > 0 and outgoing_count == 0:
+                logger.debug(
+                    f"[CLEANUP] Merging {incoming_count} pending incoming messages for {user_phone} into next batch"
+                )
+                await self._create_batch(user_phone)
+            else:
+                # Trigger next batch if available
+                await self._try_start_processing(user_phone)
         
         except Exception as e:
             logger.error(
@@ -1022,146 +1051,17 @@ class MessageQueueService:
     async def _should_send_acknowledgment(self, user_phone: str) -> bool:
         """
         Determine if acknowledgment should be sent.
-        
-        Returns True if:
-        - System is busy (processing, or queues not empty)
-        - AND acknowledgment not already sent this conversation session
-        
-        Note: Uses separate ack_sent flag (300s TTL) independent of batch session
-        to prevent duplicate acks across multiple batches in same conversation.
+        Disabled to prevent repetitive 'Got it. Please wait...' messages on WhatsApp.
         """
-        # Check if ack already sent in this conversation session
-        ack_sent_key = self._key_ack_sent(user_phone)
-        ack_already_sent = await self.redis.get(ack_sent_key)
-        
-        if ack_already_sent:
-            logger.debug(f"[ACK] Already sent in this conversation for {user_phone}")
-            return False
-        
-        # Check if system is busy
-        processing_key = self._key_processing(user_phone)
-        incoming_key = self._key_incoming(user_phone)
-        outgoing_key = self._key_outgoing(user_phone)
-        
-        is_processing = await self.redis.exists(processing_key)
-        incoming_count = await self.redis.zcard(incoming_key)
-        outgoing_count = await self.redis.llen(outgoing_key)
-        
-        # Busy if processing, or batches waiting, or multiple messages in incoming
-        is_busy = is_processing or outgoing_count > 0 or incoming_count > 1
-        
-        logger.debug(
-            f"[ACK] {user_phone}: processing={is_processing}, "
-            f"incoming={incoming_count}, outgoing={outgoing_count}, "
-            f"busy={is_busy}, ack_sent={bool(ack_already_sent)}"
-        )
-        
-        return is_busy
+        return False
 
     async def _send_acknowledgment(self, user_phone: str) -> None:
-        """
-        Send acknowledgment message with atomic flag claiming.
-        Uses lock to prevent duplicate sends across workers.
-        Sets separate ack_sent flag with 300s TTL (5 minutes) that persists
-        across multiple batches in the same conversation session.
-        """
-        lock_key = self._key_lock_ack(user_phone)
-        lock = self.redis.lock(lock_key, timeout=10, blocking_timeout=1)
-        
-        try:
-            async with lock:
-                # Double-check inside lock using separate ack_sent flag
-                ack_sent_key = self._key_ack_sent(user_phone)
-                ack_already_sent = await self.redis.get(ack_sent_key)
-                
-                if ack_already_sent:
-                    logger.debug(f"[ACK] Already sent (double-check) for {user_phone}")
-                    return
-                
-                # Set ack_sent flag with 300s TTL (5 minutes)
-                # This persists across batches in the same conversation
-                await self.redis.setex(ack_sent_key, 300, "1")
-                
-                # Also update session if it exists (for backward compatibility)
-                session_key = self._key_session(user_phone)
-                session_json = await self.redis.get(session_key)
-                
-                if session_json:
-                    session = ProcessingSession.from_json(session_json)
-                    session.ack_sent = True
-                    await self.redis.setex(session_key, 60, session.to_json())
-                else:
-                    # No session yet - create minimal session for ack tracking
-                    # This can happen if ack is sent before first batch starts processing
-                    session = ProcessingSession(
-                        batch_id="pending",
-                        started_at=time.time(),
-                        ack_sent=True
-                    )
-                    await self.redis.setex(session_key, 60, session.to_json())
-                
-                # Send acknowledgment
-                recipient_id = f"+{user_phone}" if not user_phone.startswith('+') else user_phone
-                ack_message = "Got it. Please wait while we process your request, we will be back shortly."
-                
-                await self.whatsapp_service.send_message(
-                    recipient_id=recipient_id,
-                    message=ack_message,
-                    clear_pending_reply=False,
-                    skip_concatenation=True  
-                )
-                
-                # Persist acknowledgment to the conversation session history in Redis
-                try:
-                    from app.redis_db import get_session_redis_service
-                    from app.services.helpers.session_helpers import SessionHelpers
-                    session_id = SessionHelpers.generate_session_id(user_phone, "daily")
-                    redis_session = get_session_redis_service()
-                    await redis_session.append_message_to_history(session_id, "assistant", ack_message, "text")
-                except Exception as track_error:
-                    logger.debug(f"[ACK] Could not persist ack to conversation history: {track_error}")
-                
-                logger.debug(f"[ACK] Sent acknowledgment to {user_phone} (pending_reply flag preserved)")
-        
-        except Exception as e:
-            logger.warning(
-                f"[ACK] Failed to send acknowledgment to {user_phone}: {e}",
-                exc_info=True
-            )
+        """Disabled auto-ack."""
+        pass
 
     async def _send_please_wait(self, user_phone: str) -> None:
-        """
-        Send please-wait message directly.
-        Called by monitoring loop when processing exceeds threshold.
-        """
-        try:
-            please_wait_message = "We are working on your request. Please wait while we process it."
-            recipient_id = f"+{user_phone}" if not user_phone.startswith('+') else user_phone
-            
-            await self.whatsapp_service.send_message(
-                recipient_id=recipient_id,
-                message=please_wait_message,
-                clear_pending_reply=False,  # Don't clear flag for acknowledgment
-                skip_concatenation=True  # Don't prepend irrelevant responses to system messages
-            )
-            
-            # Persist please-wait message to the conversation session history in Redis
-            try:
-                from app.redis_db import get_session_redis_service
-                from app.services.helpers.session_helpers import SessionHelpers
-                session_id = SessionHelpers.generate_session_id(user_phone, "daily")
-                redis_session = get_session_redis_service()
-                await redis_session.append_message_to_history(session_id, "assistant", please_wait_message, "text")
-            except Exception as track_error:
-                logger.debug(f"[PLEASE_WAIT] Could not persist please-wait to conversation history: {track_error}")
-            
-            logger.debug(f"[PLEASE_WAIT] Sent to {user_phone}")
-        
-        except Exception as e:
-            logger.warning(
-                f"[PLEASE_WAIT] Failed to send to {user_phone}: {e}",
-                exc_info=True
-            )
+        """Disabled intermediate please-wait messages to avoid chat spam."""
+        pass
 
     # ========================================================================
     # Utility Methods
@@ -1193,7 +1093,7 @@ class MessageQueueService:
                     "started_at": session.started_at,
                     "duration": time.time() - session.started_at,
                     "ack_sent": session.ack_sent,
-                    "please_wait_sent": session.please_wait_sent,
+                    "please_wait_sent": session.please_wait_sent_count > 0,
                     "suppressed": session.suppressed
                 }
             except Exception as e:
@@ -1328,6 +1228,7 @@ class MessageQueueService:
         Call this when shutting down the application.
         """
         logger.debug("[SHUTDOWN] Cancelling background tasks...")
+        self._running = False
         
         for task in self._background_tasks:
             if not task.done():
@@ -1336,8 +1237,12 @@ class MessageQueueService:
         # Wait for tasks to complete cancellation
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            self._background_tasks.clear()
         
-        # Close Redis connection
-        await self.redis.close()
+        # Close Redis connection safely
+        try:
+            await self.redis.close()
+        except Exception as e:
+            logger.debug(f"[SHUTDOWN] Redis connection close log: {e}")
         
         logger.debug("[SHUTDOWN] MessageQueueService shutdown complete")

@@ -188,7 +188,8 @@ services:
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000
       - CHROMA_USE_SERVER=true
-      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-12}  # 12 workers with swap
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-1}
+      - CELERY_SINGLE_WORKER=true
       - HF_HUB_OFFLINE=1
       - TRANSFORMERS_OFFLINE=1
       - TQDM_DISABLE=1
@@ -202,11 +203,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '${CELERY_CPU_LIMIT:-3}'
-          memory: '${CELERY_MEMORY_LIMIT:-24G}'  # 24GB for 12 workers
+          cpus: '${CELERY_CPU_LIMIT:-1}'
+          memory: '${CELERY_MEMORY_LIMIT:-2G}'
         reservations:
-          cpus: '${CELERY_CPU_RESERVE:-2}'
-          memory: '${CELERY_MEMORY_RESERVE:-18G}'
+          cpus: '${CELERY_CPU_RESERVE:-1}'
+          memory: '${CELERY_MEMORY_RESERVE:-2G}'
     healthcheck:
       test: ["CMD", "celery", "-A", "app.celery_app", "inspect", "ping"]
       interval: 30s

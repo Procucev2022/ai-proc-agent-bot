@@ -1,0 +1,3 @@
+# Cursor repository rules
+
+Read and follow `AGENTS.md` before changing code. Every application change requires deterministic unit tests and the full coverage gate. Measure every `app/**/*.py` file without omissions and enforce >=90% statements, branches, and functions per file and in aggregate. Keep the global pytest timeout at 60 seconds. Mock external services (database, Redis, Celery, OpenAI, WhatsApp, Chroma, and network HTTP); mark live tests `integration` or `manual`. Never lower thresholds or add exclusions to hide untested application behavior. Include the complete coverage output in the completion report.

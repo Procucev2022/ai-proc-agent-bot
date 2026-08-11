@@ -629,8 +629,26 @@ class InactivityTimeoutService:
             if session_data:
                 try:
                     from app.database import DatabaseManager
-                    from app.models import ConversationOutcome
-                    
+                    from app.models import ConversationOutcome, ConversationSession
+
+                    if isinstance(session_data, ConversationSession):
+                        session_dict = {
+                            'session_id': session_data.session_id,
+                            'external_user_id': session_data.external_user_id,
+                            'workflow_type': session_data.workflow_type,
+                            'outcome': session_data.outcome,
+                            'workflow_state': session_data.workflow_state or {},
+                            'conversation_history': session_data.conversation_history or {},
+                            'extracted_entities': session_data.extracted_entities or [],
+                            'retention_date': session_data.retention_date,
+                            'created_at': session_data.created_at,
+                            'last_activity_at': session_data.last_activity_at,
+                            'completed_at': session_data.completed_at
+                        }
+                        session_data = session_dict
+                    elif hasattr(session_data, "to_dict"):
+                        session_data = session_data.to_dict()
+
                     # Mark as abandoned (system-side error)
                     session_data['outcome'] = ConversationOutcome.abandoned.value
                     session_data['completed_at'] = utc_now().isoformat()
@@ -666,19 +684,7 @@ class InactivityTimeoutService:
                     # Persist to database
                     db_manager = DatabaseManager()
                     try:
-                        # Convert dict back to ConversationSession object
-                        from app.models import ConversationSession
-                        session_obj = ConversationSession(**{
-                            k: v for k, v in session_data.items()
-                            if k in [
-                                'session_id', 'external_user_id', 'workflow_type',
-                                'outcome', 'workflow_state', 'conversation_history',
-                                'extracted_entities', 'retention_date', 'created_at',
-                                'last_activity_at', 'completed_at'
-                            ]
-                        })
-                        
-                        db_manager.save_conversation_session(session_obj)
+                        db_manager.save_conversation_session(session_data)
                         logger.debug(f"[WORKER_TIMEOUT] Persisted session to DB (outcome: abandoned)")
                         
                     except Exception as db_error:

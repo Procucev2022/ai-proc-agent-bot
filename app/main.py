@@ -77,44 +77,54 @@ class IPRestrictionMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    logger.info("Starting AI Procurement Agent application")
+    logger.info("=" * 60)
+    logger.info(f"[BOOT] Starting App: {settings.app_name} ({settings.environment})")
+    logger.info(f"[BOOT] Database Mode: {settings.database_mode}")
+    logger.info("[BOOT] Redis configured")
+    logger.info(f"[BOOT] Chroma Host: {settings.chroma_host}:{settings.chroma_port}")
+    logger.info(f"[BOOT] Azure OpenAI Endpoint: {settings.azure_openai_base_url}")
+    logger.info("=" * 60)
 
     # Initialize database on startup
     try:
+        logger.info("[BOOT] Initializing database...")
         init_database()
-        logger.info("Database initialized successfully")
+        logger.info("[BOOT] ✓ Database initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize database: {e}")
+        logger.critical(f"[BOOT] Database initialization failed: {e}", exc_info=True)
         raise
 
     # Initialize global ProcucevAPIClient
     try:
+        logger.info("[BOOT] Initializing ProcucevAPIClient...")
         from app.procucev_apis.procucev_api_client import init_procucev_api_client
         await init_procucev_api_client()
-        logger.info("ProcucevAPIClient initialized successfully")
+        logger.info("[BOOT] ✓ ProcucevAPIClient initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize ProcucevAPIClient: {e}")
-        # Continue without failing startup - API calls will fail gracefully
-        raise
+        logger.warning(f"[BOOT] ⚠️ Failed to initialize ProcucevAPIClient: {e}")
 
     # Start message queue background tasks
     message_queue_tasks = []
     try:
+        logger.info("[BOOT] Starting message queue background tasks...")
         from app.api.webhook import message_queue_service
 
         # Start batch poller (creates batches from incoming messages)
-        poller_task = asyncio.create_task(message_queue_service.run_batch_poller())
+        poller_task = asyncio.create_task(message_queue_service.run_batch_poller(), name="batch_poller")
         message_queue_tasks.append(poller_task)
-        logger.info("Message queue batch poller started")
+        if hasattr(message_queue_service, "_background_tasks"):
+            message_queue_service._background_tasks.append(poller_task)
+        logger.info("[BOOT] ✓ Message queue batch poller started")
 
         # Start monitoring loop (acknowledgments and please-wait messages)
-        monitor_task = asyncio.create_task(message_queue_service.run_monitoring_loop())
+        monitor_task = asyncio.create_task(message_queue_service.run_monitoring_loop(), name="monitoring_loop")
         message_queue_tasks.append(monitor_task)
-        logger.info("Message queue monitoring loop started")
+        if hasattr(message_queue_service, "_background_tasks"):
+            message_queue_service._background_tasks.append(monitor_task)
+        logger.info("[BOOT] ✓ Message queue monitoring loop started")
 
     except Exception as e:
-        logger.error(f"Failed to start message queue background tasks: {e}")
-        raise
+        logger.warning(f"[BOOT] ⚠️ Failed to start message queue background tasks: {e}")
 
     # Start webhook health monitoring
     webhook_monitor_task = None
@@ -259,8 +269,28 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+        path = request.url.path
+        method = request.method
+        client_ip = request.client.host if request.client else "unknown"
+
+        logger.info(f"[HTTP-IN] {method} {path} from {client_ip}")
+        try:
+            response = await call_next(request)
+            duration_ms = round((time.time() - start_time) * 1000, 2)
+            logger.info(f"[HTTP-OUT] {method} {path} -> {response.status_code} ({duration_ms}ms)")
+            return response
+        except Exception as e:
+            duration_ms = round((time.time() - start_time) * 1000, 2)
+            logger.error(f"[HTTP-ERR] {method} {path} failed: {e} ({duration_ms}ms)", exc_info=True)
+            raise
+
+
 # Add context middleware (must be first)
 app.add_middleware(ContextMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
 
 # License validation is handled in SessionManagementService (not middleware)
 # This ensures license checks happen at session creation time, not on every request

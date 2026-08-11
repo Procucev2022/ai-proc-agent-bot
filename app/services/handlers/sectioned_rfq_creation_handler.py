@@ -104,6 +104,20 @@ class SectionedRFQCreationHandler:
             Dict with response data
         """
 
+        # Normalize message if passed as a dict (e.g. interactive button reply)
+        if isinstance(message, dict):
+            if "button_reply" in message:
+                message = message["button_reply"].get("title", "") or message["button_reply"].get("id", "")
+            elif "text" in message:
+                txt = message.get("text", "")
+                message = txt.get("body", "") if isinstance(txt, dict) else str(txt)
+            elif "content" in message:
+                message = str(message.get("content", ""))
+            else:
+                message = str(message)
+        elif not isinstance(message, str):
+            message = str(message or "")
+
         # Check if pending restart confirmation
         if WorkflowManager.is_sectioned_rfq_pending_restart(session):
             return await self._handle_restart_confirmation_response(user, session, message)

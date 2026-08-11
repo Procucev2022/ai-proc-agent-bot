@@ -1,0 +1,23 @@
+rules:
+  - capability: builtin
+    effect: allow
+  - capability: shell
+    effect: allow
+    match: ["git *", "python -m pytest*", "python -m coverage*", "python -m compileall*"]
+  - capability: fs_read
+    effect: allow
+    match: ["app/**", "tests/**", "Setup/**", "*.py", "*.sh", "*.yml", "*.yaml", "*.bicep", "*.json", "*.md"]
+  - capability: fs_write
+    effect: allow
+    match: ["app/**", "tests/**", "Setup/**", "*.py", "*.sh", "*.yml", "*.yaml", "*.bicep", "*.json", "*.md"]
+  - capability: web_fetch
+    effect: allow
+    match: ["https://api.openai.com/*", "https://*.azurewebsites.net/*"]
+  - capability: subagent
+    effect: allow
+  - capability: skill
+    effect: allow
+  - capability: diagnostics
+    effect: allow
+  - capability: context
+    effect: allow

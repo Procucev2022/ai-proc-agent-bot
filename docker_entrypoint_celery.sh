@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # ====================================================================
-# Static Celery Worker Manager - 3-Pool Architecture (ALWAYS ON)
+# Celery worker entrypoint
 # D8as v5 (8 vCPUs, 32GB RAM + 32GB Swap)
 # App: 16GB / 4 cores  |  Celery: 24GB / 3 cores (+ swap)
 #
@@ -32,12 +32,17 @@ log ""
 log "NOTE: All pools run 24/7. Task scheduling handled by Celery Beat."
 log "      When bulk queues are empty, bulk workers help with operations tasks."
 
+if [ "${CELERY_SINGLE_WORKER:-false}" = "true" ]; then
+    exec celery -A app.celery_app worker --loglevel=info \
+        --concurrency="${CELERY_CONCURRENCY:-1}" --queues="${CELERY_QUEUES:-default}"
+fi
+
 # ── Pool 1: Critical (BFS always available, NO fallback to ops queues) ──
 log "Starting Critical Pool (2 workers)..."
 CRITICAL_LOG="$LOG_DIR/critical_pool_${CURRENT_DATE}.log"
 celery -A app.celery_app worker \
     --loglevel=info \
-    --concurrency=2 \
+    --concurrency=1 \
     --queues=bfs_notification,default \
     --prefetch-multiplier=1 \
     --hostname=critical_pool.%h \
@@ -50,7 +55,7 @@ log "Starting Operations Pool (4 workers)..."
 OPERATIONS_LOG="$LOG_DIR/operations_pool_${CURRENT_DATE}.log"
 celery -A app.celery_app worker \
     --loglevel=info \
-    --concurrency=4 \
+    --concurrency=1 \
     --queues=categorization,seller_matching,vector_store,report_automation,taxonomy_build,maintenance \
     --prefetch-multiplier=1 \
     --hostname=operations_pool.%h \
@@ -63,7 +68,7 @@ log "Starting Bulk Pool (6 workers)..."
 BULK_LOG="$LOG_DIR/bulk_pool_${CURRENT_DATE}.log"
 celery -A app.celery_app worker \
     --loglevel=info \
-    --concurrency=6 \
+    --concurrency=1 \
     --queues=vector_store,taxonomy_build,report_automation,maintenance,categorization,seller_matching \
     --prefetch-multiplier=1 \
     --hostname=bulk_pool.%h \
@@ -105,7 +110,7 @@ while true; do
         CRITICAL_LOG="$LOG_DIR/critical_pool_${CURRENT_DATE}.log"
         celery -A app.celery_app worker \
             --loglevel=info \
-            --concurrency=2 \
+            --concurrency=1 \
             --queues=bfs_notification,default \
             --prefetch-multiplier=1 \
             --hostname=critical_pool.%h \
@@ -122,7 +127,7 @@ while true; do
         OPERATIONS_LOG="$LOG_DIR/operations_pool_${CURRENT_DATE}.log"
         celery -A app.celery_app worker \
             --loglevel=info \
-            --concurrency=4 \
+            --concurrency=1 \
             --queues=categorization,seller_matching,vector_store,report_automation,taxonomy_build,maintenance \
             --prefetch-multiplier=1 \
             --hostname=operations_pool.%h \
@@ -139,7 +144,7 @@ while true; do
         BULK_LOG="$LOG_DIR/bulk_pool_${CURRENT_DATE}.log"
         celery -A app.celery_app worker \
             --loglevel=info \
-            --concurrency=6 \
+            --concurrency=1 \
             --queues=vector_store,taxonomy_build,report_automation,maintenance,categorization,seller_matching \
             --prefetch-multiplier=1 \
             --hostname=bulk_pool.%h \

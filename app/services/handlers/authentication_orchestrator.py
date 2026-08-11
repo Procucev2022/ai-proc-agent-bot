@@ -349,6 +349,13 @@ class AuthenticationOrchestrator:
             # Check for profile selection response - HIGHEST PRIORITY after OTP
             if session.workflow_state.get("profile_selection_stage"):
                 logger.info(f"Handling profile selection response for stage: {session.workflow_state.get('profile_selection_stage')}")
+                msg_lower = str(message_content).strip().lower()
+                intent = (intent_result or {}).get("intent")
+                if intent == "greeting" or msg_lower in ["hi", "hello", "hey", "start", "hi!", "hello!"]:
+                    logger.info(f"Greeting received during profile selection stage for {user_phone}, re-presenting menu")
+                    return await self.profile_selection_service.handle_profile_selection(
+                        user_phone, message_content, session, intent_result or {"intent": "greeting", "confidence": 100}
+                    )
                 result = await self.profile_selection_service.handle_profile_selection_response(
                     user_phone, message_content, session
                 )

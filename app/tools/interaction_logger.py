@@ -170,7 +170,17 @@ class InteractionLogger:
             return obj.isoformat()
         if isinstance(obj, Enum):
             return obj.value
-        raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+        if hasattr(obj, "model_dump") and callable(obj.model_dump):
+            try:
+                return obj.model_dump()
+            except Exception:
+                pass
+        if hasattr(obj, "dict") and callable(obj.dict):
+            try:
+                return obj.dict()
+            except Exception:
+                pass
+        return str(obj)
 
 
 # Global logger instance

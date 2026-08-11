@@ -188,27 +188,37 @@ async def handle_delivery_callback(request: Request):
         redis_service = get_redis_service()
         await redis_service.set("webhook:last_callback_time", datetime.now().isoformat())
         
-        # Parse query parameters from URL
+        # Parse query parameters or body data
         query_params = dict(request.query_params)
+        
+        # Fallback to form data or json if empty query params
+        if not query_params:
+            try:
+                form_data = await request.form()
+                query_params = dict(form_data)
+                if not query_params:
+                    json_data = await request.json()
+                    if isinstance(json_data, dict):
+                        query_params = json_data
+            except Exception:
+                try:
+                    json_data = await request.json()
+                    if isinstance(json_data, dict):
+                        query_params = json_data
+                except Exception:
+                    pass
+
         # Extract ICS delivery callback fields
-        status = query_params.get("qStatus")
-        mobile = query_params.get("qMobile")
-        msg_ref = query_params.get("qMsgRef")
-        date_time = query_params.get("qDTime")
-        sms_msg_id = query_params.get("SMSMSGID")
-        sender_id = query_params.get("SENDERID")
-        notes = query_params.get("NOTES")
+        status = query_params.get("qStatus") or query_params.get("status")
+        mobile = query_params.get("qMobile") or query_params.get("mobile")
+        msg_ref = query_params.get("qMsgRef") or query_params.get("msg_ref") or query_params.get("mid")
+        date_time = query_params.get("qDTime") or query_params.get("timestamp")
+        notes = query_params.get("NOTES") or query_params.get("notes")
 
         if status and mobile and msg_ref:
-            # Log delivery status at DEBUG level to reduce noise (high volume endpoint)
             logger.debug(f"ICS delivery callback - Message {msg_ref[:20]}... to {mobile}: {status} at {date_time}")
-            if notes and notes != "NA":
-                logger.debug(f"Delivery notes: {notes}")
-
-            # Here you could update message status in database
-            # Example: await update_message_status(msg_ref, status, date_time)
         else:
-            logger.warning(f"Missing required delivery callback fields: status={status}, mobile={mobile}, msg_ref={msg_ref}")
+            logger.debug(f"Delivery callback received: status={status}, mobile={mobile}, msg_ref={msg_ref}")
 
         return JSONResponse(content={"status": "ok"})
 
@@ -531,15 +541,6 @@ async def process_message_async(webhook_data: Dict[str, Any]):
                     f"User {from_number} is already processing another message. "
                     f"Skipping {message_type} message to prevent concurrent processing conflicts."
                 )
-                # Send user notification that their message was received but will be processed after current operation
-                from app.services.whatsapp_service import WhatsAppService
-                whatsapp_service = WhatsAppService()
-                recipient_id = f"+{from_number}" if not from_number.startswith('+') else from_number
-                await whatsapp_service.send_message(
-                    recipient_id,
-                    "We're still processing your previous request. Please wait until it completes before sending a new one.",
-                    clear_pending_reply=False  # Don't clear flag - not the final response to original request
-                )
                 return  # Exit without processing to prevent concurrent execution
             
             # Log if allowing concurrent processing
@@ -697,5 +698,4 @@ async def handle_technical_error_with_cancel(user_phone: str, error_message: str
     except Exception as e:
         # Don't let error handling fail the webhook response
         logger.error(f"Error in handle_technical_error_with_cancel: {e}")
-
 

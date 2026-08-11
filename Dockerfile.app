@@ -1,48 +1,50 @@
 # ====================================================================
-# OPTIMIZED APP DOCKERFILE - Multi-stage with Layer Caching
+# UNIFIED DOCKERFILE - Azure Container Apps Production (Optimized CPU)
 # ====================================================================
-FROM procucev-base:local AS base
+FROM python:3.11-slim AS base
 
 WORKDIR /app
 
-# ====================================================================
-# STAGE 1: Dependencies (rarely changes)
-# ====================================================================
-FROM procucev-base:local AS dependencies
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy only dependency files first (better caching)
-COPY requirements.txt ./
-RUN pip list | grep -E "(gunicorn|fastapi)" || echo "Dependencies already in base"
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-# ====================================================================
-# STAGE 2: Application Code (changes frequently)
-# ====================================================================
-FROM base AS application
+# Copy requirements
+COPY requirements.txt .
 
-WORKDIR /app
+# Install CPU-only PyTorch first to avoid downloading 5GB+ of unneeded CUDA/NVIDIA wheels
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Pre-download sentence transformer model so it's cached in the image
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+# Copy application code and entrypoint scripts
 COPY app/ ./app/
+COPY Setup/ ./Setup/
 COPY templates/ ./templates/
 COPY gunicorn_config.py ./
 COPY docker_entrypoint_app.sh ./
-COPY .env* ./
+COPY docker_entrypoint_celery.sh ./
 
-# Make entrypoint executable
-RUN chmod +x docker_entrypoint_app.sh
+# Convert line endings to Unix format and make scripts executable
+RUN sed -i 's/\r$//' docker_entrypoint_app.sh docker_entrypoint_celery.sh && \
+    chmod +x docker_entrypoint_app.sh docker_entrypoint_celery.sh
 
-# Create logs directory
-RUN mkdir -p logs/app
-
-# ====================================================================
-# FINAL STAGE: Runtime
-# ====================================================================
-FROM application AS runtime
+# Create log directories
+RUN mkdir -p logs/app logs/celery_worker
 
 EXPOSE 8005
 
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8005/health || exit 1
 
-# Use entrypoint script with log rotation
 CMD ["./docker_entrypoint_app.sh"]

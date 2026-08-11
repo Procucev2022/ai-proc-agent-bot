@@ -57,13 +57,13 @@ class Settings:
         
         # OpenAI configuration
         self.openai_api_key = os.getenv("AZURE_OPENAI_API_KEY")
-        self.openai_model_default = os.getenv("OPENAI_MODEL_DEFAULT", "gpt-4.1-mini")
-        self.openai_model_advanced = os.getenv("OPENAI_MODEL_ADVANCED", "gpt-4.1-mini")
+        self.openai_model_default = os.getenv("OPENAI_MODEL_DEFAULT", "gpt-5.4-mini")
+        self.openai_model_advanced = os.getenv("OPENAI_MODEL_ADVANCED", "gpt-5.4-mini")
         self.azure_openai_base_url = os.getenv("AZURE_OPENAI_ENDPOINT")
         # WhatsApp configuration
         self.WHATSAPP_USERNAME = os.getenv("WHATSAPP_USERNAME", "test_user")
         self.WHATSAPP_PASSWORD = os.getenv("WHATSAPP_PASSWORD", "test_password")
-        self.WHATSAPP_FROM_NUMBER = os.getenv("WHATSAPP_FROM_NUMBER", "918147745000")
+        self.WHATSAPP_FROM_NUMBER = os.getenv("WHATSAPP_FROM_NUMBER", "917996170801")
         self.WHATSAPP_BASE_URL = os.getenv("WHATSAPP_BASE_URL", "https://media.sendmsg.in")
         self.WHATSAPP_MEDIA_DOWNLOAD_URL = os.getenv("WHATSAPP_MEDIA_DOWNLOAD_URL", "https://download.sendmsg.in/whatsapp-mediadownloader")
         self.WHATSAPP_TEMPLATE_BASE_URL = os.getenv("WHATSAPP_TEMPLATE_BASE_URL", "https://wsapi.sendmsg.in")
@@ -138,7 +138,7 @@ class Settings:
         self.procurement_api_key = os.getenv("PROCUREMENT_API_KEY")
         
         # GMT API configuration - Updated for new API
-        self.gmt_base_url = os.getenv("GMT_BASE_URL", "https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net")
+        self.gmt_base_url = os.getenv("GMT_BASE_URL")
         self.gmt_username = os.getenv("GMT_USERNAME")
         self.gmt_phone = os.getenv("GMT_PHONE")
         # Legacy OAuth fields (kept for backward compatibility)
@@ -264,7 +264,7 @@ class Settings:
         self.rfq_fetch_limit: int = 3  # Used for buyer RFQ creation, seller uses seller_rfq_fetch_limit
 
         # Queue Configuration
-        self.batch_window_seconds: int = int(os.getenv("BATCH_WINDOW_SECONDS", "3"))
+        self.batch_window_seconds: int = int(os.getenv("BATCH_WINDOW_SECONDS", "1"))
         self.please_wait_threshold_seconds: int = int(os.getenv("PLEASE_WAIT_THRESHOLD_SECONDS", "15"))
         self.max_please_wait_count: int = int(os.getenv("MAX_PLEASE_WAIT_COUNT", "3"))
         self.monitoring_poll_interval_seconds: int = int(os.getenv("MONITORING_POLL_INTERVAL_SECONDS", "2"))
@@ -405,6 +405,10 @@ class Settings:
             ("AZURE_OPENAI_API_KEY", self.openai_api_key),
             ("GMT_USERNAME", self.gmt_username),
             ("GMT_PHONE", self.gmt_phone),
+            ("GMT_BASE_URL", self.gmt_base_url),
+            ("GMT_PASSWORD", self.gmt_password),
+            ("GMT_CLIENT_ID", self.gmt_client_id),
+            ("GMT_CLIENT_SECRET", self.gmt_client_secret),
         ]
         
         # Check database URL based on mode

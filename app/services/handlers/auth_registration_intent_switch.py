@@ -780,12 +780,15 @@ Analyze their response and return only:
 
         except Exception as e:
             logger.error(f"AI role confirmation validation error: {e}")
-            # Fallback to simple pattern matching
+            # Fallback to simple pattern matching. Match complete words so a
+            # response such as "stay" is not misclassified because it contains
+            # the single-letter affirmative token "y".
             message_lower = message.lower().strip()
+            words = set(message_lower.replace(",", " ").replace(".", " ").split())
 
-            if any(word in message_lower for word in ["1", "yes", "y", "switch", "confirm", "ok"]):
+            if message_lower in {"1", "yes", "y", "switch", "confirm", "ok"} or words.intersection({"switch", "confirm"}):
                 return "yes"
-            elif any(word in message_lower for word in ["2", "no", "n", "continue", "stay", "current"]):
+            elif message_lower in {"2", "no", "n", "continue", "stay", "current"} or words.intersection({"continue", "stay", "current"}):
                 return "no"
             else:
                 return "unclear"

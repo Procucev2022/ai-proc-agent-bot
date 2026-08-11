@@ -65,6 +65,46 @@ class IntentService:
             session = context.get('session') if context else None
 
             if isinstance(message, str):
+                msg_clean = message.strip().lower()
+
+                # Session-sensitive interruptions take precedence over greeting shortcuts.
+                if session:
+                    interruption_result = self.detect_interruption_intent(message, session)
+                    if interruption_result["is_interruption"]:
+                        interruption_type = interruption_result["interruption_type"]
+                        return {
+                            "intent": interruption_type,
+                            "confidence": 85,
+                            "reasoning": f"User interrupted RFQ flow with {interruption_type}",
+                            "success": True,
+                            "is_interruption": True,
+                            "context_analysis": {"conversation_stage": "interrupted"}
+                        }
+
+                # Fast-path 1: Simple Greetings (0.001s response time)
+                if msg_clean in ["hi", "hello", "hey", "hi!", "hello!", "hey!", "start", "menu", "help"]:
+                    logger.info(f"[FAST_PATH] Simple greeting matched for '{message}'")
+                    return {
+                        "intent": "greeting",
+                        "confidence": 100,
+                        "reasoning": "Fast-path local matching: Simple greeting keyword",
+                        "success": True,
+                        "context_analysis": {"conversation_stage": "initial"}
+                    }
+
+                # Fast-path 2: Numeric & Menu Choices (0.001s response time)
+                if msg_clean in ["1", "2", "3", "buy", "sell", "create_rfq", "new_rfq", "raise_rfq", "create new rfq"]:
+                    is_rfq = msg_clean in ["buy", "create_rfq", "new_rfq", "raise_rfq", "create new rfq"]
+                    target_intent = "buy_something" if is_rfq else ("sell_something" if msg_clean == "sell" else "ambiguous")
+                    logger.info(f"[FAST_PATH] Menu choice matched for '{message}' -> {target_intent}")
+                    return {
+                        "intent": target_intent,
+                        "confidence": 100 if is_rfq else 98,
+                        "reasoning": f"Fast-path local matching: Menu option '{msg_clean}'",
+                        "success": True,
+                        "context_analysis": {}
+                    }
+
                 # PRIORITY 2: Check for format modification (Track 2)
                 if session and self.detect_format_modification_intent(message, session):
                     return {

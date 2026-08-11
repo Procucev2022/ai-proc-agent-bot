@@ -1,4 +1,9 @@
 *.pyc
+.coverage
+.coverage.*
+coverage.json
+htmlcov/
+.pytest_cache/
 /.idea
 .sonar
 .scannerwork
