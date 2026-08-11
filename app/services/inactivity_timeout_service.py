@@ -684,19 +684,7 @@ class InactivityTimeoutService:
                     # Persist to database
                     db_manager = DatabaseManager()
                     try:
-                        # Convert dict back to ConversationSession object
-                        from app.models import ConversationSession
-                        session_obj = ConversationSession(**{
-                            k: v for k, v in session_data.items()
-                            if k in [
-                                'session_id', 'external_user_id', 'workflow_type',
-                                'outcome', 'workflow_state', 'conversation_history',
-                                'extracted_entities', 'retention_date', 'created_at',
-                                'last_activity_at', 'completed_at'
-                            ]
-                        })
-                        
-                        db_manager.save_conversation_session(session_obj)
+                        db_manager.save_conversation_session(session_data)
                         logger.debug(f"[WORKER_TIMEOUT] Persisted session to DB (outcome: abandoned)")
                         
                     except Exception as db_error:

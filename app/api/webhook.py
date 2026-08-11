@@ -196,6 +196,10 @@ async def handle_delivery_callback(request: Request):
             try:
                 form_data = await request.form()
                 query_params = dict(form_data)
+                if not query_params:
+                    json_data = await request.json()
+                    if isinstance(json_data, dict):
+                        query_params = json_data
             except Exception:
                 try:
                     json_data = await request.json()
@@ -694,5 +698,4 @@ async def handle_technical_error_with_cancel(user_phone: str, error_message: str
     except Exception as e:
         # Don't let error handling fail the webhook response
         logger.error(f"Error in handle_technical_error_with_cancel: {e}")
-
 

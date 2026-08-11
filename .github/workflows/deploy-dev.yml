@@ -72,7 +72,24 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Verify Azure Secrets Present
+        env:
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          WHATSAPP_API_KEY: ${{ secrets.WHATSAPP_API_KEY }}
+          WHATSAPP_USERNAME: ${{ secrets.WHATSAPP_USERNAME }}
+          WHATSAPP_PASSWORD: ${{ secrets.WHATSAPP_PASSWORD }}
+          GMT_BASE_URL: ${{ secrets.GMT_BASE_URL }}
+          GMT_USERNAME: ${{ secrets.GMT_USERNAME }}
+          GMT_PASSWORD: ${{ secrets.GMT_PASSWORD }}
+          GMT_PHONE: ${{ secrets.GMT_PHONE }}
+          GMT_CLIENT_ID: ${{ secrets.GMT_CLIENT_ID }}
+          GMT_CLIENT_SECRET: ${{ secrets.GMT_CLIENT_SECRET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.DEV_DATABASE_URL }}
         run: |
+          required=(AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_KEY WHATSAPP_API_KEY WHATSAPP_USERNAME WHATSAPP_PASSWORD GMT_BASE_URL GMT_USERNAME GMT_PASSWORD GMT_PHONE GMT_CLIENT_ID GMT_CLIENT_SECRET DATABASE_URL)
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then echo "::error::Missing required secret $name"; exit 1; fi
+          done
           if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ] && [ -z "${{ secrets.AZURE_CLIENT_ID }}" ]; then
             echo "::error title=Missing Azure Secrets::No Azure authentication secrets found!"
             echo "--------------------------------------------------------------------------------"
@@ -142,13 +159,18 @@ jobs:
           TAG_APP="aiproc-app:dev-${SHORT_SHA}"
           TAG_CELERY="aiproc-celery:dev-${SHORT_SHA}"
           
-          echo "Building single image and tagging as '$TAG_APP' and '$TAG_CELERY'..."
+          echo "Building application image '$TAG_APP'..."
           az acr build \
             --registry ${{ env.ACR_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image "$TAG_APP" \
-            --image "$TAG_CELERY" \
             --file Dockerfile.app .
+          echo "Building Celery image '$TAG_CELERY'..."
+          az acr build \
+            --registry ${{ env.ACR_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image "$TAG_CELERY" \
+            --file Dockerfile.celery .
           
           echo "TAG_APP=$TAG_APP" >> $GITHUB_ENV
           echo "TAG_CELERY=$TAG_CELERY" >> $GITHUB_ENV
@@ -172,14 +194,16 @@ jobs:
             azureOpenAiEndpoint="${{ secrets.AZURE_OPENAI_ENDPOINT }}"
             azureOpenAiKey="${{ secrets.AZURE_OPENAI_API_KEY }}"
             whatsappApiKey="${{ secrets.WHATSAPP_API_KEY }}"
-            whatsappFromNumber="${{ secrets.WHATSAPP_FROM_NUMBER || '917996170801' }}"
-            whatsappMockMode="${{ secrets.WHATSAPP_MOCK_MODE || 'false' }}"
+            whatsappFromNumber="${{ secrets.WHATSAPP_FROM_NUMBER }}"
+            whatsappMockMode="${{ secrets.WHATSAPP_MOCK_MODE }}"
             whatsappUsername="${{ secrets.WHATSAPP_USERNAME }}"
             whatsappPassword="${{ secrets.WHATSAPP_PASSWORD }}"
-            gmtBaseUrl="${{ secrets.GMT_BASE_URL || 'https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net' }}"
-            gmtUsername="${{ secrets.GMT_USERNAME || 'clientinitiator@procucev.com' }}"
-            gmtPassword="${{ secrets.GMT_PASSWORD || 'Clientinitiator@123' }}"
-            gmtPhone="${{ secrets.GMT_PHONE || '919876543229' }}"
+            gmtBaseUrl="${{ secrets.GMT_BASE_URL }}"
+            gmtUsername="${{ secrets.GMT_USERNAME }}"
+            gmtPassword="${{ secrets.GMT_PASSWORD }}"
+            gmtPhone="${{ secrets.GMT_PHONE }}"
+            gmtClientId="${{ secrets.GMT_CLIENT_ID }}"
+            gmtClientSecret="${{ secrets.GMT_CLIENT_SECRET }}"
 
       - name: Get App URL & Run Health Check Probe
         run: |

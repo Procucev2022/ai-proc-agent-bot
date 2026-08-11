@@ -20,7 +20,7 @@ class AsyncRedisConnectionManager:
         """Get or create async Redis client with connection pooling."""
         if cls._pool is None:
             settings = get_settings()
-            logger.info(f"[REDIS] Connecting to Redis pool at: {settings.redis_url}")
+            logger.info("[REDIS] Connecting to Redis pool")
             try:
                 cls._pool = await aioredis.from_url(
                     settings.redis_url,
@@ -31,7 +31,7 @@ class AsyncRedisConnectionManager:
                 )
                 logger.info(f"[REDIS] ✓ Connected to Redis pool successfully")
             except Exception as e:
-                logger.error(f"[REDIS] ⚠️ Failed to connect to Redis pool ({settings.redis_url}): {e}")
+                logger.error(f"[REDIS] ⚠️ Failed to connect to Redis pool: {e}")
                 raise
         return cls._pool
 

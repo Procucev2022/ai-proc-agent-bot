@@ -138,7 +138,7 @@ class Settings:
         self.procurement_api_key = os.getenv("PROCUREMENT_API_KEY")
         
         # GMT API configuration - Updated for new API
-        self.gmt_base_url = os.getenv("GMT_BASE_URL", "https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net")
+        self.gmt_base_url = os.getenv("GMT_BASE_URL")
         self.gmt_username = os.getenv("GMT_USERNAME")
         self.gmt_phone = os.getenv("GMT_PHONE")
         # Legacy OAuth fields (kept for backward compatibility)
@@ -405,6 +405,10 @@ class Settings:
             ("AZURE_OPENAI_API_KEY", self.openai_api_key),
             ("GMT_USERNAME", self.gmt_username),
             ("GMT_PHONE", self.gmt_phone),
+            ("GMT_BASE_URL", self.gmt_base_url),
+            ("GMT_PASSWORD", self.gmt_password),
+            ("GMT_CLIENT_ID", self.gmt_client_id),
+            ("GMT_CLIENT_SECRET", self.gmt_client_secret),
         ]
         
         # Check database URL based on mode

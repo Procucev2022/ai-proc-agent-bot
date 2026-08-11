@@ -35,7 +35,7 @@ def _get_ssl_connect_args(settings) -> dict:
         existing_cert = next((p for p in cert_paths if os.path.exists(p)), None)
         if existing_cert:
             return {"ssl": {"ca": existing_cert}}
-        return {"ssl": {"ssl_disabled": False, "ssl_check_hostname": False, "ssl_verify_cert": False}}
+        raise ValueError("Database TLS CA certificate is required in client mode")
     else:
         return {"ssl": {"ssl_disabled": False, "ssl_check_hostname": False, "ssl_verify_cert": False}}
 

@@ -5,6 +5,11 @@
 
 set -e
 
+required_env=(DATABASE_URL AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_KEY WHATSAPP_API_KEY WHATSAPP_USERNAME WHATSAPP_PASSWORD GMT_BASE_URL GMT_USERNAME GMT_PASSWORD GMT_PHONE)
+for name in "${required_env[@]}"; do
+  if [[ -z "${!name:-}" ]]; then echo "Missing required environment variable: $name" >&2; exit 1; fi
+done
+
 # Parameters / Defaults
 ENV="${1:-dev}"
 LOCATION="${2:-centralindia}"
@@ -44,6 +49,9 @@ IMAGE_TAG_APP="aiproc-app:${ENV}-latest"
 IMAGE_TAG_CELERY="aiproc-celery:${ENV}-latest"
 
 ACR_SERVER=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
+ACR_USERNAME=$(az acr credential show --name "$ACR_NAME" --query username -o tsv)
+ACR_PASSWORD=$(az acr credential show --name "$ACR_NAME" --query "passwords[0].value" -o tsv)
+[[ -n "$ACR_SERVER" && -n "$ACR_USERNAME" && -n "$ACR_PASSWORD" ]] || { echo "Unable to obtain ACR credentials" >&2; exit 1; }
 
 echo "--> Building and pushing App Docker Image: ${ACR_SERVER}/${IMAGE_TAG_APP}..."
 az acr build --registry "$ACR_NAME" --image "$IMAGE_TAG_APP" --file Dockerfile.app .
@@ -61,8 +69,20 @@ az deployment group create \
     location="$LOCATION" \
     baseName="$BASE_NAME" \
     acrServer="$ACR_SERVER" \
+    acrUsername="$ACR_USERNAME" \
+    acrPassword="$ACR_PASSWORD" \
     appImageTag="$IMAGE_TAG_APP" \
     celeryImageTag="$IMAGE_TAG_CELERY" \
+    databaseUrl="$DATABASE_URL" \
+    azureOpenAiEndpoint="$AZURE_OPENAI_ENDPOINT" \
+    azureOpenAiKey="$AZURE_OPENAI_API_KEY" \
+    whatsappApiKey="$WHATSAPP_API_KEY" \
+    whatsappUsername="$WHATSAPP_USERNAME" \
+    whatsappPassword="$WHATSAPP_PASSWORD" \
+    gmtBaseUrl="$GMT_BASE_URL" \
+    gmtUsername="$GMT_USERNAME" \
+    gmtPassword="$GMT_PASSWORD" \
+    gmtPhone="$GMT_PHONE" \
   --output table
 
 APP_URL=$(az deployment group show --resource-group "$RESOURCE_GROUP" --name main --query properties.outputs.appUrl.value -o tsv 2>/dev/null || true)

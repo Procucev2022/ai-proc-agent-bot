@@ -52,24 +52,24 @@ param whatsappUsername string = ''
 param whatsappPassword string = ''
 
 @description('GMT Base URL')
-param gmtBaseUrl string = 'https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net'
+param gmtBaseUrl string
 
 @description('GMT Client ID')
-param gmtClientId string = 'procucev'
+param gmtClientId string
 
 @description('GMT Client Secret')
 @secure()
 param gmtClientSecret string = ''
 
 @description('GMT Username')
-param gmtUsername string = 'clientinitiator@procucev.com'
+param gmtUsername string
 
 @description('GMT Password')
 @secure()
 param gmtPassword string = ''
 
 @description('GMT Phone')
-param gmtPhone string = '919876543229'
+param gmtPhone string
 
 // Container Apps Environment
 module environmentModule 'modules/container-apps-env.bicep' = {

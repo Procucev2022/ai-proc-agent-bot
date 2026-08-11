@@ -80,7 +80,7 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info(f"[BOOT] Starting App: {settings.app_name} ({settings.environment})")
     logger.info(f"[BOOT] Database Mode: {settings.database_mode}")
-    logger.info(f"[BOOT] Redis URL: {settings.redis_url}")
+    logger.info("[BOOT] Redis configured")
     logger.info(f"[BOOT] Chroma Host: {settings.chroma_host}:{settings.chroma_port}")
     logger.info(f"[BOOT] Azure OpenAI Endpoint: {settings.azure_openai_base_url}")
     logger.info("=" * 60)
@@ -91,7 +91,8 @@ async def lifespan(app: FastAPI):
         init_database()
         logger.info("[BOOT] ✓ Database initialized successfully")
     except Exception as e:
-        logger.warning(f"[BOOT] ⚠️ Database initialization deferred/failed: {e}")
+        logger.critical(f"[BOOT] Database initialization failed: {e}", exc_info=True)
+        raise
 
     # Initialize global ProcucevAPIClient
     try:

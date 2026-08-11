@@ -67,6 +67,20 @@ class IntentService:
             if isinstance(message, str):
                 msg_clean = message.strip().lower()
 
+                # Session-sensitive interruptions take precedence over greeting shortcuts.
+                if session:
+                    interruption_result = self.detect_interruption_intent(message, session)
+                    if interruption_result["is_interruption"]:
+                        interruption_type = interruption_result["interruption_type"]
+                        return {
+                            "intent": interruption_type,
+                            "confidence": 85,
+                            "reasoning": f"User interrupted RFQ flow with {interruption_type}",
+                            "success": True,
+                            "is_interruption": True,
+                            "context_analysis": {"conversation_stage": "interrupted"}
+                        }
+
                 # Fast-path 1: Simple Greetings (0.001s response time)
                 if msg_clean in ["hi", "hello", "hey", "hi!", "hello!", "hey!", "start", "menu", "help"]:
                     logger.info(f"[FAST_PATH] Simple greeting matched for '{message}'")

@@ -14,6 +14,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$RequiredEnvironment = @(
+    "DATABASE_URL", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY",
+    "WHATSAPP_API_KEY", "WHATSAPP_USERNAME", "WHATSAPP_PASSWORD",
+    "GMT_BASE_URL", "GMT_USERNAME", "GMT_PASSWORD", "GMT_PHONE"
+)
+foreach ($Name in $RequiredEnvironment) {
+    if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($Name))) {
+        throw "Missing required environment variable: $Name"
+    }
+}
+
 $ResourceGroup = "rg-aiproc-$Environment"
 $AcrName = "acraiproc$Environment"
 $BaseName = "aiproc"
@@ -33,6 +44,11 @@ az acr create --resource-group $ResourceGroup --name $AcrName --sku Basic --admi
 
 # 3. Get ACR Server
 $AcrServer = az acr show --name $AcrName --query loginServer -o tsv
+$AcrUsername = az acr credential show --name $AcrName --query username -o tsv
+$AcrPassword = az acr credential show --name $AcrName --query "passwords[0].value" -o tsv
+if ([string]::IsNullOrWhiteSpace($AcrServer) -or [string]::IsNullOrWhiteSpace($AcrUsername) -or [string]::IsNullOrWhiteSpace($AcrPassword)) {
+    throw "Unable to obtain ACR credentials"
+}
 
 # 4. Build and Push Container Images
 $ImageTagApp = "aiproc-app:${Environment}-latest"
@@ -54,8 +70,20 @@ az deployment group create `
     location=$Location `
     baseName=$BaseName `
     acrServer=$AcrServer `
+    acrUsername=$AcrUsername `
+    acrPassword=$AcrPassword `
     appImageTag=$ImageTagApp `
     celeryImageTag=$ImageTagCelery `
+    databaseUrl=$env:DATABASE_URL `
+    azureOpenAiEndpoint=$env:AZURE_OPENAI_ENDPOINT `
+    azureOpenAiKey=$env:AZURE_OPENAI_API_KEY `
+    whatsappApiKey=$env:WHATSAPP_API_KEY `
+    whatsappUsername=$env:WHATSAPP_USERNAME `
+    whatsappPassword=$env:WHATSAPP_PASSWORD `
+    gmtBaseUrl=$env:GMT_BASE_URL `
+    gmtUsername=$env:GMT_USERNAME `
+    gmtPassword=$env:GMT_PASSWORD `
+    gmtPhone=$env:GMT_PHONE `
   --output table
 
 Write-Host "======================================================================" -ForegroundColor Green

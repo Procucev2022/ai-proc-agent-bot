@@ -1305,10 +1305,6 @@ class ProfileSelectionService:
                 message = str(message)
             message_lower = message.lower().strip()
 
-            # Fast-Path: Quick check for non-registration short messages (0ms response time)
-            if message_lower in ["hi", "hello", "hey", "hi!", "hello!", "start", "menu", "1", "2", "3", "buy", "sell"]:
-                return None
-
             # Fast-Path: Local phrase matching FIRST
             buyer_registration_phrases = [
                 'register me as buyer', 'register as buyer', 'register me as a buyer',
@@ -1334,8 +1330,7 @@ class ProfileSelectionService:
                     logger.info(f"[FAST_PATH] Matched seller registration phrase '{phrase}' in message '{message}'")
                     return 'seller'
 
-            # Fallback to LLM user_selection_tool ONLY for long complex messages (>25 chars)
-            if self.user_selection_tool and len(message_lower) > 25:
+            if self.user_selection_tool:
                 dummy_options = []
                 analysis_result = await self.user_selection_tool.analyze_user_selection(message, dummy_options)
 

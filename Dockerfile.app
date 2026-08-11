@@ -29,6 +29,7 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 
 # Copy application code and entrypoint scripts
 COPY app/ ./app/
+COPY Setup/ ./Setup/
 COPY templates/ ./templates/
 COPY gunicorn_config.py ./
 COPY docker_entrypoint_app.sh ./

@@ -34,18 +34,18 @@ param chromaHost string
 
 @description('Database URL')
 @secure()
-param databaseUrl string = ''
+param databaseUrl string
 
 @description('Azure OpenAI Endpoint')
 param azureOpenAiEndpoint string = ''
 
 @description('Azure OpenAI Key')
 @secure()
-param azureOpenAiKey string = ''
+param azureOpenAiKey string
 
 @description('WhatsApp API Key')
 @secure()
-param whatsappApiKey string = ''
+param whatsappApiKey string
 
 @description('WhatsApp From Number')
 param whatsappFromNumber string = '917996170801'
@@ -58,61 +58,54 @@ param whatsappUsername string = ''
 
 @description('WhatsApp Password')
 @secure()
-param whatsappPassword string = ''
+param whatsappPassword string
 
 @description('GMT Base URL')
-param gmtBaseUrl string = 'https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net'
+param gmtBaseUrl string
 
 @description('GMT Client ID')
-param gmtClientId string = 'procucev'
+param gmtClientId string
 
 @description('GMT Client Secret')
 @secure()
-param gmtClientSecret string = ''
+param gmtClientSecret string
 
 @description('GMT Username')
-param gmtUsername string = 'clientinitiator@procucev.com'
+param gmtUsername string
 
 @description('GMT Password')
 @secure()
-param gmtPassword string = ''
+param gmtPassword string
 
 @description('GMT Phone')
-param gmtPhone string = '919876543229'
+param gmtPhone string
 
 var appName = 'aiproc-celery-${environment}'
-
-var dbUrlSecret = empty(databaseUrl) ? 'placeholder_db_url' : databaseUrl
-var openAiKeySecret = empty(azureOpenAiKey) ? 'placeholder_openai_key' : azureOpenAiKey
-var whatsappKeySecret = empty(whatsappApiKey) ? 'placeholder_whatsapp_key' : whatsappApiKey
-var whatsappPasswordSecret = empty(whatsappPassword) ? 'placeholder_whatsapp_password' : whatsappPassword
-var gmtPasswordSecret = empty(gmtPassword) ? 'Clientinitiator@123' : gmtPassword
-var gmtClientSecretVal = empty(gmtClientSecret) ? 'procucev' : gmtClientSecret
 
 var baseSecrets = [
   {
     name: 'database-url'
-    value: dbUrlSecret
+    value: databaseUrl
   }
   {
     name: 'azure-openai-key'
-    value: openAiKeySecret
+    value: azureOpenAiKey
   }
   {
     name: 'whatsapp-api-key'
-    value: whatsappKeySecret
+    value: whatsappApiKey
   }
   {
     name: 'whatsapp-password'
-    value: whatsappPasswordSecret
+    value: whatsappPassword
   }
   {
     name: 'gmt-password'
-    value: gmtPasswordSecret
+    value: gmtPassword
   }
   {
     name: 'gmt-client-secret'
-    value: gmtClientSecretVal
+    value: gmtClientSecret
   }
 ]
 
@@ -149,6 +142,7 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
       containers: [
         {
           name: 'celery-worker'
+          command: ['celery', '-A', 'app.celery_app', 'worker', '--loglevel=info', '--concurrency=1']
           image: '${acrServer}/${imageTag}'
           env: [
             {
@@ -250,18 +244,110 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
         minReplicas: minReplicas
         maxReplicas: maxReplicas
         rules: [
-          {
-            name: 'redis-queue-scaling'
+          for queueName in [
+            'bfs_notification'
+            'categorization'
+            'seller_matching'
+            'report_automation'
+            'vector_store'
+            'taxonomy_build'
+            'maintenance'
+            'default'
+          ]: {
+            name: 'redis-${queueName}-scaling'
             custom: {
               type: 'redis'
               metadata: {
                 address: '${redisHost}:6379'
                 listLength: '5'
-                queueName: 'bfs_notification'
+                queueName: queueName
               }
             }
           }
         ]
+      }
+    }
+  }
+  identity: {
+    type: 'SystemAssigned'
+  }
+}
+
+resource celeryBeatApp 'Microsoft.App/containerApps@2023-05-01' = {
+  name: 'aiproc-celery-beat-${environment}'
+  location: location
+  properties: {
+    managedEnvironmentId: environmentId
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: null
+      registries: !empty(acrPassword) ? [
+        {
+          server: acrServer
+          username: acrUsername
+          passwordSecretRef: 'acr-password'
+        }
+      ] : [
+        {
+          server: acrServer
+          identity: 'system'
+        }
+      ]
+      secrets: concat(baseSecrets, acrSecret)
+    }
+    template: {
+      containers: [
+        {
+          name: 'celery-beat'
+          image: '${acrServer}/${imageTag}'
+          command: [
+            'celery'
+            '-A'
+            'app.celery_app'
+            'beat'
+            '--loglevel=info'
+            '--schedule=/app/celerybeat/celerybeat-schedule'
+          ]
+          env: [
+            {
+              name: 'CELERY_BROKER_URL'
+              value: 'redis://${redisHost}:6379/1'
+            }
+            {
+              name: 'CELERY_RESULT_BACKEND'
+              value: 'redis://${redisHost}:6379/1'
+            }
+            {
+              name: 'DATABASE_MODE'
+              value: 'client'
+            }
+            {
+              name: 'CLIENT_DATABASE_URL'
+              secretRef: 'database-url'
+            }
+          ]
+          volumeMounts: [
+            {
+              volumeName: 'celery-beat-data-vol'
+              mountPath: '/app/celerybeat'
+            }
+          ]
+          resources: {
+            cpu: json('0.25')
+            memory: '0.5Gi'
+          }
+        }
+      ]
+      volumes: [
+        {
+          name: 'celery-beat-data-vol'
+          storageName: 'redis-storage'
+          storageType: 'AzureFile'
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 1
       }
     }
   }

@@ -36,10 +36,23 @@ resource redisApp 'Microsoft.App/containerApps@2023-05-01' = {
             '--maxmemory-policy'
             'allkeys-lru'
           ]
+          volumeMounts: [
+            {
+              volumeName: 'redis-data-vol'
+              mountPath: '/data'
+            }
+          ]
           resources: {
             cpu: json('0.5')
             memory: '1.0Gi'
           }
+        }
+      ]
+      volumes: [
+        {
+          name: 'redis-data-vol'
+          storageName: 'redis-storage'
+          storageType: 'AzureFile'
         }
       ]
       scale: {

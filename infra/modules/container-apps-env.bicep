@@ -11,6 +11,7 @@ var logAnalyticsName = 'law-${baseName}-${environment}'
 var uniqueSuffix = substring(uniqueString(resourceGroup().id), 0, 8)
 var storageAccountName = 'st${replace(baseName, '-', '')}${environment}${uniqueSuffix}'
 var fileShareName = 'chroma-data'
+var redisFileShareName = 'redis-data'
 var envName = 'cae-${baseName}-${environment}'
 
 // Log Analytics Workspace
@@ -51,6 +52,14 @@ resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-0
   properties: {
     shareQuota: 32
   }
+
+  resource redisFileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
+    parent: fileServices
+    name: redisFileShareName
+    properties: {
+      shareQuota: 8
+    }
+  }
 }
 
 // Azure Container Apps Managed Environment
@@ -78,6 +87,19 @@ resource envStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
       accountKey: storageAccount.listKeys().keys[0].value
       shareName: fileShare.name
       accessMode: 'ReadWrite'
+    }
+
+    resource redisEnvStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
+      parent: containerAppsEnv
+      name: 'redis-storage'
+      properties: {
+        azureFile: {
+          accountName: storageAccount.name
+          accountKey: storageAccount.listKeys().keys[0].value
+          shareName: redisFileShare.name
+          accessMode: 'ReadWrite'
+        }
+      }
     }
   }
 }

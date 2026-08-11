@@ -154,6 +154,9 @@ class MessageQueueService:
     def _key_incoming(self, user_phone: str) -> str:
         return f"{user_phone}:incoming"
 
+    def _key_message(self, user_phone: str, message_id: str) -> str:
+        return f"{user_phone}:message:{message_id}"
+
     def _key_outgoing(self, user_phone: str) -> str:
         return f"{user_phone}:outgoing"
 
@@ -244,10 +247,11 @@ class MessageQueueService:
             
             # Add to incoming queue
             incoming_key = self._key_incoming(user_phone)
-            await self.redis.zadd(
-                incoming_key,
-                {json.dumps(message.to_dict()): timestamp}
-            )
+            # Deduplicate retries by message_id while preserving identical content.
+            if not await self.redis.set(self._key_message(user_phone, message_id), "1", nx=True, ex=86400):
+                logger.debug(f"[ENQUEUE] Duplicate message_id='{message_id}', ignored")
+                return
+            await self.redis.zadd(incoming_key, {json.dumps(message.to_dict()): timestamp})
             
             logger.debug(
                 f"[ENQUEUE] message_id='{message_id}', user={user_phone}, "
@@ -258,13 +262,8 @@ class MessageQueueService:
             processing_key = self._key_processing(user_phone)
             is_processing = await self.redis.exists(processing_key)
             
-            if not is_processing:
-                # User is idle: immediately create batch and start processing without 1-2s poller delay
-                logger.debug(f"[ENQUEUE] User {user_phone} is idle, creating batch immediately")
-                await self._create_batch(user_phone)
-            else:
-                # User is processing: refresh batch timer so pending messages get merged when current batch finishes
-                await self._refresh_batch_timer(user_phone)
+            # Always allow the batching window to collect messages, including for idle users.
+            await self._refresh_batch_timer(user_phone)
             
             # NOTE: Background tasks are started in main.py lifespan
             # No need to ensure them here (prevents duplication)
@@ -671,17 +670,9 @@ class MessageQueueService:
                 # Remove messages from incoming queue (atomic)
                 await self.redis.zrem(incoming_key, *message_data_list)
                 
-                # Create batch (deduplicate identical repeated lines e.g. ["Hi", "Hi", "Hi"])
+                # Preserve every message; only message_id is used for deduplication.
                 batch_id = f"{user_phone}+{int(time.time() * 1000)}"
-                seen_lines = set()
-                unique_lines = []
-                for msg in messages:
-                    c_clean = msg.content.strip()
-                    if c_clean and c_clean.lower() not in seen_lines:
-                        seen_lines.add(c_clean.lower())
-                        unique_lines.append(msg.content.strip())
-                
-                concatenated_content = "\n".join(unique_lines) if unique_lines else messages[-1].content
+                concatenated_content = "\n".join(msg.content.strip() for msg in messages)
                 
                 batch = Batch(
                     batch_id=batch_id,

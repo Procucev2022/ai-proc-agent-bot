@@ -34,18 +34,18 @@ param chromaHost string
 
 @description('Database URL')
 @secure()
-param databaseUrl string = ''
+param databaseUrl string
 
 @description('Azure OpenAI Endpoint')
 param azureOpenAiEndpoint string = ''
 
 @description('Azure OpenAI Key')
 @secure()
-param azureOpenAiKey string = ''
+param azureOpenAiKey string
 
 @description('WhatsApp API Key')
 @secure()
-param whatsappApiKey string = ''
+param whatsappApiKey string
 
 @description('WhatsApp From Number')
 param whatsappFromNumber string = '917996170801'
@@ -58,61 +58,54 @@ param whatsappUsername string = ''
 
 @description('WhatsApp Password')
 @secure()
-param whatsappPassword string = ''
+param whatsappPassword string
 
 @description('GMT Base URL')
-param gmtBaseUrl string = 'https://p2pv1servicesdev-etfrcte5fhdvfrd4.centralindia-01.azurewebsites.net'
+param gmtBaseUrl string
 
 @description('GMT Client ID')
-param gmtClientId string = 'procucev'
+param gmtClientId string
 
 @description('GMT Client Secret')
 @secure()
-param gmtClientSecret string = ''
+param gmtClientSecret string
 
 @description('GMT Username')
-param gmtUsername string = 'clientinitiator@procucev.com'
+param gmtUsername string
 
 @description('GMT Password')
 @secure()
-param gmtPassword string = ''
+param gmtPassword string
 
 @description('GMT Phone')
-param gmtPhone string = '919876543229'
+param gmtPhone string
 
 var appName = 'aiproc-app-${environment}'
-
-var dbUrlSecret = empty(databaseUrl) ? 'placeholder_db_url' : databaseUrl
-var openAiKeySecret = empty(azureOpenAiKey) ? 'placeholder_openai_key' : azureOpenAiKey
-var whatsappKeySecret = empty(whatsappApiKey) ? 'placeholder_whatsapp_key' : whatsappApiKey
-var whatsappPasswordSecret = empty(whatsappPassword) ? 'placeholder_whatsapp_password' : whatsappPassword
-var gmtPasswordSecret = empty(gmtPassword) ? 'Clientinitiator@123' : gmtPassword
-var gmtClientSecretVal = empty(gmtClientSecret) ? 'procucev' : gmtClientSecret
 
 var baseSecrets = [
   {
     name: 'database-url'
-    value: dbUrlSecret
+    value: databaseUrl
   }
   {
     name: 'azure-openai-key'
-    value: openAiKeySecret
+    value: azureOpenAiKey
   }
   {
     name: 'whatsapp-api-key'
-    value: whatsappKeySecret
+    value: whatsappApiKey
   }
   {
     name: 'whatsapp-password'
-    value: whatsappPasswordSecret
+    value: whatsappPassword
   }
   {
     name: 'gmt-password'
-    value: gmtPasswordSecret
+    value: gmtPassword
   }
   {
     name: 'gmt-client-secret'
-    value: gmtClientSecretVal
+    value: gmtClientSecret
   }
 ]
 
