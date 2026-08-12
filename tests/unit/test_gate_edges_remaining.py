@@ -97,6 +97,7 @@ def api_settings():
         gmt_client_id="client",
         gmt_client_secret="secret",
         gmt_retry_delay=0,
+        gmt_max_retries=3,
     )
 
 

@@ -252,7 +252,7 @@ async def test_rfq_api_transform_and_delegation(monkeypatch, api_client_mock):
 @pytest.mark.asyncio
 async def test_client_singletons_auth_normalization_and_sessions(monkeypatch):
     redis = FakeRedis()
-    settings = SimpleNamespace(gmt_base_url="https://gmt", gmt_username="u", gmt_password="p", gmt_phone="9876543210", gmt_client_id="c", gmt_client_secret="s", gmt_retry_delay=0)
+    settings = SimpleNamespace(gmt_base_url="https://gmt", gmt_username="u", gmt_password="p", gmt_phone="9876543210", gmt_client_id="c", gmt_client_secret="s", gmt_retry_delay=0, gmt_max_retries=3)
     monkeypatch.setattr(client_module, "get_settings", lambda: settings)
     monkeypatch.setattr(client_module, "get_redis_service", lambda: redis)
     client = ProcucevAPIClient()
@@ -294,7 +294,7 @@ async def test_client_singletons_auth_normalization_and_sessions(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_client_send_request_success_errors_dynamic_and_retry(monkeypatch):
-    settings = SimpleNamespace(gmt_base_url="https://gmt", gmt_username="u", gmt_password="p", gmt_phone="9876543210", gmt_client_id="c", gmt_client_secret="s", gmt_retry_delay=0)
+    settings = SimpleNamespace(gmt_base_url="https://gmt", gmt_username="u", gmt_password="p", gmt_phone="9876543210", gmt_client_id="c", gmt_client_secret="s", gmt_retry_delay=0, gmt_max_retries=3)
     redis = FakeRedis()
     monkeypatch.setattr(client_module, "get_settings", lambda: settings)
     monkeypatch.setattr(client_module, "get_redis_service", lambda: redis)
@@ -357,7 +357,7 @@ async def test_client_send_request_success_errors_dynamic_and_retry(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_client_auth_refresh_and_dynamic_auth_responses(monkeypatch):
-    settings = SimpleNamespace(gmt_base_url="https://gmt", gmt_username="u", gmt_password="p", gmt_phone="9876543210", gmt_client_id="c", gmt_client_secret="s", gmt_retry_delay=0)
+    settings = SimpleNamespace(gmt_base_url="https://gmt", gmt_username="u", gmt_password="p", gmt_phone="9876543210", gmt_client_id="c", gmt_client_secret="s", gmt_retry_delay=0, gmt_max_retries=3)
     monkeypatch.setattr(client_module, "get_settings", lambda: settings)
     monkeypatch.setattr(client_module, "get_redis_service", lambda: FakeRedis())
     client = ProcucevAPIClient()

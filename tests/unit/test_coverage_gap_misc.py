@@ -339,6 +339,7 @@ async def test_procucev_client_cache_auth_and_http_fallbacks(monkeypatch):
         gmt_client_id="client",
         gmt_client_secret="secret",
         gmt_retry_delay=0,
+        gmt_max_retries=3,
     )
     redis = SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock())
     monkeypatch.setattr(client_module, "get_settings", lambda: settings)

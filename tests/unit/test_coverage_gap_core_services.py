@@ -556,7 +556,7 @@ async def test_queue_batch_lock_empty_dedup_and_redis_error_paths(monkeypatch):
     service.redis.zrange.return_value = [valid("Hello"), "not-json", valid("hello"), valid("  ")]
     await service._create_batch("1")
     payload = json.loads(service.redis.rpush.await_args.args[1])
-    assert payload["concatenated_content"] == "Hello"
+    assert payload["concatenated_content"] == "Hello\nhello\n"
     assert payload["message_count"] == 3
     service._try_start_processing.assert_awaited_once_with("1")
 

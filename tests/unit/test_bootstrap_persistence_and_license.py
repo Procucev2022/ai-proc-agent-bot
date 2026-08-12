@@ -472,7 +472,8 @@ def test_database_helpers_and_remote_operations(monkeypatch):
     monkeypatch.setattr(os.path, "exists", lambda path: path.endswith("ssl/DigiCertGlobalRootCA.crt.pem"))
     assert "ca" in database._get_ssl_connect_args(settings)["ssl"]
     monkeypatch.setattr(os.path, "exists", lambda _path: False)
-    assert database._get_ssl_connect_args(settings)["ssl"]["ssl_verify_cert"] is False
+    with pytest.raises(ValueError, match="TLS CA certificate"):
+        database._get_ssl_connect_args(settings)
     settings.database_mode = "local"
     assert database._get_ssl_connect_args(settings)["ssl"]["ssl_disabled"] is False
 

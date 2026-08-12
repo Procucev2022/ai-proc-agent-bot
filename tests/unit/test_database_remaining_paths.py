@@ -747,7 +747,8 @@ def test_get_conversation_session_plain_and_deserialized_workflow_state(monkeypa
 def test_remaining_database_branches(monkeypatch, main_settings):
     client = SimpleNamespace(database_mode="client", PROJECT_ROOT="C:/missing")
     monkeypatch.setattr("os.path.exists", lambda _path: False)
-    assert database._get_ssl_connect_args(client)["ssl"]["ssl_verify_cert"] is False
+    with pytest.raises(ValueError, match="TLS CA certificate"):
+        database._get_ssl_connect_args(client)
 
     monkeypatch.setattr(database, "get_settings", lambda: SimpleNamespace(enable_remote_categorization=False))
     assert database.test_remote_connection() is False
