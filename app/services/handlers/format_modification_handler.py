@@ -32,6 +32,25 @@ class FormatModificationHandler:
         """
         self.whatsapp_service = whatsapp_service
 
+    def _parse_delivery_format(self, message: str, retry_count: int) -> Dict[str, Any]:
+        """Parse delivery text through the Track 1 seam when it is available.
+
+        Track 1 is not implemented in this branch yet. Keeping the fallback in
+        a method makes the orchestration testable without changing the current
+        user-facing behavior, and allows the parser to be supplied later.
+        """
+        return {
+            "success": False,
+            "error_message": "Track 1 parse_delivery_format() not yet implemented",
+        }
+
+    def _parse_items_format(self, message: str, retry_count: int) -> Dict[str, Any]:
+        """Parse item text through the Track 1 seam when it is available."""
+        return {
+            "success": False,
+            "error_message": "Track 1 parse_items_format() not yet implemented",
+        }
+
     async def handle_format_modification(
         self,
         message: str,
@@ -112,14 +131,8 @@ class FormatModificationHandler:
         # Get current retry count
         retry_count = WorkflowManager.get_retry_count(session)
 
-        # TODO: Call Track 1 function when it exists
-        # result = parse_delivery_format(message, retry_count)
-        #
-        # For now, placeholder response
-        result = {
-            "success": False,
-            "error_message": "Track 1 parse_delivery_format() not yet implemented"
-        }
+        # Track 1 supplies parsing/validation through this seam.
+        result = self._parse_delivery_format(message, retry_count)
 
         if not result["success"]:
             # Track 1 generated error message
@@ -186,14 +199,8 @@ class FormatModificationHandler:
         # Get current retry count
         retry_count = WorkflowManager.get_retry_count(session)
 
-        # TODO: Call Track 1 function when it exists
-        # result = parse_items_format(message, retry_count)
-        #
-        # For now, placeholder response
-        result = {
-            "success": False,
-            "error_message": "Track 1 parse_items_format() not yet implemented"
-        }
+        # Track 1 supplies parsing/validation through this seam.
+        result = self._parse_items_format(message, retry_count)
 
         if not result["success"]:
             # Track 1 generated error message

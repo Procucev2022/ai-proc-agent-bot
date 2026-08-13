@@ -189,6 +189,7 @@ _interaction_logger = None
 
 def get_interaction_logger() -> InteractionLogger:
     """Get global interaction logger instance."""
+    pass
     global _interaction_logger
     if _interaction_logger is None:
         _interaction_logger = InteractionLogger()

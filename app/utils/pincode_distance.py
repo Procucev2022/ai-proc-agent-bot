@@ -27,6 +27,7 @@ _pincode_cache: Dict[str, Optional[Tuple[float, float]]] = {}
 
 def _get_nominatim():
     """Get or initialize the pgeocode Nominatim instance."""
+    pass
     global _nomi
     if _nomi is None:
         try:
@@ -172,6 +173,7 @@ def calculate_distance_from_pincode_to_coords(
 
 def clear_pincode_cache():
     """Clear the pincode coordinate cache."""
+    pass
     global _pincode_cache
     _pincode_cache.clear()
     logger.info("Pincode cache cleared")

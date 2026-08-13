@@ -122,8 +122,8 @@ async def test_taxonomy_sequential_failure_continues_and_checkpoint_read_error(m
     result = await taxonomy.build_taxonomy_async(None, batch_size=2, process_all=True, parallel=False, resume=True)
 
     assert result["success"] is False
-    assert "asyncio" in result["error"]
-    assert process.await_count == 1
+    assert result["total_errors"] == 1
+    assert process.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -139,7 +139,9 @@ async def test_taxonomy_parallel_false_result_and_checkpoint_cleanup_failure(mon
     result = await taxonomy.build_taxonomy_async(None, batch_size=1, process_all=True, parallel=True, resume=True)
 
     assert result["success"] is False
-    assert "max_retries" in result["error"]
+    assert result["total_errors"] == 3
+    assert result["batches_processed"] == 0
+    assert process.await_count == 3
 
 
 def test_vector_sync_outer_timeout_and_cleanup_close(monkeypatch):

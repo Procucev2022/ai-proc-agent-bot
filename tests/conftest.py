@@ -3,6 +3,27 @@
 from __future__ import annotations
 
 import os
+import sys
+import types
+
+
+# Some Windows-hosted runners block NumPy's optional random extension DLL even
+# though pandas and the rest of the deterministic suite do not use NumPy random
+# APIs. Keep the compatibility fallback confined to the test bootstrap so the
+# application imports and coverage scope remain unchanged.
+try:
+    import numpy.random  # noqa: F401
+except ImportError:
+    import numpy as _numpy
+
+    _blocked_random = types.ModuleType("numpy.random")
+    _blocked_random.Generator = object
+    _blocked_random.RandomState = object
+    _blocked_random.BitGenerator = object
+    _blocked_random.SeedSequence = object
+    _blocked_random.default_rng = lambda *args, **kwargs: None
+    sys.modules["numpy.random"] = _blocked_random
+    _numpy.random = _blocked_random
 
 
 # Set safe values before any application module is imported. Unit tests never
