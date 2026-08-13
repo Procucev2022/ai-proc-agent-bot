@@ -480,8 +480,8 @@ def run_fast(options: argparse.Namespace) -> int:
         if include:
             command += [f"--include={include}"]
         # -x and -q keep this a pre-check: stop at the first failure and skip
-        # the long warning summary the full gate is there to report.
-        command += ["-m", "pytest", "-x", "-q", "--no-header"]
+        # the warning summary, which the full gate is the place to read.
+        command += ["-m", "pytest", "-x", "-q", "--no-header", "--disable-warnings"]
         command += [path.as_posix() for path in tests]
         ok = python(*command, env=env) == 0
         if include and ok:
