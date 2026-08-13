@@ -5,7 +5,8 @@ per-file metrics produced by :mod:`check_coverage` into one Markdown document
 that the workflow writes to both the job summary and a sticky pull-request
 comment.
 
-Per the repository contract in AGENTS.md the report carries the complete
+Per the repository coverage gate (``scripts/check_coverage.py`` and
+``.github/workflows/pr-quality-gate.yml``) the report carries the complete
 per-file table from ``scripts/check_coverage.py`` alongside the aggregate
 figures; the table is wrapped in a collapsed ``<details>`` block so the comment
 stays readable.

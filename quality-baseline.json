@@ -14,7 +14,7 @@
     "finding instead. Tool versions are pinned in requirements.txt because these",
     "counts are only reproducible for a fixed tool version.",
     "",
-    "The unit-test and per-file coverage contract in AGENTS.md is NOT ratcheted.",
+    "The unit-test and per-file coverage gate from scripts/check_coverage.py is NOT ratcheted.",
     "It is enforced absolutely at 90% by scripts/check_coverage.py."
   ],
   "checks": {

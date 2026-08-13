@@ -82,10 +82,16 @@ def run_check(name: str, spec: dict[str, Any]) -> Result:
     )
     output = (completed.stdout or "") + (completed.stderr or "")
     findings = count_findings(tool, output)
-    if findings == 0 and completed.returncode not in (0, 1):
+    if completed.returncode not in (0, 1):
         raise RuntimeError(
-            f"{name}: {' '.join(command)} exited {completed.returncode} without "
-            f"reporting findings:\n{output.strip()}"
+            f"{name}: {' '.join(command)} exited {completed.returncode}:\n"
+            f"{output.strip()}"
+        )
+    if completed.returncode == 1 and findings == 0:
+        raise RuntimeError(
+            f"{name}: {' '.join(command)} exited 1 but no findings were parsed. "
+            "Check the tool output format and the parser patterns.\n"
+            f"{output.strip()}"
         )
     return Result(
         name=name,

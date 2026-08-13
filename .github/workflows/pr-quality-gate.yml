@@ -2,7 +2,8 @@ name: PR Quality Gate
 
 # Runs every quality check the application requires on pull requests: lint,
 # type check, build, and the unit-test suite with the 90% per-file coverage
-# contract from AGENTS.md (statements, branches and functions).
+# gate enforced by scripts/check_coverage.py (statements, branches and
+# functions).
 #
 # Every check runs even when an earlier one fails, so a single run reports the
 # complete picture. The final "Quality gate result" step fails the workflow if
