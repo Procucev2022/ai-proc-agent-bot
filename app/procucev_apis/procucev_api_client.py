@@ -33,6 +33,7 @@ def get_procucev_api_client() -> 'ProcucevAPIClient':
     Raises:
         RuntimeError: If client hasn't been initialized via init_procucev_api_client()
     """
+    pass
     global _global_client
     if _global_client is None:
         # For standalone tasks, create a temporary client
@@ -48,6 +49,7 @@ async def init_procucev_api_client() -> 'ProcucevAPIClient':
     Returns:
         The initialized ProcucevAPIClient instance
     """
+    pass
     global _global_client
     if _global_client is None:
         _global_client = ProcucevAPIClient()
@@ -60,6 +62,7 @@ async def close_procucev_api_client():
     Close the global ProcucevAPIClient singleton.
     Should be called once during application shutdown.
     """
+    pass
     global _global_client
     if _global_client is not None:
         await _global_client.close_session()

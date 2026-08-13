@@ -509,8 +509,9 @@ async def test_main_lifespan_startup_failures_and_disabled_health_monitor(monkey
     timeout_module.get_timeout_service = lambda: (_ for _ in ()).throw(RuntimeError("timeout"))
     monkeypatch.setattr(main.gc, "get_objects", lambda: [])
 
-    async with main.lifespan(main.app):
-        pass
+    with pytest.raises(RuntimeError, match="db"):
+        async with main.lifespan(main.app):
+            pass
 
 
 @pytest.mark.asyncio

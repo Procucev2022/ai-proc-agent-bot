@@ -1,0 +1,65 @@
+{
+  "_README": [
+    "Ratchet baseline for the pull-request quality gate.",
+    "",
+    "The application predates any lint or type-check gate, so a strict pass/fail",
+    "run would fail on every pull request and teach reviewers to ignore it.",
+    "Instead each check below records the finding count measured on the trunk at",
+    "the time the gate was introduced. A pull request fails when it pushes a",
+    "count ABOVE its recorded maximum, so existing debt is visible and frozen",
+    "while new debt is blocked.",
+    "",
+    "When a pull request reduces a count, lower max_findings in the same commit.",
+    "Never raise a max_findings value to make a pull request pass: fix the",
+    "finding instead. Tool versions are pinned in requirements.txt because these",
+    "counts are only reproducible for a fixed tool version.",
+    "",
+    "The unit-test and per-file coverage gate from scripts/check_coverage.py is NOT ratcheted.",
+    "It is enforced absolutely at 90% by scripts/check_coverage.py."
+  ],
+  "checks": {
+    "flake8-errors": {
+      "title": "Lint (correctness)",
+      "tool": "flake8",
+      "description": "Syntax errors, undefined names and invalid comparisons: code that is broken rather than merely untidy.",
+      "command": [
+        "python",
+        "-m",
+        "flake8",
+        "app",
+        "scripts",
+        "--select=E9,F63,F7,F82",
+        "--isolated",
+        "--max-line-length=120"
+      ],
+      "max_findings": 6,
+      "blocking": true
+    },
+    "flake8-style": {
+      "title": "Lint (full)",
+      "tool": "flake8",
+      "description": "Full flake8 run using .flake8. Advisory: reported on the pull request but does not fail the build.",
+      "command": [
+        "python",
+        "-m",
+        "flake8",
+        "app",
+        "scripts"
+      ],
+      "max_findings": 572,
+      "blocking": false
+    },
+    "mypy": {
+      "title": "Type check",
+      "tool": "mypy",
+      "description": "mypy over app/ using the [tool.mypy] settings in pyproject.toml.",
+      "command": [
+        "python",
+        "-m",
+        "mypy"
+      ],
+      "max_findings": 1320,
+      "blocking": true
+    }
+  }
+}

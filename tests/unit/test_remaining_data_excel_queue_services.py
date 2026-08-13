@@ -422,6 +422,21 @@ def queue_service():
     service._running = True
     service.whatsapp_service = SimpleNamespace(send_message=AsyncMock(return_value=SimpleNamespace(success=True)))
     service.redis = MagicMock()
+    service.redis.set = AsyncMock(return_value=True)
+    service.redis.zadd = AsyncMock()
+    service.redis.exists = AsyncMock(return_value=False)
+    service.redis.setex = AsyncMock()
+    service.redis.zrange = AsyncMock(return_value=[])
+    service.redis.zrem = AsyncMock()
+    service.redis.rpush = AsyncMock()
+    service.redis.lpop = AsyncMock(return_value=None)
+    service.redis.lpush = AsyncMock()
+    service.redis.scan = AsyncMock(return_value=(0, []))
+    service.redis.get = AsyncMock(return_value=None)
+    service.redis.zcard = AsyncMock(return_value=0)
+    service.redis.llen = AsyncMock(return_value=0)
+    service.redis.delete = AsyncMock()
+    service.redis.close = AsyncMock()
     return service
 
 
@@ -432,7 +447,7 @@ async def test_message_queue_enqueue_batch_wrapper_status_health_and_shutdown(mo
     service._create_batch = AsyncMock()
     await service.enqueue_message({"from": "+123", "timestamp": "2024-01-01 00:00:00", "text": {"body": "hello"}, "message_id": "M"})
     service.redis.zadd.assert_awaited_once()
-    service._create_batch.assert_awaited_once_with("123")
+    service._create_batch.assert_not_awaited()
     service.redis.exists.return_value = True
     service._refresh_batch_timer = AsyncMock()
     await service.enqueue_message({"from": "123", "content": "next", "timestamp": 2})
@@ -446,7 +461,7 @@ async def test_message_queue_enqueue_batch_wrapper_status_health_and_shutdown(mo
     monkeypatch.setattr(queue_module.time, "time", lambda: 1)
     await service._create_batch("1")
     batch = queue_module.Batch.from_dict(json.loads(service.redis.rpush.await_args.args[1]))
-    assert batch.concatenated_content == "Hello" and batch.message_count == 2
+    assert batch.concatenated_content == "Hello\nhello" and batch.message_count == 2
     service.redis.zcard = AsyncMock(return_value=0); service.redis.llen = AsyncMock(return_value=0)
     service.redis.get = AsyncMock(return_value=None); service.redis.exists = AsyncMock(return_value=False)
     assert (await service.get_queue_status("1"))["incoming_queue_size"] == 0

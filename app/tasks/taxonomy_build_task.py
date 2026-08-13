@@ -118,7 +118,8 @@ async def build_taxonomy_async(self, batch_size: int = 50, process_all: bool = T
                 logger.info(f"Total batches to process: {num_batches}")
                 
                 # Initialize batch counter from checkpoint or start from beginning
-                import asyncio.locks
+                # asyncio is imported at module scope and is shared by both
+                # sequential and parallel execution paths.
                 batch_counter = {'current': 0}
                 
                 # Resume from checkpoint if available
@@ -142,8 +143,9 @@ async def build_taxonomy_async(self, batch_size: int = 50, process_all: bool = T
                 # Track failed batches for retry
                 failed_batches = []
                 failed_batches_lock = asyncio.Lock()
+                max_retries = 2
                 
-                async def process_next_available_batch(max_retries=2):
+                async def process_next_available_batch():
                     """Worker function that grabs the next available batch with retry logic"""
                     while True:
                         # Get next batch number atomically
@@ -322,6 +324,7 @@ async def build_taxonomy_async(self, batch_size: int = 50, process_all: bool = T
                     except Exception as e:
                         error_msg = f"Batch exception (attempt {attempt + 1}/{max_retries + 1}): {str(e)}"
                         logger.error(error_msg)
+                        total_results["success"] = False
                         success = False
                     
                     if not success and attempt < max_retries:
@@ -347,7 +350,7 @@ async def build_taxonomy_async(self, batch_size: int = 50, process_all: bool = T
             logger.info("=" * 60)
             
             return {
-                "success": True,
+                "success": total_results["success"],
                 "message": "Taxonomy build completed successfully",
                 "total_processed": total_results["total_processed"],
                 "total_created": total_results["total_created"],

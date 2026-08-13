@@ -55,6 +55,7 @@ def _log_pool_status(context: str = ""):
     Args:
         context: Context description for the log message (e.g., "after creating session")
     """
+    pass
     global engine
 
     if not engine or not hasattr(engine, 'pool'):
@@ -117,6 +118,7 @@ def log_connection_pool_status(context: str = "manual check"):
 
 def init_database():
     """Initialize database tables and create sample data."""
+    pass
     global engine, SessionLocal
 
     settings = get_settings()
@@ -226,6 +228,7 @@ def get_db_session():
 
     Returns a new database session. Caller is responsible for closing the session.
     """
+    pass
     global engine, SessionLocal
 
     if SessionLocal is None:
@@ -308,6 +311,7 @@ def get_db_session_context():
 
 def get_remote_db_session():
     """Get remote database session for item categorization with error handling."""
+    pass
     global remote_engine, RemoteSessionLocal
     
     settings = get_settings()
@@ -564,6 +568,7 @@ class DatabaseManager:
 
         Returns dictionary with pool statistics and health information.
         """
+        pass
         global engine, remote_engine
 
         status = {}

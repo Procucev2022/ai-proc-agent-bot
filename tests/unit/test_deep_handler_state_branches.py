@@ -234,11 +234,15 @@ async def test_confirmation_submission_completion_optional_and_bfs_fallbacks(mon
     h.whatsapp_service = SimpleNamespace(send_configurable_buttons=AsyncMock())
     h._merge_specifications_into_product = MagicMock()
     monkeypatch.setattr(confirmation_mod.ChatServiceHelpers, "create_rfq_schema_from_entities", lambda *_: SimpleNamespace())
+    import app.services.openai_service as openai_mod
+    fake_openai = SimpleNamespace(
+        extract_entities=AsyncMock(return_value={"products": [{"remarks": "steel"}]})
+    )
+    monkeypatch.setattr(openai_mod, "OpenAIService", lambda: fake_openai)
     single = session(pending_optional_rfq={"entities": {"description": "pump"}}, attachment_caption="urgent")
     assert (await h._merge_optional_fields_and_confirm(u, single, "steel"))["status"] == "optional_fields_merged_confirmation_sent"
     combined = session(pending_optional_combined_rfq={"combined_schema": {}, "products": [{"entities": {}}]})
     assert (await h._merge_optional_fields_and_confirm(u, combined, "steel"))["status"] == "optional_fields_merged_confirmation_sent"
-    import app.services.openai_service as openai_mod
     monkeypatch.setattr(openai_mod, "OpenAIService", MagicMock(side_effect=RuntimeError("ai")))
     assert (await h._merge_optional_fields_and_confirm(u, session(), "x"))["status"] == "continue_with_purchase_intent"
 

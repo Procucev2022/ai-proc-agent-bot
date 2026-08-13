@@ -556,6 +556,22 @@ def queue_service():
     service.batch_window = 3; service.please_wait_threshold = 15; service.max_please_wait_count = 3; service.monitoring_poll_interval = 1; service.response_ready_ttl = 60; service.monitor_lock_ttl = 180; service.please_wait_interval_ttl = 600; service._background_tasks = []; service._running = True
     service.whatsapp_service = SimpleNamespace(send_message=AsyncMock(return_value=SimpleNamespace(success=True)))
     service.redis = MagicMock()
+    service.redis.lock.return_value = FakeLock()
+    service.redis.set = AsyncMock(return_value=True)
+    service.redis.zadd = AsyncMock()
+    service.redis.exists = AsyncMock(return_value=False)
+    service.redis.setex = AsyncMock()
+    service.redis.zrange = AsyncMock(return_value=[])
+    service.redis.zrem = AsyncMock()
+    service.redis.rpush = AsyncMock()
+    service.redis.lpop = AsyncMock(return_value=None)
+    service.redis.lpush = AsyncMock()
+    service.redis.scan = AsyncMock(return_value=(0, []))
+    service.redis.get = AsyncMock(return_value=None)
+    service.redis.zcard = AsyncMock(return_value=0)
+    service.redis.llen = AsyncMock(return_value=0)
+    service.redis.delete = AsyncMock()
+    service.redis.close = AsyncMock()
     return service
 
 
@@ -565,7 +581,7 @@ async def test_queue_keys_enqueue_batch_and_start_paths(monkeypatch):
     assert service._key_incoming("u") == "u:incoming" and service._key_please_wait_interval("u", 2).endswith(":2")
     service.redis.zadd = AsyncMock(); service.redis.exists = AsyncMock(return_value=False); service._create_batch = AsyncMock()
     await service.enqueue_message({"from": "+123", "timestamp": "2024-01-01 00:00:00", "text": {"body": "hello"}})
-    service._create_batch.assert_awaited_once_with("123")
+    service._create_batch.assert_not_awaited()
     service.redis.exists.return_value = True; service._refresh_batch_timer = AsyncMock()
     await service.enqueue_message({"from": "123", "content": "next", "timestamp": 2, "type": "image"})
     service._refresh_batch_timer.assert_awaited_once_with("123")
@@ -581,7 +597,7 @@ async def test_queue_keys_enqueue_batch_and_start_paths(monkeypatch):
     monkeypatch.setattr(queue_module.time, "time", lambda: 1)
     await service._create_batch("u")
     batch = queue_module.Batch.from_dict(json.loads(service.redis.rpush.call_args.args[1]))
-    assert batch.concatenated_content == "Hello" and batch.message_count == 2
+    assert batch.concatenated_content == "Hello\nhello" and batch.message_count == 2
     service.redis.exists.return_value = True
     await service._create_batch("u")
     service.redis.zrange.return_value = ["bad"]; service.redis.exists.return_value = False

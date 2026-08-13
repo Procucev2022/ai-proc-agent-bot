@@ -138,6 +138,7 @@ _welcome_service: Optional[WelcomeMessageService] = None
 
 def get_welcome_service() -> WelcomeMessageService:
     """Get welcome message service singleton."""
+    pass
     global _welcome_service
     if _welcome_service is None:
         _welcome_service = WelcomeMessageService()

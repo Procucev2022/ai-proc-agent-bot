@@ -268,8 +268,9 @@ async def test_taxonomy_sequential_retries_and_checkpoint_failure(monkeypatch):
     _patch_taxonomy_loader(monkeypatch, process)
     result = await taxonomy.build_taxonomy_async(None, batch_size=2, process_all=True, parallel=False, resume=True)
     assert result["success"] is False
-    assert "asyncio" in result["error"]
-    assert process.await_count == 2
+    assert result["total_errors"] == 1
+    assert result["batches_processed"] == 1
+    assert process.await_count == 4
 
 
 def test_vector_timeout_cleanup_error_and_embedding_exception(monkeypatch):

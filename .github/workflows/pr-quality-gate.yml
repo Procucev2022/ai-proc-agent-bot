@@ -1,0 +1,273 @@
+name: PR Quality Gate
+
+# Runs every quality check the application requires on pull requests: lint,
+# type check, build, and the unit-test suite with the 90% per-file coverage
+# gate enforced by scripts/check_coverage.py (statements, branches and
+# functions).
+#
+# Every check runs even when an earlier one fails, so a single run reports the
+# complete picture. The final "Quality gate result" step fails the workflow if
+# any blocking check failed, which is what branch protection should require.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-quality-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gate:
+    name: Lint, Build, Type Check, Tests & Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      # Deterministic placeholders. Unit tests never reach a live service; the
+      # suite mocks the database, Redis, Celery, OpenAI, WhatsApp and Chroma.
+      # tests/conftest.py sets the same values via os.environ.setdefault, so
+      # these only need to stay consistent with it.
+      AZURE_OPENAI_API_KEY: unit-test-key
+      GMT_USERNAME: unit-test-user
+      GMT_PHONE: '919876543229'
+      GMT_BASE_URL: https://gmt.invalid
+      GMT_PASSWORD: unit-test-password
+      GMT_CLIENT_ID: unit-test-client-id
+      GMT_CLIENT_SECRET: unit-test-client-secret
+      LOCAL_DATABASE_URL: 'sqlite:///:memory:'
+      REMOTE_DATABASE_URL: 'sqlite:///:memory:'
+      DATABASE_MODE: local
+      LICENSE_ENABLED: 'false'
+      WHATSAPP_MOCK_MODE: 'true'
+      WEBHOOK_HEALTH_MONITORING_ENABLED: 'false'
+      PYTHONPATH: .
+      COVERAGE_THRESHOLD: '90'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # sentence-transformers pulls torch, which defaults to the multi-GB
+          # CUDA wheels. Dockerfile.app installs the CPU build first for the
+          # same reason; the runner has no GPU either.
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt
+
+      - name: Report tool versions
+        run: |
+          python --version
+          python -m pytest --version
+          python -m coverage --version
+          python -m flake8 --version
+          python -m mypy --version
+
+      # ---------------------------------------------------------------- lint
+      - name: Lint (flake8)
+        id: lint
+        continue-on-error: true
+        run: |
+          python scripts/check_quality_budget.py \
+            --check flake8-errors \
+            --check flake8-style \
+            --summary-file quality-table.md
+
+      # ------------------------------------------------------------ typecheck
+      - name: Type check (mypy)
+        id: typecheck
+        continue-on-error: true
+        run: |
+          python scripts/check_quality_budget.py \
+            --check mypy \
+            --summary-file quality-table.md
+
+      # ------------------------------------------------------- unit tests
+      - name: Unit tests with coverage
+        id: tests
+        continue-on-error: true
+        run: |
+          python -m coverage run --branch -m pytest \
+            --junitxml=junit.xml \
+            -o junit_family=xunit2
+
+      - name: Build coverage report
+        id: coverage_report
+        continue-on-error: true
+        run: python -m coverage json -o coverage.json
+
+      - name: Enforce per-file coverage contract
+        id: per_file_coverage
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python scripts/check_coverage.py \
+            --coverage-file coverage.json \
+            --threshold "$COVERAGE_THRESHOLD" | tee per-file-coverage.md
+
+      - name: Enforce aggregate coverage
+        id: aggregate_coverage
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m coverage report --fail-under="$COVERAGE_THRESHOLD" \
+            | tee aggregate-coverage.txt
+
+      # --------------------------------------------------------------- build
+      # Runs after the coverage gate so that installing the build frontend and
+      # emitting build/ and dist/ cannot influence the measured run. The Docker
+      # images are built by the deploy workflows via `az acr build`; reproducing
+      # that here would mean installing torch and the sentence-transformers
+      # model on every pull request, so the gate verifies the Python build
+      # instead: every module compiles, the tree packages, and the ASGI app
+      # constructs.
+      - name: Build
+        id: build
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          echo "::group::Byte-compile every application module"
+          python -m compileall -q app scripts
+          echo "::endgroup::"
+          echo "::group::Build the distribution"
+          python -m pip install --quiet build
+          python -m build --wheel --outdir dist
+          echo "::endgroup::"
+          echo "::group::Import smoke test"
+          python - <<'PY'
+          from app.main import app
+
+          routes = [getattr(route, "path", "") for route in app.routes]
+          assert "/health" in routes, f"/health missing from {routes}"
+          print(f"ASGI app '{app.title}' built with {len(routes)} routes")
+          PY
+          echo "::endgroup::"
+
+      # ------------------------------------------------------------- report
+      - name: Render quality gate report
+        id: report
+        if: always()
+        run: |
+          python scripts/pr_report.py \
+            --junit-xml junit.xml \
+            --coverage-json coverage.json \
+            --threshold "$COVERAGE_THRESHOLD" \
+            --per-file-table per-file-coverage.md \
+            --aggregate-report aggregate-coverage.txt \
+            --quality-table quality-table.md \
+            --status "Lint=${{ steps.lint.outcome }}" \
+            --status "Type check=${{ steps.typecheck.outcome }}" \
+            --status "Build=${{ steps.build.outcome }}" \
+            --status "Unit tests=${{ steps.tests.outcome }}" \
+            --status "Per-file coverage=${{ steps.per_file_coverage.outcome }}" \
+            --status "Aggregate coverage=${{ steps.aggregate_coverage.outcome }}" \
+            --commit "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --output pr-report.md \
+            --comment-output pr-comment.md
+
+      - name: Publish report to job summary
+        if: always()
+        run: cat pr-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-gate-reports
+          path: |
+            pr-report.md
+            pr-comment.md
+            per-file-coverage.md
+            aggregate-coverage.txt
+            quality-table.md
+            coverage.json
+            junit.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+      # A fork pull request gets a read-only token, so commenting is best-effort.
+      # The job summary above always carries the same report.
+      - name: Comment report on the pull request
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- pr-quality-gate -->';
+            const body = fs.readFileSync('pr-comment.md', 'utf8');
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number, per_page: 100 }
+            );
+            const existing = comments.find(
+              (comment) =>
+                comment.user.type === 'Bot' && comment.body.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id, body,
+              });
+              core.info(`Updated comment ${existing.id}`);
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body,
+              });
+              core.info('Created quality gate comment');
+            }
+
+      # ---------------------------------------------------------------- gate
+      - name: Quality gate result
+        if: always()
+        env:
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
+          COVERAGE_REPORT_OUTCOME: ${{ steps.coverage_report.outcome }}
+          PER_FILE_OUTCOME: ${{ steps.per_file_coverage.outcome }}
+          AGGREGATE_OUTCOME: ${{ steps.aggregate_coverage.outcome }}
+        run: |
+          failed=0
+          check() {
+            if [ "$2" = "success" ]; then
+              echo "$1: success"
+            else
+              echo "::error title=Quality gate::$1 failed ($2)"
+              failed=1
+            fi
+          }
+          check "Lint" "$LINT_OUTCOME"
+          check "Type check" "$TYPECHECK_OUTCOME"
+          check "Build" "$BUILD_OUTCOME"
+          check "Unit tests" "$TESTS_OUTCOME"
+          check "Coverage report" "$COVERAGE_REPORT_OUTCOME"
+          check "Per-file coverage" "$PER_FILE_OUTCOME"
+          check "Aggregate coverage" "$AGGREGATE_OUTCOME"
+          if [ "$failed" -ne 0 ]; then
+            echo "Quality gate failed. See the job summary and the pull request comment."
+            exit 1
+          fi
+          echo "All quality checks passed."

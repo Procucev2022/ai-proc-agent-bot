@@ -1,0 +1,32 @@
+[flake8]
+# The blocking PR gate selects correctness codes only (see quality-baseline.json).
+# This file configures the advisory full-codebase run so its output is stable
+# and reviewable rather than drowned in formatting noise.
+max-line-length = 120
+max-complexity = 40
+extend-exclude =
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    build,
+    dist,
+    logs,
+    app/logs,
+    .pytest_cache,
+    tests/load_testing,
+    tests/automationscript
+
+# Style codes the existing codebase does not follow. Formatting is not part of
+# the blocking gate; black/isort run in --check mode as advisory steps instead.
+extend-ignore =
+    E1,
+    E2,
+    E3,
+    E501,
+    E731,
+    W1,
+    W2,
+    W3,
+    W5,
+    C901

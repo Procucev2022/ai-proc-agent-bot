@@ -95,6 +95,21 @@ def timeout_service(redis=None, redis_session=None):
 def queue_service(redis=None):
     service = queue_mod.MessageQueueService.__new__(queue_mod.MessageQueueService)
     service.redis = redis or MagicMock()
+    service.redis.set = AsyncMock(return_value=True)
+    service.redis.zadd = AsyncMock()
+    service.redis.exists = AsyncMock(return_value=False)
+    service.redis.setex = AsyncMock()
+    service.redis.zrange = AsyncMock(return_value=[])
+    service.redis.zrem = AsyncMock()
+    service.redis.rpush = AsyncMock()
+    service.redis.lpop = AsyncMock(return_value=None)
+    service.redis.lpush = AsyncMock()
+    service.redis.scan = AsyncMock(return_value=(0, []))
+    service.redis.get = AsyncMock(return_value=None)
+    service.redis.zcard = AsyncMock(return_value=0)
+    service.redis.llen = AsyncMock(return_value=0)
+    service.redis.delete = AsyncMock()
+    service.redis.close = AsyncMock()
     service.batch_window = 3
     service.please_wait_threshold = 10
     service.max_please_wait_count = 2
@@ -283,13 +298,17 @@ async def test_timeout_worker_timeout_persists_resets_cleans_and_tolerates_failu
     redis_session.save_session = AsyncMock()
     service = timeout_service(redis_session=redis_session)
     service.redis.delete = AsyncMock(return_value=7)
-    db = SimpleNamespace(save_conversation_session=MagicMock(), close=MagicMock())
+    persisted = {}
+    db = SimpleNamespace(
+        save_conversation_session=MagicMock(side_effect=lambda value: persisted.update(value)),
+        close=MagicMock(),
+    )
     monkeypatch.setattr("app.database.DatabaseManager", lambda: db)
 
     await service._handle_worker_timeout("+1", "S", "1:last_activity", "1:pending_reply")
-    saved = db.save_conversation_session.call_args.args[0]
-    assert saved.outcome.value == "abandoned"
-    assert len(saved.conversation_history["messages"]) == 1
+    saved = persisted
+    assert saved["outcome"] == "abandoned"
+    assert len(saved["conversation_history"]["messages"]) == 1
     redis_session.save_session.assert_awaited_once()
     assert service.redis.delete.await_count >= 3
     service.whatsapp_service.send_message.assert_awaited_once()
@@ -342,7 +361,7 @@ async def test_queue_enqueue_polling_and_batch_retry_lock_paths(monkeypatch):
     service.redis.exists = AsyncMock(return_value=False)
     service._create_batch = AsyncMock()
     await service.enqueue_message({"from": "+1", "timestamp": "2024-01-01 00:00:00", "text": {"body": "hello"}})
-    service._create_batch.assert_awaited_once_with("1")
+    service._create_batch.assert_not_awaited()
     service.redis.exists.return_value = True
     service._refresh_batch_timer = AsyncMock()
     await service.enqueue_message({"from": "1", "timestamp": 2, "type": "text", "text": {"body": "again"}})

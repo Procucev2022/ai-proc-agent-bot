@@ -254,6 +254,7 @@ _bfs_api_service: BFSAPIService = None
 
 def get_bfs_api_service() -> BFSAPIService:
     """Get the BFS API service singleton instance."""
+    pass
     global _bfs_api_service
     if _bfs_api_service is None:
         _bfs_api_service = BFSAPIService()

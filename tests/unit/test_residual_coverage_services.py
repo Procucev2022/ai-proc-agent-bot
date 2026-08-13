@@ -281,13 +281,14 @@ async def test_message_queue_edge_keys_enqueue_and_background_cleanup(monkeypatc
     service._background_tasks = []
     service._running = True
     service.redis = SimpleNamespace(
+        set=AsyncMock(return_value=True),
         zadd=AsyncMock(), exists=AsyncMock(return_value=False), setex=AsyncMock(),
     )
     service._create_batch = AsyncMock()
     assert service._key_lock_ack("1") == "1:lock:ack"
     assert service._key_ack_sent("1") == "1:ack_sent"
     await service.enqueue_message({"from": "+1", "timestamp": 1, "type": "image", "content": "", "message_id": "m"})
-    service._create_batch.assert_awaited_once()
+    service._create_batch.assert_not_awaited()
     await service.enqueue_message({"from": "1", "timestamp": 2, "type": "text", "content": "next"})
     service.redis.exists.return_value = True
     service._refresh_batch_timer = AsyncMock()

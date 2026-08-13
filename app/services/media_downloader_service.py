@@ -218,6 +218,7 @@ _media_downloader = None
 
 def get_media_downloader() -> 'MediaDownloaderService':
     """Get global media downloader instance."""
+    pass
     global _media_downloader
     if _media_downloader is None:
         _media_downloader = MediaDownloaderService()

@@ -522,6 +522,7 @@ def load_environment() -> None:
     Loads configuration from environment file and validates
     that all required settings are present.
     """
+    pass
     global _settings
     _settings = Settings()
 
@@ -531,6 +532,7 @@ def get_settings() -> Settings:
     
     Returns the configured settings instance for the application.
     """
+    pass
     global _settings
     if _settings is None:
         load_environment()
