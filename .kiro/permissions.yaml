@@ -1,15 +1,30 @@
 rules:
   - capability: builtin
     effect: allow
+  # The quality gate must run unattended: scripts/quality_check.py and the two
+  # checkers it drives, plus the tools they invoke. Note that
+  # `quality_check.py --apply-schema` connects to the database DATABASE_MODE
+  # points at and runs create_all; it only ever adds missing tables and never
+  # alters or drops one, but confirm intent with the user before using it.
   - capability: shell
     effect: allow
-    match: ["git *", "python -m pytest*", "python -m coverage*", "python -m compileall*"]
+    match:
+      - "git *"
+      - "python -m pytest*"
+      - "python -m coverage*"
+      - "python -m compileall*"
+      - "python -m flake8*"
+      - "python -m mypy*"
+      - "python -m build*"
+      - "python scripts/quality_check.py*"
+      - "python scripts/check_coverage.py*"
+      - "python scripts/check_quality_budget.py*"
   - capability: fs_read
     effect: allow
-    match: ["app/**", "tests/**", "Setup/**", "*.py", "*.sh", "*.yml", "*.yaml", "*.bicep", "*.json", "*.md"]
+    match: ["app/**", "tests/**", "Setup/**", "scripts/**", ".kiro/**", "*.py", "*.sh", "*.yml", "*.yaml", "*.bicep", "*.json", "*.md"]
   - capability: fs_write
     effect: allow
-    match: ["app/**", "tests/**", "Setup/**", "*.py", "*.sh", "*.yml", "*.yaml", "*.bicep", "*.json", "*.md"]
+    match: ["app/**", "tests/**", "Setup/**", "scripts/**", ".kiro/**", "*.py", "*.sh", "*.yml", "*.yaml", "*.bicep", "*.json", "*.md"]
   - capability: web_fetch
     effect: allow
     match: ["https://api.openai.com/*", "https://*.azurewebsites.net/*"]

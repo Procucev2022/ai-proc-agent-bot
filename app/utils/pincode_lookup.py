@@ -162,8 +162,4 @@ async def get_location_from_pincode_async(pincode: str) -> Optional[Dict[str, st
     except Exception as e:
         logger.warning(f"Could not fetch location for pincode {clean_pincode} returning none: {e}")
         return None
-
-
-if __name__ == "__main__":
-    result = get_pincode_details("500013")
-    print("result", result)
+
