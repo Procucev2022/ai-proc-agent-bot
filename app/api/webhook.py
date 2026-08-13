@@ -104,6 +104,7 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
     user messages, processes them through the chat service, and
     returns appropriate responses.
     """
+    webhook_data = None
     try:
         # Log server receipt time immediately
         server_receipt_time = datetime.now()
@@ -144,15 +145,22 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
         # Handle critical webhook processing errors with automatic cancellation
         logger.error(f"Critical error processing webhook: {e}", exc_info=True)
 
-        # Try to extract user phone for error handling
-        user_phone = None
-        try:
-            body = await request.body()
-            webhook_data = await parse_webhook_data(request)
-            if webhook_data:
-                user_phone = webhook_data.get("from")
-        except Exception as parse_error:
-            logger.error(f"Failed to parse webhook data for error handling: {parse_error}")
+        # Extract user phone from already parsed webhook_data or fallback parsing
+        user_phone = webhook_data.get("from") if isinstance(webhook_data, dict) else None
+        if not user_phone:
+            try:
+                fallback_data = await parse_webhook_data(request)
+                if fallback_data:
+                    user_phone = fallback_data.get("from")
+            except Exception as parse_error:
+                logger.error(f"Failed to parse webhook data for error handling: {parse_error}")
+
+        if not user_phone:
+            try:
+                query_params = dict(request.query_params)
+                user_phone = query_params.get("customernumber") or query_params.get("from")
+            except Exception:
+                pass
 
         # Clear workflow state and notify user if we have their phone number
         if user_phone:

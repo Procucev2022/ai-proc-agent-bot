@@ -29,11 +29,13 @@ def test_pincode_http_retry_and_failure(monkeypatch):
 @pytest.mark.asyncio
 async def test_location_validation_and_mapping(monkeypatch):
     assert await module.get_location_from_pincode_async("123") is None
-    monkeypatch.setattr(module, "get_pincode_details", lambda pin: None)
+    monkeypatch.setattr(module, "get_pincode_details", lambda pin, **kwargs: None)
     assert await module.get_location_from_pincode_async("411005") is None
-    monkeypatch.setattr(module, "get_pincode_details", lambda pin: [{"Status": "Error", "PostOffice": []}])
+    monkeypatch.setattr(module, "get_pincode_details", lambda pin, **kwargs: [{"Status": "Error", "PostOffice": []}])
     assert await module.get_location_from_pincode_async("411005") is None
-    monkeypatch.setattr(module, "get_pincode_details", lambda pin: [{"Status": "Success", "PostOffice": [{"District": "Pune", "State": "MH"}]}])
+    monkeypatch.setattr(module, "get_pincode_details", lambda pin, **kwargs: [{"Status": "Success", "PostOffice": [{"District": "Pune", "State": "MH"}]}])
     assert await module.get_location_from_pincode_async("411005") == {"pincode": "411005", "city": "Pune", "state": "MH"}
-    monkeypatch.setattr(module, "get_pincode_details", lambda pin: [{"Status": "Success", "PostOffice": [{}]}])
+    monkeypatch.setattr(module, "get_pincode_details", lambda pin, **kwargs: [{"Status": "Success", "PostOffice": [{}]}])
     assert await module.get_location_from_pincode_async("411005") is None
+
+

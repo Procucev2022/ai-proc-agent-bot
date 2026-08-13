@@ -24,7 +24,6 @@ from app.services.whatsapp_service import WhatsAppService
 from app.services.cancel_service import CancelService
 from app.utils import sectioned_rfq_format_parser
 from app.utils.sectioned_rfq_format_parser import generate_delivery_display_with_invalid_pincode
-from app.utils.datetime_utils import utc_now
 from app.utils.pincode_lookup import get_location_from_pincode_async
 
 logger = logging.getLogger(__name__)
@@ -660,6 +659,14 @@ class SectionedRFQCreationHandler:
         await self.session_manager.save_session(session, persist_to_db=False)
 
         return {"status": "validation_error"}
+
+    async def _display_invalid_pincode_message(self, user: User, session: ConversationSession,
+                                             delivery_data: Dict, pincode: str) -> Dict[str, Any]:
+        """Display error message when pincode lookup fails or pincode is invalid."""
+        pincode_error = f"Could not find location for pincode {pincode}. Please provide a valid 6-digit Indian pincode."
+        return await self._display_delivery_validation_error(
+            user, session, delivery_data, pincode_error=pincode_error
+        )
 
     # ========================================================================
     # ITEMS SECTION
@@ -1406,6 +1413,7 @@ class SectionedRFQCreationHandler:
 
             # Lookup location
             location_data = await get_location_from_pincode_async(clean_pincode)
+
             if location_data:
                 # Always override city/state with pincode lookup results (pincode is authoritative)
                 if location_data.get("city"):
