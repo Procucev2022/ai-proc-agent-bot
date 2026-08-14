@@ -52,13 +52,14 @@ resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-0
   properties: {
     shareQuota: 32
   }
+}
 
-  resource redisFileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
-    parent: fileServices
-    name: redisFileShareName
-    properties: {
-      shareQuota: 8
-    }
+// Azure File Share for Redis persistence (AOF)
+resource redisFileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
+  parent: fileServices
+  name: redisFileShareName
+  properties: {
+    shareQuota: 8
   }
 }
 
@@ -77,7 +78,8 @@ resource containerAppsEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
   }
 }
 
-// Attach Azure File Share to Container Apps Environment
+// Attach ChromaDB file share to the Container Apps Environment.
+// chroma.bicep mounts this by the name 'chroma-storage'.
 resource envStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
   parent: containerAppsEnv
   name: 'chroma-storage'
@@ -85,23 +87,33 @@ resource envStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
     azureFile: {
       accountName: storageAccount.name
       accountKey: storageAccount.listKeys().keys[0].value
-      shareName: fileShare.name
+      // Use the plain share name: a child resource's .name resolves to the
+      // slash-joined full name (account/default/share), which azureFile rejects.
+      shareName: fileShareName
       accessMode: 'ReadWrite'
     }
+  }
+  dependsOn: [
+    fileShare
+  ]
+}
 
-    resource redisEnvStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
-      parent: containerAppsEnv
-      name: 'redis-storage'
-      properties: {
-        azureFile: {
-          accountName: storageAccount.name
-          accountKey: storageAccount.listKeys().keys[0].value
-          shareName: redisFileShare.name
-          accessMode: 'ReadWrite'
-        }
-      }
+// Attach Redis file share to the Container Apps Environment.
+// redis.bicep mounts this by the name 'redis-storage'.
+resource redisEnvStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
+  parent: containerAppsEnv
+  name: 'redis-storage'
+  properties: {
+    azureFile: {
+      accountName: storageAccount.name
+      accountKey: storageAccount.listKeys().keys[0].value
+      shareName: redisFileShareName
+      accessMode: 'ReadWrite'
     }
   }
+  dependsOn: [
+    redisFileShare
+  ]
 }
 
 output environmentId string = containerAppsEnv.id
