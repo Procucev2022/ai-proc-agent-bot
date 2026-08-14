@@ -15,6 +15,7 @@ on:
     branches:
       - main
       - develop
+      - deploy
   workflow_dispatch:
 
 permissions:
@@ -79,6 +80,20 @@ jobs:
           python -m coverage --version
           python -m flake8 --version
           python -m mypy --version
+
+      # ----------------------------------------------- workflow definitions
+      # An invalid workflow file cannot fail its own run: GitHub refuses to
+      # start it, so a deploy silently never happens and no run appears to
+      # investigate. That is exactly how an unquoted 'sqlite:///:memory:' in
+      # deploy-dev.yml and deploy-prod.yml blocked every dev deploy unnoticed.
+      # Parsing the definitions here turns that class of mistake into a visible
+      # pull-request failure.
+      - name: Validate workflow definitions
+        id: workflows
+        continue-on-error: true
+        run: |
+          python -m pip install --quiet pyyaml
+          python scripts/check_workflows.py
 
       # ---------------------------------------------------------------- lint
       - name: Lint (flake8)
@@ -172,6 +187,7 @@ jobs:
             --per-file-table per-file-coverage.md \
             --aggregate-report aggregate-coverage.txt \
             --quality-table quality-table.md \
+            --status "Workflow definitions=${{ steps.workflows.outcome }}" \
             --status "Lint=${{ steps.lint.outcome }}" \
             --status "Type check=${{ steps.typecheck.outcome }}" \
             --status "Build=${{ steps.build.outcome }}" \
@@ -242,6 +258,7 @@ jobs:
       - name: Quality gate result
         if: always()
         env:
+          WORKFLOWS_OUTCOME: ${{ steps.workflows.outcome }}
           LINT_OUTCOME: ${{ steps.lint.outcome }}
           TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
@@ -259,6 +276,7 @@ jobs:
               failed=1
             fi
           }
+          check "Workflow definitions" "$WORKFLOWS_OUTCOME"
           check "Lint" "$LINT_OUTCOME"
           check "Type check" "$TYPECHECK_OUTCOME"
           check "Build" "$BUILD_OUTCOME"
