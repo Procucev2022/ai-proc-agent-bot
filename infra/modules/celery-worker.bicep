@@ -82,6 +82,46 @@ param gmtPhone string
 
 var appName = 'aiproc-celery-${environment}'
 
+// Celery queue names. These must match task_routes plus task_default_queue in
+// app/celery_config.py exactly: Celery keys each queue's Redis list by this
+// literal name, and that key is what the KEDA scaler reads.
+var celeryQueueNames = [
+  'bfs_notification'
+  'categorization'
+  'seller_matching'
+  'report_automation'
+  'vector_store'
+  'taxonomy_build'
+  'maintenance'
+  'default'
+]
+
+// Redis database index the Celery broker uses. Keep in step with
+// CELERY_BROKER_URL below (redis://host:6379/1). KEDA defaults this to 0, so
+// leaving it unset makes every scaler poll an empty database and never scale.
+var celeryBrokerDatabaseIndex = '1'
+
+// One KEDA redis-list scaler per queue.
+var celeryScaleRules = [
+  for queueName in celeryQueueNames: {
+    // A scale rule name must be an RFC 1123 label: lowercase alphanumeric and
+    // '-' only. Queue names contain underscores, so sanitise the rule name and
+    // keep listName as the literal queue name.
+    name: 'redis-${replace(queueName, '_', '-')}-scaling'
+    custom: {
+      type: 'redis'
+      metadata: {
+        address: '${redisHost}:6379'
+        // The KEDA redis scaler requires 'listName'. 'queueName' is not a
+        // recognised parameter and the scaler fails to initialise without it.
+        listName: queueName
+        listLength: '5'
+        databaseIndex: celeryBrokerDatabaseIndex
+      }
+    }
+  }
+]
+
 var baseSecrets = [
   {
     name: 'database-url'
@@ -243,28 +283,7 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
       scale: {
         minReplicas: minReplicas
         maxReplicas: maxReplicas
-        rules: [
-          for queueName in [
-            'bfs_notification'
-            'categorization'
-            'seller_matching'
-            'report_automation'
-            'vector_store'
-            'taxonomy_build'
-            'maintenance'
-            'default'
-          ]: {
-            name: 'redis-${queueName}-scaling'
-            custom: {
-              type: 'redis'
-              metadata: {
-                address: '${redisHost}:6379'
-                listLength: '5'
-                queueName: queueName
-              }
-            }
-          }
-        ]
+        rules: celeryScaleRules
       }
     }
   }
