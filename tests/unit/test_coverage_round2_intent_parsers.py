@@ -180,15 +180,14 @@ async def test_intent_real_fallback_cancel_boundary_and_missing_context(monkeypa
     assert result["success"] is False
     assert result["fallback_used"] is True
     assert "down" in result["reasoning"]
-    cancel_service._send_cancellation_message.assert_awaited_once()
-    call = cancel_service._send_cancellation_message.await_args.kwargs
-    assert call["user_phone"] == "+9199"
-    assert call["user_type"] == "buyer"
-    assert "support@example.com" in call["custom_message"]
 
-    # No role is a valid no-send fallback path, but still returns a result.
+    # Classifying must not message the user. Sending here gave the user a
+    # "technical issues" notice followed by the caller's real reply: two
+    # outbound messages for one inbound message.
+    cancel_service._send_cancellation_message.assert_not_awaited()
+
     assert (await service._get_fallback_classification("failure", {}))["success"] is False
-    assert cancel_service._send_cancellation_message.await_count == 1
+    cancel_service._send_cancellation_message.assert_not_awaited()
 
     # A missing context is tolerated rather than raising inside the error path.
     assert (await service._get_fallback_classification("failure", None))["intent"] == "ambiguous"

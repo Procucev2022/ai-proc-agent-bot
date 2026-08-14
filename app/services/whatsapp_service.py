@@ -35,6 +35,10 @@ class MessageResponse:
     success: bool
     message_id: Optional[str] = None
     error: Optional[str] = None
+    # False marks a permanent failure that retrying cannot fix, such as a
+    # malformed recipient number. RetryService gives up immediately instead of
+    # spending its full backoff schedule on a request that can never succeed.
+    retryable: bool = True
 
 
 class WhatsAppService:
@@ -109,7 +113,7 @@ class WhatsAppService:
             formatted_recipient = self._format_phone_number(recipient_id)
             if not formatted_recipient:
                 logger.error(f"Invalid phone number format: {recipient_id}")
-                return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}")
+                return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}", retryable=False)
 
             # Prepare message
             combined_message = message  # default
@@ -219,7 +223,7 @@ class WhatsAppService:
             formatted_recipient = self._format_phone_number(recipient_id)
             if not formatted_recipient:
                 logger.error(f"Invalid phone number format: {recipient_id}")
-                return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}")
+                return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}", retryable=False)
 
             # Build placeholder dict for template
             placeholders = {}
@@ -279,7 +283,7 @@ class WhatsAppService:
             formatted_recipient = self._format_phone_number(recipient_id)
             if not formatted_recipient:
                 logger.error(f"Invalid phone number format: {recipient_id}")
-                return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}")
+                return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}", retryable=False)
 
             payload = {
                 "user": self.username,
@@ -451,7 +455,7 @@ class WhatsAppService:
             formatted_recipient = self._format_phone_number(recipient_id)
             if not formatted_recipient:
                 logger.error(f"Invalid phone number format: {recipient_id}")
-                return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}")
+                return MessageResponse(success=False, error=f"Invalid phone number format: {recipient_id}", retryable=False)
 
             # Prepare body text
             combined_body = body  # default

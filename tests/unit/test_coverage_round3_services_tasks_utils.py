@@ -436,9 +436,10 @@ async def test_openai_prompt_fallback_rate_limit_and_timeout_cleanup(monkeypatch
     # Patch the import used by the method, not a network service.
     with patch("app.services.cancel_service.CancelService", return_value=SimpleNamespace(_send_cancellation_message=cancellation)):
         result = await service._get_fallback_classification("hello", {"user_role": "buyer"}, user_phone="+1")
-    cancellation.assert_awaited_once()
-    # The fallback notifies the user AND returns a usable classification; it used
-    # to return None, which callers then dereferenced as a dict.
+    # The fallback returns a usable classification and sends nothing: it used to
+    # return None (dereferenced as a dict by callers) and also message the user,
+    # which duplicated the caller's own reply.
+    cancellation.assert_not_awaited()
     assert result["success"] is False
     assert result["intent"] == "general_inquiry"
 

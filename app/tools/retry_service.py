@@ -48,6 +48,13 @@ class RetryService:
                 else:
                     # Treat as failure, continue to retry
                     last_error = f"Function returned unsuccessful result: {result}"
+
+                    # A permanent failure such as a malformed recipient number
+                    # cannot be fixed by trying again. Give up now rather than
+                    # spending the whole backoff schedule on it.
+                    if not self._is_retryable(result):
+                        logger.error(f"Not retrying permanent failure: {last_error}")
+                        return {"success": False, "error": last_error, "attempts": attempt + 1}
                     
             except Exception as e:
                 last_error = str(e)
@@ -61,6 +68,19 @@ class RetryService:
         
         logger.error(f"All {self.max_retries + 1} attempts failed. Last error: {last_error}")
         return {"success": False, "error": last_error, "attempts": self.max_retries + 1}
+
+    @staticmethod
+    def _is_retryable(result: Any) -> bool:
+        """
+        Decide whether an unsuccessful result is worth another attempt.
+
+        Callers opt out by setting a falsey ``retryable`` on the result. Anything
+        that does not say otherwise stays retryable, so existing callers keep
+        their current behaviour.
+        """
+        if isinstance(result, dict):
+            return bool(result.get('retryable', True))
+        return bool(getattr(result, 'retryable', True))
 
 
 # Global instance

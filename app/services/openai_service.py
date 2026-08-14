@@ -637,15 +637,14 @@ class OpenAIService:
         Returns:
             Fallback classification result
         """
-        # Use cancel service's method to send the appropriate message with buttons
-        from app.services.cancel_service import CancelService
-        user = (context or {}).get('user_role')
-        if user:
-            cancel_service = CancelService()
-            await cancel_service._send_cancellation_message(user_phone=user_phone, user_type=user, custom_message="Currently, we are facing some technical issues. The team is actively working to get QUA up and running.\n"
-            "We apologise for the inconvenience caused and request you to please try again after a while.\n"
-            f"In case of anything urgent, feel free to reach us at {self.settings.support_contact_info}")
-
+        # This helper classifies; it deliberately sends nothing to the user.
+        #
+        # It used to push a "we are facing technical issues" message with the main
+        # menu buttons. Because callers carry on and produce their own reply, a
+        # single inbound message became two outbound ones: the technical-issues
+        # notice followed by the correct response. Operators are still alerted
+        # through _notify_openai_error, which emails the on-call address.
+        #
         # Always return a usable classification. Returning None here made
         # classify_intent() resolve to None, which callers then treated as a
         # dict, and the resulting AttributeError was reported as a classification

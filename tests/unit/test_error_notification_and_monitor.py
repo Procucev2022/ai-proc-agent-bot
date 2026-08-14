@@ -44,14 +44,15 @@ async def test_error_notification_routing_and_helpers():
     assert await service.notify_api_down(details)
     assert await service.notify_general_error(details)
 
-    service._service_status_cache["whatsapp_health"]["timestamp"] = service._service_status_cache["whatsapp_health"]["timestamp"]
-    service.whatsapp_service.send_message.side_effect = RuntimeError("down")
+    # Missing credentials mark the channel unusable. The health check reaches this
+    # verdict from configuration alone; it never sends a probe message.
     service._service_status_cache = {}
+    service.whatsapp_service.base_url = ""
     assert not await service._check_whatsapp_health()
+    service.whatsapp_service.base_url = "https://wa.example.test"
     service.email_service.list_available_templates.side_effect = RuntimeError("mail")
     service._service_status_cache = {}
     assert not await service._check_email_health()
-    service.whatsapp_service.send_message.side_effect = None
     service._service_status_cache = {}
     service._check_whatsapp_health = AsyncMock(return_value=False)
     service._check_email_health = AsyncMock(return_value=False)

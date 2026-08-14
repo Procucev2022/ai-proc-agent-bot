@@ -200,15 +200,18 @@ async def test_fallback_classification_and_entity_openai_response_matrix(monkeyp
     cancel = MagicMock(_send_cancellation_message=AsyncMock())
     monkeypatch.setattr('app.services.cancel_service.CancelService', lambda: cancel)
     notified = await obj._get_fallback_classification('x', {'user_role': 'buyer'}, user_phone='1')
-    cancel._send_cancellation_message.assert_awaited_once()
     assert notified['success'] is False and notified['intent'] == 'general_inquiry'
 
-    # No user_role: no WhatsApp message, but still a usable classification dict
-    # rather than None, which callers used to dereference as a dict.
+    # Classifying must not message the user. Sending here produced a second
+    # outbound message on top of the caller's real reply.
+    cancel._send_cancellation_message.assert_not_awaited()
+
+    # Still a usable classification dict rather than None, which callers used to
+    # dereference as a dict.
     quiet = await obj._get_fallback_classification('x', {})
     assert quiet['success'] is False and quiet['confidence'] == 30
-    assert cancel._send_cancellation_message.await_count == 1
     assert await obj._get_fallback_classification('x', None) is not None
+    cancel._send_cancellation_message.assert_not_awaited()
 
     cases = [
         ('modification_request', {'modifications': [{'operation_type': 'modify'}], 'has_new_values': True}),

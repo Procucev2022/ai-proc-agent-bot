@@ -714,6 +714,7 @@ class ChatService:
             # Bound before the try block so the failure path below can always
             # reach the sanitized content.
             classification_content = message_content
+            clicked_button_id = ""
             try:
                 # Sanitize message content for intent classification - strip base64 data to avoid token limits
                 if message_type == "excel_upload" and isinstance(message_content, dict):
@@ -721,11 +722,16 @@ class ChatService:
                     classification_content = f"Excel file upload: {message_content.get('document', {}).get('filename', 'unknown')}"
                 elif message_type == "interactive" and isinstance(message_content, dict):
                     button_reply = message_content.get("button_reply", {})
-                    button_id = button_reply.get("id", "")
+                    clicked_button_id = button_reply.get("id", "")
                     button_title = button_reply.get("title", "")
-                    classification_content = button_title or button_id or str(message_content)
+                    classification_content = button_title or clicked_button_id or str(message_content)
 
                 conversation_context = await ChatServiceHelpers.build_conversation_context(session, classification_content)
+                if clicked_button_id:
+                    # Pass the id, not just the title. The id identifies the choice
+                    # exactly, letting intent_service resolve it locally instead of
+                    # paying for an OpenAI round trip on every button press.
+                    conversation_context["button_id"] = clicked_button_id
                 # Now using async OpenAI service
                 message_intent_result = await self.intent_service.classify_intent(classification_content, conversation_context,user_phone)
                 

@@ -105,20 +105,39 @@ class ErrorNotificationService:
             return {"error": str(e)}
     
     async def _check_whatsapp_health(self) -> bool:
-        """Check if WhatsApp service is available."""
+        """
+        Check if the WhatsApp service is usable.
+
+        Probes configuration rather than sending anything, mirroring
+        _check_email_health. The previous implementation sent a real message to
+        the literal recipient "test_number", which could never pass phone-number
+        validation. That had two consequences: every error notification burned
+        four send attempts and about seven seconds of backoff, and the check
+        always reported WhatsApp as unavailable, so the operator WhatsApp alert
+        channel never fired.
+        """
         try:
             # Check cache first
             cache_key = "whatsapp_health"
             if self._is_cache_valid(cache_key):
                 return self._service_status_cache[cache_key]['status']
-            
-            # Test WhatsApp service with a mock message
-            test_response = await self.whatsapp_service.send_message(
-                "test_number", "health_check"
-            )
-            
-            is_healthy = test_response.success or self.whatsapp_service.mock_mode
-            
+
+            if self.whatsapp_service.mock_mode:
+                is_healthy = True
+            else:
+                # Credentials and endpoint must all be present to send anything.
+                is_healthy = all([
+                    self.whatsapp_service.base_url,
+                    self.whatsapp_service.username,
+                    self.whatsapp_service.password,
+                    self.whatsapp_service.from_number,
+                ])
+                if not is_healthy:
+                    logger.warning(
+                        "WhatsApp service is not fully configured; "
+                        "error notifications will fall back to email"
+                    )
+
             # Cache result
             self._service_status_cache[cache_key] = {
                 'status': is_healthy,

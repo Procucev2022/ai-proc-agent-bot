@@ -251,10 +251,6 @@ async def test_none_from_openai_yields_a_dict_not_a_coroutine(monkeypatch):
     `.get("timeout_handled")` raised 'coroutine' object has no attribute 'get'.
     """
     service, _ = _intent_service(monkeypatch, None)
-    monkeypatch.setattr(
-        "app.services.cancel_service.CancelService",
-        lambda: SimpleNamespace(_send_cancellation_message=AsyncMock()),
-    )
 
     result = await service.classify_intent(
         "2 Laptop,  delivery tomorrow, pincode: 251002",
@@ -270,16 +266,25 @@ async def test_none_from_openai_yields_a_dict_not_a_coroutine(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_fallback_notifies_the_user_when_openai_reports_failure(monkeypatch):
-    """user_phone previously landed in the `error` parameter, so nobody was told."""
+async def test_fallback_receives_the_error_description_not_the_phone_number(monkeypatch):
+    """
+    user_phone used to be passed positionally, landing in the `error` parameter:
+    the recorded cause became a phone number and user_phone stayed None. Assert
+    each value reaches the parameter it belongs to.
+    """
     service, _ = _intent_service(monkeypatch, {"success": False})
-    cancel = SimpleNamespace(_send_cancellation_message=AsyncMock())
-    monkeypatch.setattr("app.services.cancel_service.CancelService", lambda: cancel)
+    captured = {}
+
+    async def capture(message, context=None, error=None, user_phone=None):
+        captured.update(message=message, error=error, user_phone=user_phone)
+        return {"intent": "ambiguous", "confidence": 30, "success": False}
+
+    service._get_fallback_classification = capture
 
     await service.classify_intent("buy 2 laptops", {"user_role": "buyer"}, user_phone="919808494950")
 
-    cancel._send_cancellation_message.assert_awaited_once()
-    assert cancel._send_cancellation_message.await_args.kwargs["user_phone"] == "919808494950"
+    assert captured["user_phone"] == "919808494950"
+    assert captured["error"] == "OpenAI classification unsuccessful"
 
 
 @pytest.mark.parametrize(

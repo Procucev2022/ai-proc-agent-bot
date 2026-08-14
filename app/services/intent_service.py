@@ -12,7 +12,7 @@ Key responsibilities:
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from app.services.openai_service import OpenAIService
 from app.config import get_settings
 from app.data.faq_config import FULL_FAQ_CONTEXT
@@ -32,6 +32,70 @@ class IntentService:
         self.openai_service = OpenAIService()
         self.settings = get_settings()
         
+    # Button ids that resolve to an intent without calling OpenAI.
+    #
+    # Every value here is deliberately inert on the stretch of
+    # chat_service.process_message between classification and button dispatch:
+    #   - not "general_inquiry"/"greeting"/"support", which trigger the
+    #     irrelevant-message flow and its cached out-of-scope reply
+    #   - not "exit_system"/"cancel_workflow", which the exit and cancel checks
+    #     and the authentication orchestrator intercept before dispatch
+    #
+    # Restart, cancel, exit, support and email-confirmation buttons are
+    # intentionally absent. Those depend on intent-level handling to break out of
+    # authentication loops, so they keep going through the model. Any unmapped id
+    # falls through unchanged, so adding a button needs no edit here.
+    BUTTON_REPLY_INTENTS = {
+        # Sectioned RFQ section confirmations
+        "confirm_date_location": "confirmation_response",
+        "modify_date_location": "confirmation_response",
+        "confirm_items": "confirmation_response",
+        "modify_items": "confirmation_response",
+        # RFQ confirmation and optional-field steps
+        "confirm_rfq": "confirmation_response",
+        "no_rfq": "confirmation_response",
+        "continue_rfq": "confirmation_response",
+        "confirm_no_changes": "confirmation_response",
+        # Excel confirmation
+        "confirm_excel": "confirmation_response",
+        "cancel_excel": "confirmation_response",
+        # Menu entry points. These already resolved locally through the menu-choice
+        # fast path below when matched on title, so the intent is unchanged.
+        "create_rfq": "buy_something",
+        "new_rfq": "buy_something",
+        "raise_rfq": "buy_something",
+    }
+
+    def _classify_button_reply(self, context: Optional[dict] = None) -> Optional[Dict[str, Any]]:
+        """
+        Resolve a button reply to an intent locally.
+
+        Args:
+            context: Conversation context. chat_service records the clicked
+                button's id under "button_id" for interactive messages.
+
+        Returns:
+            A classification result, or None when there is no button id or the id
+            is not mapped, so the caller continues to OpenAI.
+        """
+        button_id = (context or {}).get("button_id")
+        if not button_id:
+            return None
+
+        intent = self.BUTTON_REPLY_INTENTS.get(button_id)
+        if not intent:
+            logger.debug(f"[FAST_PATH] Button id '{button_id}' is unmapped, falling through to OpenAI")
+            return None
+
+        logger.info(f"[FAST_PATH] Button reply matched for '{button_id}' -> {intent}")
+        return {
+            "intent": intent,
+            "confidence": 100,
+            "reasoning": f"Fast-path local matching: button '{button_id}'",
+            "success": True,
+            "context_analysis": {},
+        }
+
     async def classify_intent(self, message: str, context: dict = None,user_phone=None) -> Dict[str, Any]:
         """
         Classify user message intent using OpenAI with conversation context awareness.
@@ -63,6 +127,18 @@ class IntentService:
 
             # Get session from context if available (for Track 2 checks)
             session = context.get('session') if context else None
+
+            # Fast-path 0: button replies resolve locally, with no API call.
+            #
+            # A button id is the user's selection from a list this application
+            # rendered, so there is nothing for a model to infer. Classifying the
+            # button *title* instead cost a full OpenAI round trip on every press
+            # (about 2.7s and 7300 input tokens each in production) and the result
+            # was then discarded, because chat_service._handle_button_response
+            # dispatches on the id alone.
+            button_result = self._classify_button_reply(context)
+            if button_result:
+                return button_result
 
             if isinstance(message, str):
                 msg_clean = message.strip().lower()
@@ -187,15 +263,15 @@ class IntentService:
         Returns:
             Fallback classification result
         """
-        # Use cancel service's method to send the appropriate message with buttons
-        from app.services.cancel_service import CancelService
-        user = (context or {}).get('user_role')
-        if user:
-            cancel_service = CancelService()
-            await cancel_service._send_cancellation_message(user_phone=user_phone, user_type=user,custom_message="Currently, we are facing some technical issues. The team is actively working to get QUA up and running.\n"
-            "We apologise for the inconvenience caused and request you to please try again after a while.\n"
-            f"In case of anything urgent, feel free to reach us at {self.settings.support_contact_info}")
-
+        # This helper classifies; it deliberately sends nothing to the user.
+        #
+        # It used to push a "we are facing technical issues" message with the main
+        # menu buttons. Because callers carry on and produce their own reply, a
+        # single inbound message became two outbound ones: the technical-issues
+        # notice followed by the correct response. Operators are still alerted
+        # through openai_service._notify_openai_error, which emails the on-call
+        # address.
+        #
         # Always return a usable classification. Returning None here made
         # classify_intent() resolve to None, so chat_service's `.get()` call
         # raised an AttributeError and a genuine RFQ request was rebound to a
