@@ -11,12 +11,21 @@ from app.context.context_manager import ContextManager, context_manager
 from app.context.middleware import ContextMiddleware, get_request_id
 
 
-def test_settings_accessors_and_singleton_contract():
+def test_settings_accessors_and_singleton_contract(monkeypatch):
+    # Settings reads these straight from the process environment and conftest only
+    # supplies them via setdefault, so whatever the runner exports wins. Asserting
+    # one workflow's placeholder made this test pass under pr-quality-gate.yml
+    # (AZURE_OPENAI_API_KEY=unit-test-key) and fail under the deploy workflows
+    # (test-key). Pin the values the assertions below depend on instead.
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "configured-openai-key")
+    monkeypatch.setenv("LOCAL_DATABASE_URL", "sqlite:///:memory:")
+    monkeypatch.setenv("REMOTE_DATABASE_URL", "sqlite:///:memory:")
+    monkeypatch.setenv("DATABASE_MODE", "local")
     settings = Settings()
     assert settings.get_database_url() == "sqlite:///:memory:"
     assert settings.get_remote_database_url() == "sqlite:///:memory:"
     assert settings.is_ssl_enabled() is False
-    assert settings.get_openai_config()["api_key"] == "unit-test-key"
+    assert settings.get_openai_config()["api_key"] == "configured-openai-key"
     assert settings.get_whatsapp_config()["verify_token"]
     assert settings.get_logging_config()["handlers"] == ["console"]
     assert settings.get_rfq_status_config()["max_allowed"] == 5

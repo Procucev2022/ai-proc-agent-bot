@@ -30,8 +30,8 @@ jobs:
       # The sqlite URLs MUST stay quoted: a trailing colon in a plain scalar
       # makes YAML read the value as a nested mapping, which silently
       # invalidates the whole workflow file.
-      AZURE_OPENAI_API_KEY: test-key
-      GMT_USERNAME: test-user
+      AZURE_OPENAI_API_KEY: unit-test-key
+      GMT_USERNAME: unit-test-user
       GMT_PHONE: '919876543229'
       GMT_BASE_URL: https://gmt.invalid
       GMT_PASSWORD: unit-test-password
