@@ -136,7 +136,9 @@ class IntentService:
             # If OpenAI service returned None
             if classification_result is None:
                 logger.error(f"OpenAI classify_intent returned None, using fallback")
-                return self._get_fallback_classification(message, context, error="OpenAI service returned None")
+                return await self._get_fallback_classification(
+                    message, context, error="OpenAI service returned None", user_phone=user_phone
+                )
             
             # Check for timeout handling BEFORE checking success (timeout takes precedence)
             if classification_result.get("timeout_handled"):
@@ -145,7 +147,9 @@ class IntentService:
             
             if not classification_result.get("success", False):
                 logger.warning(f"OpenAI classification failed, using fallback")
-                return await self._get_fallback_classification(message, context,user_phone)
+                return await self._get_fallback_classification(
+                    message, context, error="OpenAI classification unsuccessful", user_phone=user_phone
+                )
             
             # Log context-aware classification result
             intent = classification_result['intent']
@@ -185,12 +189,53 @@ class IntentService:
         """
         # Use cancel service's method to send the appropriate message with buttons
         from app.services.cancel_service import CancelService
-        user = context.get('user_role')
+        user = (context or {}).get('user_role')
         if user:
             cancel_service = CancelService()
             await cancel_service._send_cancellation_message(user_phone=user_phone, user_type=user,custom_message="Currently, we are facing some technical issues. The team is actively working to get QUA up and running.\n"
             "We apologise for the inconvenience caused and request you to please try again after a while.\n"
             f"In case of anything urgent, feel free to reach us at {self.settings.support_contact_info}")
+
+        # Always return a usable classification. Returning None here made
+        # classify_intent() resolve to None, so chat_service's `.get()` call
+        # raised an AttributeError and a genuine RFQ request was rebound to a
+        # zero-confidence greeting. The rule-based classifier below already
+        # existed for exactly this case but was never reached.
+        intent, confidence = self._get_general_fallback_intent(self._message_to_text(message).lower())
+
+        return {
+            "intent": intent,
+            "confidence": confidence,
+            "relevant_message": None,
+            "irrelevant_message": None,
+            "all_intent_scores": {intent: confidence},
+            "context_analysis": {
+                "references_existing_data": False,
+                "conversation_stage": "unknown",
+            },
+            "reasoning": f"Rule-based fallback classification (OpenAI unavailable: {error})",
+            "suggested_clarification": None,
+            "success": False,
+            "fallback_used": True,
+        }
+
+    @staticmethod
+    def _message_to_text(message: Any) -> str:
+        """
+        Reduce a message of any supported shape to plain text for keyword matching.
+
+        Messages reach the classifier as a string, as a content dict, or as a list
+        of content parts (multimodal payloads), so the rule-based fallback cannot
+        assume str.
+        """
+        if isinstance(message, str):
+            return message
+        if isinstance(message, dict):
+            return str(message.get('text') or message.get('content') or '')
+        if isinstance(message, list):
+            parts = [str(part.get('text', '')) for part in message if isinstance(part, dict)]
+            return ' '.join(part for part in parts if part)
+        return str(message or '')
     
     def _get_general_fallback_intent(self, message_lower: str) -> tuple:
         """Get general intent classification without context."""

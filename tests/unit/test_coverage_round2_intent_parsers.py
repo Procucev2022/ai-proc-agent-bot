@@ -39,16 +39,15 @@ async def test_intent_missing_timeout_failure_exception_and_malformed_results(mo
     service, ai = make_intent_service(monkeypatch)
     context = {"conversation_history": {"messages": []}}
 
-    # The None-result branch invokes the fallback without awaiting it in the
-    # current implementation.  A synchronous mock keeps this test focused on
-    # the branch without creating an unawaited coroutine.
+    # The None-result branch awaits the fallback and forwards user_phone so the
+    # user actually receives the outage notice.
     ai.classify_intent.return_value = None
-    fallback_sync = MagicMock(return_value={"intent": "ambiguous", "success": False})
-    service._get_fallback_classification = fallback_sync
+    fallback = AsyncMock(return_value={"intent": "ambiguous", "success": False})
+    service._get_fallback_classification = fallback
     result = await service.classify_intent("unmatched", context, user_phone="+1")
     assert result == {"intent": "ambiguous", "success": False}
-    fallback_sync.assert_called_once_with(
-        "unmatched", context, error="OpenAI service returned None"
+    fallback.assert_awaited_once_with(
+        "unmatched", context, error="OpenAI service returned None", user_phone="+1"
     )
 
     timeout_result = {
@@ -65,9 +64,11 @@ async def test_intent_missing_timeout_failure_exception_and_malformed_results(mo
     ai.classify_intent.return_value = {"success": False}
     failed = await service.classify_intent("failed", context, user_phone="+9199")
     assert failed["intent"] == "fallback"
-    # The positional call is intentional: it exercises the existing failure
-    # branch and its exact call contract.
-    fallback_async.assert_awaited_once_with("failed", context, "+9199")
+    # user_phone must arrive by keyword: passing it positionally landed it in the
+    # `error` parameter, leaving user_phone None so no notice was ever sent.
+    fallback_async.assert_awaited_once_with(
+        "failed", context, error="OpenAI classification unsuccessful", user_phone="+9199"
+    )
 
     fallback_async.reset_mock()
     ai.classify_intent.side_effect = RuntimeError("OpenAI unavailable")
@@ -174,20 +175,32 @@ async def test_intent_real_fallback_cancel_boundary_and_missing_context(monkeypa
         error="down",
         user_phone="+9199",
     )
-    assert result is None
+    # Returns a usable classification rather than None: callers dereference this
+    # as a dict, and returning None surfaced as an unrelated AttributeError.
+    assert result["success"] is False
+    assert result["fallback_used"] is True
+    assert "down" in result["reasoning"]
     cancel_service._send_cancellation_message.assert_awaited_once()
     call = cancel_service._send_cancellation_message.await_args.kwargs
     assert call["user_phone"] == "+9199"
     assert call["user_type"] == "buyer"
     assert "support@example.com" in call["custom_message"]
 
-    # No role is a valid no-send fallback path.
-    assert await service._get_fallback_classification("failure", {}) is None
+    # No role is a valid no-send fallback path, but still returns a result.
+    assert (await service._get_fallback_classification("failure", {}))["success"] is False
     assert cancel_service._send_cancellation_message.await_count == 1
 
-    # The current helper expects a mapping when it is called directly.
-    with pytest.raises(AttributeError):
-        await service._get_fallback_classification("failure", None)
+    # A missing context is tolerated rather than raising inside the error path.
+    assert (await service._get_fallback_classification("failure", None))["intent"] == "ambiguous"
+
+    # The rule-based classifier drives the intent, so a real request no longer
+    # degrades to a zero-confidence greeting.
+    buying = await service._get_fallback_classification("I need to buy 10 laptops", {})
+    assert buying["intent"] == "buy_something" and buying["confidence"] == 60
+
+    # Non-string message shapes reach this path from multimodal payloads.
+    assert (await service._get_fallback_classification({"text": "please cancel"}, {}))["intent"] == "cancel_workflow"
+    assert (await service._get_fallback_classification([{"text": "bye"}], {}))["intent"] == "exit_system"
 
 
 @pytest.mark.asyncio

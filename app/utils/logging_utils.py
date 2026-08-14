@@ -44,7 +44,24 @@ class CustomFormatter(logging.Formatter):
         record.phone_number = phone if phone else 'N/A'
 
         # Format: timestamp | phone_number | source | level | message
-        return f"{record.timestamp} | {record.phone_number} | {record.source} | {record.levelname} | {record.getMessage()}"
+        formatted = f"{record.timestamp} | {record.phone_number} | {record.source} | {record.levelname} | {record.getMessage()}"
+
+        # logging.Formatter.format() appends exception and stack text after the
+        # message. This formatter builds its output by hand, so it must do the
+        # same explicitly: without this, every logger.exception(...) and
+        # logger.error(..., exc_info=True) call site in the application silently
+        # discards its traceback, leaving errors like "Critical error processing
+        # webhook: " with no diagnosable detail.
+        if record.exc_info and not record.exc_text:
+            record.exc_text = self.formatException(record.exc_info)
+
+        if record.exc_text:
+            formatted = f"{formatted}\n{record.exc_text}"
+
+        if record.stack_info:
+            formatted = f"{formatted}\n{self.formatStack(record.stack_info)}"
+
+        return formatted
 
 
 def set_user_phone_context(phone_number: str):

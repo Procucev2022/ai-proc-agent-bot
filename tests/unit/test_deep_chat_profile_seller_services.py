@@ -747,8 +747,10 @@ async def test_intent_classification_fast_paths_openai_fallback_and_context(monk
     assert (await service.classify_intent("buy"))["intent"] == "buy_something"
     service.openai_service.classify_intent = AsyncMock(return_value=None)
     result = await service.classify_intent("unknown")
-    assert hasattr(result, "__await__")
-    result.close()
+    # A None from OpenAI resolves to a real classification. This used to return
+    # the un-awaited fallback coroutine, which callers then called .get() on.
+    assert not hasattr(result, "__await__")
+    assert result["success"] is False and result["fallback_used"] is True
     service._get_fallback_classification = AsyncMock(return_value={"intent": "fallback"})
     service.openai_service.classify_intent.return_value = {"success": False}
     assert (await service.classify_intent("unknown"))["intent"] == "fallback"

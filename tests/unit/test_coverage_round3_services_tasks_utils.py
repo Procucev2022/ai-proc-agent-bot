@@ -437,7 +437,10 @@ async def test_openai_prompt_fallback_rate_limit_and_timeout_cleanup(monkeypatch
     with patch("app.services.cancel_service.CancelService", return_value=SimpleNamespace(_send_cancellation_message=cancellation)):
         result = await service._get_fallback_classification("hello", {"user_role": "buyer"}, user_phone="+1")
     cancellation.assert_awaited_once()
-    assert result is None  # Current fallback intentionally delegates notification only.
+    # The fallback notifies the user AND returns a usable classification; it used
+    # to return None, which callers then dereferenced as a dict.
+    assert result["success"] is False
+    assert result["intent"] == "general_inquiry"
 
     class RateLimit(Exception):
         pass

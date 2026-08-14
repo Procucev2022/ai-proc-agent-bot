@@ -711,9 +711,11 @@ class ChatService:
                         return {"status": "error", "message": "OTP service not available"}
 
             # Classify intent once for all message routing and tracking
+            # Bound before the try block so the failure path below can always
+            # reach the sanitized content.
+            classification_content = message_content
             try:
                 # Sanitize message content for intent classification - strip base64 data to avoid token limits
-                classification_content = message_content
                 if message_type == "excel_upload" and isinstance(message_content, dict):
                     # Create sanitized copy without base64 data for classification
                     classification_content = f"Excel file upload: {message_content.get('document', {}).get('filename', 'unknown')}"
@@ -740,11 +742,15 @@ class ChatService:
                 self.session_manager.add_message_to_history(session, "user", history_content, message_type, intent, confidence)
             except Exception as e:
                 # If intent classification fails, still track the message without intent
-                logger.warning(f"Intent classification failed during message tracking: {e}")
+                logger.warning(f"Intent classification failed during message tracking: {e}", exc_info=True)
                 self.session_manager.add_message_to_history(session, "user", message_content, message_type)
-                message_intent_result = {"intent": "greeting", "confidence": 0}
-                intent = "greeting"
-                confidence = 0
+                # Never default to "greeting" here. "greeting" is in the
+                # irrelevant-message tuple below, so a genuine RFQ request was
+                # being answered with the canned out-of-scope reply and then
+                # dropped. Degrade to keyword matching instead.
+                message_intent_result = self._build_classification_fallback(classification_content)
+                intent = message_intent_result["intent"]
+                confidence = message_intent_result["confidence"]
 
             # Track meaningful messages during auth/registration flows for later processing
             self._track_meaningful_message_during_auth_flow(session, message_intent_result.get('relevant_message') or message_content, message_intent_result)
@@ -4591,6 +4597,36 @@ class ChatService:
 
         except Exception as e:
             logger.error(f"Error updating last user message with intent: {e}")
+
+    def _build_classification_fallback(self, message_content: Any) -> Dict[str, Any]:
+        """
+        Build a classification result for use when intent classification raised.
+
+        Delegates to the intent service's rule-based classifier so a failed
+        OpenAI call degrades to keyword matching. The previous behaviour was a
+        hard-coded "greeting", which routed real requests into the
+        irrelevant-message flow and lost them.
+
+        Args:
+            message_content: Sanitized message content used for classification
+
+        Returns:
+            Classification result marked unsuccessful, never None
+        """
+        intent, confidence = "ambiguous", 0
+        try:
+            text = self.intent_service._message_to_text(message_content)
+            if text.strip():
+                intent, confidence = self.intent_service._get_general_fallback_intent(text.lower())
+        except Exception as fallback_error:
+            logger.warning(f"Rule-based intent fallback failed, using 'ambiguous': {fallback_error}")
+
+        return {
+            "intent": intent,
+            "confidence": confidence,
+            "success": False,
+            "fallback_used": True,
+        }
 
     def _track_meaningful_message_during_auth_flow(self, session: ConversationSession, message_content: str, intent_result: Dict[str, Any]) -> None:
         """Track the last meaningful message for processing after auth/registration completes."""

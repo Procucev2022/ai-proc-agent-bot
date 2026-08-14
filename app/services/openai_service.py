@@ -36,6 +36,19 @@ from app.utils.datetime_utils import format_date_display, format_date_for_valida
 
 logger = logging.getLogger(__name__)
 
+# Output-token cap for the intent classification call.
+#
+# tools/intent_classification.json marks intent, confidence, relevant_message,
+# irrelevant_message, all_intent_scores, context_analysis, reasoning and
+# suggested_clarification as required, and all_intent_scores carries one score
+# per intent in a 19-value enum. A complete function-call payload is therefore
+# ~1000 characters, roughly 350 tokens. The previous cap of 100 truncated the
+# arguments mid-string, so json.loads() raised "Unterminated string" and every
+# affected message fell through to the fallback classifier. This is a ceiling,
+# not a target: the model still stops as soon as the payload is complete.
+INTENT_CLASSIFICATION_MAX_OUTPUT_TOKENS = 800
+
+
 class OpenAIService:
     """
     OpenAI API integration service for LLM operations.
@@ -151,6 +164,33 @@ class OpenAIService:
             self._error_notification_service = ErrorNotificationService()
         return self._error_notification_service
     
+    @staticmethod
+    def _log_incomplete_response(response: Any, call_description: str) -> bool:
+        """
+        Log a warning when the Responses API cut a generation short.
+
+        A truncated response still arrives with HTTP 200 and partial function-call
+        arguments, so the only symptom further down is a JSON decode error. This
+        makes the actual cause explicit in the logs.
+
+        Args:
+            response: Raw Responses API result
+            call_description: Human-readable name of the call, used in the log line
+
+        Returns:
+            True if the response was reported as incomplete
+        """
+        incomplete_details = getattr(response, 'incomplete_details', None)
+        if getattr(response, 'status', None) != "incomplete" and not incomplete_details:
+            return False
+
+        reason = getattr(incomplete_details, 'reason', None) or incomplete_details or "unknown"
+        logger.warning(
+            f"OpenAI response for {call_description} was truncated (reason: {reason}). "
+            f"The model output hit its token ceiling, so the payload is incomplete."
+        )
+        return True
+
     async def _notify_openai_error(self, error_type: str, error_message: str, method_name: str):
         """Send WhatsApp notification when OpenAI service has errors."""
         try:
@@ -427,9 +467,15 @@ class OpenAIService:
                 instructions=system_prompt,
                 tools=[intent_tool],
                 tool_choice={"type": "function", "name": "classify_intent"},
-                max_output_tokens=100
+                max_output_tokens=INTENT_CLASSIFICATION_MAX_OUTPUT_TOKENS
             )
             api_call_time = time.time() - api_call_start
+
+            # Surface truncation explicitly. When the generation is cut short the
+            # Responses API reports status="incomplete" with a reason, while the
+            # arguments string is left unparseable. Logging it here means the
+            # cause is visible instead of only its symptom (a JSON decode error).
+            self._log_incomplete_response(response, "intent classification")
 
             # Log cache usage information
             usage = getattr(response, 'usage', None)
@@ -593,14 +639,20 @@ class OpenAIService:
         """
         # Use cancel service's method to send the appropriate message with buttons
         from app.services.cancel_service import CancelService
-        user = context.get('user_role')
+        user = (context or {}).get('user_role')
         if user:
             cancel_service = CancelService()
             await cancel_service._send_cancellation_message(user_phone=user_phone, user_type=user, custom_message="Currently, we are facing some technical issues. The team is actively working to get QUA up and running.\n"
             "We apologise for the inconvenience caused and request you to please try again after a while.\n"
             f"In case of anything urgent, feel free to reach us at {self.settings.support_contact_info}")
 
-        
+        # Always return a usable classification. Returning None here made
+        # classify_intent() resolve to None, which callers then treated as a
+        # dict, and the resulting AttributeError was reported as a classification
+        # failure rather than an OpenAI outage.
+        return self._get_fallback_intent_response(error or "OpenAI classification unavailable")
+
+    
     @log_service_method("openai_service")
     async def extract_entities(self, message: str, workflow_type: str = "product_search") -> Dict[str, Any]:
         """
