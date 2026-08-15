@@ -126,6 +126,7 @@ async def test_webhook_sessions_queue_document_and_error_paths(monkeypatch):
     assert redis.delete.await_count >= 3 and redis.delete_pattern.await_count == 1
     redis.delete.side_effect = RuntimeError("down")
     await webhook.cleanup_direct_processing_session("9199")
+    redis.delete.side_effect = None
 
     timeout = AsyncMock()
     queue = AsyncMock()
@@ -149,16 +150,13 @@ async def test_webhook_sessions_queue_document_and_error_paths(monkeypatch):
     await webhook.process_document_message({"from": "1", "content": {"id": "m", "filename": "a.pdf"}}, chat)
     assert [call.kwargs["message_type"] for call in chat.process_message.await_args_list] == ["excel_upload", "document"]
 
-    whatsapp = AsyncMock()
-    import sys
-    monkeypatch.setitem(sys.modules, "app.services.whatsapp_service", SimpleNamespace(WhatsAppService=lambda *args, **kwargs: whatsapp))
     failure = AsyncMock()
     monkeypatch.setattr("app.utils.technical_failure_handler.handle_technical_failure", failure)
     monkeypatch.setattr(webhook, "handle_technical_error_with_cancel", technical_handler)
     await webhook.handle_technical_error_with_cancel("1", "bad", "X")
-    whatsapp.send_message.assert_awaited_once()
+    # Notification is delegated: the helper must not send a second error bubble.
     failure.assert_awaited_once()
-    whatsapp.send_message.side_effect = RuntimeError("send")
+    failure.side_effect = RuntimeError("notify")
     await webhook.handle_technical_error_with_cancel("1", "bad")
 
 

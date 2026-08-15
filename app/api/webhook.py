@@ -17,6 +17,7 @@ Key responsibilities:
 from fastapi import APIRouter, Request, Query, HTTPException, BackgroundTasks
 from fastapi.responses import PlainTextResponse, JSONResponse
 from urllib.parse import unquote
+import asyncio
 import logging
 import os
 from typing import Dict, Any, Optional
@@ -32,6 +33,7 @@ from app.services.cancel_service import CancelService
 from app.services.session_management_service import SessionManagementService
 from app.services.message_queue_service import MessageQueueService
 from app.services.inactivity_timeout_service import get_timeout_service
+from app.services.whatsapp_service import reply_sent_key
 from app.redis_db import get_redis_service
 import time
 
@@ -463,10 +465,17 @@ async def enqueue_message_async(webhook_data: Dict[str, Any]):
             redis_service = get_redis_service()
             settings = get_settings()
             normalized_phone = from_number.lstrip('+') if from_number.startswith('+') else from_number
-            await redis_service.set(
-                f"{normalized_phone}:pending_reply",
-                "1",
-                ex=settings.pending_reply_ttl_seconds
+            # A new turn starts here: the previous turn's reply must not suppress
+            # an error notice that belongs to this message. Both keys are
+            # independent, and this runs before the message is enqueued, so the
+            # two round trips overlap instead of delaying processing twice.
+            await asyncio.gather(
+                redis_service.set(
+                    f"{normalized_phone}:pending_reply",
+                    "1",
+                    ex=settings.pending_reply_ttl_seconds
+                ),
+                redis_service.delete(reply_sent_key(from_number)),
             )
             logger.debug(f"[WORKER_TIMEOUT] Set pending_reply flag for {normalized_phone}")
         
@@ -517,10 +526,17 @@ async def process_message_async(webhook_data: Dict[str, Any]):
             redis_service = get_redis_service()
             settings = get_settings()
             normalized_phone = from_number.lstrip('+') if from_number.startswith('+') else from_number
-            await redis_service.set(
-                f"{normalized_phone}:pending_reply",
-                "1",
-                ex=settings.pending_reply_ttl_seconds
+            # A new turn starts here: the previous turn's reply must not suppress
+            # an error notice that belongs to this message. Both keys are
+            # independent, so the two round trips overlap instead of delaying
+            # processing twice.
+            await asyncio.gather(
+                redis_service.set(
+                    f"{normalized_phone}:pending_reply",
+                    "1",
+                    ex=settings.pending_reply_ttl_seconds
+                ),
+                redis_service.delete(reply_sent_key(from_number)),
             )
             logger.debug(f"[WORKER_TIMEOUT] Set pending_reply flag for {normalized_phone} (non-text)")
         
@@ -666,12 +682,12 @@ async def process_document_message(webhook_data: Dict[str, Any], chat_service):
 
 async def handle_technical_error_with_cancel(user_phone: str, error_message: str, error_type: str = "Technical Error"):
     """
-    Handle technical errors by clearing workflow state and notifying user.
+    Handle technical errors by logging them and notifying the user once.
 
-    This function:
-    1. Clears the user's workflow state using cancel service
-    2. Sends a user-friendly error message
-    3. Logs the error details for debugging
+    Notification is delegated entirely to handle_technical_failure, which owns
+    the single user-facing error message and the support-team alert. This used to
+    send its own notice first, which delivered two error bubbles for one failure
+    and claimed the session had been cleared even though nothing here clears it.
 
     Args:
         user_phone: User's phone number
@@ -681,21 +697,6 @@ async def handle_technical_error_with_cancel(user_phone: str, error_message: str
     try:
         logger.error(f"{error_type} for user {user_phone}: {error_message}")
 
-        # Initialize minimal services for error handling
-        # Note: SessionManagementService requires 4 dependencies,
-        # so we skip session clearing in error scenarios to avoid complexity
-        from app.services.whatsapp_service import WhatsAppService
-        whatsapp_service = WhatsAppService()
-
-        error_notification = (
-            "Due to a technical error, your request could not be processed. "
-            "Your current session has been cleared. Please try again later or contact support if the issue persists."
-        )
-
-        await whatsapp_service.send_message(user_phone, error_notification)
-        logger.info(f"Technical error notification sent to user {user_phone}")
-
-        # Also send to technical failure handler for admin notification
         from app.utils.technical_failure_handler import handle_technical_failure
         await handle_technical_failure(
             user_phone=user_phone,

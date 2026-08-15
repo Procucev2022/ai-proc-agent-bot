@@ -15,6 +15,7 @@ Key responsibilities:
 - Handle message delivery status and read receipts
 """
 
+import asyncio
 import requests
 import json
 import logging
@@ -27,6 +28,23 @@ from app.tools.retry_service import get_retry_service
 from app.redis_db import get_redis_service
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_recipient(recipient_id: str) -> str:
+    """Strip the leading '+' so Redis keys match the webhook's phone format."""
+    recipient_id = str(recipient_id)
+    return recipient_id.lstrip('+') if recipient_id.startswith('+') else recipient_id
+
+
+def reply_sent_key(recipient_id: str) -> str:
+    """
+    Redis key recording that a real reply already reached this user.
+
+    Set when a message is delivered, cleared when the next inbound message
+    arrives. Error handlers read it to avoid delivering an apology on top of a
+    reply the user already received.
+    """
+    return f"{normalize_recipient(recipient_id)}:reply_sent"
 
 
 @dataclass
@@ -75,7 +93,7 @@ class WhatsAppService:
         """
         try:
             redis_service = get_redis_service()
-            normalized_phone = recipient_id.lstrip('+') if recipient_id.startswith('+') else recipient_id
+            normalized_phone = normalize_recipient(recipient_id)
             pending_reply_key = f"{normalized_phone}:pending_reply"
             
             deleted = await redis_service.delete(pending_reply_key)
@@ -86,6 +104,31 @@ class WhatsAppService:
         except Exception as e:
             # Don't fail the send if flag cleanup fails - just log
             logger.warning(f"[PENDING_REPLY] Failed to clear flag for {recipient_id}: {e}")
+
+    async def _mark_reply_sent(self, recipient_id: str) -> None:
+        """
+        Record that a message was delivered to this user for the current turn.
+
+        Error handlers check this marker before sending a user-facing failure
+        notice, so a late exception cannot append an apology to a reply the user
+        already received. The webhook clears the marker on each new inbound
+        message, and the TTL bounds it for flows with no inbound message.
+
+        Args:
+            recipient_id: User's phone number (will be normalized)
+        """
+        try:
+            redis_service = get_redis_service()
+            settings = get_settings()
+            await redis_service.set(
+                reply_sent_key(recipient_id),
+                "1",
+                ex=settings.pending_reply_ttl_seconds
+            )
+            logger.debug(f"[REPLY_SENT] Marked reply delivered for {normalize_recipient(recipient_id)}")
+        except Exception as e:
+            # Don't fail the send if marking fails - just log
+            logger.warning(f"[REPLY_SENT] Failed to mark reply for {recipient_id}: {e}")
 
     async def send_message(self, recipient_id: str, message: str, session_id: str = None, clear_pending_reply: bool = True, skip_concatenation: bool = False) -> MessageResponse:
 
@@ -165,7 +208,14 @@ class WhatsAppService:
         if retry_result["success"]:
             # Clear pending_reply flag only for actual responses (not acknowledgments)
             if clear_pending_reply:
-                await self._clear_pending_reply_flag(recipient_id)
+                # Two independent keys, so overlap the round trips rather than
+                # paying for them one after the other. This bookkeeping runs
+                # after the message is already delivered and must not add to the
+                # turn the user is waiting on.
+                await asyncio.gather(
+                    self._clear_pending_reply_flag(recipient_id),
+                    self._mark_reply_sent(recipient_id),
+                )
             else:
                 logger.debug(f"[WORKER_TIMEOUT] Skipped clearing pending_reply flag for {recipient_id} (acknowledgment)")
             return retry_result["result"]

@@ -32,7 +32,7 @@
         "--isolated",
         "--max-line-length=120"
       ],
-      "max_findings": 5,
+      "max_findings": 2,
       "blocking": true
     },
     "flake8-style": {
@@ -46,7 +46,7 @@
         "app",
         "scripts"
       ],
-      "max_findings": 568,
+      "max_findings": 567,
       "blocking": false
     },
     "mypy": {
@@ -58,7 +58,7 @@
         "-m",
         "mypy"
       ],
-      "max_findings": 1301,
+      "max_findings": 1299,
       "blocking": true
     }
   }

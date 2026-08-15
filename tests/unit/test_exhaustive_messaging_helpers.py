@@ -495,7 +495,10 @@ async def test_whatsapp_send_message_real_mock_cache_tracking_and_failures(monke
     service.retry_service.retry_with_backoff.side_effect = retry_call
     service._clear_pending_reply_flag = AsyncMock(); service._track_message_in_history = AsyncMock()
     result = await service.send_message("x", "new", "S")
-    assert result.message_id == "M" and cache.set.await_count == 1
+    # Filter to the user_cache write: a successful send also stamps the
+    # <phone>:reply_sent marker through the same Redis client.
+    cache_writes = [call for call in cache.set.await_args_list if str(call.args[0]).startswith("user_cache:")]
+    assert result.message_id == "M" and len(cache_writes) == 1
     payload = whatsapp_module.requests.post.call_args.kwargs["json"]
     assert payload["sessiondata"]["message"]["text"] == "old\n\nnew"
     assert (await service.send_message("x", "system", skip_concatenation=True)).success

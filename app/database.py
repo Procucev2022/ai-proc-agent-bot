@@ -15,6 +15,8 @@ from contextlib import contextmanager
 import json
 import logging
 import asyncio
+import os
+import ssl
 
 from .config import get_settings
 from .models import Base, ProductCategory, Vendor, ConversationSession, RFQNotificationFact
@@ -23,9 +25,35 @@ from .utils.datetime_utils import utc_now
 logger = logging.getLogger(__name__)
 
 
+def _get_system_ca_bundle() -> Optional[str]:
+    """
+    Return a path to the platform's public CA bundle, or None if none is readable.
+
+    Azure Database for MySQL presents a certificate chained to a public root
+    (DigiCert Global Root CA / G2), so the standard trust store verifies it
+    without shipping the root separately. This is the fallback for deployments
+    that do not mount the bundled certificate, such as the container image
+    built from Dockerfile.app.
+    """
+    candidates = []
+
+    try:
+        import certifi
+        candidates.append(certifi.where())
+    except Exception as exc:
+        logger.debug(f"certifi CA bundle unavailable: {exc}")
+
+    candidates.extend([
+        ssl.get_default_verify_paths().cafile,
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/etc/pki/tls/certs/ca-bundle.crt",
+    ])
+
+    return next((path for path in candidates if path and os.path.exists(path)), None)
+
+
 def _get_ssl_connect_args(settings) -> dict:
     """Return SQLAlchemy connect_args with SSL config based on database_mode."""
-    import os
     if settings.database_mode == "client":
         cert_paths = [
             "/app/ssl/DigiCertGlobalRootCA.crt.pem",
@@ -35,6 +63,18 @@ def _get_ssl_connect_args(settings) -> dict:
         existing_cert = next((p for p in cert_paths if os.path.exists(p)), None)
         if existing_cert:
             return {"ssl": {"ca": existing_cert}}
+
+        # No bundled certificate on this host. Verify against the platform trust
+        # store rather than failing the boot: TLS verification stays on, only the
+        # source of the root certificate changes.
+        system_bundle = _get_system_ca_bundle()
+        if system_bundle:
+            logger.warning(
+                f"Bundled database TLS CA certificate not found in {cert_paths}; "
+                f"falling back to the system CA bundle at {system_bundle}"
+            )
+            return {"ssl": {"ca": system_bundle}}
+
         raise ValueError("Database TLS CA certificate is required in client mode")
     else:
         return {"ssl": {"ssl_disabled": False, "ssl_check_hostname": False, "ssl_verify_cert": False}}
@@ -56,7 +96,6 @@ def _log_pool_status(context: str = ""):
         context: Context description for the log message (e.g., "after creating session")
     """
     pass
-    global engine
 
     if not engine or not hasattr(engine, 'pool'):
         return
@@ -569,7 +608,6 @@ class DatabaseManager:
         Returns dictionary with pool statistics and health information.
         """
         pass
-        global engine, remote_engine
 
         status = {}
 

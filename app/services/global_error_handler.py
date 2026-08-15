@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
 from app.config import get_settings
-from app.services.whatsapp_service import WhatsAppService
+from app.services.whatsapp_service import WhatsAppService, reply_sent_key
 from app.services.email_service import EmailService
 
 logger = logging.getLogger(__name__)
@@ -85,9 +85,37 @@ class GlobalErrorHandler:
             logger.error(f"Error in global error handler: {e}")
             return False
     
-    async def _send_user_response(self, user_phone: str) -> None:
-        """Send user-friendly error response."""
+    async def _reply_already_delivered(self, user_phone: str) -> bool:
+        """
+        Check whether the user already received a reply for the current turn.
+
+        Failures here return False on purpose: a duplicate error message is a
+        smaller problem than staying silent when something is actually broken.
+        """
         try:
+            from app.redis_db import get_redis_service
+            return bool(await get_redis_service().exists(reply_sent_key(user_phone)))
+        except Exception as e:
+            logger.warning(f"Could not check reply state for {user_phone}: {e}")
+            return False
+
+    async def _send_user_response(self, user_phone: str) -> None:
+        """
+        Send user-friendly error response, unless the user already got a reply.
+
+        Handlers send their response mid-flow and the surrounding try block keeps
+        running afterwards (session persistence, cache refresh, history writes).
+        An exception in that tail used to deliver this apology on top of the
+        answer the user had already received.
+        """
+        try:
+            if await self._reply_already_delivered(user_phone):
+                logger.info(
+                    f"Suppressed error response for {user_phone}: "
+                    f"a reply was already delivered for this turn"
+                )
+                return
+
             await self.whatsapp_service.send_message(
                 user_phone, 
                 self.user_error_message,

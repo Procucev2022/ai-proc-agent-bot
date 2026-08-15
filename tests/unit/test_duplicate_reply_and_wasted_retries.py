@@ -30,10 +30,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import app.api.webhook as webhook_module
 import app.services.error_notification_service as error_module
+import app.services.global_error_handler as geh_module
 import app.services.intent_service as intent_module
 import app.services.openai_service as openai_module
-from app.services.whatsapp_service import MessageResponse
+import app.services.whatsapp_service as wa_module
+from app.services.whatsapp_service import MessageResponse, reply_sent_key
 from app.tools.retry_service import RetryService
 
 
@@ -252,3 +255,206 @@ async def test_dict_results_can_opt_out_of_retrying(monkeypatch):
 def test_message_response_defaults_to_retryable():
     assert MessageResponse(success=False, error="boom").retryable is True
     assert RetryService._is_retryable(SimpleNamespace(success=False)) is True
+
+
+# ---------------------------------------------------------------------------
+# An error notice must never follow a reply the user already received
+# ---------------------------------------------------------------------------
+#
+# Second incident shape from the same 2026-08-14 logs. A handler sends its reply
+# mid-flow, then the rest of process_message keeps running (session persistence,
+# cache refresh, history writes, ExitService). An exception in that tail reached
+# the outer `except`, which called handle_technical_failure unconditionally, so
+# the user got the answer followed by "Currently, we are facing some technical
+# issues". The webhook-level handler stacked a second notice on top of that.
+
+
+class _FakeRedis:
+    """Minimal async Redis stand-in shared across the services under test."""
+
+    def __init__(self):
+        self.store: dict[str, str] = {}
+
+    async def set(self, key, value, ex=None):
+        self.store[key] = value
+        return True
+
+    async def get(self, key, as_json=False):
+        return self.store.get(key)
+
+    async def delete(self, key):
+        return self.store.pop(key, None) is not None
+
+    async def exists(self, key):
+        return key in self.store
+
+
+def _whatsapp_service(monkeypatch, redis):
+    monkeypatch.setattr(wa_module, "get_redis_service", lambda: redis)
+    monkeypatch.setattr(
+        wa_module, "get_settings",
+        lambda: SimpleNamespace(pending_reply_ttl_seconds=180),
+    )
+    return wa_module.WhatsAppService.__new__(wa_module.WhatsAppService)
+
+
+def _error_handler(monkeypatch, redis):
+    monkeypatch.setattr("app.redis_db.get_redis_service", lambda: redis)
+    handler = geh_module.GlobalErrorHandler.__new__(geh_module.GlobalErrorHandler)
+    handler.whatsapp_service = AsyncMock()
+    handler.user_error_message = "Currently, we are facing some technical issues."
+    return handler
+
+
+def test_reply_marker_key_matches_the_webhook_phone_format():
+    assert reply_sent_key("+919808494950") == "919808494950:reply_sent"
+    assert reply_sent_key("919808494950") == "919808494950:reply_sent"
+
+
+@pytest.mark.asyncio
+async def test_a_delivered_reply_silences_the_late_error_notice(monkeypatch):
+    """The incident end to end: one reply out, then the tail fails."""
+    redis = _FakeRedis()
+    service = _whatsapp_service(monkeypatch, redis)
+    handler = _error_handler(monkeypatch, redis)
+
+    await service._mark_reply_sent("+919808494950")
+    await handler._send_user_response("+919808494950")
+
+    handler.whatsapp_service.send_message.assert_not_awaited()
+
+    # A second failure in the same turn stays quiet too, which is what stops the
+    # webhook-level handler from stacking a notice on the chat-level one.
+    await handler._send_user_response("919808494950")
+    handler.whatsapp_service.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_failure_before_any_reply_still_notifies(monkeypatch):
+    redis = _FakeRedis()
+    handler = _error_handler(monkeypatch, redis)
+
+    await handler._send_user_response("+919808494950")
+
+    handler.whatsapp_service.send_message.assert_awaited_once()
+    assert handler.whatsapp_service.send_message.await_args.kwargs["skip_concatenation"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_next_inbound_message_reopens_the_turn(monkeypatch):
+    """Clearing on ingress keeps genuine failures on later turns visible."""
+    redis = _FakeRedis()
+    redis.store["919808494950:reply_sent"] = "1"
+    monkeypatch.setattr(webhook_module, "get_redis_service", lambda: redis)
+    monkeypatch.setattr(
+        webhook_module, "get_settings",
+        lambda: SimpleNamespace(pending_reply_ttl_seconds=180),
+    )
+    monkeypatch.setattr(webhook_module, "timeout_service", AsyncMock())
+    monkeypatch.setattr(webhook_module, "message_queue_service", AsyncMock())
+
+    await webhook_module.enqueue_message_async({"from": "+919808494950", "content": "hi"})
+
+    assert "919808494950:reply_sent" not in redis.store
+    assert redis.store["919808494950:pending_reply"] == "1"
+
+    handler = _error_handler(monkeypatch, redis)
+    await handler._send_user_response("+919808494950")
+    handler.whatsapp_service.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_unreachable_redis_keeps_the_notice_rather_than_going_silent(monkeypatch):
+    """Fail open: a duplicate beats silence when something is actually broken."""
+    redis = _FakeRedis()
+    handler = _error_handler(monkeypatch, redis)
+
+    async def boom(_key):
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(redis, "exists", boom)
+
+    assert await handler._reply_already_delivered("+1") is False
+    await handler._send_user_response("+1")
+    handler.whatsapp_service.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_marking_a_reply_never_breaks_the_send(monkeypatch):
+    redis = _FakeRedis()
+    service = _whatsapp_service(monkeypatch, redis)
+
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(redis, "set", boom)
+
+    await service._mark_reply_sent("+919808494950")  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_successful_send_records_the_marker_with_a_ttl(monkeypatch):
+    redis = AsyncMock()
+    service = _whatsapp_service(monkeypatch, redis)
+    service._format_phone_number = MagicMock(return_value="919808494950")
+    service._track_message_in_history = AsyncMock()
+    service.retry_service = SimpleNamespace(
+        retry_with_backoff=AsyncMock(
+            return_value={"success": True, "result": MessageResponse(True, "m"), "attempts": 1, "error": None}
+        )
+    )
+
+    assert (await service.send_message("+919808494950", "your RFQ is live")).success
+
+    redis.set.assert_awaited_once_with("919808494950:reply_sent", "1", ex=180)
+    redis.delete.assert_awaited_once_with("919808494950:pending_reply")
+
+
+@pytest.mark.asyncio
+async def test_acknowledgements_do_not_close_the_turn(monkeypatch):
+    """clear_pending_reply=False means "not the real answer", so no marker."""
+    redis = AsyncMock()
+    service = _whatsapp_service(monkeypatch, redis)
+    service._format_phone_number = MagicMock(return_value="919808494950")
+    service._track_message_in_history = AsyncMock()
+    service.retry_service = SimpleNamespace(
+        retry_with_backoff=AsyncMock(
+            return_value={"success": True, "result": MessageResponse(True, "m"), "attempts": 1, "error": None}
+        )
+    )
+
+    await service.send_message("+919808494950", "please wait", clear_pending_reply=False)
+
+    redis.set.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_webhook_technical_error_notifies_the_user_once(monkeypatch):
+    """
+    handle_technical_error_with_cancel used to send its own notice *and* call
+    handle_technical_failure, so one failure produced two bubbles. The first also
+    claimed "your current session has been cleared" while clearing nothing.
+    """
+    failure = AsyncMock()
+    monkeypatch.setattr("app.utils.technical_failure_handler.handle_technical_failure", failure)
+    constructed = []
+    monkeypatch.setattr(
+        wa_module, "WhatsAppService",
+        lambda *a, **k: constructed.append(1) or MagicMock(),
+    )
+
+    await webhook_module.handle_technical_error_with_cancel("919808494950", "boom", "Critical Webhook Error")
+
+    failure.assert_awaited_once()
+    assert failure.await_args.kwargs["user_phone"] == "919808494950"
+    assert constructed == [], "the webhook must not send a second error message of its own"
+
+
+@pytest.mark.asyncio
+async def test_webhook_technical_error_survives_a_failing_notifier(monkeypatch):
+    monkeypatch.setattr(
+        "app.utils.technical_failure_handler.handle_technical_failure",
+        AsyncMock(side_effect=RuntimeError("notifier down")),
+    )
+
+    await webhook_module.handle_technical_error_with_cancel("919808494950", "boom")  # must not raise
