@@ -1,12 +1,27 @@
 # ====================================================================
-# SHARED BASE IMAGE - BUILD ONCE, USE EVERYWHERE
+# SHARED DEPENDENCY IMAGE - BUILD ONCE, USE EVERYWHERE
+# ====================================================================
+# Everything in this file is expensive and changes rarely: the apt packages,
+# the CPU PyTorch wheel, requirements.txt and the pre-downloaded
+# sentence-transformers model. Dockerfile.app starts FROM the image this file
+# produces, so these layers are built once and reused by the web app, the
+# Celery worker and Celery beat.
+#
+# CI keys the published tag on the hash of this file plus requirements.txt
+# (see .github/workflows/deploy-*.yml), so a deploy that touches neither one
+# reuses the image instead of reinstalling ~2GB of wheels. ACR quick tasks run
+# on a fresh agent with no layer cache, which is why the reuse has to be
+# explicit rather than left to Docker.
+#
+#   local/VM:  docker build -f Dockerfile.base -t procucev-base:local .
+#   CI:        az acr build --image aiproc-base:py311-<hash> -f Dockerfile.base .
 # ====================================================================
 FROM python:3.11-slim
 
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     curl \
@@ -16,9 +31,12 @@ RUN apt-get update && apt-get install -y \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy and install Python dependencies (ONCE)
+# Copy requirements
 COPY requirements.txt .
+
+# Install CPU-only PyTorch first to avoid downloading 5GB+ of unneeded CUDA/NVIDIA wheels
 RUN pip install --upgrade pip && \
+    pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
 # Pre-download sentence transformer model so it's cached in the image

@@ -55,11 +55,44 @@ if ([string]::IsNullOrWhiteSpace($AcrServer) -or [string]::IsNullOrWhiteSpace($A
 $ImageTagApp = "aiproc-app:${Environment}-latest"
 $ImageTagCelery = "aiproc-celery:${Environment}-latest"
 
-Write-Host "--> Building and pushing App Docker image to ACR..." -ForegroundColor Yellow
-az acr build --registry $AcrName --image $ImageTagApp --file Dockerfile.app .
+# Shared dependency image, keyed on the files that produce it. ACR quick tasks
+# have no layer cache, so this is what keeps repeat deploys from reinstalling
+# every wheel. Mirrors .github/workflows/deploy-*.yml.
+$DepsBytes = [System.IO.File]::ReadAllBytes((Resolve-Path "requirements.txt")) +
+             [System.IO.File]::ReadAllBytes((Resolve-Path "Dockerfile.base"))
+$Sha256 = [System.Security.Cryptography.SHA256]::Create()
+$DepsHash = ([System.BitConverter]::ToString($Sha256.ComputeHash($DepsBytes)) -replace '-', '').ToLower().Substring(0, 12)
+$BaseTag = "py311-$DepsHash"
+$BaseImageTag = "aiproc-base:$BaseTag"
 
-Write-Host "--> Building and pushing Celery Docker image to ACR..." -ForegroundColor Yellow
-az acr build --registry $AcrName --image $ImageTagCelery --file Dockerfile.celery .
+# show-tags exits non-zero when the repository does not exist yet, which is the
+# normal state on a first deploy. Do not let that abort the script.
+$ExistingBaseTags = @()
+try {
+    $ErrorActionPreference = "Continue"
+    $ExistingBaseTags = @(az acr repository show-tags --name $AcrName --repository aiproc-base -o tsv 2>$null)
+} catch {
+    $ExistingBaseTags = @()
+} finally {
+    $ErrorActionPreference = "Stop"
+    $global:LASTEXITCODE = 0
+}
+
+if ($ExistingBaseTags -contains $BaseTag) {
+    Write-Host "--> Reusing dependency image $AcrServer/$BaseImageTag" -ForegroundColor Yellow
+} else {
+    Write-Host "--> Building dependency image $AcrServer/$BaseImageTag..." -ForegroundColor Yellow
+    az acr build --registry $AcrName --image $BaseImageTag --file Dockerfile.base .
+}
+
+# One build, two tags: the app image also serves the Celery worker and beat,
+# which override the command in infra/modules/celery-worker.bicep.
+Write-Host "--> Building and pushing $ImageTagApp and $ImageTagCelery..." -ForegroundColor Yellow
+az acr build --registry $AcrName `
+  --image $ImageTagApp `
+  --image $ImageTagCelery `
+  --build-arg BASE_IMAGE="$AcrServer/$BaseImageTag" `
+  --file Dockerfile.app .
 
 # 5. Deploy Bicep
 Write-Host "--> Deploying Bicep Infrastructure..." -ForegroundColor Yellow

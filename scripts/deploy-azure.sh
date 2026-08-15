@@ -53,11 +53,28 @@ ACR_USERNAME=$(az acr credential show --name "$ACR_NAME" --query username -o tsv
 ACR_PASSWORD=$(az acr credential show --name "$ACR_NAME" --query "passwords[0].value" -o tsv)
 [[ -n "$ACR_SERVER" && -n "$ACR_USERNAME" && -n "$ACR_PASSWORD" ]] || { echo "Unable to obtain ACR credentials" >&2; exit 1; }
 
-echo "--> Building and pushing App Docker Image: ${ACR_SERVER}/${IMAGE_TAG_APP}..."
-az acr build --registry "$ACR_NAME" --image "$IMAGE_TAG_APP" --file Dockerfile.app .
+# Shared dependency image, keyed on the files that produce it. ACR quick tasks
+# have no layer cache, so this is what keeps repeat deploys from reinstalling
+# every wheel. Mirrors .github/workflows/deploy-*.yml.
+DEPS_HASH=$(cat requirements.txt Dockerfile.base | sha256sum | cut -c1-12)
+BASE_IMAGE_TAG="aiproc-base:py311-${DEPS_HASH}"
 
-echo "--> Building and pushing Celery Docker Image: ${ACR_SERVER}/${IMAGE_TAG_CELERY}..."
-az acr build --registry "$ACR_NAME" --image "$IMAGE_TAG_CELERY" --file Dockerfile.celery .
+if az acr repository show-tags --name "$ACR_NAME" --repository aiproc-base -o tsv 2>/dev/null \
+    | grep -qx "py311-${DEPS_HASH}"; then
+  echo "--> Reusing dependency image ${ACR_SERVER}/${BASE_IMAGE_TAG}"
+else
+  echo "--> Building dependency image: ${ACR_SERVER}/${BASE_IMAGE_TAG}..."
+  az acr build --registry "$ACR_NAME" --image "$BASE_IMAGE_TAG" --file Dockerfile.base .
+fi
+
+# One build, two tags: the app image also serves the Celery worker and beat,
+# which override the command in infra/modules/celery-worker.bicep.
+echo "--> Building and pushing ${ACR_SERVER}/${IMAGE_TAG_APP} and ${ACR_SERVER}/${IMAGE_TAG_CELERY}..."
+az acr build --registry "$ACR_NAME" \
+  --image "$IMAGE_TAG_APP" \
+  --image "$IMAGE_TAG_CELERY" \
+  --build-arg BASE_IMAGE="${ACR_SERVER}/${BASE_IMAGE_TAG}" \
+  --file Dockerfile.app .
 
 # 5. Deploy Infrastructure via Bicep
 echo "--> Deploying Bicep Infrastructure..."

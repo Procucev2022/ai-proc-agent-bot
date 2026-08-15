@@ -1,0 +1,71 @@
+name: Unit Tests & Coverage Gate
+
+# Called by deploy-dev.yml and deploy-prod.yml, which used to carry a
+# byte-identical copy of this job each. The placeholder environment below has to
+# stay in step with tests/conftest.py and pr-quality-gate.yml, and keeping it in
+# one place is the point of this file.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Unit Tests & Coverage Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Deterministic placeholders; the unit suite mocks every external service.
+      # The sqlite URLs MUST stay quoted: a trailing colon in a plain scalar
+      # makes YAML read the value as a nested mapping, which silently
+      # invalidates the whole workflow file.
+      AZURE_OPENAI_API_KEY: unit-test-key
+      GMT_USERNAME: unit-test-user
+      GMT_PHONE: '919876543229'
+      GMT_BASE_URL: https://gmt.invalid
+      GMT_PASSWORD: unit-test-password
+      GMT_CLIENT_ID: unit-test-client-id
+      GMT_CLIENT_SECRET: unit-test-client-secret
+      LOCAL_DATABASE_URL: 'sqlite:///:memory:'
+      REMOTE_DATABASE_URL: 'sqlite:///:memory:'
+      DATABASE_MODE: local
+      LICENSE_ENABLED: 'false'
+      WHATSAPP_MOCK_MODE: 'true'
+      WEBHOOK_HEALTH_MONITORING_ENABLED: 'false'
+      PYTHONPATH: .
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          # Same key as pr-quality-gate.yml so both reuse one pip cache entry.
+          cache-dependency-path: requirements.txt
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # sentence-transformers pulls torch, which defaults to the multi-GB
+          # CUDA wheels. Dockerfile.base and pr-quality-gate.yml install the CPU
+          # build first for the same reason; the runner has no GPU either.
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt
+
+      - name: Run Unit Tests with Coverage
+        run: python -m coverage run --branch -m pytest
+
+      - name: Build Coverage Report
+        run: python -m coverage json -o coverage.json
+
+      - name: Enforce Per-File Coverage
+        run: python scripts/check_coverage.py --coverage-file coverage.json --threshold 90
+
+      - name: Enforce Aggregate Coverage
+        run: python -m coverage report --fail-under=90

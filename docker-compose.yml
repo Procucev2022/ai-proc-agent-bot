@@ -170,9 +170,13 @@ services:
   # ============================================================================
   celery_worker:
     container_name: procucev_celery_worker
+    # Same image as the app service. Dockerfile.celery was a copy of
+    # Dockerfile.app with a different CMD, so it installed the same
+    # dependencies a second time for no gain; the command is set here instead.
     build:
       context: .
-      dockerfile: Dockerfile.celery
+      dockerfile: Dockerfile.app
+    command: ./docker_entrypoint_celery.sh
     depends_on:
       redis:
         condition: service_healthy
@@ -218,7 +222,7 @@ services:
     container_name: procucev_celery_beat
     build:
       context: .
-      dockerfile: Dockerfile.celery
+      dockerfile: Dockerfile.app
     command: celery -A app.celery_app beat --loglevel=info --scheduler=celery.beat:PersistentScheduler --schedule=/app/celerybeat-data/celerybeat-schedule
     depends_on:
       redis:

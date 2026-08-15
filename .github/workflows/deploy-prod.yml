@@ -5,6 +5,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      force_base_rebuild:
+        description: 'Rebuild the shared dependency image even if its tag already exists'
+        type: boolean
+        default: false
 
 permissions:
   id-token: write
@@ -22,59 +27,7 @@ env:
 
 jobs:
   unit-tests:
-    name: Unit Tests & Coverage Gate
-    runs-on: ubuntu-latest
-    env:
-      # Deterministic placeholders; the unit suite mocks every external service.
-      # Keep these in step with tests/conftest.py and pr-quality-gate.yml.
-      # The sqlite URLs MUST stay quoted: a trailing colon in a plain scalar
-      # makes YAML read the value as a nested mapping, which silently
-      # invalidates the whole workflow file.
-      AZURE_OPENAI_API_KEY: unit-test-key
-      GMT_USERNAME: unit-test-user
-      GMT_PHONE: '919876543229'
-      GMT_BASE_URL: https://gmt.invalid
-      GMT_PASSWORD: unit-test-password
-      GMT_CLIENT_ID: unit-test-client-id
-      GMT_CLIENT_SECRET: unit-test-client-secret
-      LOCAL_DATABASE_URL: 'sqlite:///:memory:'
-      REMOTE_DATABASE_URL: 'sqlite:///:memory:'
-      DATABASE_MODE: local
-      LICENSE_ENABLED: 'false'
-      WHATSAPP_MOCK_MODE: 'true'
-      WEBHOOK_HEALTH_MONITORING_ENABLED: 'false'
-      PYTHONPATH: .
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-          cache: pip
-
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          # sentence-transformers pulls torch, which defaults to the multi-GB
-          # CUDA wheels. Dockerfile.app and pr-quality-gate.yml install the CPU
-          # build first for the same reason; the runner has no GPU either.
-          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install -r requirements.txt
-
-      - name: Run Unit Tests with Coverage
-        run: python -m coverage run --branch -m pytest
-
-      - name: Build Coverage Report
-        run: python -m coverage json -o coverage.json
-
-      - name: Enforce Per-File Coverage
-        run: python scripts/check_coverage.py --coverage-file coverage.json --threshold 90
-
-      - name: Enforce Aggregate Coverage
-        run: python -m coverage report --fail-under=90
+    uses: ./.github/workflows/unit-tests.yml
 
   build-and-deploy:
     needs: unit-tests
@@ -128,10 +81,18 @@ jobs:
 
       - name: Register Required Azure Resource Providers
         run: |
-          echo "Checking and registering Azure Resource Providers..."
+          # Registration is permanent per subscription. Re-running
+          # 'az provider register --wait' on every deploy only re-confirms what
+          # is already true, so check the state first and skip the call.
+          echo "Checking Azure Resource Providers..."
           for provider in Microsoft.ContainerRegistry Microsoft.App Microsoft.OperationalInsights Microsoft.Storage; do
-            echo "Registering $provider..."
-            az provider register --namespace "$provider" --wait
+            state=$(az provider show --namespace "$provider" --query registrationState -o tsv 2>/dev/null || echo Unknown)
+            if [ "$state" = "Registered" ]; then
+              echo "✓ $provider already registered"
+            else
+              echo "Registering $provider (state: $state)..."
+              az provider register --namespace "$provider" --wait
+            fi
           done
           echo "✓ All required Resource Providers are registered."
 
@@ -167,8 +128,50 @@ jobs:
           echo "ACR_USER=$USER" >> $GITHUB_ENV
           echo "ACR_PASS=$PASS" >> $GITHUB_ENV
 
-      - name: Build & Push Container Images to ACR (Unified Build)
+      # ACR quick tasks run on a fresh agent with no layer cache and az acr
+      # build has no --cache-from, so the only way to stop reinstalling ~2GB of
+      # wheels on every deploy is to publish the dependency layers as their own
+      # image. The tag is keyed on the hash of the files that produce them, so a
+      # deploy that changes neither requirements.txt nor Dockerfile.base reuses
+      # it. ACR authenticates to its own registry automatically, so the app
+      # build can pull it as a base image with no extra credentials.
+      - name: Resolve Shared Dependency Image
+        id: base
+        env:
+          FORCE_BASE_REBUILD: ${{ github.event.inputs.force_base_rebuild }}
         run: |
+          set -euo pipefail
+          DEPS_HASH=$(cat requirements.txt Dockerfile.base | sha256sum | cut -c1-12)
+          BASE_REPO=aiproc-base
+          BASE_TAG="py311-${DEPS_HASH}"
+          echo "image=${BASE_REPO}:${BASE_TAG}" >> "$GITHUB_OUTPUT"
+
+          if [ "${FORCE_BASE_REBUILD:-false}" = "true" ]; then
+            echo "Forced rebuild requested for ${BASE_REPO}:${BASE_TAG}."
+          elif az acr repository show-tags --name ${{ env.ACR_NAME }} --repository "$BASE_REPO" -o tsv 2>/dev/null \
+               | grep -qx "$BASE_TAG"; then
+            echo "✓ Reusing existing ${BASE_REPO}:${BASE_TAG}, skipping the dependency install."
+            exit 0
+          else
+            echo "No cached ${BASE_REPO}:${BASE_TAG} found (requirements or base image changed)."
+          fi
+
+          az acr build \
+            --registry ${{ env.ACR_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image "${BASE_REPO}:${BASE_TAG}" \
+            --file Dockerfile.base .
+
+      # One build, two tags. The app image already contains everything the old
+      # Celery image did, and both Celery container apps override the command in
+      # infra/modules/celery-worker.bicep, so a second build produced a second
+      # copy of the same bytes. Pushing both repository names keeps each
+      # container app's tag history intact and leaves infra/main.bicep unchanged.
+      - name: Build & Push Container Image to ACR (Single Build, Both Tags)
+        env:
+          BASE_IMAGE_REF: ${{ steps.acr.outputs.server }}/${{ steps.base.outputs.image }}
+        run: |
+          set -euo pipefail
           # Tag by commit, not by branch name. Deriving the tag from
           # GITHUB_REF_NAME produced a single mutable "prod-main" tag that every
           # release overwrote, so the running image could not be traced back to a
@@ -176,22 +179,18 @@ jobs:
           SHORT_SHA=$(git rev-parse --short HEAD)
           TAG_APP="aiproc-app:prod-${SHORT_SHA}"
           TAG_CELERY="aiproc-celery:prod-${SHORT_SHA}"
-          
-          echo "Building application image '$TAG_APP'..."
+
+          echo "Building '$TAG_APP' and '$TAG_CELERY' from Dockerfile.app on $BASE_IMAGE_REF..."
           az acr build \
             --registry ${{ env.ACR_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image "$TAG_APP" \
             --image "aiproc-app:latest" \
-            --file Dockerfile.app .
-          echo "Building Celery image '$TAG_CELERY'..."
-          az acr build \
-            --registry ${{ env.ACR_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
             --image "$TAG_CELERY" \
             --image "aiproc-celery:latest" \
-            --file Dockerfile.celery .
-          
+            --build-arg "BASE_IMAGE=$BASE_IMAGE_REF" \
+            --file Dockerfile.app .
+
           echo "TAG_APP=$TAG_APP" >> $GITHUB_ENV
           echo "TAG_CELERY=$TAG_CELERY" >> $GITHUB_ENV
 

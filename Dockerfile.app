@@ -1,31 +1,25 @@
 # ====================================================================
-# UNIFIED DOCKERFILE - Azure Container Apps Production (Optimized CPU)
+# APPLICATION IMAGE - Azure Container Apps Production
 # ====================================================================
-FROM python:3.11-slim AS base
+# One image serves the web app, the Celery worker and Celery beat. The only
+# difference between the roles is the command:
+#
+#   web app      -> ./docker_entrypoint_app.sh (the CMD below)
+#   celery       -> overridden by infra/modules/celery-worker.bicep on Azure,
+#                   and by docker-compose.yml locally
+#
+# There used to be a separate Dockerfile.celery whose content was a strict
+# subset of this one, which meant every deploy installed the same ~2GB of
+# dependencies twice. It is gone; build this file and tag it for both.
+#
+# The dependency layers live in Dockerfile.base so they can be built once and
+# reused. BASE_IMAGE defaults to the locally built tag used by
+# procucev-agent.sh; CI passes the registry-hosted tag instead.
+# ====================================================================
+ARG BASE_IMAGE=procucev-base:local
+FROM ${BASE_IMAGE}
 
 WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create virtual environment
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Copy requirements
-COPY requirements.txt .
-
-# Install CPU-only PyTorch first to avoid downloading 5GB+ of unneeded CUDA/NVIDIA wheels
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
-    pip install --no-cache-dir -r requirements.txt
-
-# Pre-download sentence transformer model so it's cached in the image
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 # Copy application code and entrypoint scripts
 COPY app/ ./app/

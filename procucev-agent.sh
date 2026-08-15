@@ -30,6 +30,21 @@ export COMPOSE_DOCKER_CLI_BUILD=1
 # BUILD COMMANDS
 # ====================================================================
 
+# Shared dependency image. Dockerfile.app starts FROM this tag (see its
+# BASE_IMAGE arg), so it has to exist before any service image is built.
+BASE_IMAGE_TAG="procucev-base:local"
+
+# Build the base image only when it is missing. Compose cannot build it itself
+# and would try to pull 'procucev-base:local' from a registry instead.
+ensure_base() {
+    if docker image inspect "$BASE_IMAGE_TAG" >/dev/null 2>&1; then
+        print_status "Base image $BASE_IMAGE_TAG present"
+        return
+    fi
+    print_warning "Base image $BASE_IMAGE_TAG missing, building it first..."
+    docker build -f Dockerfile.base -t "$BASE_IMAGE_TAG" .
+}
+
 # Full build - use when requirements.txt changes
 build() {
     print_header "FULL BUILD - Base Image + Services"
@@ -42,8 +57,10 @@ build() {
     start_time=$(date +%s)
     
     print_status "Building base image (Python + dependencies)..."
-    docker build -f Dockerfile.base -t procucev-base:local --no-cache .
+    docker build -f Dockerfile.base -t "$BASE_IMAGE_TAG" --no-cache .
     
+    # --no-cache only re-runs the code COPY steps here: the service images start
+    # FROM the base image above, so the dependency install happens once.
     print_status "Building service images..."
     docker compose build --no-cache --parallel
     
@@ -64,6 +81,8 @@ rebuild() {
     print_status "Stopping containers..."
     docker compose down --remove-orphans
     
+    ensure_base
+    
     print_status "Building updated images (parallel)..."
     docker compose build --parallel
     
@@ -83,6 +102,8 @@ reload() {
     print_header "HOT RELOAD - Restart with Code Changes"
     
     start_time=$(date +%s)
+    
+    ensure_base
     
     docker compose up -d --build
     
@@ -115,7 +136,7 @@ init() {
     start_time=$(date +%s)
     
     print_status "Building base image (Python + dependencies)..."
-    docker build -f Dockerfile.base -t procucev-base:local .
+    docker build -f Dockerfile.base -t "$BASE_IMAGE_TAG" .
     
     print_status "Building service images..."
     docker compose build --parallel
