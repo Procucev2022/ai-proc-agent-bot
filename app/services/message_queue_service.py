@@ -23,6 +23,7 @@ Usage (unchanged):
 import logging
 import dataclasses
 import asyncio
+import hashlib
 import time
 import json
 from typing import Dict, List, Optional, Any
@@ -32,6 +33,12 @@ from redis.asyncio import Redis
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# Values a gateway sends when it has no per-message identifier. The ICS gateway
+# posts 'mid=NA&smsgid=NA' on every message, so treating the raw value as the
+# deduplication key claimed '<phone>:message:NA' for its full 24 hour TTL and
+# silently dropped every subsequent message from that user.
+PLACEHOLDER_MESSAGE_IDS = frozenset({"", "-", "NA", "N/A", "NONE", "NULL", "NIL"})
 
 
 # ============================================================================
@@ -157,6 +164,30 @@ class MessageQueueService:
     def _key_message(self, user_phone: str, message_id: str) -> str:
         return f"{user_phone}:message:{message_id}"
 
+    @staticmethod
+    def _resolve_message_id(
+        raw_message_id: Any,
+        user_phone: str,
+        timestamp: float,
+        content: str,
+    ) -> str:
+        """
+        Return an identifier that is unique per message, not per gateway.
+
+        A real provider ID is used as-is so a re-posted webhook is recognised as
+        a retry. When the gateway sends a placeholder such as 'NA', identity is
+        derived from the sender, the gateway's own timestamp and a digest of the
+        content: a genuine retry carries all three unchanged and is still
+        deduplicated, while a new message gets a new key instead of colliding
+        with every previous message from the same user.
+        """
+        candidate = str(raw_message_id or "").strip()
+        if candidate.upper() not in PLACEHOLDER_MESSAGE_IDS:
+            return candidate
+
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+        return f"{user_phone}_{timestamp}_{digest}"
+
     def _key_outgoing(self, user_phone: str) -> str:
         return f"{user_phone}:outgoing"
 
@@ -221,7 +252,6 @@ class MessageQueueService:
                 timestamp = float(timestamp_raw)
             
             user_phone = webhook_data.get("from", "").lstrip('+')
-            message_id = webhook_data.get("message_id", f"{user_phone}_{timestamp}")
             message_type = webhook_data.get("type", "text")
             content = webhook_data.get("content", "")
             
@@ -234,6 +264,12 @@ class MessageQueueService:
                         f"[ENQUEUE] Non-text message type '{message_type}' "
                         f"with no content, user={user_phone}"
                     )
+            
+            # Resolved after content, because a gateway that sends no real
+            # message ID needs the content to tell two messages apart.
+            message_id = self._resolve_message_id(
+                webhook_data.get("message_id"), user_phone, timestamp, content
+            )
             
             # Create Message object
             message = Message(
