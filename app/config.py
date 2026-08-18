@@ -279,6 +279,14 @@ class Settings:
         self.pending_reply_ttl_seconds: int = int(os.getenv("PENDING_REPLY_TTL_SECONDS", "180"))  # 3 minutes default (longer than worker timeout)
         self.worker_timeout_threshold_seconds: int = int(os.getenv("WORKER_TIMEOUT_THRESHOLD_SECONDS", "135"))  # 2m15s default (2min gunicorn timeout + 15s buffer)
 
+        # Auto-categorization budgets for request-path use.
+        # The first call per worker loads a Sentence Transformer model, which can take
+        # 30s+ on a cold cache. These caps keep a WhatsApp turn inside the worker
+        # timeout: when they are exceeded, categorization is skipped for that turn and
+        # the load finishes in the background for later turns.
+        self.categorization_init_timeout_seconds: float = float(os.getenv("CATEGORIZATION_INIT_TIMEOUT_SECONDS", "20"))
+        self.categorization_item_timeout_seconds: float = float(os.getenv("CATEGORIZATION_ITEM_TIMEOUT_SECONDS", "15"))
+
         # Feature Flags
         self.USE_TRACK2_RFQ_FLOW = os.getenv("USE_TRACK2_RFQ_FLOW", "false").lower() == "true"
 
@@ -532,8 +540,8 @@ def get_settings() -> Settings:
     
     Returns the configured settings instance for the application.
     """
-    pass
-    global _settings
+    # No `global` declaration: this function only reads the module-level singleton.
+    # load_environment() is what assigns it.
     if _settings is None:
         load_environment()
         assert _settings is not None

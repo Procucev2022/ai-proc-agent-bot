@@ -10,7 +10,7 @@ from typing import Dict, Any, List
 from app.models import User, ConversationSession
 from app.services.openai_service import OpenAIService
 from app.services.whatsapp_service import WhatsAppService
-from app.services.auto_categorization_service import get_auto_categorization_service
+from app.services.auto_categorization_service import get_auto_categorization_service_async
 from app.procucev_apis.bfs_apis import get_bfs_api_service
 from app.utils.bfs_bid_format_parser import (
     generate_bid_format,
@@ -29,8 +29,17 @@ class BFSSearchHandler:
         self.whatsapp_service = whatsapp_service
         self.session_manager = session_manager
         self.openai_service = OpenAIService()
-        self.auto_categorization_service = get_auto_categorization_service()
+        # Resolved lazily via _get_categorization_service. Building it loads a Sentence
+        # Transformer model, and this handler is constructed inside a request, so doing
+        # that here blocked the event loop until gunicorn killed the worker.
+        self.auto_categorization_service = None
         self.bfs_api_service = get_bfs_api_service()
+
+    async def _get_categorization_service(self):
+        """Resolve the auto-categorization singleton without blocking the event loop."""
+        if self.auto_categorization_service is None:
+            self.auto_categorization_service = await get_auto_categorization_service_async()
+        return self.auto_categorization_service
 
     # ==================== Button Handler ====================
 
@@ -206,7 +215,8 @@ class BFSSearchHandler:
 
             category_array = []
             try:
-                cat_result = await self.auto_categorization_service.categorize_item(
+                categorization_service = await self._get_categorization_service()
+                cat_result = await categorization_service.categorize_item(
                     item_description=description,
                     user_id=user_id,
                     session_id=session_id

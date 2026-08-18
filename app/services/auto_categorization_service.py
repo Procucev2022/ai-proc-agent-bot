@@ -10,10 +10,12 @@ The service operates as an offline process after RFQ submission to avoid
 impacting conversation flow performance.
 """
 
+import asyncio
 import chromadb
 import chromadb.utils.embedding_functions as embedding_functions
 import os
 import logging
+import threading
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -28,25 +30,78 @@ from .learning_categorization_service import LearningCategorizationService
 logger = logging.getLogger(__name__)
 
 # Global singleton instance
-_auto_categorization_service_instance = None
+_auto_categorization_service_instance: Optional['AutoCategorizationService'] = None
+
+# Guards construction of the singleton. Construction is slow (model load plus a
+# possible full re-embed) and is now reached from worker threads, so two concurrent
+# callers could otherwise each build their own copy.
+_auto_categorization_service_lock = threading.Lock()
+
 
 def get_auto_categorization_service() -> 'AutoCategorizationService':
     """
     Get singleton instance of AutoCategorizationService.
     This ensures the model is loaded only once and reused across requests.
+
+    WARNING: this blocks for tens of seconds on the first call in a process, because
+    it loads a Sentence Transformer model and connects to ChromaDB. Never call it
+    directly from a coroutine; use get_auto_categorization_service_async instead.
     """
     global _auto_categorization_service_instance
-    if _auto_categorization_service_instance is None:
-        logger.info("Initializing AutoCategorizationService singleton")
-        _auto_categorization_service_instance = AutoCategorizationService()
-        logger.info("AutoCategorizationService singleton initialized")
 
-        # Auto-populate if collection is empty (e.g. after ChromaDB restart)
-        if _auto_categorization_service_instance.collection.count() == 0:
-            logger.warning("ChromaDB collection is empty — auto-populating from database")
-            _auto_categorization_service_instance.populate_embeddings_from_db()
+    instance = _auto_categorization_service_instance
+    if instance is not None:
+        return instance
 
-    return _auto_categorization_service_instance
+    with _auto_categorization_service_lock:
+        # Re-check inside the lock: another thread may have finished while we waited.
+        instance = _auto_categorization_service_instance
+        if instance is None:
+            logger.info("Initializing AutoCategorizationService singleton")
+            instance = AutoCategorizationService()
+            logger.info("AutoCategorizationService singleton initialized")
+
+            # Auto-populate if collection is empty (e.g. after ChromaDB restart)
+            if instance.collection.count() == 0:
+                logger.warning("ChromaDB collection is empty — auto-populating from database")
+                instance.populate_embeddings_from_db()
+
+            # Published last, so no other thread can observe a half-built instance.
+            _auto_categorization_service_instance = instance
+
+    return instance
+
+
+async def get_auto_categorization_service_async(
+    timeout: Optional[float] = None,
+) -> 'AutoCategorizationService':
+    """
+    Resolve the singleton without blocking the event loop.
+
+    The first call in a worker loads the all-MiniLM-L6-v2 model and opens a ChromaDB
+    connection. Doing that inline stopped the worker answering gunicorn's heartbeat,
+    so gunicorn killed it mid-request and the user never got a reply; the inactivity
+    monitor then told them the request was "taking longer than expected due to high
+    traffic". Running it on a worker thread keeps the loop responsive.
+
+    Args:
+        timeout: Seconds to wait before giving up. On timeout the load keeps running in
+            its thread and will serve later callers, so the wait is paid only once.
+
+    Returns:
+        The singleton instance
+
+    Raises:
+        asyncio.TimeoutError: The instance was not ready within timeout
+    """
+    instance = _auto_categorization_service_instance
+    if instance is not None:
+        return instance
+
+    load = asyncio.to_thread(get_auto_categorization_service)
+    if timeout is None:
+        return await load
+    return await asyncio.wait_for(load, timeout=timeout)
 
 def get_project_root() -> Path:
     """
@@ -396,8 +451,11 @@ class AutoCategorizationService:
         start_time = time.time()
 
         try:
-            # Step 1: Vector search for top 3 similar items
-            similar_items = self._get_similar_items(item_description)
+            # Step 1: Vector search for top 3 similar items.
+            # The collection carries a Sentence Transformer embedding function, so the
+            # query embeds the text in-process. That is CPU-bound work and must not run
+            # on the event loop.
+            similar_items = await asyncio.to_thread(self._get_similar_items, item_description)
 
             if not similar_items:
                 return self._handle_no_similar_items(

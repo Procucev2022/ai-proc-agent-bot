@@ -113,7 +113,7 @@ async def test_bfs_constructor_buttons_payload_and_post_bid_menus(monkeypatch):
     categorizer = MagicMock(name="categorizer")
     bfs_api = MagicMock(name="bfs_api")
     monkeypatch.setattr(bfs_mod, "OpenAIService", lambda: openai)
-    monkeypatch.setattr(bfs_mod, "get_auto_categorization_service", lambda: categorizer)
+    monkeypatch.setattr(bfs_mod, "get_auto_categorization_service_async", AsyncMock(return_value=categorizer))
     monkeypatch.setattr(bfs_mod, "get_bfs_api_service", lambda: bfs_api)
 
     whatsapp = SimpleNamespace(
@@ -123,8 +123,14 @@ async def test_bfs_constructor_buttons_payload_and_post_bid_menus(monkeypatch):
     session_manager = SimpleNamespace(save_session=AsyncMock())
     handler = BFSSearchHandler(whatsapp, session_manager)
     assert handler.openai_service is openai
-    assert handler.auto_categorization_service is categorizer
     assert handler.bfs_api_service is bfs_api
+    # Constructing the handler must not build the categorization service: that loads a
+    # Sentence Transformer model and would block the event loop mid-request.
+    assert handler.auto_categorization_service is None
+    assert await handler._get_categorization_service() is categorizer
+    # Resolved once, then reused.
+    assert await handler._get_categorization_service() is categorizer
+    assert bfs_mod.get_auto_categorization_service_async.await_count == 1
 
     session = make_session(bfs_searched_products=["pump"], bfs_results=[{"id": "i"}])
     result = await handler.handle_button(make_user(), session, "bfs_raise_rfq")

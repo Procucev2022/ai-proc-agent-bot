@@ -163,6 +163,8 @@ def registration_service(auth_dependencies):
     settings = SimpleNamespace(
         support_contact_info="support@example.com",
         procucev_rfq_details_url="https://example.test/profile",
+        categorization_init_timeout_seconds=20.0,
+        categorization_item_timeout_seconds=15.0,
     )
     entity = MagicMock()
     entity.extract_entities = AsyncMock()
@@ -726,7 +728,10 @@ class TestRegistrationHelpersAndPrivateBranches:
         auth_dependencies.openai.parse_seller_product_items = AsyncMock(return_value={"success": True, "items": ["p1", "p2"]})
         categorizer = MagicMock()
         categorizer.categorize_item = AsyncMock(side_effect=[{"success": True, "category": "A", "confidence_score": .9, "method": "m"}, {"success": False}])
-        with patch("app.services.auto_categorization_service.get_auto_categorization_service", return_value=categorizer):
+        with patch(
+            "app.services.auto_categorization_service.get_auto_categorization_service_async",
+            new=AsyncMock(return_value=categorizer),
+        ):
             result = await registration_service._categorize_seller_products("p1 and p2", PHONE, make_session())
         assert result == [{"category": "A", "division": ""}]
         auth_dependencies.openai.parse_seller_product_items.return_value = {"success": False, "items": []}

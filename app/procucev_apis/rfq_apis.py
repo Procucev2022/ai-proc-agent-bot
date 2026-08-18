@@ -8,12 +8,81 @@ and bulk upload operations with the GMT Procucev backend.
 import logging
 import base64
 import json
+import re
+import unicodedata
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from app.procucev_apis.procucev_api_client import get_procucev_api_client
 
 logger = logging.getLogger(__name__)
+
+# Symbols buyers routinely type into WhatsApp specs that the GMT backend rejects.
+# Every RFQ payload observed failing with "Error occurred while creating RFQ" carried
+# one of these in an item's remarks (10KΩ, ±5%, 1000µF), while payloads with plain
+# ASCII text were accepted, so outbound text is transliterated to an ASCII equivalent
+# that preserves the buyer's meaning.
+_GMT_TEXT_REPLACEMENTS = {
+    "\u2126": "ohm", "\u03a9": "ohm", "\u03c9": "ohm",          # Ω ohm sign / omega
+    "\u00b5": "u", "\u03bc": "u",                                # µ micro sign / mu
+    "\u00b1": "+/-",                                             # ±
+    "\u00b0": "deg",                                             # °
+    "\u00d7": "x",                                               # ×
+    "\u00f7": "/",                                               # ÷
+    "\u2013": "-", "\u2014": "-", "\u2212": "-",                 # – — −
+    "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",  # single quotes
+    "\u201c": '"', "\u201d": '"', "\u201e": '"',                 # double quotes
+    "\u2026": "...",                                             # …
+    "\u00b2": "2", "\u00b3": "3",                                # ² ³
+    "\u00bd": "1/2", "\u00bc": "1/4", "\u00be": "3/4",           # ½ ¼ ¾
+    "\u20b9": "INR ",                                            # ₹
+    "\u2122": "(TM)", "\u00ae": "(R)", "\u00a9": "(C)",          # ™ ® ©
+    "\u2264": "<=", "\u2265": ">=", "\u2260": "!=",              # ≤ ≥ ≠
+    "\u00a0": " ",                                               # non-breaking space
+}
+
+
+def sanitize_gmt_text(value: Any) -> Any:
+    """
+    Convert a text field to ASCII the GMT backend accepts.
+
+    Known technical symbols become readable ASCII (Ω -> ohm, ± -> +/-, µ -> u); anything
+    else outside ASCII is decomposed by Unicode compatibility rules and, if still not
+    representable, dropped. Non-string values pass through untouched so numbers, None and
+    nested structures keep their type.
+
+    Args:
+        value: Field value from the RFQ, usually free text typed by the buyer
+
+    Returns:
+        An ASCII-only string for text input, otherwise the value unchanged
+    """
+    if not isinstance(value, str) or value.isascii():
+        return value
+
+    original = value
+    for symbol, replacement in _GMT_TEXT_REPLACEMENTS.items():
+        value = value.replace(symbol, replacement)
+
+    if not value.isascii():
+        # NFKD splits accented characters into base + combining mark; encoding with
+        # "ignore" then keeps the base letter and discards the mark.
+        value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+
+    # Collapse whitespace left behind by dropped characters.
+    value = re.sub(r"[ \t]{2,}", " ", value).strip()
+
+    logger.info(f"Sanitized non-ASCII text for GMT API: {original!r} -> {value!r}")
+    return value
+
+
+def _sanitize_gmt_payload(payload: Any) -> Any:
+    """Apply sanitize_gmt_text to every string in a nested payload structure."""
+    if isinstance(payload, dict):
+        return {key: _sanitize_gmt_payload(item) for key, item in payload.items()}
+    if isinstance(payload, list):
+        return [_sanitize_gmt_payload(item) for item in payload]
+    return sanitize_gmt_text(payload)
 
 class RFQAPIService:
     """
@@ -53,12 +122,21 @@ class RFQAPIService:
                     "rfq_id": rfq_id
                 }
             else:
+                # The upstream detail sits in errorMsg, not message, and "message" alone
+                # is always the generic "Failed to create RFQ". Log both plus the payload
+                # so a repeat failure can be diagnosed without reproducing it.
                 logger.error(f"GMT API returned error: {response}")
+                logger.error(
+                    "GMT RFQ creation rejected | statusCode=%s | errorMsg=%s | payload=%s",
+                    response.get("statusCode"),
+                    response.get("errorMsg"),
+                    json.dumps(gmt_rfq_data, default=str),
+                )
                 return {
                     "success": False,
                     "error": f"GMT API error: {response.get('message', 'Unknown error')}"
                 }
-                        
+
         except Exception as e:
             logger.error(f"Error creating RFQ in GMT system: {e}")
             return {"success": False, "error": str(e)}
@@ -288,8 +366,11 @@ class RFQAPIService:
             "rfqDocument": rfq_documents,
             "user": user_id
         }
-        
-        return gmt_payload
+
+        # Buyer-typed specs reach us straight from WhatsApp and can contain symbols the
+        # GMT backend cannot store, which it reports as a generic creation failure.
+        # Normalize once here so every field in the payload is ASCII-safe.
+        return _sanitize_gmt_payload(gmt_payload)
 
     def _generate_project_desc(self, rfq_data: Dict[str, Any]) -> str:
         """Generate project description from product names with 100 character limit."""

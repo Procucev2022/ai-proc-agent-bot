@@ -115,7 +115,12 @@ def make_registration_service():
         authentication_helpers=MagicMock(),
         otp_service=SimpleNamespace(send_otp=AsyncMock(return_value={"status": "otp_sent"}), handle_user_message=AsyncMock()),
         auth_api_service=SimpleNamespace(authenticate_user=AsyncMock()),
-        settings=SimpleNamespace(support_contact_info="support@example.com", procucev_rfq_details_url="https://example.test/profile"),
+        settings=SimpleNamespace(
+            support_contact_info="support@example.com",
+            procucev_rfq_details_url="https://example.test/profile",
+            categorization_init_timeout_seconds=20.0,
+            categorization_item_timeout_seconds=15.0,
+        ),
     )
     return service, whatsapp, manager
 
@@ -524,11 +529,25 @@ async def test_registration_submission_and_product_categorization_edges(monkeypa
     service.openai_service.parse_seller_product_items.return_value = {"success": False, "items": []}
     assert await service._categorize_seller_products("pumps", "1", session) == []
     service.openai_service.parse_seller_product_items.return_value = {"success": True, "items": ["pump", "valve"]}
-    monkeypatch.setattr("app.services.auto_categorization_service.get_auto_categorization_service", lambda: (_ for _ in ()).throw(RuntimeError("model")))
+    monkeypatch.setattr(
+        "app.services.auto_categorization_service.get_auto_categorization_service_async",
+        AsyncMock(side_effect=RuntimeError("model")),
+    )
+    assert await service._categorize_seller_products("pumps", "1", session) == []
+
+    # A cold model load that overruns its budget must degrade to no categorization
+    # rather than leaving the seller without a reply.
+    monkeypatch.setattr(
+        "app.services.auto_categorization_service.get_auto_categorization_service_async",
+        AsyncMock(side_effect=asyncio.TimeoutError()),
+    )
     assert await service._categorize_seller_products("pumps", "1", session) == []
 
     cat = SimpleNamespace(categorize_item=AsyncMock(side_effect=[{"success": True, "category": "Pumps", "confidence_score": .8, "method": "ai"}, {"success": False, "error": "bad"}]))
-    monkeypatch.setattr("app.services.auto_categorization_service.get_auto_categorization_service", lambda: cat)
+    monkeypatch.setattr(
+        "app.services.auto_categorization_service.get_auto_categorization_service_async",
+        AsyncMock(return_value=cat),
+    )
     result = await service._categorize_seller_products("pumps", "1", session)
     assert result == [{"category": "Pumps", "division": ""}]
     cat.categorize_item.side_effect = RuntimeError("item")

@@ -356,8 +356,14 @@ async def test_user_selection_rule_fuzzy_and_ai_paths(monkeypatch, tmp_path):
     assert tool._string_similarity("abc", "abc") == 1
     assert tool._string_similarity("", "abc") == 0
 
+    # Redirect both directories into tmp_path first. Writing the stub prompt and tool
+    # straight into app/prompts and app/tools overwrote the shipped files, which is how
+    # user_selection_analysis.json ended up empty and returned HTTP 400 in production.
+    tool.prompts_dir = tmp_path / "prompts"
+    tool.tools_dir = tmp_path / "tools"
     prompt_dir = tool.prompts_dir / "profile_selection"
     prompt_dir.mkdir(parents=True, exist_ok=True)
+    tool.tools_dir.mkdir(parents=True, exist_ok=True)
     (prompt_dir / "user_selection_analysis.txt").write_text("system", encoding="utf-8")
     (tool.tools_dir / "user_selection_analysis.json").write_text("{}", encoding="utf-8")
     service.client.responses.create.return_value = SimpleNamespace(output=[SimpleNamespace(type="function_call", arguments=json.dumps({"selected_option": 2, "confidence": 0.9, "reasoning": "AI"}))])

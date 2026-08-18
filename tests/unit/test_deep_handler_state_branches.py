@@ -114,8 +114,15 @@ async def test_sectioned_date_items_retry_validation_and_cancellation_branches(m
 
     h.entity_service.extract_entities.return_value = {"deliveryDate": "", "pincode": "", "products": []}
     assert (await h._handle_date_location_section(u, session(), "details", []))["status"] == "awaiting_delivery_details"
-    with pytest.raises(UnboundLocalError):
-        await h._handle_date_location_section(u, session(date_location={"deliveryDate": "d", "pincode": "p"}), "details", [])
+    # Delivery basics already stored, so the extraction block is skipped. The validation
+    # error flags must still be bound; date+pincode without city/state means the pincode
+    # lookup failed, so the user is asked for a valid pincode.
+    stored_basics = session(date_location={"deliveryDate": "d", "pincode": "p"})
+    assert (await h._handle_date_location_section(u, stored_basics, "details", []))["status"] == "pincode"
+    # An empty message carries nothing to extract, so no OpenAI round trip is spent.
+    h.entity_service.extract_entities.reset_mock()
+    assert (await h._handle_date_location_section(u, session(), "", []))["status"] == "awaiting_delivery_details"
+    h.entity_service.extract_entities.assert_not_called()
 
     parser = sectioned_mod.sectioned_rfq_format_parser
     monkeypatch.setattr(parser, "parse_delivery_format", lambda _: {"error": "bad format", "additional_text": ""})

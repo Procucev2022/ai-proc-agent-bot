@@ -2,7 +2,7 @@
 
 import logging
 from typing import Dict, Any, Optional
-from .auto_categorization_service import get_auto_categorization_service
+from .auto_categorization_service import get_auto_categorization_service_async
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +11,9 @@ class BFSSearchService:
     """Service for BFS stock search operations."""
 
     def __init__(self):
-        self.auto_categorization_service = get_auto_categorization_service()
+        # Resolved lazily. Building it loads a Sentence Transformer model, which must
+        # not happen in __init__ on the event loop.
+        self.auto_categorization_service = None
 
     async def get_product_category(
         self,
@@ -37,6 +39,9 @@ class BFSSearchService:
         """
         try:
             logger.info(f"Getting category for product: {product_description[:50]}...")
+
+            if self.auto_categorization_service is None:
+                self.auto_categorization_service = await get_auto_categorization_service_async()
 
             result = await self.auto_categorization_service.categorize_item(
                 item_description=product_description,

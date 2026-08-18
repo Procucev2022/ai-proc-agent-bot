@@ -8,6 +8,7 @@ Handles complete user registration flow including:
 - Domain approval for buyers
 """
 
+import asyncio
 import logging
 from typing import Dict, Any, List, Optional
 from app.schemas.user import User
@@ -1001,11 +1002,27 @@ class RegistrationService:
             items = parsing_result.get("items", [])
             logger.info(f"Parsed {len(items)} items from seller details: {items}")
 
-            # Step 2: Get auto categorization service singleton (reuses preloaded model)
+            # Step 2: Get auto categorization service singleton.
+            # Resolved off the event loop and time-boxed: on a cold worker this loads a
+            # Sentence Transformer model, and doing that inline used to block the worker
+            # until gunicorn killed it, so the seller never got a confirmation.
+            init_timeout = self.settings.categorization_init_timeout_seconds
+            item_timeout = self.settings.categorization_item_timeout_seconds
             try:
-                from app.services.auto_categorization_service import get_auto_categorization_service
-                categorization_service = get_auto_categorization_service()
+                from app.services.auto_categorization_service import (
+                    get_auto_categorization_service_async,
+                )
+                categorization_service = await get_auto_categorization_service_async(
+                    timeout=init_timeout
+                )
                 logger.info("Successfully initialized auto-categorization service")
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Auto-categorization service not ready within {init_timeout}s - "
+                    "continuing registration without categorization "
+                    "(the model keeps loading in the background)"
+                )
+                return []
             except Exception as e:
                 logger.error(f"Failed to initialize auto-categorization service: {e}")
                 # Return empty list but don't fail registration
@@ -1019,10 +1036,13 @@ class RegistrationService:
                 logger.info(f"Categorizing seller item {i}/{len(items)}: '{item}'")
 
                 try:
-                    categorization_result = await categorization_service.categorize_item(
-                        item_description=item,
-                        user_id=user_phone,  # Use phone as user_id during registration
-                        session_id=session.session_id if hasattr(session, 'session_id') else None
+                    categorization_result = await asyncio.wait_for(
+                        categorization_service.categorize_item(
+                            item_description=item,
+                            user_id=user_phone,  # Use phone as user_id during registration
+                            session_id=session.session_id if hasattr(session, 'session_id') else None
+                        ),
+                        timeout=item_timeout
                     )
                     logger.info(f"Categorization result for '{item}': {categorization_result}")
 
@@ -1046,6 +1066,12 @@ class RegistrationService:
                         logger.info(f"✓ Categorized '{item}' as '{client_category}' (confidence: {categorization_result.get('confidence_score', 0)})")
                     else:
                         logger.warning(f"✗ Failed to categorize '{item}': {categorization_result.get('error', 'Unknown error')}")
+
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"✗ Categorizing '{item}' exceeded {item_timeout}s - skipping this item"
+                    )
+                    # Continue with next item instead of failing completely
 
                 except Exception as e:
                     logger.error(f"✗ Error categorizing item '{item}': {e}")

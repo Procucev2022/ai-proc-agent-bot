@@ -19,6 +19,15 @@ from app.data.faq_config import FULL_FAQ_CONTEXT
 
 logger = logging.getLogger(__name__)
 
+# Button ids that mean "start a brand new RFQ from scratch".
+#
+# A click on one of these is an explicit request for a fresh RFQ, so any half-finished
+# RFQ workflow left in the session has to be discarded first. Without that the handler
+# resumed the stale workflow and fed the button's own title ("Create new RFQ") to the
+# delivery-format parser, which answered with "Missing Some Details".
+RFQ_ENTRY_POINT_BUTTON_IDS = frozenset({"create_rfq", "new_rfq", "raise_rfq"})
+
+
 class IntentService:
     """
     Intent classification service for routing user messages.
@@ -94,6 +103,10 @@ class IntentService:
             "reasoning": f"Fast-path local matching: button '{button_id}'",
             "success": True,
             "context_analysis": {},
+            # Downstream handlers need to know the click came from a button, and which
+            # one, to tell an explicit menu selection apart from typed text that happens
+            # to classify the same way.
+            "button_id": button_id,
         }
 
     async def classify_intent(self, message: str, context: dict = None,user_phone=None) -> Dict[str, Any]:

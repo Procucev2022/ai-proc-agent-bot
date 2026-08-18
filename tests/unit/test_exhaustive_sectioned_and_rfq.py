@@ -228,8 +228,10 @@ async def test_sectioned_location_validation_and_direct_format_branches(monkeypa
     assert result["status"] == "confirmation"
     s.workflow_state["date_location"] = {"deliveryDate": "d", "pincode": "p"}
     h._display_invalid_pincode_message = AsyncMock(return_value={"status": "pincode"})
-    with pytest.raises(UnboundLocalError):
-        await h._handle_date_location_section(u, s, "plain", [])
+    # Basics already stored, so the extraction block is skipped; the validation flags it
+    # would have set must still be bound. Date+pincode without city/state means the
+    # pincode lookup failed, so the user is asked for a valid one.
+    assert (await h._handle_date_location_section(u, s, "plain", []))["status"] == "pincode"
 
     parser = sectioned_mod.sectioned_rfq_format_parser
     monkeypatch.setattr(parser, "parse_delivery_format", lambda _: {"error": "bad", "additional_text": ""})

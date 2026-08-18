@@ -31,7 +31,10 @@ async def test_faq_and_confirmation_services(monkeypatch):
 @pytest.mark.asyncio
 async def test_bfs_search_service_paths(monkeypatch):
     categorizer = AsyncMock()
-    monkeypatch.setattr("app.services.bfs_search_service.get_auto_categorization_service", lambda: categorizer)
+    monkeypatch.setattr(
+        "app.services.bfs_search_service.get_auto_categorization_service_async",
+        AsyncMock(return_value=categorizer),
+    )
     from app.services.bfs_search_service import BFSSearchService
 
     service = BFSSearchService()

@@ -1559,6 +1559,11 @@ Analyze their response to determine their true choice.
                 kwargs['support_info_email'] = self.settings.support_contact_info
             if 'portal_url' not in kwargs:
                 kwargs['portal_url'] = self.settings.PROCUCEV_PORTAL_URL
+            # The RFQ status prompts reference {followup_note} for the portal link.
+            # Without it, formatting raised KeyError and callers silently received the
+            # fallback prompt instead of the instructions they asked for.
+            if 'followup_note' not in kwargs:
+                kwargs['followup_note'] = self.settings.rfq_followup_note
             # Handle seller end-of-flow reminder prompts
             if prompt_name == "_get_seller_common_response_prompt":
                 workflow_state = kwargs.get("workflow_state", "")
@@ -1592,7 +1597,17 @@ Analyze their response to determine their true choice.
 
             # Format the template with provided arguments
             if kwargs:
-                return template.format(**kwargs)
+                try:
+                    return template.format(**kwargs)
+                except KeyError as missing:
+                    # A placeholder nobody supplied. Keep the requested instructions with
+                    # the placeholder left literal rather than substituting an unrelated
+                    # prompt, which used to answer buyers with seller instructions.
+                    logger.error(
+                        f"Prompt {prompt_name} references unknown placeholder {missing} - "
+                        "using the unformatted template"
+                    )
+                    return template
             return template
 
         except Exception as e:

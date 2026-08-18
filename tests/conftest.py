@@ -6,6 +6,8 @@ import os
 import sys
 import types
 
+import pytest
+
 
 # Some Windows-hosted runners block NumPy's optional random extension DLL even
 # though pandas and the rest of the deterministic suite do not use NumPy random
@@ -47,3 +49,47 @@ os.environ.setdefault("CHROMA_HOST", "localhost")
 os.environ.setdefault("CHROMA_PORT", "8000")
 os.environ.setdefault("CHROMA_USE_SERVER", "true")
 os.environ.setdefault("WEBHOOK_HEALTH_MONITORING_ENABLED", "false")
+
+# A test that pointed a service's prompts_dir or tools_dir at the real package and then
+# wrote a stub into it emptied app/tools/user_selection_analysis.json and reduced
+# app/prompts/profile_selection/user_selection_analysis.txt to the word "system". Both
+# shipped that way, so profile selection answered HTTP 400 in production. Tests must
+# write their fixtures under tmp_path; this guard fails the run if any of them does not.
+_GUARDED_ASSET_DIRS = ("app/tools", "app/prompts", "app/email_templates")
+
+
+def _asset_fingerprints() -> dict:
+    import hashlib
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    fingerprints = {}
+    for relative in _GUARDED_ASSET_DIRS:
+        directory = root / relative
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.rglob("*")):
+            if path.is_file() and path.suffix in {".json", ".txt"}:
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                fingerprints[str(path.relative_to(root)).replace("\\", "/")] = digest
+    return fingerprints
+
+
+def pytest_configure(config):
+    config._shipped_asset_fingerprints = _asset_fingerprints()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    before = getattr(session.config, "_shipped_asset_fingerprints", None)
+    if not before:
+        return
+    after = _asset_fingerprints()
+    changed = sorted(
+        name for name in set(before) | set(after) if before.get(name) != after.get(name)
+    )
+    if changed:
+        raise pytest.UsageError(
+            "Tests modified shipped prompt or tool assets: "
+            + ", ".join(changed)
+            + ". Point prompts_dir/tools_dir at tmp_path instead of the real package."
+        )

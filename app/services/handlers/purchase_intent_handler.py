@@ -7,7 +7,7 @@ Extracted from ChatService to reduce complexity.
 """
 
 import logging
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 from app.models import WorkflowType, User, ConversationSession
 from app.services.whatsapp_service import WhatsAppService
 from app.services.workflow_manager import WorkflowManager
@@ -32,6 +32,26 @@ class PurchaseIntentHandler:
         self.confirmation_handler = confirmation_handler
         self.attachment_decision_handler = attachment_decision_handler
     
+    @staticmethod
+    def _is_rfq_entry_point_click(intent_result: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Check whether this turn came from a "Create new RFQ" style button.
+
+        Args:
+            intent_result: Classification result; intent_service records the clicked
+                button's id under "button_id" when it resolves a button reply locally.
+
+        Returns:
+            True when the user explicitly asked to start a new RFQ from a menu button
+        """
+        if not intent_result:
+            return False
+        # Imported here, matching the other in-method imports in this file, to keep
+        # module import order independent of intent_service.
+        from app.services.intent_service import RFQ_ENTRY_POINT_BUTTON_IDS
+
+        return intent_result.get("button_id") in RFQ_ENTRY_POINT_BUTTON_IDS
+
     async def handle_purchase_intent(self, user: User, session: ConversationSession,
                                    message: str, intent_result: Dict[str, Any] = None,
                                    should_use_summary_aware_extraction_func=None) -> Dict[str, Any]:
@@ -65,6 +85,23 @@ class PurchaseIntentHandler:
             # If sectioned RFQ is already active OR global flag is enabled
             if WorkflowManager.is_sectioned_rfq_active(session) or settings.use_sectioned_rfq:
                 logger.info(f"[SECTIONED_RFQ] Routing to sectioned RFQ handler (global flag: {settings.use_sectioned_rfq}, already active: {WorkflowManager.is_sectioned_rfq_active(session)})")
+
+                # A click on "Create new RFQ" asks for a fresh RFQ, so drop whatever the
+                # previous attempt left behind. Resuming it made the handler treat the
+                # button's title as the delivery details the user was being asked for.
+                if self._is_rfq_entry_point_click(intent_result) and WorkflowManager.is_sectioned_rfq_active(session):
+                    logger.info(
+                        "[SECTIONED_RFQ] Entry-point button clicked while a sectioned RFQ was "
+                        "already active - resetting to start a new RFQ"
+                    )
+                    WorkflowManager.reset_sectioned_rfq(session, caller="handle_purchase_intent")
+                    WorkflowManager.set_sectioned_rfq_section(session, "date_location",
+                                                              caller="handle_purchase_intent")
+                    session.workflow_state["sectioned_rfq"]["active"] = True
+                    await self.session_manager.save_session(session, persist_to_db=False)
+                    # The button title carries no RFQ details, so do not hand it to the
+                    # section handler as if the user had typed it.
+                    message = ""
 
                 # Initialize sectioned RFQ if not already active
                 if not WorkflowManager.is_sectioned_rfq_active(session):

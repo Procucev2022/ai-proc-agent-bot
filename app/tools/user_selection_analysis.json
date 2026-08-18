@@ -1,1 +1,58 @@
-{}
+{
+    "type": "function",
+    "name": "analyze_user_selection",
+    "description": "Determine which of the numbered profile options the user picked, and whether they instead asked to register a new profile. Used only when rule-based matching on numbers, emails and roles was inconclusive.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "selected_option": {
+                "type": ["integer", "null"],
+                "description": "The option number the user chose. Must be one of the numbers listed in the available options. Null when the message does not identify any single option."
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Confidence in selected_option, from 0.0 to 1.0. Use 0.0 when selected_option is null."
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "One short sentence explaining which part of the user's message identified the option"
+            },
+            "alternative_matches": {
+                "type": "array",
+                "items": {
+                    "type": "integer"
+                },
+                "description": "Other option numbers the message could plausibly refer to, best first. Empty when the choice is unambiguous."
+            },
+            "requires_clarification": {
+                "type": "boolean",
+                "description": "True when the user should be asked again because no option matched or several matched equally well"
+            },
+            "register": {
+                "type": "object",
+                "description": "Set when the user asked to register a new profile rather than pick an existing one",
+                "properties": {
+                    "type": {
+                        "type": ["string", "null"],
+                        "enum": ["buyer", "seller", null],
+                        "description": "The role the user asked to register as, or null when they did not ask to register"
+                    }
+                },
+                "required": ["type"],
+                "additionalProperties": false
+            }
+        },
+        "required": [
+            "selected_option",
+            "confidence",
+            "reasoning",
+            "alternative_matches",
+            "requires_clarification",
+            "register"
+        ],
+        "additionalProperties": false
+    },
+    "strict": true
+}

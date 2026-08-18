@@ -57,6 +57,7 @@ def service(monkeypatch):
         openai_model_default='model', openai_model_advanced='advanced',
         support_email='support@example.test', support_contact_info='help@example.test',
         PROCUCEV_PORTAL_URL='https://portal.test',
+        rfq_followup_note='https://portal.test/login',
     )
     interaction = MagicMock()
     monkeypatch.setattr(openai_module, 'get_settings', lambda: settings)
@@ -774,7 +775,9 @@ async def test_remaining_conditional_branches_and_invalid_payloads(monkeypatch, 
     # Exercise prompt formatting failure and all context input fallbacks.
     obj._load_prompt = openai_module.OpenAIService._load_prompt.__get__(obj)
     monkeypatch.setattr(builtins, 'open', lambda *a, **k: _File('{missing}'))
-    assert obj._load_prompt('x', 'y') .startswith('Generate')
+    # An unsupplied placeholder keeps the requested template rather than swapping in an
+    # unrelated fallback prompt, which used to answer buyers with seller instructions.
+    assert obj._load_prompt('x', 'y') == '{missing}'
     monkeypatch.setattr(builtins, 'open', lambda *a, **k: _File('{"tool": 1}'))
     obj._load_prompt = lambda *a, **k: 'P'
     client.responses.create.return_value = response({'intent': 'general_inquiry'}, usage=False)

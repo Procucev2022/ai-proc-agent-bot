@@ -146,6 +146,7 @@ def settings(**overrides):
         email_signature="Regards", support_contact_info="help@example.com",
         openai_model_default="gpt-5.4-mini", openai_model_advanced="gpt-5.4-mini",
         procucev_link="https://procucev.example", PROCUCEV_PORTAL_URL="https://portal",
+        rfq_followup_note="https://portal/login",
         database_mode="local", local_database_url="mysql+pymysql://u:pw@host/db",
         client_database_url="mysql+pymysql://c:cp@host/db",
         remote_database_url="mysql+pymysql://r:rp@host/db",

@@ -19,6 +19,43 @@ from ..utils.pincode_lookup import get_location_from_pincode_async
 
 logger = logging.getLogger(__name__)
 
+# Sentinel description the extraction prompt emits to signal "the user mentioned no
+# products at all" (see app/prompts/entity_extraction/_get_entity_system_prompt_rfq_creation.txt).
+# It is a signal, never a product line, so it is stripped before anything downstream
+# can store it or render it back to the user.
+NO_PRODUCTS_SENTINEL = "NO_PRODUCTS_MENTIONED"
+
+
+def strip_no_products_sentinel(products: list) -> list:
+    """
+    Drop the extractor's "no products mentioned" sentinel entries from a product list.
+
+    The prompt contract represents "zero products" as a single synthetic product whose
+    description is NO_PRODUCTS_SENTINEL and whose other fields are null. Treating that
+    as a real product made the bot ask the user for the missing quantity of an item
+    called "NO_PRODUCTS_MENTIONED", so it is removed here, at the boundary where the
+    model response first enters the application.
+
+    Args:
+        products: Raw product dicts from the extraction response
+
+    Returns:
+        The list without sentinel entries. An all-sentinel list becomes empty, which is
+        what every caller already treats as "no products yet".
+    """
+    if not products:
+        return products
+
+    kept = []
+    for product in products:
+        description = product.get("description") if isinstance(product, dict) else None
+        if isinstance(description, str) and description.strip() == NO_PRODUCTS_SENTINEL:
+            logger.debug("EntityService: Dropped %s sentinel product entry", NO_PRODUCTS_SENTINEL)
+            continue
+        kept.append(product)
+    return kept
+
+
 class EntityService:
     """Entity extraction service using OpenAI function calling."""
 
@@ -149,7 +186,10 @@ class EntityService:
         # Handle both old single entity format and new multi-product format
         if "products" in response:
             # New multi-product format with global + item structure
-            products = response.get("products", [])
+            # Strip the "no products mentioned" sentinel here so no downstream consumer
+            # can mistake it for a real item. Global fields below are read from the
+            # response directly, so a date/pincode-only message still keeps its data.
+            products = strip_no_products_sentinel(response.get("products", []))
 
             # Get newly extracted global fields
             newly_extracted_global_fields = {
@@ -954,7 +994,12 @@ class EntityService:
             )
             
             print(f"EntityService: Summary-aware extraction response: {response}")
-            
+
+            # Strip the "no products mentioned" sentinel before any further processing,
+            # exactly as the standard extraction path does.
+            if "products" in response:
+                response["products"] = strip_no_products_sentinel(response["products"])
+
             # Log resolved references for debugging
             resolved_refs = response.get("resolved_references", [])
             if resolved_refs:
@@ -1162,9 +1207,10 @@ class EntityService:
         for new_prod in new_products:
             new_desc = new_prod.get("description")
 
-            # Skip NO_PRODUCTS_MENTIONED entries - they should be filtered out earlier
-            if new_desc == "NO_PRODUCTS_MENTIONED":
-                print(f"EntityService: Skipping NO_PRODUCTS_MENTIONED entry in merge")
+            # Belt and braces: strip_no_products_sentinel already removes these at
+            # ingestion, but existing_products may have been persisted by an older build.
+            if new_desc == NO_PRODUCTS_SENTINEL:
+                print(f"EntityService: Skipping {NO_PRODUCTS_SENTINEL} entry in merge")
                 continue
 
             # Handle None, non-string, or empty string descriptions

@@ -71,6 +71,7 @@ async def test_openai_constructor_client_lifecycle_helpers_and_prompt_loading(mo
     settings = SimpleNamespace(
         openai_model_default="d", openai_model_advanced="a", support_email="s@example.com",
         support_contact_info="help", PROCUCEV_PORTAL_URL="https://portal",
+        rfq_followup_note="https://portal/login",
     )
     logger = MagicMock()
     monkeypatch.setattr(openai_module, "get_settings", lambda: settings)

@@ -47,6 +47,7 @@ def service(monkeypatch):
         support_email="support@example.test",
         support_contact_info="help@example.test",
         PROCUCEV_PORTAL_URL="https://portal.example.test",
+        rfq_followup_note="https://portal.example.test/login",
     )
     interaction_logger = MagicMock()
     client = SimpleNamespace(

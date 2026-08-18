@@ -19,7 +19,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from app.models import User, ConversationSession, WorkflowType
 from app.services.workflow_manager import WorkflowManager
-from app.services.entity_service import EntityService
+from app.services.entity_service import EntityService, strip_no_products_sentinel
 from app.services.whatsapp_service import WhatsAppService
 from app.services.cancel_service import CancelService
 from app.utils import sectioned_rfq_format_parser
@@ -177,6 +177,60 @@ class SectionedRFQCreationHandler:
             return {"status": "error", "message": "Unknown section"}
 
     # ========================================================================
+    # SECTION DATA HELPERS
+    # ========================================================================
+
+    @staticmethod
+    def _usable_items(items_data: Optional[List]) -> List:
+        """
+        Keep only product entries worth showing to the user.
+
+        Drops the extractor's "no products mentioned" sentinel and entries that carry no
+        information at all. Without this an extraction from a message that mentioned no
+        products stored one placeholder item, which made the empty-items checks below
+        think items had been collected and produced a prompt asking the user for the
+        quantity of an item literally named NO_PRODUCTS_MENTIONED.
+
+        Args:
+            items_data: Product dicts from extraction, session state or a parser
+
+        Returns:
+            A new list containing only the usable entries
+        """
+        if not items_data:
+            return []
+
+        usable = []
+        for item in strip_no_products_sentinel(list(items_data)):
+            if not isinstance(item, dict):
+                continue
+            # An entry with neither a description nor a quantity holds nothing the user
+            # can confirm or correct, so it is not a real item line.
+            has_content = any(
+                str(item.get(field) or "").strip()
+                for field in ("description", "quantity", "brand", "remarks", "unitofMeasures")
+            )
+            if has_content:
+                usable.append(item)
+        return usable
+
+    def _store_extracted_items(self, session: ConversationSession, entity_result: Dict[str, Any]) -> List:
+        """
+        Write extracted products into the items section, ignoring unusable entries.
+
+        Args:
+            session: Conversation session
+            entity_result: Result from EntityService.extract_entities
+
+        Returns:
+            The items that were stored (empty list when there was nothing usable)
+        """
+        items = self._usable_items(entity_result.get("products"))
+        if items:
+            WorkflowManager.update_section_data(session, "items", items)
+        return items
+
+    # ========================================================================
     # DATE/LOCATION SECTION
     # ========================================================================
 
@@ -212,10 +266,19 @@ class SectionedRFQCreationHandler:
             if any(keyword in message.lower() for keyword in ["delivery date:", "delivery pincode:"]):
                 return await self._process_delivery_modification_direct(user, session, message)
 
-        # Track date validation error to show to user if needed
+        # Track validation errors to show to user if needed.
+        # These are read after the extraction block below, which does not always run,
+        # so they have to be bound here.
         date_validation_error = None
+        date_error = None
+        pincode_error = None
 
-        if not delivery_data or not self._has_delivery_basics(delivery_data):
+        # An empty message carries nothing to extract. This happens when the user
+        # arrives from a menu button rather than typing, and calling the extractor on
+        # it would spend an OpenAI round trip to learn nothing.
+        has_message_text = bool(message and message.strip())
+
+        if has_message_text and (not delivery_data or not self._has_delivery_basics(delivery_data)):
             # Need to extract delivery details - ONE TIME entity extraction
             entity_context = self._build_entity_context(session)
             entity_result = await self.entity_service.extract_entities(
@@ -257,8 +320,7 @@ class SectionedRFQCreationHandler:
             WorkflowManager.update_section_data(session, "date_location", delivery_data)
 
             # Also check if items were provided in initial message
-            if entity_result.get("products"):
-                WorkflowManager.update_section_data(session, "items", entity_result["products"])
+            self._store_extracted_items(session, entity_result)
 
             # Save session after extraction to persist the delivery data
             await self.session_manager.save_session(session, persist_to_db=False)
@@ -389,8 +451,7 @@ class SectionedRFQCreationHandler:
                     WorkflowManager.update_section_data(session, "date_location", delivery_data)
 
                     # Store items if provided
-                    if entity_result.get("products"):
-                        WorkflowManager.update_section_data(session, "items", entity_result["products"])
+                    self._store_extracted_items(session, entity_result)
 
                     await self.session_manager.save_session(session, persist_to_db=False)
 
@@ -414,8 +475,7 @@ class SectionedRFQCreationHandler:
                 else:
                     # No delivery data found - store any items and re-show the format prompt
                     # Don't increment retry since this wasn't a format attempt
-                    if entity_result.get("products"):
-                        WorkflowManager.update_section_data(session, "items", entity_result["products"])
+                    if self._store_extracted_items(session, entity_result):
                         await self.session_manager.save_session(session, persist_to_db=False)
 
                     # Re-show the format prompt
@@ -688,8 +748,13 @@ class SectionedRFQCreationHandler:
         if WorkflowManager.is_awaiting_section_modification(session, "items"):
             return await self._process_items_modification_direct(user, session, message)
 
-        # Check if we have items from initial extraction or previous entry
-        items_data = WorkflowManager.get_section_data(session, "items")
+        # Check if we have items from initial extraction or previous entry.
+        # Filter here too: a session stored before this guard existed can still hold a
+        # sentinel entry, and it must not resurface as an item line.
+        stored_items = WorkflowManager.get_section_data(session, "items")
+        items_data = self._usable_items(stored_items)
+        if stored_items and len(items_data) != len(stored_items):
+            WorkflowManager.update_section_data(session, "items", items_data)
 
         # If we already have items, check if user sent data in structured format
         # This handles the case where user directly copies and modifies the confirmation format
@@ -711,7 +776,7 @@ class SectionedRFQCreationHandler:
                 message, context=entity_context, workflow_type="buy_something"
             )
 
-            items_data = entity_result.get("products", [])
+            items_data = self._usable_items(entity_result.get("products"))
 
             # Enforce item limit for text input (not Excel)
             if not is_from_excel and len(items_data) > MAX_TEXT_INPUT_ITEMS:
@@ -729,7 +794,7 @@ class SectionedRFQCreationHandler:
             )
 
             # Merge new extraction with existing items
-            new_items = entity_result.get("products", [])
+            new_items = self._usable_items(entity_result.get("products"))
             if new_items:
                 # Enforce item limit for text input (not Excel)
                 if not is_from_excel and len(new_items) > MAX_TEXT_INPUT_ITEMS:

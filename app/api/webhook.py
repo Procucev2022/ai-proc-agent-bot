@@ -16,6 +16,7 @@ Key responsibilities:
 
 from fastapi import APIRouter, Request, Query, HTTPException, BackgroundTasks
 from fastapi.responses import PlainTextResponse, JSONResponse
+from starlette.requests import ClientDisconnect
 from urllib.parse import unquote
 import asyncio
 import logging
@@ -142,10 +143,20 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
         
         # Return success immediately
         return JSONResponse(content={"status": "ok"})
-        
+
+    except ClientDisconnect:
+        # The sender hung up before the body arrived. There is no message to process and
+        # no user to notify, so this is not an application error - it was previously
+        # logged as a critical failure with an empty message and then retried against the
+        # same dead stream, producing two useless error lines per occurrence.
+        logger.info("Webhook client disconnected before the request body was received")
+        return JSONResponse(content={"status": "ok"})
+
     except Exception as e:
-        # Handle critical webhook processing errors with automatic cancellation
-        logger.error(f"Critical error processing webhook: {e}", exc_info=True)
+        # Handle critical webhook processing errors with automatic cancellation.
+        # Include the exception type: several exceptions here carry an empty str(), which
+        # left the log line with nothing after the colon.
+        logger.error(f"Critical error processing webhook: {type(e).__name__}: {e}", exc_info=True)
 
         # Extract user phone from already parsed webhook_data or fallback parsing
         user_phone = webhook_data.get("from") if isinstance(webhook_data, dict) else None
@@ -155,7 +166,10 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
                 if fallback_data:
                     user_phone = fallback_data.get("from")
             except Exception as parse_error:
-                logger.error(f"Failed to parse webhook data for error handling: {parse_error}")
+                logger.error(
+                    "Failed to parse webhook data for error handling: "
+                    f"{type(parse_error).__name__}: {parse_error}"
+                )
 
         if not user_phone:
             try:
