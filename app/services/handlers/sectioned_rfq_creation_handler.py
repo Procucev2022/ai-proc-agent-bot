@@ -204,6 +204,11 @@ class SectionedRFQCreationHandler:
         for item in strip_no_products_sentinel(list(items_data)):
             if not isinstance(item, dict):
                 continue
+            desc = item.get("description")
+            if isinstance(desc, str):
+                clean_desc = desc.strip().upper().replace(" ", "_")
+                if clean_desc in ("NO_PRODUCTS_MENTIONED", "NO_PRODUCTS", "NONE_MENTIONED"):
+                    continue
             # An entry with neither a description nor a quantity holds nothing the user
             # can confirm or correct, so it is not a real item line.
             has_content = any(
@@ -465,6 +470,8 @@ class SectionedRFQCreationHandler:
 
                     # Check if we have complete delivery data now
                     if self._is_delivery_complete(delivery_data):
+                        WorkflowManager.set_awaiting_section_modification(session, "date_location", False)
+                        WorkflowManager.reset_section_retry(session, "date_location")
                         return await self._display_delivery_confirmation(user, session, delivery_data)
                     elif self._has_delivery_basics(delivery_data):
                         # We have date+pincode but city/state lookup failed - pincode is invalid
@@ -800,7 +807,17 @@ class SectionedRFQCreationHandler:
                 if not is_from_excel and len(new_items) > MAX_TEXT_INPUT_ITEMS:
                     return await self._display_item_limit_exceeded(user, session, len(new_items))
 
-                items_data = new_items  # Use the merged result from entity service
+                # Merge new extraction with existing items while preserving existing fields
+                merged_items = []
+                for idx, item in enumerate(new_items):
+                    existing_item = items_data[idx] if idx < len(items_data) else {}
+                    merged_item = existing_item.copy()
+                    for k, v in item.items():
+                        if v is not None and str(v).strip():
+                            merged_item[k] = v
+                    merged_items.append(merged_item)
+
+                items_data = merged_items
                 WorkflowManager.update_section_data(session, "items", items_data)
         else:
             # We have existing items and message is empty - just use existing items
@@ -1377,6 +1394,18 @@ class SectionedRFQCreationHandler:
         workflow_state = session.workflow_state.copy() if session.workflow_state else {}
         if global_supplementary_fields:
             workflow_state["global_supplementary_fields"] = global_supplementary_fields
+
+        # Include existing section items in incomplete_products so entity service retains items
+        items_data = WorkflowManager.get_section_data(session, "items")
+        usable_items = self._usable_items(items_data) if items_data else []
+        if usable_items:
+            incomplete_products = []
+            for item in usable_items:
+                incomplete_products.append({
+                    "entities": item,
+                    "missing_fields": []
+                })
+            workflow_state["incomplete_products"] = incomplete_products
 
         return {
             "session_id": session.session_id,

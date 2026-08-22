@@ -48,10 +48,13 @@ def strip_no_products_sentinel(products: list) -> list:
 
     kept = []
     for product in products:
-        description = product.get("description") if isinstance(product, dict) else None
-        if isinstance(description, str) and description.strip() == NO_PRODUCTS_SENTINEL:
-            logger.debug("EntityService: Dropped %s sentinel product entry", NO_PRODUCTS_SENTINEL)
-            continue
+        if isinstance(product, dict):
+            description = product.get("description")
+            if isinstance(description, str):
+                clean_desc = description.strip()
+                if clean_desc.upper().replace(" ", "_") in ("NO_PRODUCTS_MENTIONED", "NO_PRODUCTS", "NONE_MENTIONED") or clean_desc == NO_PRODUCTS_SENTINEL:
+                    logger.debug("EntityService: Dropped %s sentinel product entry", description)
+                    continue
         kept.append(product)
     return kept
 
@@ -171,6 +174,14 @@ class EntityService:
                 existing_context = extracted_entities
             elif isinstance(extracted_entities, dict):
                 existing_context = [extracted_entities]
+
+        # Third priority: sectioned_rfq items section data
+        if not existing_context and context and context.get("workflow_state"):
+            sectioned_rfq = context["workflow_state"].get("sectioned_rfq", {})
+            sections = sectioned_rfq.get("sections", {})
+            items_data = sections.get("items", {}).get("data")
+            if items_data and isinstance(items_data, list):
+                existing_context = strip_no_products_sentinel(items_data)
 
         # Add existing context to prompt if found
         if existing_context:
