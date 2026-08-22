@@ -342,3 +342,103 @@ async def test_full_rfq_creation_flow_with_technical_symbols_to_gmt_success():
     assert success_msg is not None
     assert "RFQ98765" in success_msg
 
+
+@pytest.mark.asyncio
+async def test_rfq_entry_point_button_prompts_cleanly_without_modification_error():
+    """
+    Test scenario: User clicks 'Create new RFQ' button from main menu or status screen.
+    Verifies that:
+    1. The bot responds with the clean 'Details Required' prompt, NOT 'Missing Some Details' or copy-paste format error.
+    2. awaiting_section_modification is NOT set to True on initial prompt.
+    3. The user can subsequently provide product details naturally without being blocked in modification mode.
+    """
+    from app.services.handlers.purchase_intent_handler import PurchaseIntentHandler
+
+    entity_service = MagicMock(spec=EntityService)
+    whatsapp_service = MagicMock()
+    whatsapp_service.send_configurable_buttons = AsyncMock()
+    whatsapp_service.send_message = AsyncMock()
+    cancel_service = MagicMock()
+    session_manager = MagicMock()
+    session_manager.save_session = AsyncMock()
+
+    # Step 1: Mock entity extraction for empty / entry point message
+    entity_service.extract_entities = AsyncMock(return_value={
+        "products": [],
+        "deliveryDate": "",
+        "pincode": "",
+        "city": "",
+        "state": ""
+    })
+
+    purchase_handler = PurchaseIntentHandler(
+        whatsapp_service=whatsapp_service,
+        response_helpers=MagicMock(),
+        entity_service=entity_service,
+        chat_summary_service=MagicMock(),
+        products_array_handler=MagicMock(),
+        session_manager=session_manager
+    )
+
+    purchase_handler.sectioned_rfq_handler = SectionedRFQCreationHandler(
+        entity_service=entity_service,
+        whatsapp_service=whatsapp_service,
+        cancel_service=cancel_service,
+        session_manager=session_manager
+    )
+
+    user = MagicMock(spec=User)
+    user.phone_number = "919999999999"
+
+    session = ConversationSession(
+        session_id="test_session_entry_point",
+        external_user_id="919999999999",
+        workflow_type=None,
+        workflow_state={}
+    )
+
+    # User clicks "Create new RFQ" button
+    intent_result = {
+        "intent": "buy_something",
+        "confidence": 100,
+        "button_id": "create_rfq"
+    }
+
+    res1 = await purchase_handler.handle_purchase_intent(
+        user, session, "Create new RFQ", intent_result=intent_result
+    )
+
+    assert res1["status"] == "awaiting_delivery_details"
+    assert WorkflowManager.is_sectioned_rfq_active(session) is True
+    assert WorkflowManager.is_awaiting_section_modification(session, "date_location") is False
+
+    # Verify message sent to user
+    whatsapp_service.send_configurable_buttons.assert_called()
+    last_call = whatsapp_service.send_configurable_buttons.call_args
+    header = last_call[0][3]
+    message_text = last_call[0][1]
+
+    assert header == "Details Required"
+    assert "Missing Some Details" not in header
+    assert "I'm sorry I do not have all the details to proceed" not in message_text
+
+    # Step 2: Next turn, user provides product details naturally
+    entity_service.extract_entities = AsyncMock(return_value={
+        "products": [{"description": "laptop", "quantity": 30}],
+        "deliveryDate": "",
+        "pincode": "",
+        "city": "",
+        "state": ""
+    })
+
+    res2 = await purchase_handler.handle_purchase_intent(
+        user, session, "laptop 30"
+    )
+
+    assert res2["status"] == "awaiting_delivery_details"
+    items = WorkflowManager.get_section_data(session, "items")
+    assert len(items) == 1
+    assert items[0]["description"] == "laptop"
+    assert WorkflowManager.is_awaiting_section_modification(session, "date_location") is False
+
+

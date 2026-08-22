@@ -367,9 +367,8 @@ class SectionedRFQCreationHandler:
                     footer="",
                     session_id=session
                 )
-                # Set awaiting modification so next message goes through _process_delivery_modification_direct
-                # This ensures that if user provides items instead, they get the detailed format prompt
-                WorkflowManager.set_awaiting_section_modification(session, "date_location", True)
+                # Do not set awaiting modification on initial prompt - user should be able to provide details naturally
+                WorkflowManager.set_awaiting_section_modification(session, "date_location", False)
                 await self.session_manager.save_session(session, persist_to_db=False)
                 return {"status": "awaiting_delivery_details"}
 

@@ -89,22 +89,22 @@ class PurchaseIntentHandler:
                 # A click on "Create new RFQ" asks for a fresh RFQ, so drop whatever the
                 # previous attempt left behind. Resuming it made the handler treat the
                 # button's title as the delivery details the user was being asked for.
-                if self._is_rfq_entry_point_click(intent_result) and WorkflowManager.is_sectioned_rfq_active(session):
+                if self._is_rfq_entry_point_click(intent_result):
                     logger.info(
-                        "[SECTIONED_RFQ] Entry-point button clicked while a sectioned RFQ was "
-                        "already active - resetting to start a new RFQ"
+                        "[SECTIONED_RFQ] Entry-point button clicked - resetting to start a new RFQ"
                     )
                     WorkflowManager.reset_sectioned_rfq(session, caller="handle_purchase_intent")
                     WorkflowManager.set_sectioned_rfq_section(session, "date_location",
                                                               caller="handle_purchase_intent")
-                    session.workflow_state["sectioned_rfq"]["active"] = True
+                    if "sectioned_rfq" in session.workflow_state:
+                        session.workflow_state["sectioned_rfq"]["active"] = True
                     await self.session_manager.save_session(session, persist_to_db=False)
                     # The button title carries no RFQ details, so do not hand it to the
                     # section handler as if the user had typed it.
                     message = ""
 
                 # Initialize sectioned RFQ if not already active
-                if not WorkflowManager.is_sectioned_rfq_active(session):
+                elif not WorkflowManager.is_sectioned_rfq_active(session):
                     logger.info(f"[SECTIONED_RFQ] Initializing sectioned RFQ workflow")
                     WorkflowManager.initialize_sectioned_rfq(session)
                     WorkflowManager.set_sectioned_rfq_section(session, "date_location")
