@@ -185,12 +185,15 @@ def test_no_mapped_intent_is_intercepted_before_dispatch(button_id, intent):
 def test_only_menu_entry_buttons_are_tracked_as_meaningful(button_id, intent):
     """
     Confirmation clicks must not be stored as last_meaningful_message and replayed
-    later. The create/new/raise RFQ buttons are the deliberate exception, matching
+    later. The create/new/raise RFQ buttons and rfq_status buttons are the deliberate exception, matching
     what the title-based menu fast path already did.
     """
     if intent in MEANINGFUL_INTENTS:
-        assert button_id in {"create_rfq", "new_rfq", "raise_rfq"}
-        assert intent == "buy_something"
+        if intent == "rfq_status_check":
+            assert button_id in {"rfq_status", "check_rfqs"}
+        else:
+            assert button_id in {"create_rfq", "new_rfq", "raise_rfq"}
+            assert intent == "buy_something"
 
 
 def test_menu_buttons_agree_with_the_existing_title_fast_path():

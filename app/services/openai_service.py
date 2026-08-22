@@ -57,6 +57,8 @@ class OpenAIService:
     entity extraction, response generation, and validation.
     """
     
+    _shared_client: Optional[AsyncOpenAI] = None
+
     def __init__(self):
         """Initialize OpenAI service with configuration."""
         self.settings = get_settings()
@@ -77,12 +79,12 @@ class OpenAIService:
     @property
     def client(self) -> AsyncOpenAI:
         """
-        Get OpenAI client with lazy initialization.
+        Get OpenAI client with lazy initialization and persistent connection reuse.
 
         Automatically recreates the client if it was previously closed.
         This ensures resilience when close_sync() is called between requests.
         """
-        if self._client is None or self._client_closed:
+        if self._client_closed:
             self._client = AsyncOpenAI(
                 api_key=os.getenv("AZURE_OPENAI_API_KEY"),
                 base_url=os.getenv("AZURE_OPENAI_ENDPOINT"),
@@ -90,14 +92,30 @@ class OpenAIService:
                 timeout=15.0,
                 max_retries=1,
             )
+            OpenAIService._shared_client = self._client
             self._client_closed = False
             logger.debug("OpenAI client (re)initialized")
+        elif self._client is None:
+            if OpenAIService._shared_client is not None:
+                self._client = OpenAIService._shared_client
+            else:
+                self._client = AsyncOpenAI(
+                    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                    base_url=os.getenv("AZURE_OPENAI_ENDPOINT"),
+                    default_query={"api-version": "preview"},
+                    timeout=15.0,
+                    max_retries=1,
+                )
+                OpenAIService._shared_client = self._client
+                logger.debug("OpenAI client (re)initialized")
         return self._client
 
     async def close(self):
         """Close the OpenAI client and cleanup resources."""
         try:
             if self._client is not None:
+                if self._client is OpenAIService._shared_client:
+                    OpenAIService._shared_client = None
                 await self._client.close()
                 self._client_closed = True
                 logger.debug("OpenAI client closed successfully")
@@ -108,6 +126,9 @@ class OpenAIService:
         """Synchronous close for Celery tasks to prevent event loop errors."""
         if self._client is None:
             return  # Nothing to close
+
+        if self._client is OpenAIService._shared_client:
+            OpenAIService._shared_client = None
 
         try:
             import asyncio

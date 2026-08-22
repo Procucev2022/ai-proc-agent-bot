@@ -901,6 +901,9 @@ class DatabaseManager:
         except SQLAlchemyError as e:
             logger.error(f"Database error in append_session_data for {session_id}: {e}")
             self.session.rollback()
+            err_str = str(e).lower()
+            if "doesn't exist" in err_str or "no such table" in err_str or "1146" in err_str:
+                return ConversationSession(**session_data)
             # Fallback to regular save
             return self.save_conversation_session(session_data)
 
@@ -969,6 +972,10 @@ class DatabaseManager:
             logger.error(f"Database error in save_conversation_session: {e}")
             self.session.rollback()
             
+            err_str = str(e).lower()
+            if "doesn't exist" in err_str or "no such table" in err_str or "1146" in err_str:
+                return ConversationSession(**session_data)
+
             # Try to fetch existing session after rollback
             try:
                 existing_session = self.session.query(ConversationSession).filter_by(

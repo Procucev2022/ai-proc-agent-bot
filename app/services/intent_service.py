@@ -65,6 +65,11 @@ class IntentService:
         "no_rfq": "confirmation_response",
         "continue_rfq": "confirmation_response",
         "confirm_no_changes": "confirmation_response",
+        # Registration confirmation
+        "confirm_registration": "confirmation_response",
+        # RFQ status inquiries
+        "rfq_status": "rfq_status_check",
+        "check_rfqs": "rfq_status_check",
         # Excel confirmation
         "confirm_excel": "confirmation_response",
         "cancel_excel": "confirmation_response",

@@ -27,7 +27,7 @@ class AsyncRedisConnectionManager:
                     decode_responses=True,
                     max_connections=20,
                     socket_timeout=5.0,
-                    socket_connect_timeout=5.0
+                    socket_connect_timeout=5.0,
                 )
                 logger.info(f"[REDIS] ✓ Connected to Redis pool successfully")
             except Exception as e:

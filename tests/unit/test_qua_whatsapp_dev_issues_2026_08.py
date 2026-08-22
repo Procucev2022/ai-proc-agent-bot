@@ -292,7 +292,7 @@ def test_button_classification_reports_which_button_was_clicked():
     assert result["intent"] == "buy_something"
     assert result["button_id"] == "create_rfq"
     # Unmapped and absent ids still fall through to the model.
-    assert service._classify_button_reply({"button_id": "rfq_status"}) is None
+    assert service._classify_button_reply({"button_id": "unmapped_test_button"}) is None
     assert service._classify_button_reply({}) is None
     assert service._classify_button_reply(None) is None
 
