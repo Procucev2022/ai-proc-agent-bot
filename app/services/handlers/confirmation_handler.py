@@ -462,7 +462,7 @@ class ConfirmationHandler:
     async def _submit_rfq_to_backend(self, rfq_schema, user) -> dict:
         """Submit RFQ directly to backend via GMT API service."""
         try:
-            rfq_service = RFQAPIService()
+            rfq_service = getattr(self, "rfq_service", None) or RFQAPIService()
             
             # Convert schema to dict using the newer method
             schema_dict = rfq_schema.model_dump() if hasattr(rfq_schema, 'model_dump') else rfq_schema.dict()
