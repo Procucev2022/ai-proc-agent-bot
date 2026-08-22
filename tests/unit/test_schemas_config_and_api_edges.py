@@ -302,15 +302,22 @@ def test_celery_entrypoint_and_disabled_schedule_branches(monkeypatch):
     monkeypatch.setattr(celery.Celery, "start", MagicMock())
     runpy.run_module("app.celery_app", run_name="__main__")
 
-    source_path = Path(celery_config.__file__)
-    source = source_path.read_text(encoding="utf-8")
     flags = [
         "ENABLE_AUTO_CATEGORIZATION", "ENABLE_VECTOR_STORE_SYNC", "ENABLE_SELLER_MATCHING",
         "ENABLE_DAILY_CATEGORY_REBUILD", "ENABLE_CATEGORY_NAME_SYNC", "ENABLE_LOG_CLEANUP",
         "ENABLE_BFS_NOTIFICATION", "ENABLE_WHATSAPP_REPORT_AUTOMATION", "ENABLE_TAXONOMY_BUILD",
+        "ENABLE_DAILY_AGGREGATION",
     ]
     for flag in flags:
-        source = source.replace(f"if {flag}:", "if False:")
-    namespace = {"__name__": "app.celery_config_disabled_test", "__file__": str(source_path)}
-    exec(compile(source, str(source_path), "exec"), namespace)
-    assert namespace["beat_schedule"] == {}
+        monkeypatch.setenv(flag, "false")
+    import importlib
+    importlib.reload(celery_config)
+    assert celery_config.beat_schedule == {}
+    assert celery_config.ENABLE_AUTO_CATEGORIZATION is False
+
+    # Restore default enabled configuration
+    for flag in flags:
+        monkeypatch.delenv(flag, raising=False)
+    importlib.reload(celery_config)
+    assert "auto-categorization-task" in celery_config.beat_schedule
+    assert celery_config.ENABLE_AUTO_CATEGORIZATION is True

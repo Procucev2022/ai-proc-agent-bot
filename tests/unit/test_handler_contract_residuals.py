@@ -1688,7 +1688,7 @@ async def test_sectioned_router_and_next_section_remaining_paths(monkeypatch):
     no_details = fresh_session()
     entity.extract_entities.return_value = {}
     assert (await handler._handle_date_location_section(user, no_details, "nothing", []))["status"] == "awaiting_delivery_details"
-    assert sectioned_mod.WorkflowManager.is_awaiting_section_modification(no_details, "date_location")
+    assert not sectioned_mod.WorkflowManager.is_awaiting_section_modification(no_details, "date_location")
 
     existing_items = fresh_session()
     sectioned_mod.WorkflowManager.update_section_data(

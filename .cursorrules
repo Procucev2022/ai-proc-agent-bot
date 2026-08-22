@@ -2,8 +2,31 @@
 
 Read and follow `AGENTS.md` before changing code.
 
-Run the quality gate after every change, before calling it complete: `python scripts/quality_check.py`. It runs five stages in a fixed order — build, unit tests and coverage, typecheck, lint, database schema — and reports all of them even when one fails. Build and coverage run first because lint findings mean nothing while the application does not import. While iterating, use `python scripts/quality_check.py --fast` to check only the files changed against the base branch and the working tree; it is a pre-check and does not run the aggregate or per-file coverage gate, so the full run is still required. Narrow to one stage with `--stage <name>`.
+## Mandatory Quality & Coverage Rules
 
-Every application change requires deterministic unit tests and the full coverage gate. Measure every `app/**/*.py` file without omissions and enforce >=90% statements, branches, and functions per file and in aggregate. Keep the global pytest timeout at 60 seconds. Mock external services (database, Redis, Celery, OpenAI, WhatsApp, Chroma, and network HTTP); mark live tests `integration` or `manual`. Never lower thresholds or add exclusions to hide untested application behavior. Include the complete coverage output in the completion report.
+1. **Check Coverage On Every Change**:
+   - While iterating: `python scripts/quality_check.py --fast`
+   - Before completion: `python scripts/quality_check.py`
 
-Lint and mypy are ratcheted against `quality-baseline.json`: fix new findings rather than raising a `max_findings` budget, and lower the budget in the same commit when a change improves a count. The `schema` stage validates `Base.metadata` offline; there is no Alembic in this repository, so `create_all` at boot is what applies pending tables, and it cannot alter an existing column.
+2. **90% Unit Test Code Coverage Per File**:
+   - Scope is 100% of files under `app/**/*.py` without skipping or omitting any file.
+   - Every file must achieve >=90% individually across statements, branches, and functions.
+   - If any parameter falls below 90%, `scripts/check_coverage.py` throws an error (exit code 1) and blocks.
+
+3. **Global Timeout**:
+   - All unit tests run under a global 60-second timeout (`pytest-timeout`).
+
+4. **Direct Verification Commands**:
+   ```powershell
+   python -m coverage run --branch -m pytest
+   python -m coverage json -o coverage.json
+   python scripts/check_coverage.py --coverage-file coverage.json --threshold 90
+   python -m coverage report --fail-under=90
+   ```
+
+5. **Mocking & Isolation**:
+   - Mock all external services (databases, Redis, Celery, OpenAI, WhatsApp, ChromaDB, HTTP).
+   - Mark live/network tests as `integration` or `manual`.
+
+6. **Reporting**:
+   - Include the complete per-file coverage table and aggregate `coverage report` output in completion reports.

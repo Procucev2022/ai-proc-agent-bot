@@ -1,10 +1,21 @@
 ---
-description: Enforce repository-wide Python unit-test coverage
+description: Enforce repository-wide 90% per-file unit test code coverage across all parameters with global timeout
 alwaysApply: true
 ---
 
+# Cursor Unit Test Coverage Rule
+
 Follow `AGENTS.md`. For each Python change, add deterministic tests and run:
 
+```powershell
+# Fast check while iterating:
+python scripts/quality_check.py --fast
+
+# Full quality gate before calling change complete:
+python scripts/quality_check.py
+```
+
+Direct coverage commands:
 ```powershell
 python -m coverage run --branch -m pytest
 python -m coverage json -o coverage.json
@@ -12,4 +23,10 @@ python scripts/check_coverage.py --coverage-file coverage.json --threshold 90
 python -m coverage report --fail-under=90
 ```
 
-The scope is every `app/**/*.py` file. Statements, branches, and functions must each be at least 90% for every file and in aggregate. The global pytest timeout is 60 seconds. Mock external services and mark live tests as `integration` or `manual`; do not hide application code with coverage exclusions.
+## Contract Rules
+- The scope is 100% of files under `app/**/*.py`. Do not skip any file.
+- Statements/lines, branches, and functions must each be >= 90.0% for every file and in aggregate.
+- If any parameter on any file is <90%, `scripts/check_coverage.py` throws an error (exit code 1).
+- Global pytest timeout is 60 seconds (`pytest-timeout`).
+- Mock all external services (database, Redis, Celery, OpenAI, WhatsApp, Chroma, HTTP).
+- Include complete per-file coverage output and aggregate summary in completion reports.

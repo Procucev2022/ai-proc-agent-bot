@@ -8,19 +8,26 @@ and periodic task scheduling for all background tasks.
 from celery.schedules import crontab
 import os
 
+def _env_bool(name: str, default: bool) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val.lower() in ("true", "1", "yes", "t")
+
+
 # ============================================================================
-# TASK ENABLE/DISABLE CONTROL - Comment/Uncomment to enable/disable tasks
+# TASK ENABLE/DISABLE CONTROL - Configured via environment variables or defaults
 # ============================================================================
-ENABLE_AUTO_CATEGORIZATION = True
-ENABLE_VECTOR_STORE_SYNC = True
-ENABLE_SELLER_MATCHING = True
-ENABLE_DAILY_AGGREGATION = False
-ENABLE_WHATSAPP_REPORT_AUTOMATION = True  # WhatsApp report automation orchestrator
-ENABLE_DAILY_CATEGORY_REBUILD = True  # Daily rebuild of category_items vector store
-ENABLE_CATEGORY_NAME_SYNC = True  # Daily sync of category_names collection from remote DB
-ENABLE_LOG_CLEANUP = True  # Daily log cleanup and archival
-ENABLE_BFS_NOTIFICATION = True  # BFS seller bid notifications
-ENABLE_TAXONOMY_BUILD = True  # Daily 3-level taxonomy build from item_category data
+ENABLE_AUTO_CATEGORIZATION = _env_bool('ENABLE_AUTO_CATEGORIZATION', True)
+ENABLE_VECTOR_STORE_SYNC = _env_bool('ENABLE_VECTOR_STORE_SYNC', True)
+ENABLE_SELLER_MATCHING = _env_bool('ENABLE_SELLER_MATCHING', True)
+ENABLE_DAILY_AGGREGATION = _env_bool('ENABLE_DAILY_AGGREGATION', False)
+ENABLE_WHATSAPP_REPORT_AUTOMATION = _env_bool('ENABLE_WHATSAPP_REPORT_AUTOMATION', True)
+ENABLE_DAILY_CATEGORY_REBUILD = _env_bool('ENABLE_DAILY_CATEGORY_REBUILD', True)
+ENABLE_CATEGORY_NAME_SYNC = _env_bool('ENABLE_CATEGORY_NAME_SYNC', True)
+ENABLE_LOG_CLEANUP = _env_bool('ENABLE_LOG_CLEANUP', True)
+ENABLE_BFS_NOTIFICATION = _env_bool('ENABLE_BFS_NOTIFICATION', True)
+ENABLE_TAXONOMY_BUILD = _env_bool('ENABLE_TAXONOMY_BUILD', True)
 # ============================================================================
 
 # Basic Celery configuration

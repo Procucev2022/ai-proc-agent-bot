@@ -58,6 +58,10 @@ Remote DB.session.sql
 # *.md rule above would otherwise keep them on a single machine, so every agent
 # except the one that wrote them would miss the quality gate contract.
 !AGENTS.md
+!CLAUDE.md
+!CODEX.md
+!.agents/rules/*.md
+!.vishwa/*.md
 !.github/copilot-instructions.md
 !.kiro/steering/*.md
 !.kiro/agents/*.md
