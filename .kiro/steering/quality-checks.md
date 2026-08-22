@@ -26,12 +26,18 @@ python scripts/quality_check.py
 
 Stages run in this fixed order, and all of them run even when one fails so a single invocation reports everything: `build`, `coverage`, `typecheck`, `lint`, `schema`. Build and coverage come first on purpose — lint findings are noise while the app does not import. Narrow to one stage with `--stage build` (repeatable) when you are iterating on a single failure.
 
-## Rules
+## 90% Unit Test Code Coverage Contract
 
-- Include the complete per-file coverage table and the aggregate `coverage report` output in your completion report. That is the evidence the contract asks for.
+- The scope is 100% of files under `app/**/*.py`. Do not skip or omit any file.
+- Every file must achieve >=90.0% coverage across all parameters individually:
+  - Statements / Lines: >= 90%
+  - Branches: >= 90%
+  - Functions: >= 90%
+- If any parameter on any file is below 90%, `scripts/check_coverage.py` throws an error (exit code 1) and blocks.
+- Global pytest timeout is 60 seconds (`pytest-timeout`).
+- Include the complete per-file coverage table and the aggregate `coverage report` output in your completion report.
 - Fix findings. Do not weaken the 90% threshold, shorten the 60-second pytest timeout, add a coverage omission or pragma, or raise a `max_findings` budget in `quality-baseline.json` to get a pass.
 - When a change lowers a lint or mypy count below its budget, lower `max_findings` in the same commit. The runner prints the delta.
 - The `schema` stage is offline and safe. Only add `--apply-schema` when you intend to write to the database `DATABASE_MODE` points at, and say so first.
-- If a stage fails for a reason you cannot fix, report which stage, the finding, and what you tried. Do not describe the change as done.
 
-`AGENTS.md` holds the full contract: coverage scope, mocking requirements, the ratchet rules, and how database schema works in this repository.
+`AGENTS.md` holds the full repository contract.

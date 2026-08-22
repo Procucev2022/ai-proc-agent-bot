@@ -7,10 +7,9 @@ training improvement, and monitoring purposes.
 
 import json
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from enum import Enum
 
 logger = logging.getLogger(__name__)

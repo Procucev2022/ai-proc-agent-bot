@@ -7,7 +7,7 @@ Now deprecated in favor of GlobalErrorHandler for technical errors.
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from app.services.email_service import EmailService
 from app.services.global_error_handler import get_global_error_handler, ErrorContext

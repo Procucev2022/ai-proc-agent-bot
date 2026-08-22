@@ -1,4 +1,3 @@
-import os
 from typing import Optional, Literal
 from ..services.openai_service import OpenAIService
 
