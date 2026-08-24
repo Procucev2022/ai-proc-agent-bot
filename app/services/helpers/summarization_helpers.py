@@ -142,16 +142,25 @@ class SummarizationHelpers:
             Atomic message index
         """
         try:
+            import time
+            from app.config import get_settings
+            settings = get_settings()
+            if not settings.redis_session_storage_enabled:
+                return int(time.time() * 1000) % 100000
+
             # Use Redis INCR for atomic counter - this prevents race conditions
             counter_key = f"msg_counter:{session_id}"
             
             # Use synchronous Redis call since this is called from sync context
             import redis
-            from app.config import get_settings
-            settings = get_settings()
             
             # Create sync Redis client for atomic operations
-            sync_redis = redis.from_url(settings.redis_url, decode_responses=True)
+            sync_redis = redis.from_url(
+                settings.redis_url,
+                decode_responses=True,
+                socket_timeout=settings.redis_socket_timeout,
+                socket_connect_timeout=settings.redis_socket_connect_timeout,
+            )
             message_index = sync_redis.incr(counter_key)
             
             # Set expiry on counter (24 hours)

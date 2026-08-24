@@ -339,6 +339,7 @@ async def test_exit_service_confirmation_and_cleanup_matrix(monkeypatch):
     redis_base.scan = AsyncMock(return_value=(0, ["welcome_msg:999", "other:999"]))
     opts = settings(redis_session_storage_enabled=True)
     monkeypatch.setattr(exit_mod, "get_settings", lambda: opts)
+    monkeypatch.setattr("app.config.get_settings", lambda: opts)
     monkeypatch.setattr("app.redis_db.get_session_redis_service", lambda: redis_session)
     monkeypatch.setattr("app.redis_db.get_redis_service", lambda: redis_base)
     service = exit_mod.ExitService(wa, auth, manager, db)

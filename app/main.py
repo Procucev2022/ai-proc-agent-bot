@@ -44,11 +44,13 @@ setup_basic_logging(level=settings.log_level)
 logger = logging.getLogger(__name__)
 
 # Initialize rate limiter
+limiter_storage = settings.redis_url if (settings.redis_url and settings.redis_session_storage_enabled) else "memory://"
 limiter = Limiter(
     key_func=get_remote_address,
-    storage_uri=settings.redis_url,
+    storage_uri=limiter_storage,
     default_limits=[settings.rate_limit_default]
 )
+
 
 
 class IPRestrictionMiddleware(BaseHTTPMiddleware):
@@ -103,28 +105,29 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"[BOOT] ⚠️ Failed to initialize ProcucevAPIClient: {e}")
 
-    # Start message queue background tasks
+    # Start message queue background tasks (only if Redis is enabled)
     message_queue_tasks = []
-    try:
-        logger.info("[BOOT] Starting message queue background tasks...")
-        from app.api.webhook import message_queue_service
+    if settings.redis_session_storage_enabled:
+        try:
+            logger.info("[BOOT] Starting message queue background tasks...")
+            from app.api.webhook import message_queue_service
 
-        # Start batch poller (creates batches from incoming messages)
-        poller_task = asyncio.create_task(message_queue_service.run_batch_poller(), name="batch_poller")
-        message_queue_tasks.append(poller_task)
-        if hasattr(message_queue_service, "_background_tasks"):
-            message_queue_service._background_tasks.append(poller_task)
-        logger.info("[BOOT] ✓ Message queue batch poller started")
+            # Start batch poller (creates batches from incoming messages)
+            poller_task = asyncio.create_task(message_queue_service.run_batch_poller(), name="batch_poller")
+            message_queue_tasks.append(poller_task)
+            if hasattr(message_queue_service, "_background_tasks"):
+                message_queue_service._background_tasks.append(poller_task)
+            logger.info("[BOOT] ✓ Message queue batch poller started")
 
-        # Start monitoring loop (acknowledgments and please-wait messages)
-        monitor_task = asyncio.create_task(message_queue_service.run_monitoring_loop(), name="monitoring_loop")
-        message_queue_tasks.append(monitor_task)
-        if hasattr(message_queue_service, "_background_tasks"):
-            message_queue_service._background_tasks.append(monitor_task)
-        logger.info("[BOOT] ✓ Message queue monitoring loop started")
+            # Start monitoring loop (acknowledgments and please-wait messages)
+            monitor_task = asyncio.create_task(message_queue_service.run_monitoring_loop(), name="monitoring_loop")
+            message_queue_tasks.append(monitor_task)
+            if hasattr(message_queue_service, "_background_tasks"):
+                message_queue_service._background_tasks.append(monitor_task)
+            logger.info("[BOOT] ✓ Message queue monitoring loop started")
 
-    except Exception as e:
-        logger.warning(f"[BOOT] ⚠️ Failed to start message queue background tasks: {e}")
+        except Exception as e:
+            logger.warning(f"[BOOT] ⚠️ Failed to start message queue background tasks: {e}")
 
     # Start webhook health monitoring
     webhook_monitor_task = None
@@ -139,20 +142,21 @@ async def lifespan(app: FastAPI):
             logger.error(f"Failed to start webhook health monitoring: {e}")
             # Continue without monitoring rather than failing startup
 
-    # Start inactivity timeout monitoring (optimized for multi-worker)
+    # Start inactivity timeout monitoring (optimized for multi-worker, only if Redis is enabled)
     timeout_service = None
-    try:
-        from app.services.inactivity_timeout_service import get_timeout_service
-        timeout_service = get_timeout_service()  # Use singleton
+    if settings.redis_session_storage_enabled:
+        try:
+            from app.services.inactivity_timeout_service import get_timeout_service
+            timeout_service = get_timeout_service()  # Use singleton
 
-        # Optimized: Only start monitor if not already running on another worker
-        if await timeout_service.try_start_monitoring_if_available():
-            logger.info("Inactivity timeout monitoring started on this worker")
-        else:
-            logger.info("Inactivity timeout monitoring already running on another worker")
-    except Exception as e:
-        logger.error(f"Failed to start timeout monitoring: {e}")
-        # Continue without timeout monitoring rather than failing startup
+            # Optimized: Only start monitor if not already running on another worker
+            if await timeout_service.try_start_monitoring_if_available():
+                logger.info("Inactivity timeout monitoring started on this worker")
+            else:
+                logger.info("Inactivity timeout monitoring already running on another worker")
+        except Exception as e:
+            logger.error(f"Failed to start timeout monitoring: {e}")
+            # Continue without timeout monitoring rather than failing startup
 
     # NOTE: AutoCategorizationService preload removed to reduce memory usage
     # Service now lazy-loads on first use per worker (registration or Celery tasks)

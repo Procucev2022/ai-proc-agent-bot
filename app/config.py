@@ -92,6 +92,9 @@ class Settings:
         # Redis configuration
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self.redis_expiry_seconds = int(os.getenv("REDIS_EXPIRY_SECONDS", "43200"))  # 12 hours default for token inactivity
+        self.redis_socket_timeout = float(os.getenv("REDIS_SOCKET_TIMEOUT", "1.0"))
+        self.redis_socket_connect_timeout = float(os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT", "1.0"))
+
         
         # Celery configuration
         self.celery_broker_url = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/1")
