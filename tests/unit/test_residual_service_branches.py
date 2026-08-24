@@ -460,7 +460,7 @@ async def test_whatsapp_send_template_interactive_payloads_and_failures(monkeypa
     service = whatsapp_service(monkeypatch)
     service._clear_pending_reply_flag = AsyncMock()
     service._track_message_in_history = AsyncMock()
-    monkeypatch.setattr(whatsapp_mod.requests, "post", lambda *a, **k: SimpleNamespace(status_code=200, text="ok", json=lambda: {"mid": "m1"}))
+    monkeypatch.setattr(whatsapp_mod, "post_to_gateway", AsyncMock(return_value=SimpleNamespace(status_code=200, text="ok", json=lambda: {"mid": "m1"})))
     assert (await service.send_message("+919999999999", "hello", session_id="sid")).success
     assert service._track_message_in_history.await_count == 1
     assert (await service.send_template_message("919999999999", "welcome", ["A"])).message_id == "m"

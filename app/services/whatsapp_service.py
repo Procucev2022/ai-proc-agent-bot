@@ -16,18 +16,128 @@ Key responsibilities:
 """
 
 import asyncio
-import requests
 import json
 import logging
 import re
+import time
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
+
+import aiohttp
 
 from app.config import get_settings
 from app.tools.retry_service import get_retry_service
 from app.redis_db import get_redis_service
+from app.utils.turn_trace import current_turn_id
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class GatewayResponse:
+    """
+    Minimal stand-in for a ``requests.Response``.
+
+    Outbound sends used to run through ``requests.post`` from inside ``async def``,
+    which blocks the whole event loop for the duration of the call: while one
+    user's reply was in flight, no other webhook could be accepted, no batch
+    could be flushed and no other user's turn could progress. A gateway that
+    slowed to its 30 second timeout froze the entire worker.
+
+    The calls are now ``aiohttp``, but the body has to be awaited before it can be
+    inspected, so the response is read up front and handed to
+    ``_handle_api_response`` through this shape. Keeping the ``requests``-like
+    surface means that parsing logic -- and every test that exercises it -- is
+    untouched.
+    """
+
+    status_code: int
+    text: str
+
+    def json(self) -> Any:
+        return json.loads(self.text)
+
+
+# One pooled aiohttp session per event loop, shared by every WhatsAppService
+# instance. Reusing connections removes a TCP and TLS handshake from each
+# outbound message, which is pure latency on the reply the user is waiting for.
+#
+# Held in a dict rather than two module globals so the accessors below do not have
+# to open with a `global` statement. That keeps the mutable state in one named
+# place, and `global` compiles to no bytecode, which would make those functions
+# permanently unreachable to the per-function coverage gate.
+_gateway: Dict[str, Any] = {"session": None, "loop": None}
+
+
+async def get_gateway_session() -> aiohttp.ClientSession:
+    """
+    Return the shared HTTP session for WhatsApp gateway calls.
+
+    Recreated when the running loop changes: a gunicorn worker restart or a test
+    that builds a fresh loop would otherwise reuse a session bound to a dead one,
+    which fails with a confusing "attached to a different loop" error.
+    """
+    loop = asyncio.get_running_loop()
+    session = _gateway["session"]
+    if session is not None and not session.closed and _gateway["loop"] is loop:
+        return session
+
+    settings = get_settings()
+    timeout = aiohttp.ClientTimeout(
+        total=settings.whatsapp_http_timeout_seconds,
+        connect=settings.whatsapp_http_connect_timeout_seconds,
+    )
+    connector = aiohttp.TCPConnector(
+        limit=settings.whatsapp_http_pool_size,
+        ttl_dns_cache=300,
+        use_dns_cache=True,
+    )
+    session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+    _gateway["session"] = session
+    _gateway["loop"] = loop
+    logger.info(
+        f"[WHATSAPP_API] Created pooled HTTP session "
+        f"(timeout={settings.whatsapp_http_timeout_seconds}s, "
+        f"connect={settings.whatsapp_http_connect_timeout_seconds}s, "
+        f"pool={settings.whatsapp_http_pool_size})"
+    )
+    return session
+
+
+async def close_gateway_session() -> None:
+    """Close the shared session during shutdown."""
+    session = _gateway["session"]
+    _gateway["session"] = None
+    _gateway["loop"] = None
+    if session is not None and not session.closed:
+        try:
+            await session.close()
+            logger.info("[WHATSAPP_API] Pooled HTTP session closed")
+        except Exception as exc:
+            logger.warning(f"[WHATSAPP_API] Error closing pooled HTTP session: {exc}")
+
+
+async def post_to_gateway(url: str, payload: Dict[str, Any]) -> GatewayResponse:
+    """
+    POST JSON to the WhatsApp gateway and return the response body.
+
+    Timing is logged for every call because this is the last hop before the user
+    sees the reply, and it was previously the one step that could stall every
+    other user at once.
+    """
+    session = await get_gateway_session()
+    started = time.perf_counter()
+    turn_id = current_turn_id()
+    async with session.post(
+        url, json=payload, headers={"Content-Type": "application/json"}
+    ) as response:
+        text = await response.text()
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.info(
+            f"[WHATSAPP_API] [TURN:{turn_id}] POST {url} -> {response.status} "
+            f"in {elapsed_ms:.0f}ms ({len(text)} bytes)"
+        )
+        return GatewayResponse(status_code=response.status, text=text)
 
 
 def normalize_recipient(recipient_id: str) -> str:
@@ -188,12 +298,7 @@ class WhatsAppService:
             }
             logger.debug(f"WhatsApp payload - from: {self.from_number}, to: {formatted_recipient}")
 
-            response = requests.post(
-                f"{self.base_url}/sessioncomm",
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=30
-            )
+            response = await post_to_gateway(f"{self.base_url}/sessioncomm", payload)
 
             return self._handle_api_response(response)
 
@@ -293,13 +398,8 @@ class WhatsAppService:
                 }]
             }
             
-            response = requests.post(
-                f"{self.base_url}/mediasend",
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=30
-            )
-            
+            response = await post_to_gateway(f"{self.base_url}/mediasend", payload)
+
             return self._handle_api_response(response)
         
         # Use retry service for reliable delivery
@@ -351,13 +451,8 @@ class WhatsAppService:
                 }
             }
             
-            response = requests.post(
-                f"{self.base_url}/sessioncomm",
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=30
-            )
-            
+            response = await post_to_gateway(f"{self.base_url}/sessioncomm", payload)
+
             result = self._handle_api_response(response)
             
             # Clear pending_reply flag on successful send
@@ -401,23 +496,27 @@ class WhatsAppService:
         for better user experience.
         """
         try:
-            # Build sections for list message
-            sections = []
-            current_section = {"title": "Options", "rows": []}
-            
+            # Build sections for list message.
+            # Annotated because the inferred value type collapsed "rows" to
+            # Sequence[str], which made the .append below a type error.
+            sections: List[Dict[str, Any]] = []
+            current_rows: List[Dict[str, str]] = []
+            section_title = "Options"
+
             for i, item in enumerate(items):
-                if len(current_section["rows"]) >= 10:  # Max 10 items per section
-                    sections.append(current_section)
-                    current_section = {"title": f"More Options", "rows": []}
-                
-                current_section["rows"].append({
+                if len(current_rows) >= 10:  # Max 10 items per section
+                    sections.append({"title": section_title, "rows": current_rows})
+                    section_title = "More Options"
+                    current_rows = []
+
+                current_rows.append({
                     "id": str(i),
                     "title": item.get("title", "Option"),
                     "description": item.get("description", "")
                 })
-            
-            if current_section["rows"]:
-                sections.append(current_section)
+
+            if current_rows:
+                sections.append({"title": section_title, "rows": current_rows})
             
             content = {
                 "header": {"type": "text", "text": header},
@@ -678,7 +777,7 @@ class WhatsAppService:
         
         return summary
         
-    def _handle_api_response(self, response: requests.Response) -> MessageResponse:
+    def _handle_api_response(self, response: GatewayResponse) -> MessageResponse:
         """Handle WhatsApp API response and extract relevant information."""
         try:
             # Log raw API response for troubleshooting (DEBUG level)

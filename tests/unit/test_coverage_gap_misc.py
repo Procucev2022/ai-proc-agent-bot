@@ -429,8 +429,9 @@ def test_database_context_and_pool_fallbacks(monkeypatch):
     owned_session.close.side_effect = RuntimeError("close")
     monkeypatch.setattr(database, "get_db_session", lambda: owned_session)
     owned = database.DatabaseManager()
+    assert owned.session is owned_session  # force the lazy checkout
     owned.close()
-    assert owned.session is None
+    assert owned.has_session is False
 
 
 @pytest.mark.asyncio

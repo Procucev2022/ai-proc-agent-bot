@@ -19,6 +19,7 @@ from app.services.daily_summary_service import DailySummaryService
 from app.services.whatsapp_service import WhatsAppService
 from app.services.workflow_manager import WorkflowManager
 from app.utils.datetime_utils import utc_now
+from app.utils.turn_trace import stage
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,8 @@ class SessionManagementService:
         # Try Redis first if enabled
         if self.redis_enabled:
             logger.debug(f"Checking Redis for session: {session_id}")
-            session_data = await self.redis_session.get_session(session_id)
+            with stage("session_redis_lookup"):
+                session_data = await self.redis_session.get_session(session_id)
 
             if session_data:
                 logger.info(f"Found session in Redis: {session_id}")
@@ -112,7 +114,14 @@ class SessionManagementService:
                 # Session not in Redis (TTL expired or first time)
                 # Don't do anything here - just create fresh session below
                 # The welcome message logic will check DB later if needed
-                logger.info(f"Session {session_id} not found in Redis - will create fresh session")
+                # Worth an explicit note: the session id is derived per day, so the
+                # first message of each calendar day always misses here and pays
+                # for session creation plus the welcome send. That is a real part
+                # of why a first "Hi" costs more than the messages after it.
+                logger.info(
+                    f"[SESSION] Session {session_id} not found in Redis - creating a fresh session. "
+                    f"This turn additionally pays for session creation and the welcome message."
+                )
                 session = None
 
         # Fallback to database ONLY if Redis is disabled
@@ -175,17 +184,20 @@ class SessionManagementService:
 
             # Save to Redis if enabled, otherwise to DB
             if self.redis_enabled:
-                await self.redis_session.store_session(session_id, session_data)
+                with stage("session_store"):
+                    await self.redis_session.store_session(session_id, session_data)
                 session = self._dict_to_session(session_data)
                 logger.info(f"Created new session in Redis: {session_id}")
             else:
-                session = self.db_manager.save_conversation_session(session_data)
+                with stage("session_store_db"):
+                    session = self.db_manager.save_conversation_session(session_data)
                 logger.info(f"Created new session in DB: {session_id}")
             
             # Check and send welcome message for new session
             from app.services.welcome_message_service import get_welcome_service
             welcome_service = get_welcome_service()
-            await welcome_service.check_and_send_welcome(phone_number, self.whatsapp_service)
+            with stage("welcome_message"):
+                await welcome_service.check_and_send_welcome(phone_number, self.whatsapp_service)
         else:
             logger.info(f"Found existing session: {session_id}")
             # Store in Redis for future requests if Redis enabled and not already there

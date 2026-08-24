@@ -17,7 +17,7 @@ class MessageProcessorFactory:
     def __init__(self, dependencies: Dict[str, Any]):
         """Initialize with service dependencies."""
         self.dependencies = dependencies
-        self._processors = {}
+        self._processors: Dict[str, Any] = {}
     
     def get_processor(self, message_type: str):
         """Get processor for message type."""

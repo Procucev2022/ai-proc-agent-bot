@@ -36,6 +36,14 @@ from app.services.message_queue_service import MessageQueueService
 from app.services.inactivity_timeout_service import get_timeout_service
 from app.services.whatsapp_service import reply_sent_key
 from app.redis_db import get_redis_service
+from app.utils.logging_utils import UserPhoneContext
+from app.utils.turn_trace import (
+    finish_turn,
+    resume_turn,
+    stage,
+    stamp_turn,
+    start_turn,
+)
 import time
 
 router = APIRouter()
@@ -111,37 +119,63 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
     try:
         # Log server receipt time immediately
         server_receipt_time = datetime.now()
+        t0 = time.time()
         logger.info(f"Message received on server at: {server_receipt_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
         body = await request.body()
-        logger.info(f"Received webhook payload: {body.decode()}")
+        body_str = body.decode(errors='replace')
+        logger.info(f"[WEBHOOK_IN] Payload received ({len(body)} bytes): {body_str}")
 
         # Parse webhook data
+        parse_start = time.time()
         webhook_data = await parse_webhook_data(request)
+        parse_dur = time.time() - parse_start
         
         if not webhook_data:
-            logger.warning("No processable data in webhook")
+            logger.warning(f"[WEBHOOK_IN] No processable data in webhook (parsed in {parse_dur:.3f}s)")
             return JSONResponse(content={"status": "ok"})
         
         # Route message based on type - text messages go to queue, others process directly
         message_type = webhook_data.get("type", "")
+        from_phone = webhook_data.get("from", "unknown")
+        total_recv_time = time.time() - t0
+
+        # Open the turn here, at the first point where the sender is known, and
+        # stamp its id into the payload. The id then travels with the message
+        # through Redis into whichever worker answers it, so a single grep for
+        # the turn id returns the whole story of one reply.
+        trace = start_turn(
+            from_phone,
+            source=f"webhook:{message_type or 'unknown'}",
+            gateway_timestamp=webhook_data.get("timestamp"),
+            message_preview=str(webhook_data.get("content", "")),
+        )
+        trace.record("webhook_parse", parse_dur)
+        trace.annotate(
+            msg_id=webhook_data.get("message_id"),
+            bytes=len(body),
+        )
+        turn_id = stamp_turn(webhook_data, trace)
 
         if message_type == "text":
-            # Enqueue text messages for batched processing
-            logger.debug(f"[ROUTING] Enqueueing text message for {webhook_data.get('from')}")
+            logger.info(f"[ROUTING] [TURN:{turn_id}] Enqueueing text message for {from_phone} (msg_id={webhook_data.get('message_id')}, parse_time={parse_dur:.3f}s, total_recv_time={total_recv_time:.3f}s)")
             background_tasks.add_task(enqueue_message_async, webhook_data)
         
         elif message_type == "interactive":
-            # Process interactive messages directly with session tracking
-            logger.debug(f"[ROUTING] Processing interactive message for {webhook_data.get('from')}")
+            logger.info(f"[ROUTING] [TURN:{turn_id}] Processing interactive message for {from_phone} (msg_id={webhook_data.get('message_id')}, parse_time={parse_dur:.3f}s, total_recv_time={total_recv_time:.3f}s)")
             background_tasks.add_task(process_message_async, webhook_data)
         
         else:
-            # Process non-text messages (excel, image, document) directly
-            logger.info(f"[ROUTING] Processing non-text message type='{message_type}' for {webhook_data.get('from')}")
+            logger.info(f"[ROUTING] [TURN:{turn_id}] Processing non-text message type='{message_type}' for {from_phone} (msg_id={webhook_data.get('message_id')}, parse_time={parse_dur:.3f}s, total_recv_time={total_recv_time:.3f}s)")
             background_tasks.add_task(process_message_async, webhook_data)
         
-        # Return success immediately
+        # Return success immediately. The ACK is measured separately from the
+        # reply: an ACK slower than a few milliseconds means the event loop was
+        # blocked, which is a different fault from a slow reply.
+        logger.info(
+            f"[WEBHOOK_ACK] [TURN:{turn_id}] Acknowledged in {(time.time() - t0) * 1000:.1f}ms "
+            f"for {from_phone} (handed to background task, reply follows)"
+        )
         return JSONResponse(content={"status": "ok"})
 
     except ClientDisconnect:
@@ -219,7 +253,9 @@ async def handle_delivery_callback(request: Request):
         if not query_params:
             try:
                 form_data = await request.form()
-                query_params = dict(form_data)
+                # FormData is a multidict, not a Mapping, so build the dict from
+                # its items rather than relying on dict(mapping).
+                query_params = {key: value for key, value in form_data.items()}
                 if not query_params:
                     json_data = await request.json()
                     if isinstance(json_data, dict):
@@ -262,7 +298,8 @@ async def parse_webhook_data(request: Request) -> Optional[Dict[str, Any]]:
     if "application/x-www-form-urlencoded" in content_type:
         # Handle URL-encoded webhook (user responses)
         form_data = await request.form()
-        return parse_user_response_callback(dict(form_data))
+        # FormData is a multidict, not a Mapping, so build the dict from its items.
+        return parse_user_response_callback({key: value for key, value in form_data.items()})
     
     elif "application/json" in content_type:
         # Handle JSON webhook (if any)
@@ -470,36 +507,47 @@ async def enqueue_message_async(webhook_data: Dict[str, Any]):
     from_number = None
     try:
         from_number = webhook_data.get("from")
-        
-        # Update activity timestamp FIRST (for timeout tracking)
-        if from_number:
-            await timeout_service.update_user_activity(from_number)
-            
-            # Set pending_reply flag to track that user is waiting for a response
-            redis_service = get_redis_service()
-            settings = get_settings()
-            normalized_phone = from_number.lstrip('+') if from_number.startswith('+') else from_number
-            # A new turn starts here: the previous turn's reply must not suppress
-            # an error notice that belongs to this message. Both keys are
-            # independent, and this runs before the message is enqueued, so the
-            # two round trips overlap instead of delaying processing twice.
-            await asyncio.gather(
-                redis_service.set(
-                    f"{normalized_phone}:pending_reply",
-                    "1",
-                    ex=settings.pending_reply_ttl_seconds
-                ),
-                redis_service.delete(reply_sent_key(from_number)),
-            )
-            logger.debug(f"[WORKER_TIMEOUT] Set pending_reply flag for {normalized_phone}")
-        
-        logger.info(f"Enqueueing text message: {webhook_data}")
+        # Starlette runs background tasks in a context copied from the request,
+        # so re-attach the turn explicitly rather than relying on that copy.
+        trace = resume_turn(webhook_data, source="enqueue", user_phone=from_number or "")
 
-        # Enqueue the message - the service will handle batching and processing
-        await message_queue_service.enqueue_message(webhook_data)
+        # Bind the phone number for the whole hand-off. Without this the phone
+        # column of every log line on the text path reads 'N/A', because this
+        # task runs outside the request that knew who the sender was.
+        async with UserPhoneContext(from_number or "unknown"):
+            # Update activity timestamp FIRST (for timeout tracking)
+            if from_number:
+                with stage("timeout_activity_update"):
+                    await timeout_service.update_user_activity(from_number)
+
+                # Set pending_reply flag to track that user is waiting for a response
+                redis_service = get_redis_service()
+                settings = get_settings()
+                normalized_phone = from_number.lstrip('+') if from_number.startswith('+') else from_number
+                # A new turn starts here: the previous turn's reply must not suppress
+                # an error notice that belongs to this message. Both keys are
+                # independent, and this runs before the message is enqueued, so the
+                # two round trips overlap instead of delaying processing twice.
+                with stage("pending_reply_flags"):
+                    await asyncio.gather(
+                        redis_service.set(
+                            f"{normalized_phone}:pending_reply",
+                            "1",
+                            ex=settings.pending_reply_ttl_seconds
+                        ),
+                        redis_service.delete(reply_sent_key(from_number)),
+                    )
+                logger.debug(f"[WORKER_TIMEOUT] Set pending_reply flag for {normalized_phone}")
+
+            logger.info(f"[ENQUEUE_IN] [TURN:{trace.turn_id}] Enqueueing text message: {webhook_data}")
+
+            # Enqueue the message - the service will handle batching and processing
+            with stage("enqueue_message"):
+                await message_queue_service.enqueue_message(webhook_data)
 
     except Exception as e:
         logger.error(f"Error enqueueing message: {e}", exc_info=True)
+        finish_turn("error", error=type(e).__name__, at="enqueue")
 
         # Extract user phone for error handling
         from_number = webhook_data.get("from")
@@ -555,7 +603,8 @@ async def process_message_async(webhook_data: Dict[str, Any]):
             logger.debug(f"[WORKER_TIMEOUT] Set pending_reply flag for {normalized_phone} (non-text)")
         
         processing_start_time = datetime.now()
-        logger.info(f"Processing non-text message directly: {webhook_data}")
+        trace = resume_turn(webhook_data, source="direct", user_phone=from_number or "")
+        logger.info(f"[DIRECT_IN] [TURN:{trace.turn_id}] Processing non-text message directly: {webhook_data}")
         logger.info(f"Background task started at: {processing_start_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
         # Extract message details
@@ -565,6 +614,7 @@ async def process_message_async(webhook_data: Dict[str, Any]):
 
         if not from_number or not content:
             logger.warning("Missing required message data")
+            trace.finish("dropped", reason="missing_phone_or_content")
             return
 
         # Set phone number context for all logs in this async task
@@ -577,8 +627,10 @@ async def process_message_async(webhook_data: Dict[str, Any]):
             if not session_created and not allow_concurrent:
                 logger.warning(
                     f"User {from_number} is already processing another message. "
-                    f"Skipping {message_type} message to prevent concurrent processing conflicts."
+                    f"Skipping {message_type} message to prevent concurrent processing conflicts. "
+                    f"The user receives no reply to this message."
                 )
+                trace.finish("dropped", reason="already_processing")
                 return  # Exit without processing to prevent concurrent execution
             
             # Log if allowing concurrent processing
@@ -600,20 +652,25 @@ async def process_message_async(webhook_data: Dict[str, Any]):
                 try:
                     # Handle document messages specifically
                     if message_type.lower() == "document":
-                        await process_document_message(webhook_data, chat_service)
+                        with stage("process_document", type=message_type):
+                            await process_document_message(webhook_data, chat_service)
                     else:
                         # Process other non-text messages (image, interactive, etc.) through chat service
-                        await chat_service.process_message(
-                            user_phone=from_number,
-                            message_content=content,
-                            message_type=message_type
-                        )
+                        with stage("chat_process_message", type=message_type):
+                            await chat_service.process_message(
+                                user_phone=from_number,
+                                message_content=content,
+                                message_type=message_type
+                            )
                 finally:
                     # Cleanup to prevent unclosed aiohttp sessions
-                    await chat_service.cleanup()
+                    with stage("chat_cleanup"):
+                        await chat_service.cleanup()
+            trace.finish("complete")
 
     except Exception as e:
         logger.error(f"Error in async message processing: {e}", exc_info=True)
+        finish_turn("error", error=type(e).__name__)
 
         # Clear workflow state and notify user of technical error
         if from_number:

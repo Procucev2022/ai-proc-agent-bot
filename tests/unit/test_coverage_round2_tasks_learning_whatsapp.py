@@ -492,7 +492,7 @@ async def test_whatsapp_pending_cache_template_and_interactive_error_paths(monke
     await service._clear_pending_reply_flag("+919999999999")
 
     posted = SimpleNamespace(status_code=200, text="ok", json=lambda: {"mid": "m"})
-    monkeypatch.setattr(whatsapp_mod.requests, "post", lambda *args, **kwargs: posted)
+    monkeypatch.setattr(whatsapp_mod, "post_to_gateway", AsyncMock(return_value=posted))
     service._clear_pending_reply_flag = AsyncMock()
     result = await service.send_message("+919999999999", "answer")
     assert result.success
@@ -506,7 +506,7 @@ async def test_whatsapp_pending_cache_template_and_interactive_error_paths(monke
     retry_failure = wa_service(monkeypatch, retry_result={"success": False, "attempts": 2, "error": "retry"})
     assert (await retry_failure.send_message("919999999999", "x")).success is False
 
-    monkeypatch.setattr(whatsapp_mod.requests, "post", Mock(side_effect=RuntimeError("http")))
+    monkeypatch.setattr(whatsapp_mod, "post_to_gateway", AsyncMock(side_effect=RuntimeError("http")))
     interactive = await service.send_interactive_message("919999999999", "button", {})
     assert interactive.success is False and "http" in interactive.error
 

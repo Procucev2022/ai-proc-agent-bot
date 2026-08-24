@@ -393,7 +393,7 @@ async def test_whatsapp_interactive_buttons_lists_http_and_response_shapes(monke
     monkeypatch.setattr(whatsapp_module, "get_redis_service", lambda: fake_cache)
     service._format_phone_number = MagicMock(return_value="919999999999")
     response = FakeHttpResponse(200, [{"mid": "M1"}])
-    monkeypatch.setattr(whatsapp_module.requests, "post", MagicMock(return_value=response))
+    monkeypatch.setattr(whatsapp_module, "post_to_gateway", AsyncMock(return_value=response))
     result = await service.send_interactive_message("x", "button", {"body": {"text": "hi"}})
     assert result.success and result.message_id == "M1"
     service.send_interactive_message = AsyncMock(return_value=whatsapp_module.MessageResponse(True))

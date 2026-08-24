@@ -489,7 +489,7 @@ async def test_whatsapp_send_message_real_mock_cache_tracking_and_failures(monke
     service = wa_service(mock=False); service._format_phone_number = Mock(return_value="919999")
     cache = SimpleNamespace(get=AsyncMock(return_value={"irrelevant_response": {"user_message": "old"}}), set=AsyncMock())
     monkeypatch.setattr(whatsapp_module, "get_redis_service", lambda: cache)
-    monkeypatch.setattr(whatsapp_module.requests, "post", Mock(return_value=FakeResponse(200, [{"mid": "M"}])))
+    monkeypatch.setattr(whatsapp_module, "post_to_gateway", AsyncMock(return_value=FakeResponse(200, [{"mid": "M"}])))
     async def retry_call(fn):
         return {"success": True, "result": await fn(), "attempts": 1}
     service.retry_service.retry_with_backoff.side_effect = retry_call
@@ -499,7 +499,7 @@ async def test_whatsapp_send_message_real_mock_cache_tracking_and_failures(monke
     # <phone>:reply_sent marker through the same Redis client.
     cache_writes = [call for call in cache.set.await_args_list if str(call.args[0]).startswith("user_cache:")]
     assert result.message_id == "M" and len(cache_writes) == 1
-    payload = whatsapp_module.requests.post.call_args.kwargs["json"]
+    payload = whatsapp_module.post_to_gateway.call_args.args[1]
     assert payload["sessiondata"]["message"]["text"] == "old\n\nnew"
     assert (await service.send_message("x", "system", skip_concatenation=True)).success
     service._format_phone_number.return_value = ""
@@ -513,12 +513,12 @@ async def test_whatsapp_send_message_real_mock_cache_tracking_and_failures(monke
 async def test_whatsapp_template_interactive_lists_buttons_and_configurable(monkeypatch):
     service = wa_service(mock=False); service._format_phone_number = Mock(return_value="919999"); service._clear_pending_reply_flag = AsyncMock(); service._track_message_in_history = AsyncMock()
     monkeypatch.setattr(whatsapp_module, "get_redis_service", lambda: SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock()))
-    monkeypatch.setattr(whatsapp_module.requests, "post", Mock(return_value=FakeResponse(200, {"mid": "M"})))
+    monkeypatch.setattr(whatsapp_module, "post_to_gateway", AsyncMock(return_value=FakeResponse(200, {"mid": "M"})))
     async def retry_call(fn):
         return {"success": True, "result": await fn(), "attempts": 1}
     service.retry_service.retry_with_backoff.side_effect = retry_call
     assert (await service.send_template_message("x", "welcome", ["A", "B"])).success
-    assert whatsapp_module.requests.post.call_args.args[0].endswith("/mediasend")
+    assert whatsapp_module.post_to_gateway.call_args.args[0].endswith("/mediasend")
     assert (await service.send_interactive_message("x", "button", {"body": {"text": "x"}})).success
     service.send_interactive_message = AsyncMock(return_value=whatsapp_module.MessageResponse(True))
     result = await service.send_list_message("x", "h", "b", [{"title": str(i)} for i in range(11)])
@@ -588,8 +588,10 @@ async def test_queue_keys_enqueue_batch_and_start_paths(monkeypatch):
     service.redis.exists.return_value = True; service._refresh_batch_timer = AsyncMock()
     await service.enqueue_message({"from": "123", "content": "next", "timestamp": 2, "type": "image"})
     service._refresh_batch_timer.assert_awaited_once_with("123")
-    with pytest.raises(ValueError):
-        await service.enqueue_message({"from": "1", "timestamp": "bad"})
+    # An unreadable timestamp falls back to arrival time; the message survives.
+    service.redis.zadd.reset_mock()
+    await service.enqueue_message({"from": "1", "timestamp": "bad", "type": "text", "content": "kept"})
+    service.redis.zadd.assert_awaited()
     service._refresh_batch_timer = queue_module.MessageQueueService._refresh_batch_timer.__get__(service)
     service.redis.setex = AsyncMock()
     await service._refresh_batch_timer("1")

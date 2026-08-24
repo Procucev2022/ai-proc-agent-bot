@@ -5,7 +5,9 @@ Handles BFS (Buy From Stock) search workflow.
 Simplified flow: extract products -> categorize -> call API directly.
 """
 
+import asyncio
 import logging
+import time
 from typing import Dict, Any, List
 from app.models import User, ConversationSession
 from app.services.openai_service import OpenAIService
@@ -215,13 +217,18 @@ class BFSSearchHandler:
 
             category_array = []
             try:
+                cat_start_time = time.time()
                 categorization_service = await self._get_categorization_service()
-                cat_result = await categorization_service.categorize_item(
-                    item_description=description,
-                    user_id=user_id,
-                    session_id=session_id
+                cat_result = await asyncio.wait_for(
+                    categorization_service.categorize_item(
+                        item_description=description,
+                        user_id=user_id,
+                        session_id=session_id
+                    ),
+                    timeout=10.0
                 )
-                logger.info(f"[BFS] Categorization result for '{description}': {cat_result}")
+                cat_elapsed = time.time() - cat_start_time
+                logger.info(f"[BFS] Categorization for '{description}' completed in {cat_elapsed:.2f}s: {cat_result}")
                 if cat_result.get("success"):
                     category = cat_result.get("category", "")
                     if category and category.lower() != "other":
@@ -231,6 +238,8 @@ class BFSSearchHandler:
                         logger.info(f"[BFS] Category is 'Other', skipping")
                 else:
                     logger.warning(f"[BFS] Categorization not successful: {cat_result.get('reason', 'unknown')}")
+            except asyncio.TimeoutError:
+                logger.warning(f"[BFS] Categorization timed out after 10.0s for '{description}', proceeding without category")
             except Exception as e:
                 logger.warning(f"[BFS] Categorization failed: {e}")
 

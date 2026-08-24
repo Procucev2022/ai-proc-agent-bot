@@ -34,6 +34,8 @@ from app.services.chat_service import ChatService
 from app.services.global_error_handler import handle_server_error
 from app.context.middleware import ContextMiddleware
 from app.utils.logging_utils import setup_basic_logging, CustomFormatter
+from app.utils.loop_monitor import get_loop_monitor
+from app.utils.turn_trace import start_turn
 from unittest.mock import patch
 import gc
 import time
@@ -60,7 +62,10 @@ class IPRestrictionMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         if self.allowed_ips:
-            client_ip = request.client.host
+            # request.client is None for connections with no peer address (ASGI
+            # test transports, some proxies). Reading .host unguarded would raise
+            # here and reject the request with a 500 instead of an IP decision.
+            client_ip = request.client.host if request.client else ""
             x_forwarded_for = request.headers.get("x-forwarded-for")
             x_real_ip = request.headers.get("x-real-ip")
 
@@ -74,6 +79,48 @@ class IPRestrictionMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
         return response
+
+
+async def _warmup_request_path() -> None:
+    """
+    Open the connections the first reply needs, before a user is waiting on them.
+
+    Several clients on the message path build themselves on first use: the Redis
+    pool, the pooled HTTP session to the WhatsApp gateway, and the database
+    connection pool. Left alone, the first user after a restart pays for all of
+    those handshakes inside their own turn -- and a restart is exactly when a
+    first "Hi" arrives, because a scaled-to-zero replica is started *by* that
+    message.
+
+    Each step is independent and best-effort: warmup is an optimisation, so a
+    failure here is logged and the lazy path still runs normally. Timings are
+    logged individually so a slow dependency at boot is attributable.
+    """
+    async def _warm(label: str, coro_factory) -> None:
+        started = time.time()
+        try:
+            await coro_factory()
+            logger.info(f"[BOOT] [WARMUP] {label} ready in {(time.time() - started) * 1000:.0f}ms")
+        except Exception as exc:
+            logger.warning(
+                f"[BOOT] [WARMUP] {label} failed after {(time.time() - started) * 1000:.0f}ms "
+                f"({type(exc).__name__}: {exc}); it will initialise lazily on first use"
+            )
+
+    async def warm_redis():
+        from app.redis_db import get_redis_service
+        await get_redis_service().set("warmup:ping", "1", ex=30)
+
+    async def warm_whatsapp_http():
+        from app.services.whatsapp_service import get_gateway_session
+        await get_gateway_session()
+
+    # The database pool is deliberately not warmed here: init_database() above
+    # already opens a session and runs a query, so the pool and its TLS handshake
+    # are done by the time this runs.
+    logger.info("[BOOT] [WARMUP] Priming the request path so the first reply is not slower than the rest...")
+    await _warm("Redis connection", warm_redis)
+    await _warm("WhatsApp gateway HTTP pool", warm_whatsapp_http)
 
 
 @asynccontextmanager
@@ -163,6 +210,20 @@ async def lifespan(app: FastAPI):
     # This saves ~100-120MB RAM per worker during startup
     logger.info("AutoCategorizationService will lazy-load on first use")
 
+    # Watch for anything blocking the event loop. Every user's turn, the batch
+    # poller and the webhook all share one thread, so a single synchronous call
+    # stalls all of them at once - a failure mode that is otherwise invisible
+    # because the stalled code never gets to report its own slowness.
+    loop_monitor = get_loop_monitor()
+    try:
+        loop_monitor.start()
+    except Exception as e:
+        logger.warning(f"[BOOT] Could not start the event loop monitor: {e}")
+
+    # Warm the connections a reply needs, while the container is still starting
+    # rather than inside the first user's turn.
+    await _warmup_request_path()
+
     yield
 
     logger.info("Shutting down AI Procurement Agent application")
@@ -213,6 +274,20 @@ async def lifespan(app: FastAPI):
             logger.info("Inactivity timeout monitoring stopped")
         except Exception as e:
             logger.error(f"Error stopping timeout monitoring: {e}")
+
+    # Stop the event loop monitor
+    try:
+        await get_loop_monitor().stop()
+    except Exception as e:
+        logger.warning(f"Error stopping event loop monitor: {e}")
+
+    # Close the pooled WhatsApp gateway session explicitly, before the sweep below
+    # so it is shut down cleanly rather than collected by the generic scan.
+    try:
+        from app.services.whatsapp_service import close_gateway_session
+        await close_gateway_session()
+    except Exception as e:
+        logger.warning(f"Error closing WhatsApp gateway session: {e}")
 
     # Cleanup any remaining aiohttp sessions
     import aiohttp
@@ -386,6 +461,16 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
 
     # Set phone number context for all logs in this request
     async with UserPhoneContext(chat_message.phone):
+        # Open a turn so this endpoint produces the same stage-by-stage breakdown
+        # as a real WhatsApp message. It runs the identical pipeline with only the
+        # outbound sends mocked, which makes it the cheapest way to attribute a
+        # slow turn without waiting on the gateway. Without this the [TURN] lines
+        # emitted inside process_message would have no id and no summary.
+        trace = start_turn(
+            chat_message.phone,
+            source="api_chat",
+            message_preview=str(chat_message.message),
+        )
         try:
             t1 = time.time()
             logger.info(f"[PERF] Request parsing completed: {(t1 - request_start) * 1000:.0f}ms")
@@ -483,6 +568,7 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
 
             t_total = time.time()
             logger.info(f"[PERF] Total request time: {(t_total - request_start) * 1000:.0f}ms")
+            trace.finish("complete", replies=len(whatsapp_messages))
 
             return {
                 "success": True,
@@ -494,6 +580,7 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
 
         except Exception as e:
             logger.error(f"Error processing chat message: {e}")
+            trace.finish("error", error=type(e).__name__)
 
             # Notify support team about chat processing error
             try:
@@ -526,11 +613,14 @@ async def upload_excel_file(
         # Read file content
         file_content = await file.read()
 
-        # Determine MIME type for Excel files
+        # Determine MIME type for Excel files.
+        # UploadFile.filename is optional, so normalise once rather than calling
+        # .lower() on a value that can be None.
+        filename = (file.filename or "").lower()
         excel_mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        if file.filename.lower().endswith('.xls'):
+        if filename.endswith('.xls'):
             excel_mime_type = "application/vnd.ms-excel"
-        elif file.filename.lower().endswith('.xlsm'):
+        elif filename.endswith('.xlsm'):
             excel_mime_type = "application/vnd.ms-excel.sheet.macroEnabled.12"
 
         # Create mock document message structure (same as WhatsApp webhook)

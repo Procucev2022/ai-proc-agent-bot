@@ -198,6 +198,18 @@ class Settings:
         self.rate_limit_otp = os.getenv("RATE_LIMIT_OTP", "3/hour")
         self.rate_limit_auth = os.getenv("RATE_LIMIT_AUTH", "10/minute")
         
+        # WhatsApp gateway HTTP client.
+        # The old blocking client used a 30s timeout, which combined with the retry
+        # schedule could hold a turn for over two minutes - long past the point the
+        # user has given up and past the gunicorn worker timeout. Measured gateway
+        # latency is p90 ~160ms, so 10s is already ample headroom and fails fast
+        # enough for a retry to still be useful.
+        self.whatsapp_http_timeout_seconds: float = float(os.getenv("WHATSAPP_HTTP_TIMEOUT_SECONDS", "10"))
+        self.whatsapp_http_connect_timeout_seconds: float = float(
+            os.getenv("WHATSAPP_HTTP_CONNECT_TIMEOUT_SECONDS", "5")
+        )
+        self.whatsapp_http_pool_size: int = int(os.getenv("WHATSAPP_HTTP_POOL_SIZE", "50"))
+
         # Message retry configuration
         self.retry_max_attempts = int(os.getenv("RETRY_MAX_ATTEMPTS", "3"))
         self.retry_initial_delay = float(os.getenv("RETRY_INITIAL_DELAY", "1.0"))
@@ -267,10 +279,22 @@ class Settings:
         self.rfq_fetch_limit: int = 3  # Used for buyer RFQ creation, seller uses seller_rfq_fetch_limit
 
         # Queue Configuration
+        # batch_window_seconds is how long an inbound message waits for a follow-up
+        # so a user who splits one request across several messages gets one answer.
+        # It is dead time on every reply, so it is the first dial to turn when
+        # latency matters; the batch is now flushed the instant the window closes
+        # rather than on the next poller tick.
         self.batch_window_seconds: int = int(os.getenv("BATCH_WINDOW_SECONDS", "1"))
+        # How many times a batch flush will re-arm while the user keeps typing
+        # before answering anyway, bounding self-inflicted delay at
+        # batch_window_seconds * max_batch_flush_waits.
+        self.max_batch_flush_waits: int = int(os.getenv("MAX_BATCH_FLUSH_WAITS", "10"))
         self.please_wait_threshold_seconds: int = int(os.getenv("PLEASE_WAIT_THRESHOLD_SECONDS", "15"))
         self.max_please_wait_count: int = int(os.getenv("MAX_PLEASE_WAIT_COUNT", "3"))
         self.monitoring_poll_interval_seconds: int = int(os.getenv("MONITORING_POLL_INTERVAL_SECONDS", "2"))
+        # Batch poller cadence. It is now a safety net rather than the primary
+        # trigger, so it no longer needs a one-second tick to keep replies fast.
+        self.batch_poll_interval_seconds: float = float(os.getenv("BATCH_POLL_INTERVAL_SECONDS", "1"))
         
         # Inactivity timeout configuration
         self.workflow_timeout_enabled: bool = os.getenv("WORKFLOW_TIMEOUT_ENABLED", "true").lower() == "true"
