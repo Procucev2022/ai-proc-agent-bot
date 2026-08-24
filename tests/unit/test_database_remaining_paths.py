@@ -359,8 +359,18 @@ def test_manager_lifecycle_pool_status_and_noops(monkeypatch):
 
     owned_session = MagicMock()
     monkeypatch.setattr(database, "get_db_session", lambda: owned_session)
+
+    # A manager that is never used takes nothing out of the pool, so there is
+    # nothing to close and nothing that can leak.
+    unused = database.DatabaseManager()
+    assert unused.has_session is False
+    unused.close()
+    owned_session.close.assert_not_called()
+
     owned = database.DatabaseManager()
     assert owned.__enter__() is owned
+    assert owned.session is owned_session  # first access checks the session out
+    assert owned.has_session is True
     assert owned.__exit__(ValueError, ValueError("x"), None) is False
     owned_session.close.assert_called_once()
 
@@ -370,8 +380,10 @@ def test_manager_close_and_destructor_swallow_close_errors(monkeypatch):
     session.close.side_effect = RuntimeError("close")
     monkeypatch.setattr(database, "get_db_session", lambda: session)
     manager = database.DatabaseManager()
+    assert manager.session is session  # force the lazy checkout
     manager.close()
-    assert manager.session is None
+    # A close() whose underlying close() raised must still drop the reference.
+    assert manager.has_session is False
 
     destructor_session = MagicMock()
     destructor = database.DatabaseManager.__new__(database.DatabaseManager)

@@ -15,6 +15,7 @@ from app.config import get_settings
 from app.schemas.user import normalize_phone_number
 from app.redis_db import get_redis_service
 from app.utils.procucev_api_logger import manual_log_api_call
+from app.utils.turn_trace import current_turn_id
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -306,7 +307,19 @@ class ProcucevAPIClient:
                     response_time = time.time() - request_start_time
                     status = resp.status
                     text = await resp.text()
-                    logger.info(f"Procucev API {method} {url} response received in {response_time:.3f}s (status: {status})")
+                    # Tagged with the turn id and escalated when slow: log analysis
+                    # shows this call is the biggest in-application cost of a
+                    # greeting turn, so it needs to stand out rather than blend
+                    # into the INFO stream.
+                    detail = (
+                        f"[PROCUCEV_API] [TURN:{current_turn_id()}] {method} {url} -> {status} "
+                        f"in {response_time:.3f}s (attempt {attempt + 1}/{self.max_retries}, "
+                        f"{len(text)} bytes)"
+                    )
+                    if response_time >= 2.0:
+                        logger.warning(f"{detail} | SLOW_UPSTREAM_API")
+                    else:
+                        logger.info(detail)
                     
                     # If 401 Unauthorized, maybe token expired: retry after refreshing token
                     # Only refresh if NOT using dynamic token

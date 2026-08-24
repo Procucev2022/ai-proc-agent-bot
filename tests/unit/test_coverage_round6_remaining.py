@@ -698,11 +698,18 @@ def test_selection_tool_fuzzy_and_ai_output_edges(tmp_path):
 
 def test_logging_setup_and_context_edges(monkeypatch):
     logging_utils.clear_user_phone_context()
-    logging_utils.set_user_phone_context("outer")
-    with logging_utils.UserPhoneContext("inner"):
-        assert logging_utils.get_user_phone_context() == "inner"
-    assert logging_utils.get_user_phone_context() == "outer"
-    asyncio.run(_async_logging_context())
+    try:
+        logging_utils.set_user_phone_context("outer")
+        with logging_utils.UserPhoneContext("inner"):
+            assert logging_utils.get_user_phone_context() == "inner"
+        assert logging_utils.get_user_phone_context() == "outer"
+        asyncio.run(_async_logging_context())
+    finally:
+        # set_user_phone_context also writes a thread-local, which outlives the
+        # test. Leaving "outer" behind made every later test in this worker see a
+        # phone context it never set, and any test asserting the "N/A" default
+        # failed depending on collection order.
+        logging_utils.clear_user_phone_context()
 
     handlers = []
     class Handler(logging.Handler):

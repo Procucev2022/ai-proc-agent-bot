@@ -303,7 +303,8 @@ async def test_main_lifespan_without_background_task_registry(monkeypatch):
     async with main_module.lifespan(main_module.app):
         pass
 
-    assert len(created) == 2
+    # Batch poller, queue monitor, and the event-loop stall monitor.
+    assert len(created) == 3
     api_init.assert_awaited_once()
     api_close.assert_awaited_once()
     queue.shutdown.assert_awaited_once()

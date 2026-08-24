@@ -287,7 +287,14 @@ async def test_webhook_unknown_route_and_error_without_phone_or_cancel_success(m
     )
     response = await webhook.handle_webhook.__wrapped__(request, background)
     assert response.status_code == 200
-    background.add_task.assert_called_once_with(webhook.process_message_async, {"type": "sticker", "from": "1"})
+    # An unrecognised type still routes to the direct processor, and the payload
+    # now also carries the turn-correlation keys the handler stamps on.
+    background.add_task.assert_called_once()
+    routed_task, routed_payload = background.add_task.call_args.args
+    assert routed_task is webhook.process_message_async
+    assert routed_payload["type"] == "sticker"
+    assert routed_payload["from"] == "1"
+    assert routed_payload["_turn_id"]
 
     background.reset_mock()
     parse = AsyncMock(side_effect=[RuntimeError("first parse"), RuntimeError("second parse")])
@@ -482,7 +489,9 @@ async def test_main_lifespan_success_startup_and_shutdown(monkeypatch):
 
     async with main.lifespan(main.app):
         assert len(queue._background_tasks) == 2
-        assert len(tasks) == 3
+        # Batch poller, queue monitor, webhook health monitor, and the
+        # event-loop stall monitor.
+        assert len(tasks) == 4
 
     api_init.assert_awaited_once()
     api_close.assert_awaited_once()

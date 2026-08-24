@@ -20,8 +20,8 @@ param acrPassword string = ''
 @description('Container Image Name & Tag')
 param imageTag string
 
-@description('Min Replicas (0 for Dev serverless scale-to-zero, 1 for Prod)')
-param minReplicas int = 0
+@description('Min Replicas. Keep at 1 or above: this app is woken by inbound WhatsApp webhooks, so scaling to zero makes the user\'s own first message pay for the container cold start (measured at ~40s).')
+param minReplicas int = 1
 
 @description('Max Replicas')
 param maxReplicas int = 5
@@ -269,13 +269,23 @@ resource appContainer 'Microsoft.App/containerApps@2023-05-01' = {
               periodSeconds: 15
             }
             {
+              // The readiness probe gates when ingress starts routing traffic, so
+              // its delay is added to every cold start. Measured boot-to-first-
+              // served-request was ~20s while the application's own startup takes
+              // ~0.15s: almost all of it was this probe waiting 15s before the
+              // first check and then up to 10s more before the next one. Probing
+              // sooner and more often hands traffic over as soon as the app can
+              // actually serve it. /health is a trivial in-process handler
+              // (measured p99 3ms over 16k calls), so a 2s period costs nothing.
               type: 'Readiness'
               httpGet: {
                 path: '/health'
                 port: 8005
               }
-              initialDelaySeconds: 15
-              periodSeconds: 10
+              initialDelaySeconds: 2
+              periodSeconds: 2
+              timeoutSeconds: 3
+              failureThreshold: 10
             }
           ]
         }

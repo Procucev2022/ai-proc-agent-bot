@@ -207,7 +207,7 @@ async def test_whatsapp_http_exception_and_invalid_button_configuration(monkeypa
     service.retry_service = SimpleNamespace(retry_with_backoff=AsyncMock(side_effect=RuntimeError("retry")))
     service._clear_pending_reply_flag = AsyncMock()
     service._track_message_in_history = AsyncMock()
-    monkeypatch.setattr(whatsapp_module.requests, "post", MagicMock(side_effect=RuntimeError("http")))
+    monkeypatch.setattr(whatsapp_module, "post_to_gateway", AsyncMock(side_effect=RuntimeError("http")))
     result = await service.send_interactive_message("1", "button", {"body": {"text": "x"}})
     assert result.success is False
     assert (await service.send_configurable_buttons("1", "body", [])).success is False

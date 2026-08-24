@@ -1298,7 +1298,7 @@ def whatsapp_service(monkeypatch):
 async def test_whatsapp_delivery_interactive_list_button_and_cache_edges(whatsapp_service, monkeypatch):
     service, retry = whatsapp_service
     response = SimpleNamespace(status_code=200, text="ok", json=lambda: {"mid": "m1"})
-    monkeypatch.setattr(whatsapp_mod.requests, "post", Mock(return_value=response))
+    monkeypatch.setattr(whatsapp_mod, "post_to_gateway", AsyncMock(return_value=response))
     retry.retry_with_backoff.return_value = {"success": True, "attempts": 1, "result": MessageResponse(True, "m")}
     assert (await service.send_message("+919999999999", "hello", session_id="sid")).success
     assert (await service.send_message("+919999999999", "ack", clear_pending_reply=False)).success
@@ -1310,7 +1310,7 @@ async def test_whatsapp_delivery_interactive_list_button_and_cache_edges(whatsap
     assert not (await service.send_template_message("1", "welcome", [])).success
 
     assert (await service.send_interactive_message("bad", "button", {})).success is False
-    monkeypatch.setattr(whatsapp_mod.requests, "post", Mock(side_effect=RuntimeError("HTTP")))
+    monkeypatch.setattr(whatsapp_mod, "post_to_gateway", AsyncMock(side_effect=RuntimeError("HTTP")))
     assert not (await service.send_interactive_message("1", "button", {})).success
     service.send_interactive_message = AsyncMock(return_value=MessageResponse(True, "m"))
     assert (await service.send_cta_button_message("1", "body", "go", "https://x")).success

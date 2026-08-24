@@ -30,6 +30,7 @@ from openai import APIError, APITimeoutError, RateLimitError, APIConnectionError
 from app.config import get_settings
 from app.tools.interaction_logger import get_interaction_logger
 from app.utils.logging_utils import log_service_method, get_user_phone_context
+from app.utils.turn_trace import current_turn_id
 from app.utils.datetime_utils import format_date_display, format_date_for_validation_error, add_business_days, calculate_working_days_from_now, utc_now
 
 # from app.services.global_error_handler import handle_api_error  # Removed to avoid circular import
@@ -76,6 +77,77 @@ class OpenAIService:
         # OpenAI call tracking for performance monitoring
         self.call_counts = {}
 
+    @staticmethod
+    def _instrument_client(client: AsyncOpenAI) -> AsyncOpenAI:
+        """
+        Wrap ``responses.create`` once so every model call reports its own cost.
+
+        There are around forty call sites in this module and the ``openai`` and
+        ``httpx`` loggers are pinned to WARNING, so before this the LLM layer was
+        completely silent: a turn could spend seconds inside a model call with
+        nothing in the log to show it. Wrapping the shared client at construction
+        instruments all of those call sites from one place, and the wrapper is
+        marked so a reused client is never double-wrapped.
+
+        Instrumentation must never break a reply, so a client the SDK will not let
+        us patch is returned unchanged.
+        """
+        try:
+            original = client.responses.create
+            if getattr(original, "_turn_traced", False):
+                return client
+
+            async def traced_create(*args: Any, **kwargs: Any) -> Any:
+                model = kwargs.get("model", "unknown")
+                turn_id = current_turn_id()
+                started = time.perf_counter()
+                try:
+                    result = await original(*args, **kwargs)
+                except Exception as exc:
+                    logger.error(
+                        f"[OPENAI] [TURN:{turn_id}] model={model} FAILED after "
+                        f"{(time.perf_counter() - started) * 1000:.0f}ms: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    raise
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                usage = getattr(result, "usage", None)
+                tokens = ""
+                if usage is not None:
+                    tokens = (
+                        f" input_tokens={getattr(usage, 'input_tokens', '?')}"
+                        f" output_tokens={getattr(usage, 'output_tokens', '?')}"
+                    )
+                message = (
+                    f"[OPENAI] [TURN:{turn_id}] model={model} ok in "
+                    f"{elapsed_ms:.0f}ms{tokens}"
+                )
+                # A model call is usually the largest controllable cost in a turn,
+                # so a slow one is escalated rather than left at INFO.
+                if elapsed_ms >= 2000:
+                    logger.warning(f"{message} | SLOW_LLM_CALL")
+                else:
+                    logger.info(message)
+                return result
+
+            traced_create._turn_traced = True  # type: ignore[attr-defined]
+            client.responses.create = traced_create  # type: ignore[method-assign]
+        except Exception as exc:
+            logger.debug(f"[OPENAI] Could not instrument the client for timing: {exc}")
+        return client
+
+    def _new_client(self) -> AsyncOpenAI:
+        """Build a fresh instrumented Azure OpenAI client."""
+        return self._instrument_client(
+            AsyncOpenAI(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                base_url=os.getenv("AZURE_OPENAI_ENDPOINT"),
+                default_query={"api-version": "preview"},
+                timeout=15.0,
+                max_retries=1,
+            )
+        )
+
     @property
     def client(self) -> AsyncOpenAI:
         """
@@ -85,13 +157,7 @@ class OpenAIService:
         This ensures resilience when close_sync() is called between requests.
         """
         if self._client_closed:
-            self._client = AsyncOpenAI(
-                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-                base_url=os.getenv("AZURE_OPENAI_ENDPOINT"),
-                default_query={"api-version": "preview"},
-                timeout=15.0,
-                max_retries=1,
-            )
+            self._client = self._new_client()
             OpenAIService._shared_client = self._client
             self._client_closed = False
             logger.debug("OpenAI client (re)initialized")
@@ -99,13 +165,7 @@ class OpenAIService:
             if OpenAIService._shared_client is not None:
                 self._client = OpenAIService._shared_client
             else:
-                self._client = AsyncOpenAI(
-                    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-                    base_url=os.getenv("AZURE_OPENAI_ENDPOINT"),
-                    default_query={"api-version": "preview"},
-                    timeout=15.0,
-                    max_retries=1,
-                )
+                self._client = self._new_client()
                 OpenAIService._shared_client = self._client
                 logger.debug("OpenAI client (re)initialized")
         return self._client

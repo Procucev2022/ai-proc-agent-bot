@@ -592,8 +592,10 @@ async def test_queue_dataclasses_enqueue_batch_and_background_paths(monkeypatch)
     service._refresh_batch_timer = AsyncMock()
     await service.enqueue_message({"from": "1", "timestamp": 2, "type": "image", "content": ""})
     service._refresh_batch_timer.assert_awaited_once_with("1")
-    with pytest.raises(ValueError):
-        await service.enqueue_message({"from": "1", "timestamp": "bad"})
+    # An unreadable timestamp falls back to arrival time; the message survives.
+    service.redis.zadd.reset_mock()
+    await service.enqueue_message({"from": "1", "timestamp": "bad", "type": "text", "content": "kept"})
+    service.redis.zadd.assert_awaited()
     service.redis.zadd.side_effect = RuntimeError("redis")
     with pytest.raises(RuntimeError):
         await service.enqueue_message({"from": "1", "timestamp": 1, "content": "x"})
@@ -1224,7 +1226,7 @@ async def test_whatsapp_send_retry_interactive_cache_and_formatters(monkeypatch)
     await service._clear_pending_reply_flag("1")
 
     # Real send path exercises concatenation, invalid phone, API success/error, and cache clearing.
-    monkeypatch.setattr(wa_mod.requests, "post", Mock(return_value=SimpleNamespace(status_code=200, text="ok", json=lambda: {"mid": "id"})))
+    monkeypatch.setattr(wa_mod, "post_to_gateway", AsyncMock(return_value=SimpleNamespace(status_code=200, text="ok", json=lambda: {"mid": "id"})))
     redis.delete.side_effect = None
     redis.get.return_value = {"irrelevant_response": {"user_message": "earlier"}}
     async def run_retry(fn):
@@ -1238,9 +1240,9 @@ async def test_whatsapp_send_retry_interactive_cache_and_formatters(monkeypatch)
     service._format_phone_number.return_value = ""
     assert not (await service.send_message("1", "body")).success
     service._format_phone_number.return_value = "919999999999"
-    monkeypatch.setattr(wa_mod.requests, "post", Mock(return_value=SimpleNamespace(status_code=400, text="bad", json=lambda: {"Error": "no"})))
+    monkeypatch.setattr(wa_mod, "post_to_gateway", AsyncMock(return_value=SimpleNamespace(status_code=400, text="bad", json=lambda: {"Error": "no"})))
     assert not (await service.send_message("1", "body")).success
-    monkeypatch.setattr(wa_mod.requests, "post", Mock(side_effect=RuntimeError("post")))
+    monkeypatch.setattr(wa_mod, "post_to_gateway", AsyncMock(side_effect=RuntimeError("post")))
     assert not (await service.send_message("1", "body")).success
 
     retry.retry_with_backoff.side_effect = None
@@ -1250,12 +1252,12 @@ async def test_whatsapp_send_retry_interactive_cache_and_formatters(monkeypatch)
     assert not (await service.send_template_message("1", "welcome", [])).success
 
     service._format_phone_number.return_value = "919999999999"
-    monkeypatch.setattr(wa_mod.requests, "post", Mock(return_value=SimpleNamespace(status_code=200, text="ok", json=lambda: {"status": "ok"})))
+    monkeypatch.setattr(wa_mod, "post_to_gateway", AsyncMock(return_value=SimpleNamespace(status_code=200, text="ok", json=lambda: {"status": "ok"})))
     assert (await service.send_interactive_message("1", "button", {"body": {"text": "x"}})).success
     service._format_phone_number.return_value = ""
     assert not (await service.send_interactive_message("1", "button", {})).success
     service._format_phone_number.return_value = "919999999999"
-    monkeypatch.setattr(wa_mod.requests, "post", Mock(side_effect=RuntimeError("interactive")))
+    monkeypatch.setattr(wa_mod, "post_to_gateway", AsyncMock(side_effect=RuntimeError("interactive")))
     assert not (await service.send_interactive_message("1", "button", {})).success
     assert (await service.send_cta_button_message("1", "body", "go", "https://x")).success is False
 

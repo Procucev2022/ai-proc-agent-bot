@@ -366,8 +366,12 @@ async def test_queue_enqueue_polling_and_batch_retry_lock_paths(monkeypatch):
     service._refresh_batch_timer = AsyncMock()
     await service.enqueue_message({"from": "1", "timestamp": 2, "type": "text", "text": {"body": "again"}})
     service._refresh_batch_timer.assert_awaited_once_with("1")
-    with pytest.raises(ValueError):
-        await service.enqueue_message({"from": "1", "timestamp": "not-a-date"})
+    # An unreadable gateway timestamp must not cost the message. This used to
+    # raise ValueError out of enqueue_message, which logged an error, re-raised,
+    # and left the user with no reply at all.
+    service.redis.zadd.reset_mock()
+    await service.enqueue_message({"from": "1", "timestamp": "not-a-date", "type": "text", "text": {"body": "still me"}})
+    service.redis.zadd.assert_awaited()
 
     poll_lock = FakeLock(acquired=True, release_error=RuntimeError("release"))
     service = queue_service()

@@ -81,7 +81,15 @@ async def test_webhook_routing_and_delivery_callbacks(monkeypatch):
         monkeypatch.setattr(webhook, "parse_webhook_data", AsyncMock(return_value={"type": message_type, "from": "1"}))
         result = await webhook.handle_webhook.__wrapped__(request, background)
         assert result.status_code == 200
-        background.add_task.assert_called_with(task, {"type": message_type, "from": "1"})
+        # The handler stamps turn-correlation keys onto the payload so the id
+        # survives the queue hop, so assert on routing and the gateway fields
+        # rather than on dict equality.
+        routed_task, routed_payload = background.add_task.call_args.args
+        assert routed_task is task
+        assert routed_payload["type"] == message_type
+        assert routed_payload["from"] == "1"
+        assert routed_payload["_turn_id"]
+        assert isinstance(routed_payload["_received_at"], float)
 
     monkeypatch.setattr(webhook, "parse_webhook_data", AsyncMock(return_value=None))
     assert (await webhook.handle_webhook.__wrapped__(request, background)).body == b'{"status":"ok"}'
@@ -519,8 +527,9 @@ def test_database_context_and_manager_paths(monkeypatch):
     owned = Session()
     monkeypatch.setattr(database, "get_db_session", lambda: owned)
     manager = database.DatabaseManager()
+    assert manager.session is owned  # the owned session is checked out on demand
     manager.close()
-    assert owned.closed and manager.session is None
+    assert owned.closed and manager.has_session is False
     with database.DatabaseManager(session=Session()) as entered:
         assert entered.session is not None
 

@@ -165,21 +165,25 @@ class PurchaseWorkflowHandler:
             from app.services.session_management_service import SessionManagementService
             from app.database import DatabaseManager
 
-            cancel_service = CancelService(
-                whatsapp_service=self.whatsapp_service,
-                session_manager=SessionManagementService(DatabaseManager()),
-                db_manager=DatabaseManager()
-            )
+            # One manager, closed on the way out. This used to build two separate
+            # DatabaseManager instances and close neither, so every non-procurable
+            # cancellation leaked two pooled connections.
+            with DatabaseManager() as db_manager:
+                cancel_service = CancelService(
+                    whatsapp_service=self.whatsapp_service,
+                    session_manager=SessionManagementService(db_manager),
+                    db_manager=db_manager
+                )
 
-            # Clear workflow state without confirmation (automatic cancellation)
-            await cancel_service._clear_workflow_state(session)
+                # Clear workflow state without confirmation (automatic cancellation)
+                await cancel_service._clear_workflow_state(session)
 
-            # Get user type and send cancellation message with buttons
-            user_role = user.role.value if hasattr(user.role, 'value') else user.role
-            user_type = "buyer" if user_role == "buyer" else "seller"
+                # Get user type and send cancellation message with buttons
+                user_role = user.role.value if hasattr(user.role, 'value') else user.role
+                user_type = "buyer" if user_role == "buyer" else "seller"
 
-            # Use cancel service's method to send the appropriate message with buttons
-            await cancel_service._send_cancellation_message(user.phone_number, user_type)
+                # Use cancel service's method to send the appropriate message with buttons
+                await cancel_service._send_cancellation_message(user.phone_number, user_type)
 
             logger.info(f"Workflow cancelled for user {user.phone_number} due to non-procurable items")
 

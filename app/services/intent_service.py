@@ -183,6 +183,12 @@ class IntentService:
                         "confidence": 100,
                         "reasoning": "Fast-path local matching: Simple greeting keyword",
                         "success": True,
+                        # Flags a bare greeting with no other content. Downstream this
+                        # means there is nothing for a language model to interpret, so
+                        # the greeting pleasantry can be produced locally instead of
+                        # costing an OpenAI round trip on the user's very first
+                        # message - the exact turn users report as slow.
+                        "simple_greeting": True,
                         "context_analysis": {"conversation_stage": "initial"}
                     }
 

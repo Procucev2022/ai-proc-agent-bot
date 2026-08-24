@@ -525,6 +525,50 @@ def test_remote_connection() -> bool:
         return False
 
 
+# Operations that have already reported a missing session table in this process.
+# A missing table is an environment fact, not an event: it is true for every
+# message until someone changes the schema or the database grant. Reporting it in
+# full on each occurrence produced 217 stacked SQLAlchemy tracebacks across the
+# analysed window, which buried the failures that were actually actionable.
+_missing_table_reported: set = set()
+
+
+def _is_missing_table_error(exc: Exception) -> bool:
+    """
+    Whether this database error means the table simply is not there.
+
+    Matched on the message rather than the driver's error class so it works for
+    MySQL error 1146 and the SQLite equivalent alike. This is a permanent
+    condition: retrying it cannot succeed, so callers use this to skip straight
+    to their fallback instead of spending a retry on it.
+    """
+    text = str(exc).lower()
+    return "doesn't exist" in text or "no such table" in text or "1146" in text
+
+
+def _report_missing_table(operation: str, exc: Exception) -> None:
+    """
+    Report a missing session table once per operation, then stay quiet.
+
+    In the deployment where this was observed, ``init_database()`` had already
+    logged that schema creation was skipped because the database user is
+    read-only ("CREATE command denied"), so the table can never appear without an
+    operator granting rights or provisioning it. The first report therefore says
+    what to do about it; the rest are DEBUG so a real error is still visible.
+    """
+    if operation not in _missing_table_reported:
+        _missing_table_reported.add(operation)
+        logger.warning(
+            f"[SCHEMA-MISSING] {operation}: the conversation session table does not exist in "
+            f"this database, so session history is not being persisted. Redis remains the "
+            f"source of truth and the conversation is unaffected. Create the table, or grant "
+            f"the application user CREATE rights so init_database() can. "
+            f"Further occurrences are logged at DEBUG. Detail: {exc}"
+        )
+    else:
+        logger.debug(f"[SCHEMA-MISSING] {operation}: session table still absent")
+
+
 class DatabaseManager:
     """
     Database manager class for advanced database operations.
@@ -556,18 +600,50 @@ class DatabaseManager:
         Initialize DatabaseManager.
 
         Args:
-            session: Optional database session. If not provided, creates a new one.
+            session: Optional database session. If not provided, one is created
+                    lazily on first use.
                     When session is provided, DatabaseManager will NOT close it.
-                    When session is None, DatabaseManager creates and owns the session,
-                    and MUST close it via close() or context manager.
+                    When session is None, DatabaseManager creates and owns the
+                    session, and MUST close it via close() or context manager.
+
+        The owned session is created on first access rather than here. Around
+        twenty-five call sites construct this class speculatively -- for example
+        ``ExitService(..., db_manager=None)`` and ``CancelService(..., db_manager=None)``
+        build one per turn and most of those turns never touch the database. Doing
+        the checkout in __init__ took a connection out of the pool for every one of
+        them and then leaked it, which is what produced the steady stream of
+        "garbage collected with unclosed session" warnings. Deferring the checkout
+        makes an unused manager free and unleakable.
         """
         self._owns_session = session is None
-        self.session = session or get_db_session()
+        self._session = session
 
-        if self._owns_session:
-            logger.debug(f"DatabaseManager created and owns session: {id(self.session)}")
-        else:
-            logger.debug(f"DatabaseManager using provided session: {id(self.session)}")
+        if not self._owns_session:
+            logger.debug(f"DatabaseManager using provided session: {id(self._session)}")
+
+    @property
+    def session(self):
+        """The database session, created on first use when this manager owns it."""
+        if self._session is None:
+            self._session = get_db_session()
+            logger.debug(f"DatabaseManager created and owns session: {id(self._session)}")
+        return self._session
+
+    @session.setter
+    def session(self, value):
+        """Allow the session to be replaced or cleared."""
+        self._session = value
+
+    @property
+    def has_session(self) -> bool:
+        """
+        Whether a session is currently held.
+
+        Use this instead of testing ``session`` when the intent is to inspect
+        state: reading ``session`` creates one on demand, so it can never be
+        falsey and checking it would defeat the point.
+        """
+        return self._session is not None
 
     def close(self):
         """
@@ -576,15 +652,17 @@ class DatabaseManager:
         This should be called when done using DatabaseManager to prevent
         connection leaks. Alternatively, use DatabaseManager as a context manager.
         """
-        if self._owns_session and self.session:
+        # Reads _session directly: touching the property would create the very
+        # session we are trying to avoid holding.
+        if self._owns_session and self._session:
             try:
-                self.session.close()
-                logger.debug(f"DatabaseManager closed owned session: {id(self.session)}")
+                self._session.close()
+                logger.debug(f"DatabaseManager closed owned session: {id(self._session)}")
                 _log_pool_status("after DatabaseManager.close()")
             except Exception as e:
                 logger.error(f"Error closing DatabaseManager session: {e}")
             finally:
-                self.session = None
+                self._session = None
 
     def __enter__(self):
         """Context manager entry."""
@@ -597,8 +675,14 @@ class DatabaseManager:
 
     def __del__(self):
         """Destructor - cleanup session if still open."""
-        if self._owns_session and self.session:
-            logger.warning(f"DatabaseManager being garbage collected with unclosed session: {id(self.session)}. Use context manager or call close() explicitly.")
+        # Reads _session directly, for two reasons: creating a session during
+        # garbage collection would be a genuine leak, and the warning must only
+        # fire when a connection really was checked out and left open.
+        if self._owns_session and getattr(self, "_session", None):
+            logger.warning(
+                f"DatabaseManager being garbage collected with unclosed session: "
+                f"{id(self._session)}. Use context manager or call close() explicitly."
+            )
             self.close()
 
     def get_connection_pool_status(self):
@@ -899,11 +983,15 @@ class DatabaseManager:
             return existing_session
 
         except SQLAlchemyError as e:
-            logger.error(f"Database error in append_session_data for {session_id}: {e}")
             self.session.rollback()
-            err_str = str(e).lower()
-            if "doesn't exist" in err_str or "no such table" in err_str or "1146" in err_str:
+            if _is_missing_table_error(e):
+                # Checked before logging, and before the fallback below: a missing
+                # table cannot be fixed by saving instead of appending, so the old
+                # order produced an ERROR here plus another one from
+                # save_conversation_session plus a third from its retry.
+                _report_missing_table("append_session_data", e)
                 return ConversationSession(**session_data)
+            logger.error(f"Database error in append_session_data for {session_id}: {e}")
             # Fallback to regular save
             return self.save_conversation_session(session_data)
 
@@ -969,12 +1057,13 @@ class DatabaseManager:
                 return ConversationSession(**session_data)
                 
         except SQLAlchemyError as e:
-            logger.error(f"Database error in save_conversation_session: {e}")
             self.session.rollback()
-            
-            err_str = str(e).lower()
-            if "doesn't exist" in err_str or "no such table" in err_str or "1146" in err_str:
+
+            if _is_missing_table_error(e):
+                _report_missing_table("save_conversation_session", e)
                 return ConversationSession(**session_data)
+
+            logger.error(f"Database error in save_conversation_session: {e}")
 
             # Try to fetch existing session after rollback
             try:
@@ -1049,6 +1138,9 @@ class DatabaseManager:
             return session
 
         except SQLAlchemyError as e:
-            logger.error(f"Database error in get_conversation_session: {e}")
             self.session.rollback()
+            if _is_missing_table_error(e):
+                _report_missing_table("get_conversation_session", e)
+                return None
+            logger.error(f"Database error in get_conversation_session: {e}")
             return None

@@ -26,11 +26,20 @@ import asyncio
 import hashlib
 import time
 import json
+from datetime import datetime
 from typing import Dict, List, Optional, Any
 
 from redis.asyncio import Redis
 
 from app.config import get_settings
+from app.utils.logging_utils import UserPhoneContext
+from app.utils.turn_trace import (
+    RECEIVED_AT_FIELD,
+    TURN_ID_FIELD,
+    current_turn_id,
+    resume_turn,
+    stage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +53,20 @@ PLACEHOLDER_MESSAGE_IDS = frozenset({"", "-", "NA", "N/A", "NONE", "NULL", "NIL"
 # ============================================================================
 # Data Classes
 # ============================================================================
+
+def _only_known_fields(cls: Any, data: Dict) -> Dict:
+    """
+    Drop keys the dataclass does not declare.
+
+    These records round-trip through Redis, so during a rolling deploy one
+    revision reads what another wrote. Without this filter, adding a field makes
+    the older revision raise ``TypeError: unexpected keyword argument`` on every
+    queued message it picks up -- which silently strands those messages and the
+    user never gets a reply.
+    """
+    known = {f.name for f in dataclasses.fields(cls)}
+    return {key: value for key, value in data.items() if key in known}
+
 
 @dataclasses.dataclass
 class Message:
@@ -60,7 +83,18 @@ class Message:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'Message':
-        return cls(**data)
+        return cls(**_only_known_fields(cls, data))
+
+    @property
+    def turn_id(self) -> str:
+        """Correlation id stamped by the webhook, or ``'-'`` when absent."""
+        return str((self.webhook_data or {}).get(TURN_ID_FIELD) or "-")
+
+    @property
+    def received_at(self) -> Optional[float]:
+        """Wall-clock time the webhook accepted this message, when known."""
+        value = (self.webhook_data or {}).get(RECEIVED_AT_FIELD)
+        return float(value) if isinstance(value, (int, float)) else None
 
 
 @dataclasses.dataclass
@@ -72,13 +106,34 @@ class Batch:
     message_type: str
     message_count: int
     created_at: float
+    # Correlation ids of the messages merged into this batch, so the reply can be
+    # traced back to the exact webhook that triggered it even after the message
+    # has been through Redis and a different worker.
+    turn_ids: List[str] = dataclasses.field(default_factory=list)
+    # Receipt time of the oldest message in the batch. Latency has to be measured
+    # from when the user's message arrived, not from when the batch was built.
+    received_at: Optional[float] = None
 
     def to_dict(self) -> Dict:
         return dataclasses.asdict(self)
     
     @classmethod
     def from_dict(cls, data: Dict) -> 'Batch':
-        return cls(**data)
+        return cls(**_only_known_fields(cls, data))
+
+    @property
+    def turn_id(self) -> str:
+        """Primary correlation id for this batch."""
+        return self.turn_ids[0] if self.turn_ids else "-"
+
+    def as_trace_payload(self) -> Dict[str, Any]:
+        """Build the payload ``turn_trace.resume_turn`` expects."""
+        return {
+            TURN_ID_FIELD: self.turn_id,
+            RECEIVED_AT_FIELD: self.received_at,
+            "from": self.user_phone,
+            "content": self.concatenated_content,
+        }
 
 
 @dataclasses.dataclass
@@ -118,9 +173,20 @@ class MessageQueueService:
     - {user}:session -> JSON (ProcessingSession, 60s TTL)
     
     Background Tasks (run in each worker, idempotent):
-    - Batch poller: Creates batches when timer expires
+    - Batch flush: closes one user's window and answers immediately (hot path)
+    - Batch poller: safety net for windows and batches the flush missed
     - Monitor: Sends please-wait messages, logs slow batches
     """
+
+    # Class-level defaults so an instance built without __init__ still behaves.
+    # __getattr__ forwards unknown names to WhatsAppService, so a missing tuning
+    # attribute would otherwise surface as a baffling error about the wrong class
+    # from inside a background loop. Only immutable values belong here; mutable
+    # state is created per instance (see flush_tasks).
+    poll_interval: float = 1.0
+    max_flush_waits: int = 10
+    batch_window: int = 1
+    _running: bool = True
 
     def __init__(self):
         settings = get_settings()
@@ -133,6 +199,7 @@ class MessageQueueService:
         self.please_wait_threshold = settings.please_wait_threshold_seconds  # Default: 15s
         self.max_please_wait_count = settings.max_please_wait_count  # Default: 3
         self.monitoring_poll_interval = settings.monitoring_poll_interval_seconds  # Default: 5s
+        self.poll_interval = max(0.1, settings.batch_poll_interval_seconds)
         self.response_ready_ttl = max(60, self.please_wait_threshold * 4)
         self.monitor_lock_ttl = 180
         self.please_wait_interval_ttl = 600
@@ -141,13 +208,23 @@ class MessageQueueService:
         from app.services.whatsapp_service import WhatsAppService
         self.whatsapp_service = WhatsAppService()
         
-        # Background task handles (for lifecycle management)
+        # Background task handles (for lifecycle management).
+        # Assigned before anything that can fail, because __getattr__ delegates
+        # unknown attributes to WhatsAppService: a half-initialised instance turns
+        # every `self._running` read into a confusing AttributeError about
+        # WhatsAppService and kills the poller for the lifetime of the worker.
         self._background_tasks: List[asyncio.Task] = []
-        self._running: bool = True
-        
-        logger.debug(
-            f"[INIT] MessageQueueService initialized: "
+        self._running = True
+
+        # Upper bound on how many times a flush task will re-arm while the user
+        # keeps typing. Without a bound, a user sending a message every window
+        # could defer their own reply indefinitely.
+        self.max_flush_waits = max(1, settings.max_batch_flush_waits)
+
+        logger.info(
+            f"[MESSAGE_QUEUE] [INIT] MessageQueueService initialized: "
             f"batch_window={self.batch_window}s, "
+            f"max_flush_waits={self.max_flush_waits}, "
             f"please_wait_threshold={self.please_wait_threshold}s, "
             f"monitoring_poll_interval={self.monitoring_poll_interval}s, "
             f"response_ready_ttl={self.response_ready_ttl}s, "
@@ -163,6 +240,55 @@ class MessageQueueService:
 
     def _key_message(self, user_phone: str, message_id: str) -> str:
         return f"{user_phone}:message:{message_id}"
+
+    # Timestamp shapes the gateway has been observed to send, plus the
+    # microsecond form its own documentation uses
+    # ('timestamp=2025-09-13 13:54:22.125300'). Ordered most precise first so the
+    # sub-second value is kept when it is there: the dedupe key is built from this
+    # timestamp, so truncating to whole seconds makes two genuinely different
+    # messages sent inside the same second collide, and the second one is then
+    # silently dropped for 24 hours.
+    _TIMESTAMP_FORMATS = (
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S",
+    )
+
+    @classmethod
+    def _parse_timestamp(cls, raw: Any) -> float:
+        """
+        Convert the gateway's timestamp to an epoch float, never raising.
+
+        Previously this parsed with a single hard-coded ``'%Y-%m-%d %H:%M:%S'``.
+        Any other shape -- including the microsecond form in the gateway's own
+        documentation -- raised ValueError out of ``enqueue_message``, which
+        logged an error and re-raised, so the message was dropped and the user got
+        no reply at all. A timestamp is metadata; failing to read it must never
+        cost the message.
+        """
+        if isinstance(raw, (int, float)):
+            return float(raw)
+
+        text = str(raw or "").strip()
+        if text:
+            for fmt in cls._TIMESTAMP_FORMATS:
+                try:
+                    return datetime.strptime(text, fmt).timestamp()
+                except ValueError:
+                    continue
+            try:
+                return datetime.fromisoformat(text).timestamp()
+            except ValueError:
+                pass
+
+        # Arrival time is a usable stand-in: it keeps ordering sane and keeps the
+        # dedupe key unique, which is all this value is used for.
+        logger.warning(
+            f"[ENQUEUE] Unrecognised gateway timestamp {raw!r}; using arrival time "
+            f"so the message is still processed"
+        )
+        return time.time()
 
     @staticmethod
     def _resolve_message_id(
@@ -239,18 +365,12 @@ class MessageQueueService:
         4. Start/refresh batch timer
         5. Ensure background tasks are running
         """
+        turn_id = current_turn_id()
         try:
             # Parse webhook data
             timestamp_raw = webhook_data.get("timestamp", time.time())
-            
-            # Handle string timestamp format
-            if isinstance(timestamp_raw, str):
-                from datetime import datetime
-                dt = datetime.strptime(timestamp_raw, '%Y-%m-%d %H:%M:%S')
-                timestamp = dt.timestamp()
-            else:
-                timestamp = float(timestamp_raw)
-            
+            timestamp = self._parse_timestamp(timestamp_raw)
+
             user_phone = webhook_data.get("from", "").lstrip('+')
             message_type = webhook_data.get("type", "text")
             content = webhook_data.get("content", "")
@@ -285,28 +405,135 @@ class MessageQueueService:
             incoming_key = self._key_incoming(user_phone)
             # Deduplicate retries by message_id while preserving identical content.
             if not await self.redis.set(self._key_message(user_phone, message_id), "1", nx=True, ex=86400):
-                logger.debug(f"[ENQUEUE] Duplicate message_id='{message_id}', ignored")
+                logger.info(
+                    f"[MESSAGE_QUEUE] [ENQUEUE] [TURN:{turn_id}] Duplicate message_id='{message_id}', "
+                    f"user={user_phone}, ignored (gateway retry or identical content in the same second)"
+                )
                 return
             await self.redis.zadd(incoming_key, {json.dumps(message.to_dict()): timestamp})
-            
-            logger.debug(
-                f"[ENQUEUE] message_id='{message_id}', user={user_phone}, "
-                f"type={message_type}"
+
+            # Deliberately no queue-depth read here: this is the latency-critical
+            # path and the depth is already reported by [BATCH_CREATE], so an
+            # extra Redis round trip per message would buy nothing.
+            logger.info(
+                f"[MESSAGE_QUEUE] [ENQUEUE] [TURN:{turn_id}] message_id='{message_id}', user={user_phone}, "
+                f"type={message_type}, chars={len(content)}"
             )
-            
+
             # Check if user is currently processing
             processing_key = self._key_processing(user_phone)
             is_processing = await self.redis.exists(processing_key)
-            
+            if is_processing:
+                logger.info(
+                    f"[MESSAGE_QUEUE] [ENQUEUE] [TURN:{turn_id}] {user_phone} is already processing an "
+                    f"earlier batch; this message waits for that turn to finish"
+                )
+
             # Always allow the batching window to collect messages, including for idle users.
             await self._refresh_batch_timer(user_phone)
-            
-            # NOTE: Background tasks are started in main.py lifespan
-            # No need to ensure them here (prevents duplication)
-            
+
+            # Flush this user's batch as soon as the window closes. Previously the
+            # only trigger was the shared one-second poller, which added its own
+            # tick plus global-lock contention on top of the window -- around a
+            # second of dead time on every single reply. The poller stays as a
+            # safety net for anything this worker fails to flush.
+            self._schedule_batch_flush(user_phone)
+
         except Exception as e:
             logger.error(f"[ENQUEUE] Error: {e}", exc_info=True)
             raise
+
+    @property
+    def flush_tasks(self) -> Dict[str, "asyncio.Task"]:
+        """
+        Per-user tasks waiting to close a batch window, created on first use.
+
+        Read straight out of ``__dict__`` so the lookup can never fall through to
+        ``__getattr__``, and so an instance built without ``__init__`` still gets
+        its own dict rather than sharing one across instances.
+        """
+        tasks = self.__dict__.get("_flush_tasks")
+        if tasks is None:
+            tasks = {}
+            self.__dict__["_flush_tasks"] = tasks
+        return tasks
+
+    def _schedule_batch_flush(self, user_phone: str) -> None:
+        """
+        Ensure exactly one task per user is waiting to close the batch window.
+
+        Idempotent: a second message arriving inside the window extends the timer
+        via Redis, and the task already waiting picks the new deadline up, so no
+        extra task is created.
+        """
+        existing = self.flush_tasks.get(user_phone)
+        if existing is not None and not existing.done():
+            logger.debug(
+                f"[MESSAGE_QUEUE] [FLUSH] Flush already armed for {user_phone}, "
+                f"window extended instead of arming a second one"
+            )
+            return
+
+        coroutine = self._flush_after_window(user_phone)
+        try:
+            task = asyncio.create_task(coroutine, name=f"batch_flush:{user_phone}")
+        except RuntimeError:
+            # No running loop. The poller remains responsible for this user's
+            # batch, so it is not fatal, but the coroutine has to be closed or it
+            # leaks and emits a "never awaited" warning.
+            coroutine.close()
+            logger.warning(
+                f"[MESSAGE_QUEUE] [FLUSH] No running event loop to arm a flush for "
+                f"{user_phone}; the batch poller will pick it up instead"
+            )
+            return
+
+        self.flush_tasks[user_phone] = task
+        task.add_done_callback(lambda _t, phone=user_phone: self.flush_tasks.pop(phone, None))
+
+    async def _flush_after_window(self, user_phone: str) -> None:
+        """
+        Wait out the batching window for one user, then create their batch.
+
+        Reads the remaining TTL from Redis rather than sleeping a fixed interval,
+        so a window extended by a follow-up message is honoured exactly and the
+        batch is created the moment the window truly closes.
+        """
+        trigger_key = self._key_batch_trigger(user_phone)
+        turn_id = current_turn_id()
+        try:
+            waits = 0
+            while waits < self.max_flush_waits:
+                remaining_ms = await self.redis.pttl(trigger_key)
+                # Redis returns -2 when the key is gone and -1 when it has no
+                # expiry; both mean there is nothing left to wait for.
+                if remaining_ms is None or remaining_ms < 0:
+                    break
+                waits += 1
+                await asyncio.sleep(remaining_ms / 1000.0)
+
+            if waits >= self.max_flush_waits:
+                logger.warning(
+                    f"[MESSAGE_QUEUE] [FLUSH] [TURN:{turn_id}] {user_phone} kept extending the batch "
+                    f"window {waits} times; answering now to bound the wait"
+                )
+
+            logger.info(
+                f"[MESSAGE_QUEUE] [FLUSH] [TURN:{turn_id}] Batch window closed for {user_phone} "
+                f"after {waits} wait(s); creating batch without waiting for the poller"
+            )
+            await self._create_batch(user_phone)
+        except asyncio.CancelledError:
+            logger.debug(f"[MESSAGE_QUEUE] [FLUSH] Flush for {user_phone} cancelled during shutdown")
+            raise
+        except Exception as e:
+            # The poller still scans for this user, so a failed flush delays the
+            # reply by one poll interval instead of losing it.
+            logger.error(
+                f"[MESSAGE_QUEUE] [FLUSH] Flush failed for {user_phone}, falling back to the "
+                f"batch poller: {e}",
+                exc_info=True,
+            )
 
     # ========================================================================
     # Batch Timer Management
@@ -320,7 +547,7 @@ class MessageQueueService:
         """
         trigger_key = self._key_batch_trigger(user_phone)
         await self.redis.setex(trigger_key, self.batch_window, "1")
-        logger.debug(f"[TIMER] Refreshed batch timer for {user_phone}")
+        logger.info(f"[MESSAGE_QUEUE] [TIMER] Refreshed batch timer for {user_phone} (window={self.batch_window}s)")
 
     # ========================================================================
     # Background Tasks (Idempotent)
@@ -352,91 +579,141 @@ class MessageQueueService:
             self._background_tasks.append(task)
             logger.debug("[BACKGROUND] Started monitoring loop task")
 
+    async def _scan_keys(self, pattern: str) -> List[str]:
+        """Collect every key matching ``pattern`` with a cursor-based scan."""
+        cursor = 0
+        found: List[str] = []
+        while True:
+            cursor, keys = await self.redis.scan(cursor=cursor, match=pattern, count=100)
+            found.extend(keys)
+            if cursor == 0 or not self._running:
+                break
+        return found
+
+    async def _poll_once(self) -> int:
+        """
+        Run one poll cycle and return how many batches it kicked off.
+
+        Split out of the loop so a failure has an obvious blast radius and so the
+        cycle can be tested without driving the infinite loop around it.
+        """
+        started = 0
+
+        # Users with messages still waiting for their window to close.
+        for key in await self._scan_keys("*:incoming"):
+            if not self._running:
+                break
+            user_phone = key.rsplit(":incoming", 1)[0]
+            trigger_key = self._key_batch_trigger(user_phone)
+            if await self.redis.exists(trigger_key):
+                continue
+            message_count = await self.redis.zcard(key)
+            if message_count > 0:
+                logger.info(
+                    f"[MESSAGE_QUEUE] [POLLER] Timer expired for {user_phone}, "
+                    f"{message_count} messages, creating batch"
+                )
+                await self._create_batch(user_phone)
+                started += 1
+
+        # Batches already built but never started. Previously nothing looked here:
+        # a worker that died between claiming a batch and answering it, or a
+        # cleanup that failed, left the batch in {phone}:outgoing where the
+        # incoming-only scan could never see it, and that user's reply was lost
+        # permanently unless they happened to send another message.
+        for key in await self._scan_keys("*:outgoing"):
+            if not self._running:
+                break
+            user_phone = key.rsplit(":outgoing", 1)[0]
+            if await self.redis.exists(self._key_processing(user_phone)):
+                continue
+            pending = await self.redis.llen(key)
+            if pending > 0:
+                logger.warning(
+                    f"[MESSAGE_QUEUE] [POLLER] Recovering {pending} stranded batch(es) for "
+                    f"{user_phone}: built but never processed, so this reply was already late"
+                )
+                await self._try_start_processing(user_phone)
+                started += 1
+
+        return started
+
     async def run_batch_poller(self) -> None:
         """
-        Background task: Poll for users with expired batch timers.
-        Creates batches when timer expires and messages exist.
-        
-        Runs every 1 second. Uses distributed lock to ensure only ONE worker
-        polls at a time across all Gunicorn workers (prevents duplicate polling).
+        Background task: safety net that creates and restarts batches.
+
+        Since :meth:`_schedule_batch_flush` now closes each user's window
+        directly, this loop is no longer on the happy path. It exists to catch
+        what that flush cannot: a window armed by a worker that then died, and a
+        batch stranded mid-flight.
+
+        The loop must outlive Redis. It previously died for the lifetime of the
+        worker on any error that escaped the inner handler, after which no text
+        message on that worker was ever answered again; the observed trigger was
+        an ``AttributeError`` on ``self._running`` misreported through
+        ``__getattr__`` as a missing ``WhatsAppService`` attribute. Every
+        iteration is therefore wrapped, and the loop only exits when explicitly
+        stopped or cancelled.
         """
-        logger.debug("[POLLER] Batch poller started")
-        
-        try:
-            while self._running:
-                await asyncio.sleep(1)  # Poll every second
+        logger.info(
+            f"[MESSAGE_QUEUE] [POLLER] Batch poller started "
+            f"(interval={self.poll_interval}s, safety net for direct flush)"
+        )
+        consecutive_failures = 0
+
+        while True:
+            try:
                 if not self._running:
                     break
-                
+                await asyncio.sleep(self.poll_interval)
+                if not self._running:
+                    break
+
                 # Global poller lock - only one worker should poll at a time
-                global_poller_lock_key = "global:poller:lock"
                 poller_lock = self.redis.lock(
-                    global_poller_lock_key,
-                    timeout=2,  # 2s timeout (longer than poll cycle)
-                    blocking_timeout=0  # Non-blocking - skip if another worker is polling
+                    "global:poller:lock",
+                    timeout=max(2.0, self.poll_interval * 2),
+                    blocking_timeout=0,  # Non-blocking - skip if another worker is polling
                 )
-                
+                acquired = await poller_lock.acquire()
+                if not acquired:
+                    # Another worker is polling, skip this cycle
+                    continue
                 try:
-                    # Try to acquire global poller lock (non-blocking)
-                    acquired = await poller_lock.acquire()
-                    if not acquired:
-                        # Another worker is polling, skip this cycle
-                        continue
-                    
+                    await self._poll_once()
+                finally:
                     try:
-                        # Find all incoming queues
-                        cursor = 0
-                        incoming_keys = []
-                        while True:
-                            cursor, keys = await self.redis.scan(
-                                cursor=cursor,
-                                match="*:incoming",
-                                count=100
-                            )
-                            incoming_keys.extend(keys)
-                            if cursor == 0 or not self._running:
-                                break
-                        
-                        # Check each user for expired timer
-                        for key in incoming_keys:
-                            if not self._running:
-                                break
-                            user_phone = key.rsplit(":incoming", 1)[0]
-                            
-                            # Check if timer exists
-                            trigger_key = self._key_batch_trigger(user_phone)
-                            timer_exists = await self.redis.exists(trigger_key)
-                            if not timer_exists:
-                                # Timer expired, check if messages exist
-                                message_count = await self.redis.zcard(key)
-                                if message_count > 0:
-                                    logger.debug(
-                                        f"[POLLER] Timer expired for {user_phone}, "
-                                        f"{message_count} messages, creating batch"
-                                    )
-                                    await self._create_batch(user_phone)
-                    
-                    finally:
-                        # Always release the global poller lock safely
-                        try:
-                            await poller_lock.release()
-                        except Exception:
-                            pass
-                
-                except Exception as e:
-                    if not self._running:
-                        logger.debug(f"[POLLER] Poller cycle interrupted during shutdown: {e}")
-                        break
-                    logger.error(f"[POLLER] Error in poll cycle: {e}", exc_info=True)
-        
-        except asyncio.CancelledError:
-            logger.debug("[POLLER] Batch poller cancelled")
-            raise
-        except Exception as e:
-            if not self._running:
-                logger.debug(f"[POLLER] Batch poller stopped during shutdown: {e}")
-            else:
-                logger.error(f"[POLLER] Batch poller failed: {e}", exc_info=True)
+                        await poller_lock.release()
+                    except Exception:
+                        pass
+
+                consecutive_failures = 0
+
+            except asyncio.CancelledError:
+                logger.info("[MESSAGE_QUEUE] [POLLER] Batch poller cancelled")
+                raise
+            except Exception as e:
+                if not self._running:
+                    logger.debug(f"[POLLER] Poller cycle interrupted during shutdown: {e}")
+                    break
+                consecutive_failures += 1
+                # Escalate but keep going: a Redis outage produces one of these per
+                # cycle, and the loop surviving it is what lets queued replies go
+                # out once Redis returns.
+                logger.error(
+                    f"[MESSAGE_QUEUE] [POLLER] Poll cycle failed "
+                    f"({consecutive_failures} in a row), poller still running: "
+                    f"{type(e).__name__}: {e}",
+                    exc_info=consecutive_failures <= 3,
+                )
+                # Back off a little while the dependency is down so a hard outage
+                # does not spin the log at the full poll rate.
+                await asyncio.sleep(min(5.0, self.poll_interval * consecutive_failures))
+
+        logger.warning(
+            "[MESSAGE_QUEUE] [POLLER] Batch poller loop exited. Text messages on this "
+            "worker will only be answered by another worker's poller from now on."
+        )
 
     async def run_monitoring_loop(self) -> None:
         """
@@ -643,6 +920,9 @@ class MessageQueueService:
             logger.debug("[MONITOR] Monitoring loop cancelled")
             raise
         except Exception as e:
+            # Reported at error level and then re-armed by the caller: this loop
+            # tracks how long turns are taking, and losing it silently is how a
+            # stalled turn stops being visible at all.
             logger.error(f"[MONITOR] Monitoring loop failed: {e}", exc_info=True)
 
     # ========================================================================
@@ -709,23 +989,35 @@ class MessageQueueService:
                 # Preserve every message; only message_id is used for deduplication.
                 batch_id = f"{user_phone}+{int(time.time() * 1000)}"
                 concatenated_content = "\n".join(msg.content.strip() for msg in messages)
-                
+
+                # Carry the webhook correlation ids and the earliest receipt time
+                # into the batch so latency is still measured from when the user
+                # sent the message, not from when this batch happened to be built.
+                turn_ids = [msg.turn_id for msg in messages if msg.turn_id != "-"]
+                receipts = [msg.received_at for msg in messages if msg.received_at is not None]
+
                 batch = Batch(
                     batch_id=batch_id,
                     user_phone=user_phone,
                     concatenated_content=concatenated_content,
                     message_type=messages[0].message_type,
                     message_count=len(messages),
-                    created_at=time.time()
+                    created_at=time.time(),
+                    turn_ids=turn_ids,
+                    received_at=min(receipts) if receipts else None,
                 )
                 
                 # Add to outgoing queue
                 outgoing_key = self._key_outgoing(user_phone)
                 await self.redis.rpush(outgoing_key, json.dumps(batch.to_dict()))
-                
-                logger.debug(
-                    f"[BATCH_CREATE] Created batch {batch_id} for {user_phone}: "
-                    f"{len(messages)} messages, "
+
+                queued_for = (
+                    f"{time.time() - batch.received_at:.3f}s"
+                    if batch.received_at is not None else "unknown"
+                )
+                logger.info(
+                    f"[MESSAGE_QUEUE] [BATCH_CREATE] [TURN:{batch.turn_id}] Created batch {batch_id} "
+                    f"for {user_phone}: {len(messages)} messages, queued_for={queued_for}, "
                     f"content='{concatenated_content[:100]}...'"
                 )
         
@@ -789,8 +1081,8 @@ class MessageQueueService:
                 session_key = self._key_session(user_phone)
                 await self.redis.setex(session_key, 60, session.to_json())
                 
-                logger.debug(
-                    f"[START] Starting processing for batch {batch.batch_id}, "
+                logger.info(
+                    f"[MESSAGE_QUEUE] [START] Starting processing for batch {batch.batch_id}, "
                     f"user={user_phone}"
                 )
         
@@ -808,49 +1100,72 @@ class MessageQueueService:
         
         Note: Cleanup happens in wrapper methods when ChatService sends response.
         """
+        # Re-establish the turn the webhook opened. This task was created by
+        # _try_start_processing, potentially in a different worker to the one that
+        # took the webhook, so the correlation id has to come back out of the
+        # batch rather than out of the context.
+        trace = resume_turn(
+            batch.as_trace_payload(), source="batch", user_phone=batch.user_phone
+        )
         try:
-            logger.debug(
-                f"[PROCESS] Batch {batch.batch_id} for {batch.user_phone}: "
-                f"{batch.message_count} messages"
+            waited = (
+                f"{time.time() - batch.created_at:.3f}s"
+                if batch.created_at else "unknown"
             )
-            
+            logger.info(
+                f"[MESSAGE_QUEUE] [PROCESS] [TURN:{trace.turn_id}] Batch {batch.batch_id} for "
+                f"{batch.user_phone}: {batch.message_count} messages, "
+                f"type={batch.message_type}, waited_in_queue={waited}"
+            )
+
             # Import here to avoid circular dependency
             from app.services.chat_service import ChatService
             from app.database import get_db_session_context
-            
-            # Process through ChatService with session management
-            with get_db_session_context() as db:
-                chat_service = ChatService(
-                    db_session=db,
-                    message_queue_service=self  # Pass self as whatsapp_service
-                )
-                try:
-                    await chat_service.process_message(
-                        user_phone=batch.user_phone,
-                        message_content=batch.concatenated_content,
-                        message_type=batch.message_type
-                    )
-                finally:
-                    # Cleanup to prevent unclosed aiohttp sessions
-                    await chat_service.cleanup()
-            
+
+            # Bind the phone for every log line this turn emits. The text path ran
+            # outside any request, so all of its lines used to be attributed to
+            # 'N/A' and could not be filtered by user.
+            async with UserPhoneContext(batch.user_phone):
+                # Process through ChatService with session management
+                with get_db_session_context() as db:
+                    with stage("chat_service_init"):
+                        chat_service = ChatService(
+                            db_session=db,
+                            message_queue_service=self  # Pass self as whatsapp_service
+                        )
+                    try:
+                        with stage("chat_process_message", type=batch.message_type):
+                            await chat_service.process_message(
+                                user_phone=batch.user_phone,
+                                message_content=batch.concatenated_content,
+                                message_type=batch.message_type
+                            )
+                    finally:
+                        # Cleanup to prevent unclosed aiohttp sessions
+                        with stage("chat_cleanup"):
+                            await chat_service.cleanup()
+
             # Fallback cleanup if no send method was called
             session_key = self._key_session(batch.user_phone)
             session_exists = await self.redis.exists(session_key)
             
             if session_exists:
                 logger.warning(
-                    f"[PROCESS] Batch {batch.batch_id} completed without cleanup. "
-                    f"This indicates processing finished without sending a response. "
-                    f"Cleaning up manually."
+                    f"[PROCESS] [TURN:{trace.turn_id}] Batch {batch.batch_id} completed without cleanup. "
+                    f"This indicates processing finished without sending a response, so "
+                    f"{batch.user_phone} received nothing for this message. Cleaning up manually."
                 )
+                trace.finish("no_reply", reason="completed_without_send")
                 await self._cleanup_and_next(batch.batch_id, batch.user_phone, success=True)
-        
+            else:
+                trace.finish("complete")
+
         except Exception as e:
             logger.error(
-                f"[PROCESS] Error processing batch {batch.batch_id}: {e}",
+                f"[PROCESS] [TURN:{trace.turn_id}] Error processing batch {batch.batch_id}: {e}",
                 exc_info=True
             )
+            trace.finish("error", error=type(e).__name__)
             await self._cleanup_and_next(batch.batch_id, batch.user_phone, success=False)
 
     # ========================================================================
@@ -865,6 +1180,20 @@ class MessageQueueService:
         on MessageQueueService as if it were WhatsAppService, and we intercept
         to add suppression logic and cleanup.
         """
+        # Never delegate private attributes. __getattr__ only runs when normal
+        # lookup fails, so a private name reaching here means this instance is
+        # half-built (or is being unpickled/copied). Forwarding it to
+        # WhatsAppService turned a plain missing-attribute bug into
+        # "'MessageQueueService' object has no attribute '_running' and neither
+        # does WhatsAppService", raised from inside the batch poller, which then
+        # died for the lifetime of the worker and stopped answering text
+        # messages entirely. Failing fast and honestly keeps that a local bug.
+        if name.startswith("_"):
+            raise AttributeError(
+                f"'{self.__class__.__name__}' object has no attribute '{name}' "
+                f"(private attributes are never delegated to WhatsAppService)"
+            )
+
         # Get attribute from WhatsAppService
         try:
             attr = getattr(self.whatsapp_service, name)
@@ -926,6 +1255,7 @@ class MessageQueueService:
                     return self._mock_success()
                 
                 # Not suppressed - send for real
+                turn_id = current_turn_id()
                 try:
                     # Mark response as ready before sending (prevents late please-wait)
                     response_ready_key = self._key_response_ready(user_phone)
@@ -933,28 +1263,29 @@ class MessageQueueService:
                     
                     # Calculate processing time for logging
                     processing_time = time.time() - session.started_at
-                    logger.debug(
-                        f"[SEND] Response ready for {recipient_id} after {processing_time:.1f}s "
-                        f"(batch {session.batch_id}) - marked to prevent late please-wait"
+                    logger.info(
+                        f"[MESSAGE_QUEUE] [SEND] [TURN:{turn_id}] Response ready for {recipient_id} "
+                        f"after {processing_time:.2f}s (batch {session.batch_id})"
                     )
                     
-                    logger.debug(
-                        f"[SEND] Calling {name} for {recipient_id} "
+                    logger.info(
+                        f"[MESSAGE_QUEUE] [SEND] [TURN:{turn_id}] Calling {name} for {recipient_id} "
                         f"in batch {session.batch_id}"
                     )
-                    result = await attr(*args, **kwargs)
+                    with stage(f"send:{name}"):
+                        result = await attr(*args, **kwargs)
                     
                     # Log result
                     success = getattr(result, 'success', True)
                     if success:
-                        logger.debug(
-                            f"[SEND] {name} succeeded for {recipient_id}, "
+                        logger.info(
+                            f"[MESSAGE_QUEUE] [SEND] [TURN:{turn_id}] {name} succeeded for {recipient_id}, "
                             f"message_id={getattr(result, 'message_id', 'N/A')}"
                         )
                     else:
                         logger.error(
-                            f"[SEND] {name} failed for {recipient_id}, "
-                            f"error={getattr(result, 'error', 'Unknown')}"
+                            f"[MESSAGE_QUEUE] [SEND] [TURN:{turn_id}] {name} failed for {recipient_id}, "
+                            f"error={getattr(result, 'error', 'Unknown')} - the user did not receive this reply"
                         )
                     
                     # Cleanup and trigger next batch
@@ -963,7 +1294,7 @@ class MessageQueueService:
                     return result
                 
                 except Exception as e:
-                    logger.error(f"[SEND] Error in {name}: {e}", exc_info=True)
+                    logger.error(f"[SEND] [TURN:{turn_id}] Error in {name}: {e}", exc_info=True)
                     await self._cleanup_and_next(session.batch_id, user_phone, success=False)
                     raise
             
@@ -1019,8 +1350,8 @@ class MessageQueueService:
             success: Whether processing succeeded
         """
         try:
-            logger.debug(
-                f"[CLEANUP] Batch {batch_id} for {user_phone}, "
+            logger.info(
+                f"[MESSAGE_QUEUE] [CLEANUP] Batch {batch_id} for {user_phone}, "
                 f"success={success}"
             )
             
@@ -1263,9 +1594,29 @@ class MessageQueueService:
         Graceful shutdown - cancel background tasks.
         Call this when shutting down the application.
         """
-        logger.debug("[SHUTDOWN] Cancelling background tasks...")
+        logger.info(
+            f"[MESSAGE_QUEUE] [SHUTDOWN] Cancelling {len(self._background_tasks)} background "
+            f"task(s) and {len(self.flush_tasks)} pending batch flush(es)..."
+        )
         self._running = False
-        
+
+        # Pending flushes hold messages that have not been answered yet. They are
+        # left in {phone}:incoming with their trigger key, so another worker's
+        # poller picks them up; logging the count makes that hand-off visible
+        # instead of looking like lost messages.
+        flush_tasks = list(self.flush_tasks.values())
+        if flush_tasks:
+            logger.warning(
+                f"[MESSAGE_QUEUE] [SHUTDOWN] {len(flush_tasks)} user(s) had a batch window open; "
+                f"their messages stay queued for another worker's poller"
+            )
+        for task in flush_tasks:
+            if not task.done():
+                task.cancel()
+        if flush_tasks:
+            await asyncio.gather(*flush_tasks, return_exceptions=True)
+        self.flush_tasks.clear()
+
         for task in self._background_tasks:
             if not task.done():
                 task.cancel()

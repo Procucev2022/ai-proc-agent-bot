@@ -110,26 +110,37 @@ class WelcomeMessageService:
         
         Returns True if welcome message was sent, False otherwise.
         """
+        import time
+        t0 = time.time()
         try:
-            if await self.should_send_welcome(phone_number):
+            should_send = await self.should_send_welcome(phone_number)
+            check_time = time.time() - t0
+            logger.debug(f"[WELCOME] Flag check for {phone_number} completed in {check_time:.3f}s: should_send={should_send}")
+
+            if should_send:
                 welcome_text = (
                     "Hello Namaste 🙏, I'm Qua – Your Procurement Partner.\n"
                     "Thank you for contacting me. Let me check if you have visited us earlier..."
                 )
                 
+                send_start = time.time()
                 message_response = await whatsapp_service.send_message(phone_number, welcome_text)
+                send_time = time.time() - send_start
+
                 if message_response.success:
                     await self.mark_welcome_sent(phone_number)
-                    logger.info(f"Welcome message sent to {phone_number}")
+                    msg_id = getattr(message_response, 'message_id', 'N/A')
+                    logger.info(f"[WELCOME] Welcome message successfully sent to {phone_number} in {send_time:.3f}s (msg_id={msg_id})")
                     return True
                 else:
-                    logger.error(f"Failed to send welcome message to {phone_number}")
+                    err = getattr(message_response, 'error', 'unknown')
+                    logger.error(f"[WELCOME] Failed to send welcome message to {phone_number} after {send_time:.3f}s: error={err}")
                     return False
             
             return False
             
         except Exception as e:
-            logger.error(f"Error checking and sending welcome message for {phone_number}: {e}")
+            logger.error(f"[WELCOME] Error checking and sending welcome message for {phone_number}: {e}", exc_info=True)
             return False
 
 

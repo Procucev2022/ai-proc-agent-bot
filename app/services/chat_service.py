@@ -29,6 +29,7 @@ from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
 from app.utils.datetime_utils import utc_now
 from app.utils.logging_utils import log_service_method
+from app.utils.turn_trace import current_turn_id, stage
 from app.context import session_context, user_context, get_request_id
 from app.services.intent_service import IntentService
 from app.services.entity_service import EntityService
@@ -74,6 +75,11 @@ from app.schemas.user import User
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
+
+# Reply to a bare greeting. Held as a constant rather than generated, because the
+# language model was being asked to produce this exact sentence on the latency
+# path of every user's first message.
+SIMPLE_GREETING_RESPONSE = "Hi there! How can I help you today?"
 
 
 class ChatService:
@@ -432,9 +438,17 @@ class ChatService:
         Orchestrates authentication check, intent classification,
         workflow routing, and response generation.
         """
+        turn_id = current_turn_id()
+        logger.info(
+            f"[CHAT] [TURN:{turn_id}] process_message start phone={user_phone} "
+            f"type={message_type} chars={len(str(message_content))}"
+        )
         try:
-            # Get or create user session using extracted service
-            session = await self.session_manager.get_conversation_context(user_phone)
+            # Get or create user session using extracted service.
+            # This is also where a brand-new session triggers the welcome message,
+            # so it is the single most expensive step of a first "Hi".
+            with stage("get_conversation_context"):
+                session = await self.session_manager.get_conversation_context(user_phone)
 
             # DISABLED: Session expiry now handled by InactivityTimeoutService (30-minute proactive timeout)
             # The timeout service actively monitors user activity and cleans up timed-out sessions
@@ -726,14 +740,16 @@ class ChatService:
                     button_title = button_reply.get("title", "")
                     classification_content = button_title or clicked_button_id or str(message_content)
 
-                conversation_context = await ChatServiceHelpers.build_conversation_context(session, classification_content)
+                with stage("build_conversation_context"):
+                    conversation_context = await ChatServiceHelpers.build_conversation_context(session, classification_content)
                 if clicked_button_id:
                     # Pass the id, not just the title. The id identifies the choice
                     # exactly, letting intent_service resolve it locally instead of
                     # paying for an OpenAI round trip on every button press.
                     conversation_context["button_id"] = clicked_button_id
                 # Now using async OpenAI service
-                message_intent_result = await self.intent_service.classify_intent(classification_content, conversation_context,user_phone)
+                with stage("classify_intent"):
+                    message_intent_result = await self.intent_service.classify_intent(classification_content, conversation_context,user_phone)
                 
                 # Check if rate limit timeout was handled (429 error)
                 if message_intent_result.get("timeout_handled"):
@@ -742,6 +758,10 @@ class ChatService:
                 
                 intent = message_intent_result.get('intent')
                 confidence = message_intent_result.get('confidence', 0)
+                logger.info(
+                    f"[CHAT] [TURN:{turn_id}] intent={intent} confidence={confidence} "
+                    f"reasoning={str(message_intent_result.get('reasoning'))[:80]!r}"
+                )
 
                 # For history, also use sanitized content for excel uploads
                 history_content = classification_content if message_type == "excel_upload" else message_content
@@ -799,10 +819,15 @@ class ChatService:
 
             # Handle irrelevant messages using reusable function
             if intent in ('general_inquiry','greeting','support') or message_intent_result.get("irrelevant_message"):
-                await self.handle_irrelevant_message_flow(user_phone, message_intent_result, session)
+                with stage("irrelevant_message_flow", intent=intent):
+                    await self.handle_irrelevant_message_flow(user_phone, message_intent_result, session)
 
 
-            auth_result = await self.authentication_orchestrator_flow(user_phone,message_intent_result.get('relevant_message') or message_content,session, message_intent_result,last_meaningful_intent=last_meaningful_intent,last_meaningful_message=last_meaningful)
+            # Authentication and profile lookup. This calls out to the Procucev
+            # API, which log analysis shows is the largest single cost of a
+            # greeting turn at roughly two seconds.
+            with stage("authentication_orchestrator"):
+                auth_result = await self.authentication_orchestrator_flow(user_phone,message_intent_result.get('relevant_message') or message_content,session, message_intent_result,last_meaningful_intent=last_meaningful_intent,last_meaningful_message=last_meaningful)
 
 
             # Check if authentication is still in progress
@@ -1171,7 +1196,21 @@ class ChatService:
             if intent == 'greeting':
                 query_message = irrelevant_msg or relevant_msg
 
-                if query_message:
+                # A bare "hi" carries nothing to interpret, so asking a language
+                # model what to say costs a full round trip on the critical path
+                # and returns a fixed pleasantry anyway. Worse, it sometimes
+                # returned the out-of-scope apology ("I'm not able to help with
+                # that message") in answer to a plain greeting. Answer locally.
+                if message_intent_result.get("simple_greeting"):
+                    with stage("greeting_local"):
+                        response = SIMPLE_GREETING_RESPONSE
+                    logger.info(
+                        f"[GREETING] Answered '{query_message}' locally, skipping the LLM "
+                        f"round trip (saves one OpenAI call on the first message)"
+                    )
+                    await self._cache_irrelevant_response(user_phone, response)
+
+                elif query_message:
                     logger.debug(f"Processing greeting: {query_message}")
 
                     context_data = {
@@ -1185,7 +1224,8 @@ class ChatService:
                     }
 
                     # Generate response directly without FAQ search
-                    response = await self._generate_llm_response(user_phone, query_message, context_data)
+                    with stage("greeting_llm"):
+                        response = await self._generate_llm_response(user_phone, query_message, context_data)
                     logger.info(f"Generated greeting response: {response}")
 
                     if response:

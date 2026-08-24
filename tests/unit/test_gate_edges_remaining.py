@@ -294,6 +294,9 @@ async def test_welcome_constructor_singleton_and_logging_context(monkeypatch, tm
     first = welcome_module.get_welcome_service()
     assert welcome_module.get_welcome_service() is first
 
+    # Assert the default from a known-clean context rather than inheriting
+    # whatever a previously collected test happened to leave behind.
+    logging_module.clear_user_phone_context()
     record = logging_module.logging.LogRecord("source", logging_module.logging.INFO, __file__, 1, "hello", (), None)
     assert "N/A" in logging_module.CustomFormatter().format(record)
     with logging_module.UserPhoneContext("123"):
