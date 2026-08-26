@@ -6,6 +6,7 @@ receive welcome messages only once per day. The flags automatically
 expire at midnight to reset for the next day.
 """
 
+import asyncio
 import logging
 from typing import Optional
 from datetime import datetime, timedelta
@@ -131,6 +132,8 @@ class WelcomeMessageService:
                     await self.mark_welcome_sent(phone_number)
                     msg_id = getattr(message_response, 'message_id', 'N/A')
                     logger.info(f"[WELCOME] Welcome message successfully sent to {phone_number} in {send_time:.3f}s (msg_id={msg_id})")
+                    # Brief pacing pause ensures WhatsApp delivers the welcome greeting before the menu arrives
+                    await asyncio.sleep(0.8)
                     return True
                 else:
                     err = getattr(message_response, 'error', 'unknown')

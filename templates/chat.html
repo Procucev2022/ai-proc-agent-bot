@@ -577,6 +577,27 @@
             typingIndicator.style.display = 'none';
         }
 
+        async function renderBotResponses(data) {
+            hideTyping();
+            if (data.success && data.responses) {
+                for (let index = 0; index < data.responses.length; index++) {
+                    const botResponse = data.responses[index];
+                    const buttons = data.interactive_buttons && data.interactive_buttons[index] ? data.interactive_buttons[index] : null;
+                    console.log(`Message ${index}: "${botResponse}", Buttons:`, buttons);
+                    addMessage(botResponse, false, true, data.debug_info, buttons);
+
+                    // Show typing animation during pause between multiple messages
+                    if (index < data.responses.length - 1) {
+                        showTyping();
+                        await new Promise(resolve => setTimeout(resolve, 800));
+                        hideTyping();
+                    }
+                }
+            } else {
+                addMessage(data.error || 'Sorry, there was an error processing your message.', false);
+            }
+        }
+
         async function sendMessage(message) {
             if (!message.trim()) return;
 
@@ -606,16 +627,7 @@
                 console.log('Chat API Response:', data);
                 console.log('Interactive buttons:', data.interactive_buttons);
                 
-                if (data.success && data.responses) {
-                    // Add bot responses with interactive buttons if present
-                    data.responses.forEach((botResponse, index) => {
-                        const buttons = data.interactive_buttons && data.interactive_buttons[index] ? data.interactive_buttons[index] : null;
-                        console.log(`Message ${index}: "${botResponse}", Buttons:`, buttons);
-                        addMessage(botResponse, false, true, data.debug_info, buttons);
-                    });
-                } else {
-                    addMessage(data.error || 'Sorry, there was an error processing your message.', false);
-                }
+                await renderBotResponses(data);
                 
             } catch (error) {
                 console.error('Error:', error);
@@ -674,18 +686,7 @@
 
                 const data = await response.json();
                 
-                // Hide typing indicator
-                typingIndicator.style.display = 'none';
-
-                if (data.success) {
-                    // Add responses from the bot with interactive buttons if present
-                    data.responses.forEach((response, index) => {
-                        const buttons = data.interactive_buttons && data.interactive_buttons[index] ? data.interactive_buttons[index] : null;
-                        addMessage(response, false, true, data.debug_info, buttons);
-                    });
-                } else {
-                    addMessage(`Error: ${data.error}`, false);
-                }
+                await renderBotResponses(data);
 
             } catch (error) {
                 typingIndicator.style.display = 'none';
@@ -854,15 +855,7 @@
 
                 const data = await response.json();
                 
-                if (data.success && data.responses) {
-                    // Add bot responses with interactive buttons if present
-                    data.responses.forEach((botResponse, index) => {
-                        const buttons = data.interactive_buttons && data.interactive_buttons[index] ? data.interactive_buttons[index] : null;
-                        addMessage(botResponse, false, true, data.debug_info, buttons);
-                    });
-                } else {
-                    addMessage(data.error || 'Sorry, there was an error processing your selection.', false);
-                }
+                await renderBotResponses(data);
                 
             } catch (error) {
                 console.error('Error:', error);

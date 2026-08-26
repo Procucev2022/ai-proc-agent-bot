@@ -19,7 +19,14 @@ dist/
 /.idea
 .sonar
 .scannerwork
+# Virtual environments
+.venv/
 venv/
+env/
+.env.bak/
+venv.bak/
+env.bak/
+ENV/
 documentation/
 # Environment files (production branch includes .env)
 .env
