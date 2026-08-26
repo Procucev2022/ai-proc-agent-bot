@@ -191,8 +191,16 @@ class MessageQueueService:
     def __init__(self):
         settings = get_settings()
         
-        # Redis client
-        self.redis = Redis.from_url(settings.redis_url, decode_responses=True)
+        # Redis client with resilient connection pooling
+        self.redis = Redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_timeout=getattr(settings, 'redis_socket_timeout', 1.5),
+            socket_connect_timeout=getattr(settings, 'redis_socket_connect_timeout', 1.5),
+            health_check_interval=30,
+            socket_keepalive=True,
+            retry_on_timeout=True,
+        )
         
         # Configuration
         self.batch_window = settings.batch_window_seconds  # Default: 3s

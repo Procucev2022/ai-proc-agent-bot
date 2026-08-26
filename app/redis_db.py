@@ -26,11 +26,15 @@ class AsyncRedisConnectionManager:
                     settings.redis_url,
                     decode_responses=True,
                     max_connections=20,
-                    socket_timeout=settings.redis_socket_timeout,
-                    socket_connect_timeout=settings.redis_socket_connect_timeout,
+                    socket_timeout=getattr(settings, 'redis_socket_timeout', 5.0),
+                    socket_connect_timeout=getattr(settings, 'redis_socket_connect_timeout', 5.0),
+                    health_check_interval=30,
+                    socket_keepalive=True,
+                    retry_on_timeout=True,
                 )
                 logger.info(f"[REDIS] ✓ Connected to Redis pool successfully")
             except Exception as e:
+                cls._pool = None
                 logger.error(f"[REDIS] ⚠️ Failed to connect to Redis pool: {e}")
                 raise
         return cls._pool
@@ -44,29 +48,35 @@ class BaseRedisService:
         self.settings = get_settings()
 
     async def init_client(self):
-        if not self.settings.redis_session_storage_enabled:
+        if not getattr(self.settings, 'redis_session_storage_enabled', True):
             return
         if self.client is None:
             self.client = await AsyncRedisConnectionManager.get_client()
 
     async def set(self, key: str, value: Any, ex: Optional[int] = None) -> bool:
-        if not self.settings.redis_session_storage_enabled:
+        if not getattr(self.settings, 'redis_session_storage_enabled', True):
             return False
         await self.init_client()
+        if self.client is None:
+            return False
         try:
             if isinstance(value, dict):
                 value = json.dumps(value)
             if ex:
-                return await self.client.set(key, value, ex=ex)
-            return await self.client.set(key, value)
+                res = await self.client.set(key, value, ex=ex)
+                return bool(res)
+            res = await self.client.set(key, value)
+            return bool(res)
         except Exception as e:
             logger.error(f"Redis SET error for key {key}: {e}")
             return False
 
     async def get(self, key: str, as_json: bool = False) -> Optional[Any]:
-        if not self.settings.redis_session_storage_enabled:
+        if not getattr(self.settings, 'redis_session_storage_enabled', True):
             return None
         await self.init_client()
+        if self.client is None:
+            return None
         try:
             value = await self.client.get(key)
             if value and as_json:
@@ -77,9 +87,11 @@ class BaseRedisService:
             return None
 
     async def delete(self, key: str) -> bool:
-        if not self.settings.redis_session_storage_enabled:
+        if not getattr(self.settings, 'redis_session_storage_enabled', True):
             return False
         await self.init_client()
+        if self.client is None:
+            return False
         try:
             return await self.client.delete(key) > 0
         except Exception as e:
@@ -87,9 +99,11 @@ class BaseRedisService:
             return False
 
     async def exists(self, key: str) -> bool:
-        if not self.settings.redis_session_storage_enabled:
+        if not getattr(self.settings, 'redis_session_storage_enabled', True):
             return False
         await self.init_client()
+        if self.client is None:
+            return False
         try:
             return await self.client.exists(key) > 0
         except Exception as e:
@@ -97,9 +111,11 @@ class BaseRedisService:
             return False
     
     async def ttl(self, key: str) -> Optional[int]:
-        if not self.settings.redis_session_storage_enabled:
+        if not getattr(self.settings, 'redis_session_storage_enabled', True):
             return None
         await self.init_client()
+        if self.client is None:
+            return None
         try:
             return await self.client.ttl(key)
         except Exception as e:
@@ -108,9 +124,11 @@ class BaseRedisService:
     
     async def expire(self, key: str, seconds: int) -> bool:
         """Set expiry time for a key."""
-        if not self.settings.redis_session_storage_enabled:
+        if not getattr(self.settings, 'redis_session_storage_enabled', True):
             return False
         await self.init_client()
+        if self.client is None:
+            return False
         try:
             return await self.client.expire(key, seconds)
         except Exception as e:
@@ -119,9 +137,11 @@ class BaseRedisService:
     
     async def expireat(self, key: str, timestamp: int) -> bool:
         """Set expiry time for a key at specific Unix timestamp."""
-        if not self.settings.redis_session_storage_enabled:
+        if not getattr(self.settings, 'redis_session_storage_enabled', True):
             return False
         await self.init_client()
+        if self.client is None:
+            return False
         try:
             return await self.client.expireat(key, timestamp)
         except Exception as e:
@@ -129,9 +149,11 @@ class BaseRedisService:
             return False
     
     async def incr(self, key: str) -> Optional[int]:
-        if not self.settings.redis_session_storage_enabled:
+        if not getattr(self.settings, 'redis_session_storage_enabled', True):
             return None
         await self.init_client()
+        if self.client is None:
+            return None
         try:
             return await self.client.incr(key)
         except Exception as e:
@@ -140,9 +162,11 @@ class BaseRedisService:
 
     async def delete_pattern(self, pattern: str) -> int:
         """Delete all keys matching a pattern using SCAN."""
-        if not self.settings.redis_session_storage_enabled:
+        if not getattr(self.settings, 'redis_session_storage_enabled', True):
             return 0
         await self.init_client()
+        if self.client is None:
+            return 0
         try:
             deleted_count = 0
             cursor = 0

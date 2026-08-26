@@ -281,6 +281,9 @@ async def test_redis_manager_pool_creation_reuse_and_failure(monkeypatch):
         max_connections=20,
         socket_timeout=5.0,
         socket_connect_timeout=5.0,
+        health_check_interval=30,
+        socket_keepalive=True,
+        retry_on_timeout=True,
     )
 
     redis_db.AsyncRedisConnectionManager._pool = None
@@ -359,6 +362,35 @@ async def test_base_redis_operations_errors_and_lazy_initialization(monkeypatch)
     bad_value = redis_db.BaseRedisService()
     bad_value.client = RedisClient()
     assert not await bad_value.set("bad", {"bad": {1, 2}})
+
+
+@pytest.mark.asyncio
+async def test_base_redis_operations_disabled_storage_and_none_client(monkeypatch):
+    disabled = redis_db.BaseRedisService()
+    disabled.settings = SimpleNamespace(redis_session_storage_enabled=False)
+    await disabled.init_client()
+    assert not await disabled.set("k", "v")
+    assert await disabled.get("k") is None
+    assert not await disabled.delete("k")
+    assert not await disabled.exists("k")
+    assert await disabled.ttl("k") is None
+    assert not await disabled.expire("k", 10)
+    assert not await disabled.expireat("k", 100)
+    assert await disabled.incr("k") is None
+    assert await disabled.delete_pattern("k*") == 0
+
+    no_client = redis_db.BaseRedisService()
+    no_client.settings = SimpleNamespace(redis_session_storage_enabled=True)
+    monkeypatch.setattr(redis_db.AsyncRedisConnectionManager, "get_client", AsyncMock(return_value=None))
+    assert not await no_client.set("k", "v")
+    assert await no_client.get("k") is None
+    assert not await no_client.delete("k")
+    assert not await no_client.exists("k")
+    assert await no_client.ttl("k") is None
+    assert not await no_client.expire("k", 10)
+    assert not await no_client.expireat("k", 100)
+    assert await no_client.incr("k") is None
+    assert await no_client.delete_pattern("k*") == 0
 
 
 @pytest.mark.asyncio

@@ -46,7 +46,7 @@ setup_basic_logging(level=settings.log_level)
 logger = logging.getLogger(__name__)
 
 # Initialize rate limiter
-limiter_storage = settings.redis_url if (settings.redis_url and settings.redis_session_storage_enabled) else "memory://"
+limiter_storage = settings.redis_url if (settings.redis_url and getattr(settings, "redis_session_storage_enabled", True)) else "memory://"
 limiter = Limiter(
     key_func=get_remote_address,
     storage_uri=limiter_storage,
@@ -154,7 +154,7 @@ async def lifespan(app: FastAPI):
 
     # Start message queue background tasks (only if Redis is enabled)
     message_queue_tasks = []
-    if settings.redis_session_storage_enabled:
+    if getattr(settings, "redis_session_storage_enabled", True):
         try:
             logger.info("[BOOT] Starting message queue background tasks...")
             from app.api.webhook import message_queue_service
@@ -191,7 +191,7 @@ async def lifespan(app: FastAPI):
 
     # Start inactivity timeout monitoring (optimized for multi-worker, only if Redis is enabled)
     timeout_service = None
-    if settings.redis_session_storage_enabled:
+    if getattr(settings, "redis_session_storage_enabled", True):
         try:
             from app.services.inactivity_timeout_service import get_timeout_service
             timeout_service = get_timeout_service()  # Use singleton
