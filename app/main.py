@@ -480,7 +480,7 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
             interactive_buttons = []
 
             # Mock the WhatsApp service to capture messages and buttons
-            async def mock_send_message(recipient_id, message, session=None, session_id=None):
+            async def mock_send_message(recipient_id, message, *args, session=None, session_id=None, **kwargs):
                 whatsapp_messages.append(message)
                 # Track message in session if provided (session_id takes precedence)
                 actual_session = session_id if session_id is not None else session
@@ -496,8 +496,8 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
                         logger.warning(f"Failed to track message in mock: {e}")
                 return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
 
-            async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None,
-                                                     session=None, session_id=None):
+            async def mock_send_configurable_buttons(recipient_id, body, buttons_config, *args, header=None, footer=None,
+                                                     session=None, session_id=None, **kwargs):
                 whatsapp_messages.append(body)
                 # Extract button info for UI
                 button_data = [{'id': btn.get('id'), 'title': btn.get('title')} for btn in buttons_config]
@@ -638,7 +638,7 @@ async def upload_excel_file(
         whatsapp_messages = []
         interactive_buttons = []
 
-        async def mock_send_message(recipient_id, message, session=None, session_id=None):
+        async def mock_send_message(recipient_id, message, *args, session=None, session_id=None, **kwargs):
             whatsapp_messages.append(message)
             # Track message in session if provided (session_id takes precedence)
             actual_session = session_id if session_id is not None else session
@@ -654,8 +654,8 @@ async def upload_excel_file(
                     logger.warning(f"Failed to track message in mock: {e}")
             return type('MessageResponse', (), {'success': True, 'message_id': 'test_id'})()
 
-        async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None,
-                                                 session=None, session_id=None):
+        async def mock_send_configurable_buttons(recipient_id, body, buttons_config, *args, header=None, footer=None,
+                                                 session=None, session_id=None, **kwargs):
             whatsapp_messages.append(body)
             # Extract button info for UI
             button_data = [{'id': btn.get('id'), 'title': btn.get('title')} for btn in buttons_config]

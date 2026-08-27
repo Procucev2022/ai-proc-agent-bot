@@ -1283,6 +1283,14 @@ class MessageQueueService:
                     with stage(f"send:{name}"):
                         result = await attr(*args, **kwargs)
                     
+                    # Determine if this is an intermediate message (e.g. greeting or acknowledgment)
+                    # or the final turn response. Intermediate messages must NOT trigger cleanup
+                    # so the batch processing lock remains held for the remainder of the turn.
+                    is_intermediate = (
+                        kwargs.get('is_intermediate', False)
+                        or kwargs.get('clear_pending_reply') is False
+                    )
+
                     # Log result
                     success = getattr(result, 'success', True)
                     if success:
@@ -1296,14 +1304,21 @@ class MessageQueueService:
                             f"error={getattr(result, 'error', 'Unknown')} - the user did not receive this reply"
                         )
                     
-                    # Cleanup and trigger next batch
-                    await self._cleanup_and_next(session.batch_id, user_phone, success)
+                    if not is_intermediate:
+                        # Cleanup and trigger next batch only on final response
+                        await self._cleanup_and_next(session.batch_id, user_phone, success)
+                    else:
+                        logger.debug(
+                            f"[MESSAGE_QUEUE] [SEND] [TURN:{turn_id}] Preserving batch session {session.batch_id} "
+                            f"for intermediate send {name} to {recipient_id}"
+                        )
                     
                     return result
                 
                 except Exception as e:
                     logger.error(f"[SEND] [TURN:{turn_id}] Error in {name}: {e}", exc_info=True)
-                    await self._cleanup_and_next(session.batch_id, user_phone, success=False)
+                    if not (kwargs.get('is_intermediate', False) or kwargs.get('clear_pending_reply') is False):
+                        await self._cleanup_and_next(session.batch_id, user_phone, success=False)
                     raise
             
             return wrapped_send
