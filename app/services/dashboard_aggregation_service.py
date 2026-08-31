@@ -1358,7 +1358,7 @@ class DashboardAggregationService:
             logger.debug(f"[DASHBOARD] Failed to get Redis sessions: {e}")
 
         # 2. Query MySQL sessions
-        def _query_db(db: Session) -> List[Dict[str, Any]]:
+        def _query_db(db: Session) -> List[ConversationSession]:
             return (
                 db.query(ConversationSession)
                 .filter(

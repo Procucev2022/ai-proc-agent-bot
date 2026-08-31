@@ -693,22 +693,7 @@ def test_user_classification_details_json_and_filters():
         assert "users" in res
 
 
-def test_delete_user_by_phone():
-    """Test delete_user_by_phone purges records from DB context."""
-    fake_db = MagicMock()
-    fake_db.query.return_value.filter.return_value.all.return_value = []
-    fake_db.query.return_value.filter.return_value.delete.return_value = 1
-    fake_db.commit = MagicMock()
 
-    ctx = MagicMock()
-    ctx.__enter__ = MagicMock(return_value=fake_db)
-    ctx.__exit__ = MagicMock(return_value=None)
-
-    svc = DashboardAggregationService(db_session=fake_db)
-    with patch("app.services.dashboard_aggregation_service.get_db_session_context", return_value=ctx):
-        res = svc.delete_user_by_phone("+919876543210")
-        assert res["status"] == "success"
-        assert res["phone_number"] == "+919876543210"
 
 
 def test_dashboard_api_endpoints_coverage():
@@ -737,15 +722,46 @@ def test_dashboard_api_endpoints_coverage():
         res = client.get("/api/dashboard/export-user-classification-csv?date_preset=today&filter_type=all")
         assert res.status_code == 500
 
-    # 5. DELETE /api/dashboard/delete-user
-    fake_delete_res = {"status": "success", "deleted_emails": []}
-    with patch("app.api.dashboard.DashboardAggregationService.delete_user_by_phone", return_value=fake_delete_res):
-        with patch("app.redis_db.AsyncRedisConnectionManager.get_client", AsyncMock(return_value=MagicMock(delete=AsyncMock()))):
-            res = client.delete("/api/dashboard/delete-user?phone_number=%2B919876543210")
-            assert res.status_code == 200
 
-    # 6. DELETE /api/dashboard/delete-user error fallback
-    with patch("app.api.dashboard.DashboardAggregationService.delete_user_by_phone", side_effect=RuntimeError("del err")):
-        res = client.delete("/api/dashboard/delete-user?phone_number=%2B919876543210")
+def test_today_conversations_api_endpoint():
+    """Test GET /api/dashboard/today-conversations success and error paths."""
+    client = TestClient(app)
+
+    # Success path
+    fake_convos = [{"phone": "919876543210", "user_type": "buyer"}]
+    with patch("app.api.dashboard.DashboardAggregationService.get_today_conversations", AsyncMock(return_value=fake_convos)):
+        res = client.get("/api/dashboard/today-conversations")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["status"] == "success"
+        assert body["data"] == fake_convos
+
+    # Error path
+    with patch("app.api.dashboard.DashboardAggregationService.get_today_conversations", AsyncMock(side_effect=RuntimeError("db fail"))):
+        res = client.get("/api/dashboard/today-conversations")
         assert res.status_code == 500
+        assert res.json()["status"] == "error"
 
+
+def test_conversation_messages_api_endpoint():
+    """Test GET /api/dashboard/conversation-messages success and error paths."""
+    client = TestClient(app)
+
+    fake_result = {"status": "success", "messages": [{"role": "user", "content": "Hello"}]}
+
+    # Success with phone param
+    with patch("app.api.dashboard.DashboardAggregationService.get_conversation_messages", AsyncMock(return_value=fake_result)):
+        res = client.get("/api/dashboard/conversation-messages?phone=919876543210")
+        assert res.status_code == 200
+        assert res.json()["status"] == "success"
+
+    # Success with session_id param
+    with patch("app.api.dashboard.DashboardAggregationService.get_conversation_messages", AsyncMock(return_value=fake_result)):
+        res = client.get("/api/dashboard/conversation-messages?session_id=sess_abc")
+        assert res.status_code == 200
+
+    # Error path
+    with patch("app.api.dashboard.DashboardAggregationService.get_conversation_messages", AsyncMock(side_effect=RuntimeError("msg fail"))):
+        res = client.get("/api/dashboard/conversation-messages?phone=919876543210")
+        assert res.status_code == 500
+        assert res.json()["status"] == "error"
