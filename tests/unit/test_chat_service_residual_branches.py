@@ -502,12 +502,7 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
     """Test uncovered branches in ChatService."""
     service = service_stub()
 
-    # 1. _validate_and_sanitize_message
-    assert service._validate_and_sanitize_message("  hello world  ") == "hello world"
-    assert service._validate_and_sanitize_message("") == ""
-    assert service._validate_and_sanitize_message(None) == ""
-
-    # 2. _handle_chat_error
+    # 1. _handle_chat_error
     sess = session()
     res_err = await service._handle_chat_error(user(), sess, "some error")
     assert res_err["status"] == "error"

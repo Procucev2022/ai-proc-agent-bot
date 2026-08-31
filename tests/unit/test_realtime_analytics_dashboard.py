@@ -1090,6 +1090,7 @@ async def test_dashboard_aggregation_full_metrics_coverage():
         1,   # drop_off_count
     ]
 
+    fake_db.query.return_value.all.return_value = [SimpleNamespace(phone_number="919876543211", subscription_credits=10)]
     fake_db.query.return_value.filter.return_value.all.side_effect = [
         [("919876543210",), ("919876543211",)],  # users_in_period
         [("919876543210",), ("919876543211",)],  # all_today_users
