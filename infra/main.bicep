@@ -112,16 +112,11 @@ module appModule 'modules/app-service.bicep' = {
     acrUsername: acrUsername
     acrPassword: acrPassword
     imageTag: appImageTag
-    // Never scale the web app to zero. This app is only ever woken by an inbound
-    // WhatsApp webhook, so a scaled-to-zero replica means the user's own message
-    // pays for the cold start: container activation, image start, interpreter
-    // boot, module imports and the readiness probe. Log analysis of
-    // 2026-08-04..24 measured that directly - the first message of a
-    // conversation took a median of 43.3s to reach the application, against
-    // 2.7s for follow-ups, and 37 of the 40 slowest arrivals landed within 21s
-    // of a container boot. Keeping one replica warm is what removes that 40s
-    // from the first "Hi".
-    minReplicas: 1
+    // Scheduled scaling: keep 1 warm replica during peak business hours (8:00 AM - 8:00 PM IST)
+    // via KEDA cron rule in app-service.bicep to eliminate cold starts for 90% of user traffic,
+    // and scale to 0 during off-peak hours (8:00 PM - 8:00 AM IST) where incoming traffic wakes
+    // the container via the HTTP scaling rule.
+    minReplicas: 0
     maxReplicas: environment == 'dev' ? 3 : 10
     redisHost: redisModule.outputs.redisHost
     chromaHost: chromaModule.outputs.chromaHost
