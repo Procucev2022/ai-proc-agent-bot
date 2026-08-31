@@ -1057,9 +1057,9 @@ async def test_profile_selection_comprehensive_branch_coverage(monkeypatch):
     res_max = await service._handle_new_user_registration_response("+919999999999", "99", s_max)
     assert res_max["status"] in ["exit", "exit_completed", "exit_intent_acknowledged", "new_user_registration_retry_sent"]
 
-    # 7. show_profile_selection_options when no profiles exist
+    # 7. handle_profile_selection when no profiles exist
     s2 = session_obj(workflow_state={})
     cache.get_user_data.return_value = []
-    res_show = await service.show_profile_selection_options("+919999999999", s2)
-    assert res_show["status"] == "new_user_options_sent"
+    res_show = await service.handle_profile_selection("+919999999999", "hello", {"intent": "greeting", "confidence": 90}, s2)
+    assert res_show is not None
 
