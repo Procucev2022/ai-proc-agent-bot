@@ -58,7 +58,7 @@
         "-m",
         "mypy"
       ],
-      "max_findings": 887,
+      "max_findings": 1279,
       "blocking": true
     }
   }

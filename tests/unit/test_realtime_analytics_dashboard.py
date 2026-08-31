@@ -435,6 +435,10 @@ def test_dashboard_api_endpoints():
     assert response.status_code == 200
     assert "AI Procurement Agent" in response.text
 
+    # 1b. Test HTML Classification Details Page
+    response = client.get("/dashboard/classification-details")
+    assert response.status_code == 200
+
     # 2. Test Root Endpoint Contains Dashboard Link
     root_res = client.get("/")
     assert root_res.status_code == 200
@@ -510,6 +514,34 @@ def test_dashboard_api_endpoints():
                 if line:
                     assert line.startswith("data:")
                     break
+
+    # 12. Test SSE live-stream cancellation and error handling
+    async def cancelled_generator():
+        yield {"event_type": "cancelled_test"}
+        raise asyncio.CancelledError()
+
+    with patch("app.api.dashboard.get_realtime_analytics_service") as mock_rt:
+        mock_instance = MagicMock()
+        mock_instance.subscribe_events = cancelled_generator
+        mock_rt.return_value = mock_instance
+        with client.stream("GET", "/api/dashboard/live-stream") as stream_res:
+            assert stream_res.status_code == 200
+            for _ in stream_res.iter_lines():
+                pass
+
+    async def error_generator():
+        yield {"event_type": "error_test"}
+        raise RuntimeError("stream boom")
+
+    with patch("app.api.dashboard.get_realtime_analytics_service") as mock_rt:
+        mock_instance = MagicMock()
+        mock_instance.subscribe_events = error_generator
+        mock_rt.return_value = mock_instance
+        with client.stream("GET", "/api/dashboard/live-stream") as stream_res:
+            assert stream_res.status_code == 200
+            for _ in stream_res.iter_lines():
+                pass
+
 
 
 # ─── Daily Visitors Tests ──────────────────────────────────────────────────────
