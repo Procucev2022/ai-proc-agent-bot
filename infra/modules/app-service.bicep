@@ -20,8 +20,8 @@ param acrPassword string = ''
 @description('Container Image Name & Tag')
 param imageTag string
 
-@description('Min Replicas. Keep at 1 or above: this app is woken by inbound WhatsApp webhooks, so scaling to zero makes the user\'s own first message pay for the container cold start (measured at ~40s).')
-param minReplicas int = 1
+@description('Min Replicas. Default to 0 so the container can scale to zero outside business hours; the business-hours cron scale rule keeps 1 warm replica from 8:00 AM to 8:00 PM IST.')
+param minReplicas int = 0
 
 @description('Max Replicas')
 param maxReplicas int = 5
@@ -294,6 +294,18 @@ resource appContainer 'Microsoft.App/containerApps@2023-05-01' = {
         minReplicas: minReplicas
         maxReplicas: maxReplicas
         rules: [
+          {
+            name: 'business-hours-rule'
+            custom: {
+              type: 'cron'
+              metadata: {
+                timezone: 'Asia/Kolkata'
+                start: '0 8 * * *'
+                end: '0 20 * * *'
+                desiredReplicas: '1'
+              }
+            }
+          }
           {
             name: 'http-scaling-rule'
             http: {

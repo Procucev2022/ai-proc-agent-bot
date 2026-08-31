@@ -192,11 +192,11 @@ if ENABLE_BFS_NOTIFICATION:
         }
     }
 
-# WhatsApp Report Automation: Daily at 7:30 AM IST (02:00 UTC)
+# WhatsApp Report Automation: Daily at 10:00 AM IST (04:30 UTC)
 if ENABLE_WHATSAPP_REPORT_AUTOMATION:
     beat_schedule['whatsapp-report-automation-task'] = {
         'task': 'app.tasks.whatsapp_report_automation_task.run_whatsapp_report_automation',
-        'schedule': crontab(minute=0, hour=2),  # 7:30 AM IST
+        'schedule': crontab(minute=30, hour=4),  # 10:00 AM IST
         'options': {
             'expires': 7200,
             'queue': 'report_automation',

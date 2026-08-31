@@ -327,7 +327,7 @@ show_tasks() {
     echo "│ category-name-sync-task                │ Daily 12:30 PM  │ Sync names      │"
     echo "│ log-cleanup-task                       │ Daily 2:00 AM   │ Cleanup logs    │"
     echo "│ bfs-notification-task                  │ Every 5 min     │ BFS notifs      │"
-    echo "│ whatsapp-report-automation-task        │ Daily 11:05 AM  │ WhatsApp reports│"
+    echo "│ whatsapp-report-automation-task        │ Daily 10:00 AM  │ WhatsApp reports│"
     echo "│ taxonomy-build-task                    │ Daily 3:44 PM   │ Build taxonomy (parallel) │"
     echo "└────────────────────────────────────────┴─────────────────┴─────────────────┘"
     echo ""
