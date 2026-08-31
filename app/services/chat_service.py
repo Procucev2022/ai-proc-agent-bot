@@ -4824,16 +4824,17 @@ class ChatService:
         """Get the most meaningful message to process after auth/registration completes."""
         try:
             # Check if we have a tracked meaningful message from during the auth/registration flow
-            workflow_state: Dict[str, Any] = dict(getattr(session, "workflow_state", None) or {})
-            tracked_message = workflow_state.get("last_meaningful_message")
-            tracked_intent_result = workflow_state.get("last_meaningful_intent_result")
+            state_dict = getattr(session, "workflow_state", None) or {}
+            tracked_message = state_dict.get("last_meaningful_message")
+            tracked_intent_result = state_dict.get("last_meaningful_intent_result")
 
             if tracked_message and tracked_intent_result:
                 logger.debug(f"Using tracked meaningful message: '{str(tracked_message)[:50]}...' with intent: {tracked_intent_result.get('intent')}")
 
                 # Clean up the tracked message since we're using it now
-                workflow_state.pop("last_meaningful_message", None)
-                workflow_state.pop("last_meaningful_intent_result", None)
+                if hasattr(session, "workflow_state") and isinstance(session.workflow_state, dict):
+                    session.workflow_state.pop("last_meaningful_message", None)
+                    session.workflow_state.pop("last_meaningful_intent_result", None)
 
                 return tracked_message, tracked_intent_result
             else:

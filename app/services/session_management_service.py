@@ -635,15 +635,23 @@ class SessionManagementService:
     
     def _clean_for_json_serialization(self, obj: Any, _visited: Optional[set] = None) -> Any:
         """Helper method to clean nested objects for JSON serialization."""
-        if _visited is None:
-            _visited = set()
-        
+        from datetime import datetime, date
+
+        if obj is None:
+            return None
+
         # Handle circular references
         obj_id = id(obj)
+        if _visited is None:
+            _visited = set()
         if obj_id in _visited:
             return "<circular_reference>"
-            
-        if isinstance(obj, dict):
+
+        if hasattr(obj, 'value'):
+            return obj.value
+        elif isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        elif isinstance(obj, dict):
             _visited.add(obj_id)
             try:
                 return {k: self._clean_for_json_serialization(v, _visited) for k, v in obj.items()}

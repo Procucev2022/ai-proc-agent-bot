@@ -695,7 +695,7 @@ class AuthenticationOrchestrator:
             )
     
     async def _check_switch_response(self, user_phone: str, session: ConversationSession,
-                                   message_content: str, intent_result: Dict) -> Dict[str, Any]:
+                                   message_content: str, intent_result: Dict) -> Optional[Dict[str, Any]]:
         """Check if user is responding to a switch choice."""
         try:
             # Handle auth/registration switch response
