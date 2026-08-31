@@ -237,13 +237,13 @@ class SessionManagementService:
                 with stage("welcome_message"):
                     await welcome_service.check_and_send_welcome(phone_number, wa_service)
         else:
-            logger.info(f"Found existing session: {session_id}")
+            logger.info(f"Found existing session: {session.session_id}")
             # Store in Redis for future requests if Redis enabled and not already there
             if self.redis_enabled:
-                redis_exists = await self.redis_session.session_exists(session_id)
+                redis_exists = await self.redis_session.session_exists(session.session_id)
                 if not redis_exists:
-                    await self.redis_session.store_session(session_id, self._session_to_dict(session))
-                    logger.debug(f"Cached session from DB to Redis: {session_id}")
+                    await self.redis_session.store_session(session.session_id, self._session_to_dict(session))
+                    logger.debug(f"Cached session from DB to Redis: {session.session_id}")
 
             # Debug: Check workflow_state immediately after retrieval
             if session.workflow_state:
