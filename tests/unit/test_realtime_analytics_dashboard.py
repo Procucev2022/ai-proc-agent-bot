@@ -797,3 +797,196 @@ def test_conversation_messages_api_endpoint():
         res = client.get("/api/dashboard/conversation-messages?phone=919876543210")
         assert res.status_code == 500
         assert res.json()["status"] == "error"
+
+
+def test_dashboard_aggregation_daily_visitors_logic():
+    """Test get_daily_visitors direct implementation."""
+    fake_db = MagicMock()
+    d1 = datetime(2026, 8, 27, 10, 0)
+    d2 = datetime(2026, 8, 26, 12, 0)
+    fake_db.query.return_value.filter.return_value.all.return_value = [
+        (d1, "919876543210"),
+        (d1, "919876543210"),  # Duplicate user same day
+        (d2, "919876543211"),
+    ]
+    svc = DashboardAggregationService(db_session=fake_db)
+    result = svc.get_daily_visitors(date_preset="7d")
+    assert len(result) >= 1
+    assert any(r["visitors"] > 0 for r in result)
+
+
+@pytest.mark.asyncio
+async def test_dashboard_aggregation_today_conversations_and_messages_logic():
+    """Test get_today_conversations and get_conversation_messages logic."""
+    fake_db = MagicMock()
+    s1 = SimpleNamespace(
+        session_id="s1",
+        external_user_id="919876543210",
+        user_type=UserType.buyer,
+        created_at=datetime.now(timezone.utc),
+        last_activity_at=datetime.now(timezone.utc),
+        workflow_type=WorkflowType.registration,
+        workflow_state={"status": "active"},
+        conversation_history={"messages": [{"sender": "user", "content": "Hello", "timestamp": "2026-08-27T10:00:00Z"}]}
+    )
+    s2 = SimpleNamespace(
+        session_id="s2",
+        external_user_id="919876543211",
+        user_type=UserType.seller,
+        created_at=datetime.now(timezone.utc),
+        last_activity_at=datetime.now(timezone.utc),
+        workflow_type=WorkflowType.seller_rfq_interest,
+        workflow_state={},
+        conversation_history='[{"role": "assistant", "content": "Hi", "timestamp": "2026-08-27T10:01:00Z"}]'
+    )
+    s3 = SimpleNamespace(
+        session_id="s3",
+        external_user_id="919876543212",
+        user_type=UserType.unknown,
+        created_at=datetime.now(timezone.utc),
+        last_activity_at=datetime.now(timezone.utc),
+        workflow_type=None,
+        workflow_state={},
+        conversation_history="invalid-json"
+    )
+
+    fake_db.query.return_value.filter.return_value.all.side_effect = [
+        [s1, s2, s3],  # get_today_conversations
+        [s1, s2],       # get_conversation_messages by phone
+    ]
+    fake_db.query.return_value.filter.return_value.first.return_value = s1
+
+    svc = DashboardAggregationService(db_session=fake_db)
+    
+    # 1. get_today_conversations
+    today_convs = await svc.get_today_conversations()
+    assert len(today_convs) == 3
+    assert today_convs[0]["phone"] == "919876543210"
+
+    # 2. get_conversation_messages by phone
+    msgs_phone = await svc.get_conversation_messages(phone="919876543210")
+    assert msgs_phone["status"] == "success"
+    assert len(msgs_phone["messages"]) >= 1
+
+    # 3. get_conversation_messages by session_id
+    msgs_sess = await svc.get_conversation_messages(session_id="s1")
+    assert msgs_sess["status"] == "success"
+
+    # 4. get_conversation_messages neither provided
+    msgs_empty = await svc.get_conversation_messages()
+    assert msgs_empty["status"] == "error"
+
+
+def test_export_user_classification_csv_all_filter_types():
+    """Test export_user_classification_csv for every filter type branch."""
+    fake_db = MagicMock()
+    s_buyer = SimpleNamespace(
+        external_user_id="919876543210",
+        user_type=UserType.buyer,
+        workflow_type=WorkflowType.registration,
+        workflow_state={"registration_stage": "completed"},
+        outcome=ConversationOutcome.completed,
+        created_at=datetime.now(timezone.utc),
+        last_activity_at=datetime.now(timezone.utc),
+        retention_date=datetime.now(timezone.utc),
+        session_id="s1"
+    )
+    s_seller = SimpleNamespace(
+        external_user_id="919876543211",
+        user_type=UserType.seller,
+        workflow_type=WorkflowType.seller_rfq_interest,
+        workflow_state={"seller_subscribed": True},
+        outcome=ConversationOutcome.completed,
+        created_at=datetime.now(timezone.utc),
+        last_activity_at=datetime.now(timezone.utc),
+        retention_date=datetime.now(timezone.utc),
+        session_id="s2"
+    )
+    fake_db.query.return_value.filter.return_value.all.return_value = [s_buyer, s_seller]
+    fake_db.query.return_value.filter.return_value.first.return_value = None
+
+    svc = DashboardAggregationService(db_session=fake_db)
+    filter_types = [
+        "all", "unknown", "buyer", "buyer_registered", "buyer_not_registered",
+        "buyer_rfq_created", "buyer_rfq_not_created", "seller", "seller_registered",
+        "seller_not_registered", "seller_subscribed", "seller_without_subscription"
+    ]
+    for ft in filter_types:
+        csv_out = svc.export_user_classification_csv(date_preset="today", filter_type=ft)
+        assert "Phone Number" in csv_out
+
+
+@pytest.mark.asyncio
+async def test_redis_db_services_and_operations():
+    """Test BaseRedisService, SessionRedisService, and AuthRedisService operations."""
+    from app.redis_db import (
+        BaseRedisService,
+        SessionRedisService,
+        AuthRedisService,
+        get_redis_service,
+        get_auth_redis_service,
+        get_session_redis_service,
+    )
+
+    base = get_redis_service()
+    assert base is not None
+    auth = get_auth_redis_service()
+    assert auth is not None
+    sess = get_session_redis_service()
+    assert sess is not None
+
+    mock_client = MagicMock()
+    mock_client.set = AsyncMock(return_value=True)
+    mock_client.get = AsyncMock(return_value=json.dumps({"session_id": "s1", "conversation_history": {"messages": []}}))
+    mock_client.delete = AsyncMock(return_value=1)
+    mock_client.exists = AsyncMock(return_value=1)
+    mock_client.ttl = AsyncMock(return_value=300)
+    mock_client.expire = AsyncMock(return_value=True)
+    mock_client.expireat = AsyncMock(return_value=True)
+
+    with patch("app.redis_db.AsyncRedisConnectionManager.get_client", AsyncMock(return_value=mock_client)):
+        base.client = mock_client
+        sess.client = mock_client
+        auth.client = mock_client
+
+        # Base operations
+        assert await base.set("k1", {"foo": "bar"}, ex=60) is True
+        assert await base.get("k1", as_json=True) == {"session_id": "s1", "conversation_history": {"messages": []}}
+        assert await base.exists("k1") is True
+        assert await base.ttl("k1") == 300
+        assert await base.expire("k1", 100) is True
+        assert await base.expireat("k1", 1234567890) is True
+        assert await base.delete("k1") is True
+
+        # Session operations
+        assert await sess.set_user_active_session_id("919876543210", "s1") is True
+        assert await sess.get_user_active_session_id("919876543210") == {"session_id": "s1", "conversation_history": {"messages": []}}
+        assert await sess.delete_user_active_session_id("919876543210") is True
+        assert await sess.append_message_to_history("s1", "user", "Hello there") is True
+
+
+def test_api_dashboard_remaining_error_endpoints():
+    """Test API error handling in get_dashboard_stats, get_recent_feed, and export_dashboard_data."""
+    client = TestClient(app)
+
+    # 1. GET /api/dashboard/stats error
+    with patch("app.api.dashboard.DashboardAggregationService.get_dashboard_stats", AsyncMock(side_effect=RuntimeError("stats fail"))):
+        res = client.get("/api/dashboard/stats")
+        assert res.status_code == 500
+
+    # 2. GET /api/dashboard/feed error
+    with patch("app.api.dashboard.get_realtime_analytics_service") as mock_rt:
+        mock_rt.return_value.get_recent_feed = AsyncMock(side_effect=RuntimeError("feed fail"))
+        res = client.get("/api/dashboard/feed")
+        assert res.status_code == 500
+
+    # 3. GET /api/dashboard/active-users error
+    with patch("app.api.dashboard.get_realtime_analytics_service") as mock_rt:
+        mock_rt.return_value.get_active_users_count = AsyncMock(side_effect=RuntimeError("active fail"))
+        res = client.get("/api/dashboard/active-users")
+        assert res.status_code == 500
+
+    # 4. GET /api/dashboard/export error
+    with patch("app.api.dashboard.DashboardAggregationService.get_dashboard_stats", AsyncMock(side_effect=RuntimeError("export fail"))):
+        res = client.get("/api/dashboard/export")
+        assert res.status_code == 500

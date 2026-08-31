@@ -1499,3 +1499,53 @@ async def test_media_downloader_singleton_and_webhook_errors(monkeypatch, tmp_pa
     assert (await downloader.download_from_webhook_content({}))["error"] == "No media ID found in content"
     downloader.download_media = AsyncMock(side_effect=RuntimeError("download"))
     assert "Webhook download error" in (await downloader.download_from_webhook_content({"id": "m"}))["error"]
+
+
+@pytest.mark.asyncio
+async def test_session_management_comprehensive_paths(monkeypatch):
+    """Test uncovered branches of SessionManagementService."""
+    db = SimpleNamespace(
+        save_conversation_session=Mock(side_effect=lambda data: make_session(state=data.get("workflow_state", {}))),
+        get_conversation_session=Mock(return_value=None),
+        session=SimpleNamespace(query=Mock(return_value=SimpleNamespace(filter=Mock(return_value=SimpleNamespace(order_by=Mock(return_value=SimpleNamespace(first=Mock(return_value=SimpleNamespace(user_type=SimpleNamespace(value="buyer"))))))))))
+    )
+    wa = SimpleNamespace(send_message=AsyncMock())
+    redis_sess = SimpleNamespace(
+        store_session=AsyncMock(),
+        get_session=AsyncMock(return_value=None),
+        delete_session=AsyncMock(),
+        session_exists=AsyncMock(return_value=False),
+        set_user_active_session_id=AsyncMock(),
+        get_user_active_session_id=AsyncMock(return_value=None),
+        delete_user_active_session_id=AsyncMock(),
+        refresh_ttl=AsyncMock(),
+        ttl=AsyncMock(return_value=300),
+    )
+
+    service = session_mod.SessionManagementService(db_manager=db, whatsapp_service=wa)
+    service.redis_session = redis_sess
+    service.redis_enabled = True
+
+    # 1. get_conversation_context for new user with past buyer history
+    s_new = await service.get_conversation_context("+919999999999")
+    assert s_new is not None
+
+    # 2. get_conversation_context with ended session in DB when redis is disabled
+    service.redis_enabled = False
+    ended_db_session = make_session(state={"x": 1})
+    ended_db_session.outcome = ConversationOutcome.completed
+    ended_db_session.completed_at = datetime(2026, 1, 1)
+    db.get_conversation_session.return_value = ended_db_session
+    s_reset = await service.get_conversation_context("+919999999999")
+    assert s_reset is not None
+
+    # 3. save_session with persist_to_db = True
+    s_to_save = make_session(state={"test": "val"})
+    saved = await service.save_session(s_to_save, persist_to_db=True)
+    assert saved is not None
+
+    # 4. save_session when DB throws error
+    db.save_conversation_session.side_effect = RuntimeError("db crash")
+    saved_fallback = await service.save_session(s_to_save, persist_to_db=True)
+    assert saved_fallback is not None
+
