@@ -97,8 +97,7 @@ class RFQStatusService:
                 # Send simple message if no buttons available
                 await self.whatsapp_service.send_message(
                     recipient_id=user.phone_number,
-                    message=response_message,
-                    session_id=session
+                    message=response_message
                 )
 
             if session:

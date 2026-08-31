@@ -135,7 +135,7 @@ class SessionManagementService:
                 )
                 session = None
 
-        # Fallback to database if session was not found in Redis
+        # Fallback to database if session was not found in Redis (or Redis disabled)
         if not session and hasattr(self.db_manager, "get_conversation_session"):
             logger.debug(f"Checking database for session: {target_session_id}")
             try:
@@ -145,8 +145,11 @@ class SessionManagementService:
 
                 if candidate_session:
                     if candidate_session.outcome and candidate_session.outcome in [ConversationOutcome.abandoned, ConversationOutcome.completed, ConversationOutcome.timeout]:
-                        logger.info(f"Found ended DB session {candidate_session.session_id} ({candidate_session.outcome})")
-                        candidate_session = None
+                        if not self.redis_enabled:
+                            session = candidate_session
+                        else:
+                            logger.info(f"Found ended DB session {candidate_session.session_id} ({candidate_session.outcome})")
+                            candidate_session = None
                     else:
                         logger.info(f"Found active session in DB: {candidate_session.session_id}, restoring to Redis")
                         session = candidate_session
@@ -159,6 +162,35 @@ class SessionManagementService:
                                 logger.warning(f"Failed to restore DB session to Redis: {re_err}")
             except Exception as db_err:
                 logger.warning(f"DB session lookup error for {target_session_id}: {db_err}")
+
+        # Check if session exists but has been completed/abandoned (e.g. when Redis is disabled)
+        if session and session.outcome:
+            if session.outcome in [ConversationOutcome.abandoned, ConversationOutcome.completed, ConversationOutcome.timeout]:
+                logger.info(f"Session {session.session_id} was {session.outcome.value if hasattr(session.outcome, 'value') else session.outcome}, resetting for COMPLETELY fresh workflow (no state preserved)")
+                session.workflow_state = {"extracted_entities": [], "last_activity_at": utc_now().isoformat()}
+                session.conversation_history = {"messages": [], "metadata": [], "openai_messages": []}
+                session.extracted_entities = {}
+                session.outcome = None
+                session.completed_at = None
+                session.workflow_type = None
+
+                if self.redis_enabled:
+                    await self.redis_session.store_session(session.session_id, self._session_to_dict(session))
+                    logger.info(f"Session {session.session_id} reset in Redis for new workflow (DB data preserved)")
+                else:
+                    logger.warning(f"Redis disabled - resetting session {session.session_id} in database (history cleared for fresh workflow)")
+                    if hasattr(self.db_manager, "save_conversation_session"):
+                        session = self.db_manager.save_conversation_session({
+                            'session_id': session.session_id,
+                            'external_user_id': session.external_user_id,
+                            'workflow_type': None,
+                            'outcome': None,
+                            'workflow_state': session.workflow_state,
+                            'conversation_history': {"messages": [], "metadata": [], "openai_messages": []},
+                            'extracted_entities': session.extracted_entities,
+                            'retention_date': session.retention_date,
+                            'completed_at': None
+                        })
 
         if not session:
             # Check if this user already has an established user_type (buyer or seller) in past DB sessions
@@ -185,12 +217,11 @@ class SessionManagementService:
                 except Exception:
                     existing_ended_db_session = None
 
-            if existing_ended_db_session is not None:
+            if existing_ended_db_session is not None and self.redis_enabled:
                 import uuid
                 session_id = f"{base_session_id}_{uuid.uuid4().hex[:6]}"
             else:
                 session_id = base_session_id
-
 
             # Create new session
             logger.info(f"Creating new session: {session_id}")
@@ -519,16 +550,19 @@ class SessionManagementService:
                 logger.info(f"[PREVENT_REDIS_SAVE] Deleted ended session from Redis: {session.session_id}")
                 logger.debug(f"[PREVENT_REDIS_SAVE] Reason - outcome={session.outcome}, exit_completed={session.workflow_state.get('exit_completed') if session.workflow_state else None}")
 
-            # Always persist session and conversation messages to database so history is never lost
-            try:
-                if hasattr(self.db_manager, "save_conversation_session"):
-                    saved_session = self.db_manager.save_conversation_session(session_data)
-                    logger.debug(f"Persisted session to database: {session.session_id}")
-                    return saved_session
-            except Exception as db_err:
-                logger.error(f"[SESSION_SAVE_DB_ERROR] Failed to save session to DB: {db_err}")
-
-            return session
+            # Only persist to DB when explicitly requested or Redis disabled
+            if persist_to_db or not self.redis_enabled:
+                try:
+                    if hasattr(self.db_manager, "save_conversation_session"):
+                        saved_session = self.db_manager.save_conversation_session(session_data)
+                        logger.debug(f"Persisted session to database: {session.session_id}")
+                        return saved_session
+                except Exception as db_err:
+                    logger.error(f"[SESSION_SAVE_DB_ERROR] Failed to save session to DB: {db_err}")
+                return session
+            else:
+                # Return the session object unchanged (data saved to Redis)
+                return session
 
         except Exception as e:
             logger.error(f"Error saving session: {e}")

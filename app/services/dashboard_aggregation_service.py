@@ -780,37 +780,47 @@ class DashboardAggregationService:
         ]
 
         def _generate(db: Session) -> str:
+            def _row_val(row, idx: int, attr: Optional[str] = None):
+                if isinstance(row, (tuple, list)):
+                    return row[idx] if len(row) > idx else None
+                if attr and hasattr(row, attr):
+                    return getattr(row, attr)
+                return None
+
             all_period_users = [
-                u[0] for u in db.query(distinct(ConversationSession.external_user_id)).filter(
+                _row_val(u, 0, "external_user_id") for u in db.query(distinct(ConversationSession.external_user_id)).filter(
                     *today_session_filter
-                ).all() if u[0]
+                ).all() if _row_val(u, 0, "external_user_id")
             ]
 
             buyer_users_set = {
-                u[0] for u in db.query(distinct(ConversationSession.external_user_id)).filter(
+                _row_val(u, 0, "external_user_id") for u in db.query(distinct(ConversationSession.external_user_id)).filter(
                     ConversationSession.user_type == UserType.buyer,
                     *today_session_filter
-                ).all() if u[0]
+                ).all() if _row_val(u, 0, "external_user_id")
             }
 
             seller_users_set = {
-                u[0] for u in db.query(distinct(ConversationSession.external_user_id)).filter(
+                _row_val(u, 0, "external_user_id") for u in db.query(distinct(ConversationSession.external_user_id)).filter(
                     ConversationSession.user_type == UserType.seller,
                     *today_session_filter
-                ).all() if u[0]
+                ).all() if _row_val(u, 0, "external_user_id")
             }
 
             unknown_users_set = set(all_period_users) - buyer_users_set - seller_users_set
 
             rfq_phones_in_period = {
-                r[0] for r in db.query(distinct(RFQ.external_user_id)).filter(
+                _row_val(r, 0, "external_user_id") for r in db.query(distinct(RFQ.external_user_id)).filter(
                     RFQ.created_at >= start_naive,
                     RFQ.created_at <= end_naive
-                ).all() if r[0]
+                ).all() if _row_val(r, 0, "external_user_id")
             }
-            for r_ids, r_id, ext_user in db.query(
+            for sess_row in db.query(
                 ConversationSession.rfq_ids, ConversationSession.rfq_id, ConversationSession.external_user_id
             ).filter(*today_session_filter).all():
+                r_ids = _row_val(sess_row, 0, "rfq_ids")
+                r_id = _row_val(sess_row, 1, "rfq_id")
+                ext_user = _row_val(sess_row, 2, "external_user_id")
                 if (r_ids or r_id) and ext_user:
                     rfq_phones_in_period.add(ext_user)
 
@@ -818,10 +828,12 @@ class DashboardAggregationService:
             try:
                 from app.models import Seller
                 for s in db.query(Seller.phone_number, Seller.subscription_credits).all():
-                    if s.phone_number:
-                        p_clean = s.phone_number.lstrip("+")
-                        registered_sellers_map[p_clean] = s.subscription_credits or 0
-                        registered_sellers_map[s.phone_number] = s.subscription_credits or 0
+                    s_phone = _row_val(s, 0, "phone_number")
+                    s_credits = _row_val(s, 1, "subscription_credits")
+                    if s_phone:
+                        p_clean = s_phone.lstrip("+")
+                        registered_sellers_map[p_clean] = s_credits or 0
+                        registered_sellers_map[s_phone] = s_credits or 0
             except Exception as e:
                 logger.debug(f"[DASHBOARD] Seller query skipped in CSV export: {e}")
 
@@ -835,8 +847,9 @@ class DashboardAggregationService:
                     ConversationSession.external_user_id == u_phone,
                     *today_session_filter
                 ).first()
-                sessions_count = sess_info[0] if sess_info else 0
-                last_active = sess_info[1].strftime("%Y-%m-%d %H:%M:%S") if sess_info and sess_info[1] else "N/A"
+                sessions_count = _row_val(sess_info, 0) or 0
+                last_active_raw = _row_val(sess_info, 1)
+                last_active = last_active_raw.strftime("%Y-%m-%d %H:%M:%S") if last_active_raw else "N/A"
 
                 user_rows.append({
                     "phone": u_phone,
@@ -865,7 +878,14 @@ class DashboardAggregationService:
                 has_rfq = b_phone in rfq_phones_in_period
                 last_active_dt = None
 
-                for w_type, w_state, out, r_id, r_ids, c_at in user_sess:
+                for sess_row in user_sess:
+                    w_type = _row_val(sess_row, 0, "workflow_type")
+                    w_state = _row_val(sess_row, 1, "workflow_state")
+                    out = _row_val(sess_row, 2, "outcome")
+                    r_id = _row_val(sess_row, 3, "rfq_id")
+                    r_ids = _row_val(sess_row, 4, "rfq_ids")
+                    c_at = _row_val(sess_row, 5, "created_at")
+
                     if c_at and (last_active_dt is None or c_at > last_active_dt):
                         last_active_dt = c_at
                     if r_id or r_ids:
@@ -923,7 +943,12 @@ class DashboardAggregationService:
                 if p_clean in registered_sellers_map or s_phone in registered_sellers_map:
                     is_reg = True
 
-                for w_type, w_state, out, c_at in user_sess:
+                for sess_row in user_sess:
+                    w_type = _row_val(sess_row, 0, "workflow_type")
+                    w_state = _row_val(sess_row, 1, "workflow_state")
+                    out = _row_val(sess_row, 2, "outcome")
+                    c_at = _row_val(sess_row, 3, "created_at")
+
                     if c_at and (last_active_dt is None or c_at > last_active_dt):
                         last_active_dt = c_at
                     w_state = w_state or {}
@@ -1023,37 +1048,47 @@ class DashboardAggregationService:
         ]
 
         def _generate(db: Session) -> Dict[str, Any]:
+            def _row_val(row, idx: int, attr: Optional[str] = None):
+                if isinstance(row, (tuple, list)):
+                    return row[idx] if len(row) > idx else None
+                if attr and hasattr(row, attr):
+                    return getattr(row, attr)
+                return None
+
             all_period_users = [
-                u[0] for u in db.query(distinct(ConversationSession.external_user_id)).filter(
+                _row_val(u, 0, "external_user_id") for u in db.query(distinct(ConversationSession.external_user_id)).filter(
                     *today_session_filter
-                ).all() if u[0]
+                ).all() if _row_val(u, 0, "external_user_id")
             ]
 
             buyer_users_set = {
-                u[0] for u in db.query(distinct(ConversationSession.external_user_id)).filter(
+                _row_val(u, 0, "external_user_id") for u in db.query(distinct(ConversationSession.external_user_id)).filter(
                     ConversationSession.user_type == UserType.buyer,
                     *today_session_filter
-                ).all() if u[0]
+                ).all() if _row_val(u, 0, "external_user_id")
             }
 
             seller_users_set = {
-                u[0] for u in db.query(distinct(ConversationSession.external_user_id)).filter(
+                _row_val(u, 0, "external_user_id") for u in db.query(distinct(ConversationSession.external_user_id)).filter(
                     ConversationSession.user_type == UserType.seller,
                     *today_session_filter
-                ).all() if u[0]
+                ).all() if _row_val(u, 0, "external_user_id")
             }
 
             unknown_users_set = set(all_period_users) - buyer_users_set - seller_users_set
 
             rfq_phones_in_period = {
-                r[0] for r in db.query(distinct(RFQ.external_user_id)).filter(
+                _row_val(r, 0, "external_user_id") for r in db.query(distinct(RFQ.external_user_id)).filter(
                     RFQ.created_at >= start_naive,
                     RFQ.created_at <= end_naive
-                ).all() if r[0]
+                ).all() if _row_val(r, 0, "external_user_id")
             }
-            for r_ids, r_id, ext_user in db.query(
+            for sess_row in db.query(
                 ConversationSession.rfq_ids, ConversationSession.rfq_id, ConversationSession.external_user_id
             ).filter(*today_session_filter).all():
+                r_ids = _row_val(sess_row, 0, "rfq_ids")
+                r_id = _row_val(sess_row, 1, "rfq_id")
+                ext_user = _row_val(sess_row, 2, "external_user_id")
                 if (r_ids or r_id) and ext_user:
                     rfq_phones_in_period.add(ext_user)
 
@@ -1061,10 +1096,12 @@ class DashboardAggregationService:
             try:
                 from app.models import Seller
                 for s in db.query(Seller.phone_number, Seller.subscription_credits).all():
-                    if s.phone_number:
-                        p_clean = s.phone_number.lstrip("+")
-                        registered_sellers_map[p_clean] = s.subscription_credits or 0
-                        registered_sellers_map[s.phone_number] = s.subscription_credits or 0
+                    s_phone = _row_val(s, 0, "phone_number")
+                    s_credits = _row_val(s, 1, "subscription_credits")
+                    if s_phone:
+                        p_clean = s_phone.lstrip("+")
+                        registered_sellers_map[p_clean] = s_credits or 0
+                        registered_sellers_map[s_phone] = s_credits or 0
             except Exception as e:
                 logger.debug(f"[DASHBOARD] Seller query skipped in details JSON: {e}")
 
@@ -1079,9 +1116,10 @@ class DashboardAggregationService:
                     ConversationSession.external_user_id == u_phone,
                     *today_session_filter
                 ).first()
-                sessions_count = sess_info[0] if sess_info else 0
-                last_active = sess_info[1].strftime("%Y-%m-%d %H:%M:%S") if sess_info and sess_info[1] else "N/A"
-                session_id = sess_info[2] if sess_info else None
+                sessions_count = _row_val(sess_info, 0) or 0
+                last_active_raw = _row_val(sess_info, 1)
+                last_active = last_active_raw.strftime("%Y-%m-%d %H:%M:%S") if last_active_raw else "N/A"
+                session_id = _row_val(sess_info, 2, "session_id")
 
                 user_rows.append({
                     "phone": u_phone,
@@ -1113,7 +1151,15 @@ class DashboardAggregationService:
                 last_active_dt = None
                 latest_session_id = None
 
-                for w_type, w_state, out, r_id, r_ids, c_at, s_id in user_sess:
+                for sess_row in user_sess:
+                    w_type = _row_val(sess_row, 0, "workflow_type")
+                    w_state = _row_val(sess_row, 1, "workflow_state")
+                    out = _row_val(sess_row, 2, "outcome")
+                    r_id = _row_val(sess_row, 3, "rfq_id")
+                    r_ids = _row_val(sess_row, 4, "rfq_ids")
+                    c_at = _row_val(sess_row, 5, "created_at")
+                    s_id = _row_val(sess_row, 6, "session_id")
+
                     if c_at and (last_active_dt is None or c_at > last_active_dt):
                         last_active_dt = c_at
                         latest_session_id = s_id
@@ -1175,7 +1221,13 @@ class DashboardAggregationService:
                 if p_clean in registered_sellers_map or s_phone in registered_sellers_map:
                     is_reg = True
 
-                for w_type, w_state, out, c_at, s_id in user_sess:
+                for sess_row in user_sess:
+                    w_type = _row_val(sess_row, 0, "workflow_type")
+                    w_state = _row_val(sess_row, 1, "workflow_state")
+                    out = _row_val(sess_row, 2, "outcome")
+                    c_at = _row_val(sess_row, 3, "created_at")
+                    s_id = _row_val(sess_row, 4, "session_id")
+
                     if c_at and (last_active_dt is None or c_at > last_active_dt):
                         last_active_dt = c_at
                         latest_session_id = s_id

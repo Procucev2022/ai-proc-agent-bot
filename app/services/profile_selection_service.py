@@ -1538,16 +1538,10 @@ class ProfileSelectionService:
                                                      session: ConversationSession) -> Dict[str, Any]:
         """Handle user response to new user registration options."""
         try:
-            profile_options = session.workflow_state.get('profile_options')
+            profile_options = session.workflow_state.get('profile_options', [])
             if not profile_options:
-                logger.info(f"Populating default profile_options for new_user_registration for {user_phone}")
-                profile_options = [
-                    {"number": 1, "action": "register_buyer", "display": "Register as Buyer"},
-                    {"number": 2, "action": "register_seller", "display": "Register as Seller"},
-                    {"number": 3, "action": "exit", "display": "Exit"}
-                ]
-                session.workflow_state = session.workflow_state or {}
-                session.workflow_state['profile_options'] = profile_options
+                logger.error(f"No profile options found for new user registration response from {user_phone}")
+                return {"status": "restart_profile_selection"}
 
 
             # Parse user selection
