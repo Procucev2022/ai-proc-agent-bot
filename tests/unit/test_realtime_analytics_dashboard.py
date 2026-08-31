@@ -1073,54 +1073,62 @@ async def test_realtime_analytics_service_comprehensive():
 
 @pytest.mark.asyncio
 async def test_dashboard_aggregation_full_metrics_coverage():
-    """Execute complete _generate_metrics calculation path with realistic DB rows."""
-    fake_db = MagicMock()
-    now_naive = datetime.utcnow()
+    """Execute complete _generate_metrics calculation path with real SQLite DB."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.database import Base
+    from app.models import ConversationSession, RFQ, Seller, ProductCategory, RFQNotificationFact, UserType, SessionState, ConversationOutcome, RFQStatus
 
-    # Create mock return queries
-    fake_db.query.return_value.filter.return_value.scalar.side_effect = [
-        10,  # total_sessions
-        5,   # comp_sessions
-        8,   # unique_users
-        4,   # comp_unique_users
-        6,   # new_buyers
-        2,   # new_sellers
-        1,   # unknown_sessions_count
-        3,   # active_conversations
-        1,   # drop_off_count
-    ]
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(bind=engine)
+    SessionLocal = sessionmaker(bind=engine)
+    db = SessionLocal()
 
-    fake_db.query.return_value.all.return_value = [SimpleNamespace(phone_number="919876543211", subscription_credits=10)]
-    fake_db.query.return_value.filter.return_value.all.side_effect = [
-        [("919876543210",), ("919876543211",)],  # users_in_period
-        [("919876543210",), ("919876543211",)],  # all_today_users
-        [("919876543210",)],                      # buyer_users_set
-        [("919876543211",)],                      # seller_users_set
-        [("919876543210",)],                      # rfq_phones_in_period
-        [(["r1"], "r1", "919876543210")],        # rfq_ids
-        [(WorkflowType.registration, {"registration_stage": "completed"}, ConversationOutcome.completed, "r1", ["r1"])],  # user_sess for buyer
-        [(WorkflowType.registration, {"registration_stage": "completed"}, ConversationOutcome.completed)],                 # user_sess for seller
-        [(["r1"], "r1", ConversationOutcome.completed, WorkflowType.rfq_creation)],                                       # session_rfq_rows
-        [("r1", RFQStatus.submitted)],                                                                                      # db_rfqs
-        [(["r1"], "r1")],                                                                                                   # comp_session_rfq_rows
-        [("r1", RFQStatus.submitted)],                                                                                      # comp_db_rfqs
-        [(now_naive,)],                                                                                                     # sessions_in_window
-        [("Fasteners", 10, 8)],                                                                                             # cat_rows
-        [("919876543210", 5, now_naive)],                                                                                   # buyer_rows
-    ]
+    now = datetime.utcnow()
 
-    seller_mock = SimpleNamespace(
-        seller_id="sel_1",
-        seller_name="Acme Corp",
+    # Seed realistic rows
+    s1 = ConversationSession(
+        session_id="s1",
+        external_user_id="919876543210",
+        user_type=UserType.buyer,
+        session_state=SessionState.active,
+        outcome=ConversationOutcome.completed,
+        workflow_type=WorkflowType.registration,
+        workflow_state={"registration_stage": "completed", "user_id": "u1"},
+        rfq_id="r1",
+        created_at=now,
+        last_activity_at=now,
+        conversation_history={"messages": [{"role": "user", "content": "Hi"}]}
+    )
+    s2 = ConversationSession(
+        session_id="s2",
+        external_user_id="919876543211",
+        user_type=UserType.seller,
+        session_state=SessionState.active,
+        outcome=ConversationOutcome.abandoned,
+        workflow_type=WorkflowType.seller_rfq_interest,
+        workflow_state={},
+        created_at=now,
+        last_activity_at=now,
+        conversation_history={"messages": []}
+    )
+    r1 = RFQ(
+        rfq_id="r1",
+        external_user_id="919876543210",
+        status=RFQStatus.submitted,
+        created_at=now
+    )
+    sel1 = Seller(
+        seller_id="sel1",
         phone_number="919876543211",
+        seller_name="Acme Sellers",
         categories=["Fasteners"],
-        ranking=SimpleNamespace(value="Gold"),
         subscription_credits=10
     )
-    fake_db.query.return_value.limit.return_value.all.return_value = [seller_mock]
-    fake_db.query.return_value.filter.return_value.count.return_value = 2
+    db.add_all([s1, s2, r1, sel1])
+    db.commit()
 
-    svc = DashboardAggregationService(db_session=fake_db)
+    svc = DashboardAggregationService(db_session=db)
     with patch.object(svc.realtime_service, "get_active_users_count", AsyncMock(return_value={"total": 2, "buyers": 1, "sellers": 1, "unknown": 0})), \
          patch.object(svc.realtime_service, "get_recent_feed", AsyncMock(return_value=[{"event_type": "visitor"}])):
 
@@ -1130,5 +1138,7 @@ async def test_dashboard_aggregation_full_metrics_coverage():
         assert "marketplace_health" in stats
         assert "buyer_funnel" in stats
         assert "seller_funnel" in stats
+
+    db.close()
 
 
