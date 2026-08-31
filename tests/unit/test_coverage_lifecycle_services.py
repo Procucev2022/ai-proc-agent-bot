@@ -1522,7 +1522,9 @@ async def test_session_management_comprehensive_paths(monkeypatch):
         ttl=AsyncMock(return_value=300),
     )
 
-    service = session_mod.SessionManagementService(db_manager=db, whatsapp_service=wa)
+    summaries = SimpleNamespace(generate_session_summary=AsyncMock(), generate_daily_summary=AsyncMock())
+    daily = SimpleNamespace(generate_daily_summary=AsyncMock())
+    service = session_mod.SessionManagementService(db_manager=db, whatsapp_service=wa, chat_summary_service=summaries, daily_summary_service=daily)
     service.redis_session = redis_sess
     service.redis_enabled = True
 

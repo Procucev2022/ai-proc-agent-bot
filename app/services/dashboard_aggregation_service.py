@@ -1338,13 +1338,15 @@ class DashboardAggregationService:
                 )
                 .all()
             )
-            # Group distinct users per day in Python (DB-agnostic)
             day_users: Dict[str, set] = {}
             for row in rows:
-                day_str = str(row.day)[:10]
-                if day_str not in day_users:
-                    day_users[day_str] = set()
-                day_users[day_str].add(row.external_user_id)
+                day_val = getattr(row, "day", row[0] if isinstance(row, (tuple, list)) else None)
+                user_val = getattr(row, "external_user_id", row[1] if isinstance(row, (tuple, list)) and len(row) > 1 else None)
+                if day_val and user_val:
+                    day_str = str(day_val)[:10]
+                    if day_str not in day_users:
+                        day_users[day_str] = set()
+                    day_users[day_str].add(user_val)
 
             result: List[Dict[str, Any]] = []
             for i in range(total_days):

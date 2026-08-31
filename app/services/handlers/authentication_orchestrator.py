@@ -483,8 +483,8 @@ class AuthenticationOrchestrator:
                 if result.get("status") == "registration_completed" and result.get("registration_flow_complete"):
                     logger.info(f"Registration flow completely finished - stopping further processing")
                     # Clear workflow to prevent any further processing
-                    session.workflow_type = None
-                    session.workflow_state = {}
+                    session.workflow_type = None  # type: ignore[assignment]
+                    session.workflow_state = {}  # type: ignore[assignment]
                 
                 return result
             elif registration_stage == "domain_matching":
@@ -622,8 +622,8 @@ class AuthenticationOrchestrator:
                 )
             elif intent in ["cancel", "stop"]:
                 # Cancel registration
-                session.workflow_type = None
-                session.workflow_state = {}
+                session.workflow_type = None  # type: ignore[assignment]
+                session.workflow_state = {}  # type: ignore[assignment]
                 await self.whatsapp_service.send_message(
                     user_phone, "Registration cancelled. How can I help you?"
                 )
@@ -659,7 +659,7 @@ class AuthenticationOrchestrator:
             
             # Ensure workflow_type is consistently set
             WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="authentication_orchestrator")
-            session.workflow_state = {
+            session.workflow_state = {  # type: ignore[assignment]
                 "registration_stage": "data_collection",
                 "user_type": user_type,
                 "registration_entities": existing_entities,

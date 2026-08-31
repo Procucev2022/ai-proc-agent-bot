@@ -1025,30 +1025,36 @@ async def test_profile_selection_comprehensive_branch_coverage(monkeypatch):
     assert res["status"] == "restart_profile_selection"
 
     # 2. _handle_new_user_registration_response with valid buyer choice
-    s.workflow_state["profile_options"] = [
-        {"number": 1, "action": "register_buyer", "display": "Register as Buyer"},
-        {"number": 2, "action": "register_seller", "display": "Register as Seller"},
-        {"number": 3, "action": "exit", "display": "Exit"}
-    ]
-    res_buyer = await service._handle_new_user_registration_response("+919999999999", "1", s)
+    def _make_opts_session():
+        sess = session_obj(workflow_state={})
+        sess.workflow_state["profile_options"] = [
+            {"number": 1, "action": "register_buyer", "display": "Register as Buyer"},
+            {"number": 2, "action": "register_seller", "display": "Register as Seller"},
+            {"number": 3, "action": "exit", "display": "Exit"}
+        ]
+        return sess
+
+    res_buyer = await service._handle_new_user_registration_response("+919999999999", "1", _make_opts_session())
     assert res_buyer["status"] == "redirected_to_buyer_registration"
 
     # 3. _handle_new_user_registration_response with valid seller choice
-    res_seller = await service._handle_new_user_registration_response("+919999999999", "2", s)
+    res_seller = await service._handle_new_user_registration_response("+919999999999", "2", _make_opts_session())
     assert res_seller["status"] == "redirected_to_seller_registration"
 
     # 4. _handle_new_user_registration_response with exit choice
-    res_exit = await service._handle_new_user_registration_response("+919999999999", "3", s)
+    res_exit = await service._handle_new_user_registration_response("+919999999999", "3", _make_opts_session())
     assert res_exit["status"] == "exit"
 
     # 5. _handle_new_user_registration_response invalid selection under limit
-    s.workflow_state["registration_retries"] = 0
-    res_invalid = await service._handle_new_user_registration_response("+919999999999", "99", s)
+    s_inv = _make_opts_session()
+    s_inv.workflow_state["registration_retries"] = 0
+    res_invalid = await service._handle_new_user_registration_response("+919999999999", "99", s_inv)
     assert res_invalid["status"] == "new_user_registration_retry_sent"
 
     # 6. _handle_new_user_registration_response max retries reached
-    s.workflow_state["registration_retries"] = 3
-    res_max = await service._handle_new_user_registration_response("+919999999999", "99", s)
+    s_max = _make_opts_session()
+    s_max.workflow_state["registration_retries"] = 3
+    res_max = await service._handle_new_user_registration_response("+919999999999", "99", s_max)
     assert res_max["status"] == "exit"
 
     # 7. show_profile_selection_options when no profiles exist
