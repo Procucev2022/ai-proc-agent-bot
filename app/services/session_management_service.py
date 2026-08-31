@@ -607,7 +607,7 @@ class SessionManagementService:
         # Handle circular references
         obj_id = id(obj)
         if obj_id in _visited:
-            return str(obj)
+            return "<circular_reference>"
             
         if isinstance(obj, dict):
             _visited.add(obj_id)
