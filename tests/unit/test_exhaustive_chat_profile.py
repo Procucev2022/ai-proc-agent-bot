@@ -1012,3 +1012,48 @@ async def test_chat_remaining_helpers_and_state_branches(monkeypatch):
     session.workflow_state = {"extracted_entities": [{"description": "bolt"}]}
     blocked = {"contextual_response": "base", "contextual_actions": [{"type": "restart_workflow"}], "context_understanding": {}}
     assert (await service._handle_contextual_interaction(user, session, "q", blocked))["destructive_blocked"]
+
+
+@pytest.mark.asyncio
+async def test_profile_selection_comprehensive_branch_coverage(monkeypatch):
+    """Test uncovered branches in ProfileSelectionService."""
+    service, wa, auth, cache = profile_service(monkeypatch)
+
+    # 1. _handle_new_user_registration_response with missing options
+    s = session_obj(workflow_state={})
+    res = await service._handle_new_user_registration_response("+919999999999", "1", s)
+    assert res["status"] == "restart_profile_selection"
+
+    # 2. _handle_new_user_registration_response with valid buyer choice
+    s.workflow_state["profile_options"] = [
+        {"number": 1, "action": "register_buyer", "display": "Register as Buyer"},
+        {"number": 2, "action": "register_seller", "display": "Register as Seller"},
+        {"number": 3, "action": "exit", "display": "Exit"}
+    ]
+    res_buyer = await service._handle_new_user_registration_response("+919999999999", "1", s)
+    assert res_buyer["status"] == "redirected_to_buyer_registration"
+
+    # 3. _handle_new_user_registration_response with valid seller choice
+    res_seller = await service._handle_new_user_registration_response("+919999999999", "2", s)
+    assert res_seller["status"] == "redirected_to_seller_registration"
+
+    # 4. _handle_new_user_registration_response with exit choice
+    res_exit = await service._handle_new_user_registration_response("+919999999999", "3", s)
+    assert res_exit["status"] == "exit"
+
+    # 5. _handle_new_user_registration_response invalid selection under limit
+    s.workflow_state["registration_retries"] = 0
+    res_invalid = await service._handle_new_user_registration_response("+919999999999", "99", s)
+    assert res_invalid["status"] == "new_user_registration_retry_sent"
+
+    # 6. _handle_new_user_registration_response max retries reached
+    s.workflow_state["registration_retries"] = 3
+    res_max = await service._handle_new_user_registration_response("+919999999999", "99", s)
+    assert res_max["status"] == "exit"
+
+    # 7. show_profile_selection_options when no profiles exist
+    s2 = session_obj(workflow_state={})
+    cache.get_user_data.return_value = []
+    res_show = await service.show_profile_selection_options("+919999999999", s2)
+    assert res_show["status"] == "new_user_options_sent"
+
