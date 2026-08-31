@@ -646,3 +646,106 @@ def test_daily_visitors_api_endpoint_error():
         res = client.get("/api/dashboard/daily-visitors?date_preset=7d")
         assert res.status_code == 500
         assert res.json()["status"] == "error"
+
+
+def test_user_classification_details_json_and_filters():
+    """Test get_user_classification_details_json with various classification filters."""
+    fake_db = MagicMock()
+
+    s1 = SimpleNamespace(
+        external_user_id="+919876543210",
+        user_type=UserType.buyer,
+        workflow_type=WorkflowType.registration,
+        workflow_state={"registration_stage": "completed", "email": "b1@test.com"},
+        outcome=ConversationOutcome.completed,
+        created_at=datetime.now(timezone.utc),
+        last_activity_at=datetime.now(timezone.utc),
+        retention_date=datetime.now(timezone.utc),
+        session_id="s1"
+    )
+
+    s2 = SimpleNamespace(
+        external_user_id="919876543211",
+        user_type=UserType.seller,
+        workflow_type=WorkflowType.seller_rfq_interest,
+        workflow_state={"seller_subscribed": True, "email": "s1@test.com"},
+        outcome=ConversationOutcome.completed,
+        created_at=datetime.now(timezone.utc),
+        last_activity_at=datetime.now(timezone.utc),
+        retention_date=datetime.now(timezone.utc),
+        session_id="s2"
+    )
+
+    fake_db.query.return_value.filter.return_value.all.return_value = [s1, s2]
+    fake_db.query.return_value.filter.return_value.first.return_value = None
+
+    svc = DashboardAggregationService(db_session=fake_db)
+    
+    # Test all filter types
+    filters = [
+        "all", "unknown", "buyer", "buyer_registered", "buyer_not_registered",
+        "buyer_rfq_created", "buyer_rfq_not_created", "seller", "seller_registered",
+        "seller_not_registered", "seller_subscribed", "seller_without_subscription"
+    ]
+    for f in filters:
+        res = svc.get_user_classification_details_json(date_preset="today", filter_type=f)
+        assert res["status"] == "success"
+        assert "users" in res
+
+
+def test_delete_user_by_phone():
+    """Test delete_user_by_phone purges records from DB context."""
+    fake_db = MagicMock()
+    fake_db.query.return_value.filter.return_value.all.return_value = []
+    fake_db.query.return_value.filter.return_value.delete.return_value = 1
+    fake_db.commit = MagicMock()
+
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=fake_db)
+    ctx.__exit__ = MagicMock(return_value=None)
+
+    svc = DashboardAggregationService(db_session=fake_db)
+    with patch("app.services.dashboard_aggregation_service.get_db_session_context", return_value=ctx):
+        res = svc.delete_user_by_phone("+919876543210")
+        assert res["status"] == "success"
+        assert res["phone_number"] == "+919876543210"
+
+
+def test_dashboard_api_endpoints_coverage():
+    """Test coverage for API endpoints in app/api/dashboard.py."""
+    client = TestClient(app)
+
+    # 1. GET /api/dashboard/user-classification-details
+    fake_details = {"status": "success", "users": []}
+    with patch("app.api.dashboard.DashboardAggregationService.get_user_classification_details_json", return_value=fake_details):
+        res = client.get("/api/dashboard/user-classification-details?date_preset=today&filter_type=all")
+        assert res.status_code == 200
+
+    # 2. GET /api/dashboard/user-classification-details error fallback
+    with patch("app.api.dashboard.DashboardAggregationService.get_user_classification_details_json", side_effect=RuntimeError("err")):
+        res = client.get("/api/dashboard/user-classification-details?date_preset=today&filter_type=all")
+        assert res.status_code == 500
+
+    # 3. GET /api/dashboard/export-user-classification-csv
+    with patch("app.api.dashboard.DashboardAggregationService.export_user_classification_csv", return_value="phone,category\n919876543210,buyer"):
+        res = client.get("/api/dashboard/export-user-classification-csv?date_preset=today&filter_type=all")
+        assert res.status_code == 200
+        assert res.headers["content-type"] == "text/csv; charset=utf-8"
+
+    # 4. GET /api/dashboard/export-user-classification-csv error fallback
+    with patch("app.api.dashboard.DashboardAggregationService.export_user_classification_csv", side_effect=RuntimeError("csv err")):
+        res = client.get("/api/dashboard/export-user-classification-csv?date_preset=today&filter_type=all")
+        assert res.status_code == 500
+
+    # 5. DELETE /api/dashboard/delete-user
+    fake_delete_res = {"status": "success", "deleted_emails": []}
+    with patch("app.api.dashboard.DashboardAggregationService.delete_user_by_phone", return_value=fake_delete_res):
+        with patch("app.redis_db.AsyncRedisConnectionManager.get_client", AsyncMock(return_value=MagicMock(delete=AsyncMock()))):
+            res = client.delete("/api/dashboard/delete-user?phone_number=%2B919876543210")
+            assert res.status_code == 200
+
+    # 6. DELETE /api/dashboard/delete-user error fallback
+    with patch("app.api.dashboard.DashboardAggregationService.delete_user_by_phone", side_effect=RuntimeError("del err")):
+        res = client.delete("/api/dashboard/delete-user?phone_number=%2B919876543210")
+        assert res.status_code == 500
+

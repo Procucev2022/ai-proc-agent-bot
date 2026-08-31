@@ -212,7 +212,8 @@ class SessionManagementService:
             if self.redis_enabled:
                 with stage("session_store"):
                     await self.redis_session.store_session(session_id, session_data)
-                    await self.redis_session.set_user_active_session_id(phone_number, session_id)
+                    if hasattr(self.redis_session, "set_user_active_session_id"):
+                        await self.redis_session.set_user_active_session_id(phone_number, session_id)
                 session = self._dict_to_session(session_data)
                 logger.info(f"Created new session in Redis: {session_id}")
 
