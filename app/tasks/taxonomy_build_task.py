@@ -140,6 +140,8 @@ async def build_taxonomy_async(self, batch_size: int = 50, process_all: bool = T
                     "batches_processed": 0
                 }
                 
+                max_retries = 2
+                
                 async def process_next_available_batch():
                     """Worker function that grabs the next available batch with retry logic"""
                     while True:

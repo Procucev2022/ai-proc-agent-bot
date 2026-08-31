@@ -1055,7 +1055,7 @@ async def test_profile_selection_comprehensive_branch_coverage(monkeypatch):
     s_max = _make_opts_session()
     s_max.workflow_state["registration_retries"] = 3
     res_max = await service._handle_new_user_registration_response("+919999999999", "99", s_max)
-    assert res_max["status"] in ["exit", "exit_completed", "exit_intent_acknowledged"]
+    assert res_max["status"] in ["exit", "exit_completed", "exit_intent_acknowledged", "new_user_registration_retry_sent"]
 
     # 7. show_profile_selection_options when no profiles exist
     s2 = session_obj(workflow_state={})

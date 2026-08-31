@@ -970,7 +970,7 @@ async def test_redis_db_services_and_operations():
         # Session operations
         assert await sess.set_user_active_session_id("919876543210", "s1") is True
         assert await sess.get_user_active_session_id("919876543210") is not None
-        assert await sess.delete_user_active_session_id("919876543210") is True
+        assert await sess.clear_user_active_session_id("919876543210") is True
         assert await sess.append_message_to_history("s1", "user", "Hello there") is True
 
 
