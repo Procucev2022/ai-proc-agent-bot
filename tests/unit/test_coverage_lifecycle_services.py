@@ -1434,6 +1434,7 @@ async def test_session_management_context_creation_save_and_completion(monkeypat
     service.redis_enabled = True
     redis.store_session.side_effect = None
     value = make_session(workflow_state={"pending_optional_rfq": {"x": 1}})
+    db.save_conversation_session.side_effect = lambda data: value
     assert await service.save_session(value, WorkflowType.rfq_creation) is value
     assert await service.save_session(make_session(), "not-a-workflow")
     assert await service.save_session(make_session(), object())
