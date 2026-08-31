@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Data View</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-page: #f8fafc;
+            --bg-card: #ffffff;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-muted: #94a3b8;
+            --border-color: #e2e8f0;
+            --primary: #7c3aed;
+            --primary-hover: #6d28d9;
+            --success: #10b981;
+            --success-bg: #ecfdf5;
+            --warning: #f59e0b;
+            --warning-bg: #fffbeb;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-page);
+            color: var(--text-primary);
+            padding: 20px;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1300px;
+            margin: 0 auto;
+        }
+
+        /* Minimal Header & Filter Bar */
+        .data-header {
+            background: var(--bg-card);
+            padding: 16px 20px;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .count-pill {
+            background: #f5f3ff;
+            color: var(--primary);
+            font-size: 13px;
+            font-weight: 700;
+            padding: 2px 10px;
+            border-radius: 12px;
+        }
+
+        .search-box {
+            position: relative;
+            min-width: 260px;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 8px 12px 8px 34px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            font-size: 13px;
+            font-family: inherit;
+            outline: none;
+        }
+
+        .search-input:focus {
+            border-color: var(--primary);
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        .btn {
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+            color: #ffffff;
+        }
+
+        .btn-primary:hover {
+            opacity: 0.9;
+        }
+
+        /* Clean Table */
+        .table-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            overflow: hidden;
+        }
+
+        .table-responsive {
+            width: 100%;
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 13px;
+        }
+
+        th {
+            background: #f8fafc;
+            color: var(--text-secondary);
+            font-weight: 700;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-color);
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+        }
+
+        td {
+            padding: 12px 16px;
+            border-bottom: 1px solid #f1f5f9;
+            color: var(--text-primary);
+            vertical-align: middle;
+            white-space: nowrap;
+        }
+
+        tr:hover {
+            background: #faf5ff;
+        }
+
+        .phone-cell {
+            font-family: monospace;
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge-registered {
+            background: var(--success-bg);
+            color: var(--success);
+        }
+
+        .badge-unregistered {
+            background: var(--warning-bg);
+            color: #d97706;
+        }
+
+        .badge-unknown {
+            background: #f1f5f9;
+            color: var(--text-secondary);
+        }
+
+        .category-tag {
+            font-weight: 700;
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 6px;
+        }
+
+        .cat-buyer {
+            background: #eff6ff;
+            color: #2563eb;
+        }
+
+        .cat-seller {
+            background: #fff7ed;
+            color: #ea580c;
+        }
+
+        .cat-unknown {
+            background: #f1f5f9;
+            color: #64748b;
+        }
+
+        .empty-state {
+            padding: 40px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <!-- Minimal Data Bar -->
+        <div class="data-header">
+            <div class="header-left">
+                <span style="font-size: 20px;" id="page-icon">📂</span>
+                <div class="header-title" id="page-title">User Data</div>
+                <span class="count-pill" id="total-count-pill">0 Users</span>
+            </div>
+
+            <div style="display:flex; align-items:center; gap:12px;">
+                <div class="search-box">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" id="search-input" class="search-input" placeholder="Search phone or status...">
+                </div>
+                <button id="btn-export-csv" class="btn btn-primary">
+                    📥 Download CSV
+                </button>
+            </div>
+        </div>
+
+        <!-- Data Table -->
+        <div class="table-card">
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Phone Number</th>
+                            <th>Category</th>
+                            <th>Registration Status</th>
+                            <th>Sub Status / Funnel Details</th>
+                            <th>Sessions Count</th>
+                            <th>Last Active Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body">
+                        <tr>
+                            <td colspan="7" class="empty-state">Loading user data...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allUsersData = [];
+        const urlParams = new URLSearchParams(window.location.search);
+        let filterType = urlParams.get('filter_type') || 'all';
+        let datePreset = urlParams.get('date_preset') || 'today';
+        let startDate = urlParams.get('start_date') || '';
+        let endDate = urlParams.get('end_date') || '';
+
+        const titles = {
+            'all': 'All Classification Data',
+            'unknown': 'Unknown / Greeting Users Data',
+            'buyer': 'Buyers Data',
+            'buyer_registered': 'Buyer Registered Data',
+            'buyer_not_registered': 'Buyer Not Registered Data',
+            'buyer_rfq_created': 'Buyer (RFQ Created) Data',
+            'buyer_rfq_not_created': 'Buyer (RFQ Not Created) Data',
+            'seller': 'Sellers Data',
+            'seller_registered': 'Seller Registered Data',
+            'seller_not_registered': 'Seller Not Registered Data',
+            'seller_subscribed': 'Subscribed Sellers (SS) Data',
+            'seller_without_subscription': 'Sellers w/o Subscription (SWS) Data'
+        };
+
+        const icons = {
+            'all': '👥', 'unknown': '❓', 'buyer': '🛒', 'buyer_registered': '✅',
+            'buyer_not_registered': '⚠️', 'buyer_rfq_created': '📝', 'buyer_rfq_not_created': '⏳',
+            'seller': '🏷️', 'seller_registered': '✅', 'seller_not_registered': '⚠️',
+            'seller_subscribed': '⭐', 'seller_without_subscription': '💳'
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('page-title').textContent = titles[filterType] || 'User Data';
+            document.getElementById('page-icon').textContent = icons[filterType] || '📂';
+            fetchData();
+            document.getElementById('search-input').addEventListener('input', renderTable);
+            document.getElementById('btn-export-csv').addEventListener('click', exportCSV);
+        });
+
+        async function fetchData() {
+            const tbody = document.getElementById('table-body');
+            tbody.innerHTML = `<tr><td colspan="7" class="empty-state">Loading user data...</td></tr>`;
+
+            let url = `/api/dashboard/user-classification-details?date_preset=${encodeURIComponent(datePreset)}&filter_type=${encodeURIComponent(filterType)}`;
+            if (datePreset === 'custom' && startDate && endDate) {
+                url += `&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
+            }
+
+            try {
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                allUsersData = data.users || [];
+                document.getElementById('total-count-pill').textContent = `${allUsersData.length} Users`;
+                renderTable();
+            } catch (err) {
+                console.error('Error fetching details:', err);
+                tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="color:#ef4444;">Failed to load data: ${err.message}</td></tr>`;
+            }
+        }
+
+        function renderTable() {
+            const query = document.getElementById('search-input').value.toLowerCase().trim();
+            const tbody = document.getElementById('table-body');
+
+            const filtered = allUsersData.filter(u => {
+                if (!query) return true;
+                return (u.phone || '').toLowerCase().includes(query) ||
+                    (u.category || '').toLowerCase().includes(query) ||
+                    (u.registration_status || '').toLowerCase().includes(query) ||
+                    (u.sub_status || '').toLowerCase().includes(query);
+            });
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" class="empty-state">No matching user records found.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = filtered.map((u, index) => {
+                const isReg = u.registration_status === 'Registered';
+                const regClass = isReg ? 'badge-registered' : (u.category === 'Unknown' ? 'badge-unknown' : 'badge-unregistered');
+                const catClass = u.category.toLowerCase() === 'buyer' ? 'cat-buyer' : (u.category.toLowerCase() === 'seller' ? 'cat-seller' : 'cat-unknown');
+
+                return `
+                    <tr>
+                        <td><strong>${index + 1}</strong></td>
+                        <td class="phone-cell">${u.phone}</td>
+                        <td><span class="category-tag ${catClass}">${u.category}</span></td>
+                        <td><span class="badge ${regClass}">${u.registration_status}</span></td>
+                        <td><strong>${u.sub_status}</strong></td>
+                        <td><span style="font-weight:700;">${u.sessions_count}</span></td>
+                        <td style="color:var(--text-secondary); font-size:12px;">${u.last_active}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function exportCSV() {
+            let exportUrl = `/api/dashboard/export-user-classification-csv?date_preset=${encodeURIComponent(datePreset)}&filter_type=${encodeURIComponent(filterType)}`;
+            if (datePreset === 'custom' && startDate && endDate) {
+                exportUrl += `&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
+            }
+            window.location.href = exportUrl;
+        }
+    </script>
+</body>
+
+</html>

@@ -10,7 +10,7 @@ import asyncio
 import inspect
 from typing import Dict, Any, Optional, Union, Tuple
 from datetime import date, timedelta
-from app.models import User, ConversationSession, WorkflowType, ConversationOutcome
+from app.models import User, ConversationSession, WorkflowType, ConversationOutcome, UserType
 from app.database import DatabaseManager
 from app.services.helpers.session_helpers import SessionHelpers
 from app.services.helpers.summarization_helpers import SummarizationHelpers
@@ -90,88 +90,114 @@ class SessionManagementService:
             logger.warning(f"License validation failed for {phone_number}: {message}")
             raise Exception("The session could not be initiated due to a technical issue. Please try again after some time. If the issue persists, please contact support.")
         
-        # Generate session ID using helper method (configurable strategy)
-        session_id = SessionHelpers.generate_session_id(phone_number, "daily")
+        # Generate base session ID using helper method (daily strategy)
+        base_session_id = SessionHelpers.generate_session_id(phone_number, "daily")
         session = None
+        target_session_id = base_session_id
 
         # Try Redis first if enabled
         if self.redis_enabled:
-            logger.debug(f"Checking Redis for session: {session_id}")
+            # Check if user has an active visit session pointer in Redis
+            try:
+                active_sid = await self.redis_session.get_user_active_session_id(phone_number)
+                if active_sid:
+                    target_session_id = active_sid
+            except Exception:
+                target_session_id = base_session_id
+
+            logger.debug(f"Checking Redis for session: {target_session_id}")
             with stage("session_redis_lookup"):
-                session_data = await self.redis_session.get_session(session_id)
+                session_data = await self.redis_session.get_session(target_session_id)
 
             if session_data:
-                logger.info(f"Found session in Redis: {session_id}")
-                # Convert dict back to ConversationSession object
-                session = self._dict_to_session(session_data)
-
-                # Refresh TTL on activity
-                await self.redis_session.refresh_ttl(session_id)
-                logger.debug(f"Refreshed TTL for session: {session_id}")
-
-                return session
+                candidate_session = self._dict_to_session(session_data)
+                if candidate_session.outcome and candidate_session.outcome in [ConversationOutcome.abandoned, ConversationOutcome.completed, ConversationOutcome.timeout]:
+                    logger.info(f"Found ended session {target_session_id} ({candidate_session.outcome.value}) in Redis - clearing active pointer and starting fresh visit session")
+                    try:
+                        await self.redis_session.clear_user_active_session_id(phone_number)
+                    except Exception:
+                        pass
+                    session = None
+                else:
+                    logger.info(f"Found active session in Redis: {target_session_id}")
+                    session = candidate_session
+                    # Refresh TTL on activity
+                    await self.redis_session.refresh_ttl(target_session_id)
+                    try:
+                        await self.redis_session.set_user_active_session_id(phone_number, target_session_id)
+                    except Exception:
+                        pass
+                    logger.debug(f"Refreshed TTL for session: {target_session_id}")
+                    return session
             else:
-                # Session not in Redis (TTL expired or first time)
-                # Don't do anything here - just create fresh session below
-                # The welcome message logic will check DB later if needed
-                # Worth an explicit note: the session id is derived per day, so the
-                # first message of each calendar day always misses here and pays
-                # for session creation plus the welcome send. That is a real part
-                # of why a first "Hi" costs more than the messages after it.
                 logger.info(
-                    f"[SESSION] Session {session_id} not found in Redis - creating a fresh session. "
-                    f"This turn additionally pays for session creation and the welcome message."
+                    f"[SESSION] Session {target_session_id} not found in Redis - checking DB/creating fresh session."
                 )
                 session = None
 
-        # Fallback to database ONLY if Redis is disabled
-        if not session and not self.redis_enabled:
-            logger.debug(f"Checking database for session: {session_id}")
-            session = self.db_manager.get_conversation_session(session_id)
+        # Fallback to database if session was not found in Redis
+        if not session and hasattr(self.db_manager, "get_conversation_session"):
+            logger.debug(f"Checking database for session: {target_session_id}")
+            try:
+                candidate_session = self.db_manager.get_conversation_session(target_session_id)
+                if not candidate_session and target_session_id != base_session_id:
+                    candidate_session = self.db_manager.get_conversation_session(base_session_id)
 
-        # Check if session exists but has been completed/abandoned
-        if session and session.outcome:
-            if session.outcome in [ConversationOutcome.abandoned, ConversationOutcome.completed, ConversationOutcome.timeout]:
-                # IMPORTANT: For role switches and exits, we ALWAYS want a completely fresh session
-                # Do NOT preserve ANY workflow_state from the abandoned session
-                logger.info(f"Session {session_id} was {session.outcome.value}, resetting for COMPLETELY fresh workflow (no state preserved)")
-
-                # CRITICAL: Clear ALL workflow_state, conversation_history, and entities
-                # This ensures role switches get a truly fresh start with no data from previous sessions
-                session.workflow_state = {"extracted_entities": [], "last_activity_at": utc_now().isoformat()}
-                session.conversation_history = {"messages": [], "metadata": [], "openai_messages": []}
-                session.extracted_entities = {}
-                session.outcome = None
-                session.completed_at = None
-                session.workflow_type = None
-
-                # Save reset state to Redis ONLY (don't touch database)
-                # Database keeps all accumulated history via append_session_data
-                if self.redis_enabled:
-                    await self.redis_session.store_session(session_id, self._session_to_dict(session))
-                    logger.info(f"Session {session_id} reset in Redis for new workflow (DB data preserved)")
-                else:
-                    # If Redis disabled, we have no choice but to update DB
-                    # Clear conversation_history for fresh workflow (prevent stale data leak)
-                    logger.warning(f"Redis disabled - resetting session {session_id} in database (history cleared for fresh workflow)")
-                    session = self.db_manager.save_conversation_session({
-                        'session_id': session.session_id,
-                        'external_user_id': session.external_user_id,
-                        'workflow_type': None,
-                        'outcome': None,
-                        'workflow_state': session.workflow_state,
-                        'conversation_history': {"messages": [], "metadata": [], "openai_messages": []},  # Cleared for fresh workflow
-                        'extracted_entities': session.extracted_entities,  # Empty for new workflow
-                        'retention_date': session.retention_date,
-                        'completed_at': None
-                    })
+                if candidate_session:
+                    if candidate_session.outcome and candidate_session.outcome in [ConversationOutcome.abandoned, ConversationOutcome.completed, ConversationOutcome.timeout]:
+                        logger.info(f"Found ended DB session {candidate_session.session_id} ({candidate_session.outcome})")
+                        candidate_session = None
+                    else:
+                        logger.info(f"Found active session in DB: {candidate_session.session_id}, restoring to Redis")
+                        session = candidate_session
+                        if self.redis_enabled:
+                            try:
+                                redis_data = self._session_to_dict(session)
+                                await self.redis_session.store_session(session.session_id, redis_data)
+                                await self.redis_session.set_user_active_session_id(phone_number, session.session_id)
+                            except Exception as re_err:
+                                logger.warning(f"Failed to restore DB session to Redis: {re_err}")
+            except Exception as db_err:
+                logger.warning(f"DB session lookup error for {target_session_id}: {db_err}")
 
         if not session:
+            # Check if this user already has an established user_type (buyer or seller) in past DB sessions
+            established_user_type = 'unknown'
+            if hasattr(self.db_manager, "session"):
+                try:
+                    past_known_session = self.db_manager.session.query(ConversationSession).filter(
+                        ConversationSession.external_user_id == phone_number,
+                        ConversationSession.user_type.in_([UserType.buyer, UserType.seller])
+                    ).order_by(ConversationSession.started_at.desc()).first()
+                    if past_known_session and past_known_session.user_type:
+                        established_user_type = past_known_session.user_type.value if hasattr(past_known_session.user_type, 'value') else str(past_known_session.user_type)
+                        logger.info(f"User {phone_number} previously established as {established_user_type}, preserving user_type")
+                except Exception as e:
+                    logger.debug(f"Could not check past user_type for {phone_number}: {e}")
+
+            # Check if an ended base session already exists in DB (meaning this is a return visit after exit/completion)
+            existing_ended_db_session = None
+            if hasattr(self.db_manager, "get_conversation_session"):
+                try:
+                    candidate = self.db_manager.get_conversation_session(base_session_id)
+                    if candidate and candidate.outcome in [ConversationOutcome.abandoned, ConversationOutcome.completed, ConversationOutcome.timeout]:
+                        existing_ended_db_session = candidate
+                except Exception:
+                    existing_ended_db_session = None
+
+            if existing_ended_db_session is not None:
+                import uuid
+                session_id = f"{base_session_id}_{uuid.uuid4().hex[:6]}"
+            else:
+                session_id = base_session_id
+
+
             # Create new session
             logger.info(f"Creating new session: {session_id}")
             session_data = {
                 'session_id': session_id,
                 'external_user_id': phone_number,
+                'user_type': established_user_type,
                 'workflow_type': None,
                 'outcome': None,
                 'workflow_state': {"extracted_entities": [], "last_activity_at": utc_now().isoformat()},
@@ -182,22 +208,33 @@ class SessionManagementService:
                 'last_activity_at': utc_now().isoformat()
             }
 
-            # Save to Redis if enabled, otherwise to DB
+            # Save to Redis if enabled, and persist new session to DB for immediate dashboard analytics
             if self.redis_enabled:
                 with stage("session_store"):
                     await self.redis_session.store_session(session_id, session_data)
+                    await self.redis_session.set_user_active_session_id(phone_number, session_id)
                 session = self._dict_to_session(session_data)
                 logger.info(f"Created new session in Redis: {session_id}")
-            else:
-                with stage("session_store_db"):
-                    session = self.db_manager.save_conversation_session(session_data)
-                logger.info(f"Created new session in DB: {session_id}")
+
+            with stage("session_store_db"):
+                try:
+                    saved_db_session = self.db_manager.save_conversation_session(session_data)
+                    if not self.redis_enabled or session is None:
+                        session = saved_db_session
+                    logger.info(f"Created new session in DB: {session_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to persist new session {session_id} to DB: {e}")
+
+            if session is None:
+                session = self._dict_to_session(session_data)
             
             # Check and send welcome message for new session
             from app.services.welcome_message_service import get_welcome_service
             welcome_service = get_welcome_service()
-            with stage("welcome_message"):
-                await welcome_service.check_and_send_welcome(phone_number, self.whatsapp_service)
+            wa_service = getattr(self, "whatsapp_service", None)
+            if wa_service is not None:
+                with stage("welcome_message"):
+                    await welcome_service.check_and_send_welcome(phone_number, wa_service)
         else:
             logger.info(f"Found existing session: {session_id}")
             # Store in Redis for future requests if Redis enabled and not already there
@@ -211,6 +248,23 @@ class SessionManagementService:
             if session.workflow_state:
                 has_optional = 'pending_optional_rfq' in session.workflow_state or 'pending_optional_combined_rfq' in session.workflow_state
                 logger.info(f"[GET_CONTEXT_DEBUG] Session {session_id} has_optional_fields={has_optional}, keys={list(session.workflow_state.keys())}")
+
+        # Emit real-time analytics event
+        try:
+            from app.services.realtime_analytics_service import get_realtime_analytics_service
+            rt_service = get_realtime_analytics_service()
+            u_type = session.user_type.value if hasattr(session, "user_type") and hasattr(session.user_type, "value") else str(session.user_type or "unknown")
+            asyncio.create_task(
+                rt_service.publish_event(
+                    event_type="whatsapp_visitor",
+                    user_id=phone_number,
+                    data={"session_id": session_id, "user_type": u_type},
+                    session_id=session_id,
+                    persist_db=False
+                )
+            )
+        except Exception:
+            pass
 
         return session
     
@@ -395,9 +449,20 @@ class SessionManagementService:
                 if 'pending_optional_combined_rfq' in clean_workflow_state:
                     logger.info(f"[SESSION_SAVE_DEBUG] pending_optional_combined_rfq keys: {list(clean_workflow_state['pending_optional_combined_rfq'].keys())}")
 
+            # Ensure user_type is properly captured
+            u_type_enum = getattr(session, 'user_type', None)
+            if isinstance(u_type_enum, str):
+                try:
+                    u_type_enum = UserType(u_type_enum.lower())
+                except Exception:
+                    u_type_enum = UserType.unknown
+            elif not isinstance(u_type_enum, UserType):
+                u_type_enum = UserType.unknown
+
             session_data = {
                 'session_id': session.session_id,
                 'external_user_id': session.external_user_id,
+                'user_type': u_type_enum,
                 'workflow_type': workflow_value,
                 'outcome': session.outcome.value if session.outcome and hasattr(session.outcome, 'value') else session.outcome,
                 'workflow_state': clean_workflow_state,
@@ -422,24 +487,47 @@ class SessionManagementService:
                 redis_data = self._session_to_dict(session)
                 await self.redis_session.store_session(session.session_id, redis_data)
                 await self.redis_session.refresh_ttl(session.session_id)
+                try:
+                    await self.redis_session.set_user_active_session_id(str(session.external_user_id or ""), session.session_id)
+                except Exception:
+                    pass
                 logger.debug(f"Saved session to Redis: {session.session_id} (persist_to_db={persist_to_db})")
+
+                # Emit real-time chat event so dashboard updates instantly
+                try:
+                    from app.services.realtime_analytics_service import get_realtime_analytics_service
+                    rt_service = get_realtime_analytics_service()
+                    u_type = session.user_type.value if hasattr(session, "user_type") and hasattr(session.user_type, "value") else str(session.user_type or "unknown")
+                    asyncio.create_task(
+                        rt_service.publish_event(
+                            event_type="chat_message",
+                            user_id=str(session.external_user_id or ""),
+                            data={"session_id": session.session_id, "user_type": u_type, "phone": str(session.external_user_id or "")},
+                            session_id=session.session_id,
+                            persist_db=False
+                        )
+                    )
+                except Exception:
+                    pass
             elif self.redis_enabled and not should_save_to_redis:
-                logger.info(f"[PREVENT_REDIS_SAVE] Skipped Redis save for exited session: {session.session_id}")
+                try:
+                    await self.redis_session.delete_session(session.session_id)
+                    await self.redis_session.clear_user_active_session_id(str(session.external_user_id or ""))
+                except Exception:
+                    pass
+                logger.info(f"[PREVENT_REDIS_SAVE] Deleted ended session from Redis: {session.session_id}")
                 logger.debug(f"[PREVENT_REDIS_SAVE] Reason - outcome={session.outcome}, exit_completed={session.workflow_state.get('exit_completed') if session.workflow_state else None}")
 
-            # Only persist to DB when explicitly requested or Redis disabled
-            if persist_to_db or not self.redis_enabled:
-                saved_session = self.db_manager.save_conversation_session(session_data)
-                logger.info(f"Persisted session to database: {session.session_id}")
+            # Always persist session and conversation messages to database so history is never lost
+            try:
+                if hasattr(self.db_manager, "save_conversation_session"):
+                    saved_session = self.db_manager.save_conversation_session(session_data)
+                    logger.debug(f"Persisted session to database: {session.session_id}")
+                    return saved_session
+            except Exception as db_err:
+                logger.error(f"[SESSION_SAVE_DB_ERROR] Failed to save session to DB: {db_err}")
 
-                # Debug logging to verify save
-                if 'pending_optional_rfq' in session.workflow_state or 'pending_optional_combined_rfq' in session.workflow_state:
-                    logger.info(f"[SESSION_SAVE_DEBUG] Session saved to DB, verifying workflow_state keys: {list(saved_session.workflow_state.keys()) if saved_session.workflow_state else 'None'}")
-
-                return saved_session
-            else:
-                # Return the session object unchanged (data saved to Redis)
-                return session
+            return session
 
         except Exception as e:
             logger.error(f"Error saving session: {e}")
@@ -468,25 +556,25 @@ class SessionManagementService:
                 'session_id': session.session_id,
                 'created_at': session.created_at,
                 'completed_at': session.completed_at,
-                'enhanced_entities': rich_entities,
-                'conversation_history': session.conversation_history if hasattr(session, 'conversation_history') else {}
             })
             
-            # Start background summarization (non-blocking)
-            asyncio.create_task(
-                SummarizationHelpers.handle_session_completion_async(
-                    self.chat_summary_service,
-                    self.daily_summary_service,
-                    enhanced_summary_data
-                )
-            )
+            # Save enhanced summary data to session
+            await self.save_session(session)
             
-            logger.info(f"Started background summarization for session {session.session_id}")
+            # Run summarization in background to avoid blocking user
+            asyncio.create_task(self._run_background_summarization(session, enhanced_summary_data))
             
         except Exception as e:
-            logger.error(f"Error starting enhanced session completion for {session.session_id}: {e}") 
-            # Fallback to original method
-            await self._handle_session_completion_fallback(session)
+            logger.error(f"Error in enhanced session completion handling: {e}")
+
+    async def _run_background_summarization(self, session: ConversationSession, enhanced_data: Dict[str, Any]) -> None:
+        """Run summarization in background with rich context."""
+        try:
+            from app.services.chat_summary_service import ChatSummaryService
+            summary_service = ChatSummaryService()
+            await summary_service.generate_and_save_summary(session, enhanced_data)
+        except Exception as e:
+            logger.error(f"Background summarization failed for session {session.session_id}: {e}")
     
     async def _handle_session_completion_enhanced(self, session: ConversationSession) -> None:
         """Wrapper for enhanced session completion."""
@@ -510,37 +598,23 @@ class SessionManagementService:
         except Exception as e:
             logger.error(f"Error sending authentication placeholder: {e}")
     
-    def _clean_for_json_serialization(self, obj, _visited=None):
-        """Recursively clean object for JSON serialization with circular reference protection."""
-        import json
-        from datetime import datetime, date
-
-        # Initialize visited set for circular reference detection
+    def _clean_for_json_serialization(self, obj: Any, _visited: Optional[set] = None) -> Any:
+        """Helper method to clean nested objects for JSON serialization."""
         if _visited is None:
             _visited = set()
-
-        # Check for circular reference using object id
+        
+        # Handle circular references
         obj_id = id(obj)
         if obj_id in _visited:
-            logger.warning(f"[CIRCULAR_REF] Detected circular reference in object, converting to placeholder")
-            return "<circular_reference>"
-
-        if obj is None:
-            return None
-        elif hasattr(obj, 'value'):  # Enum object
-            return obj.value
-        elif isinstance(obj, (datetime, date)):
-            return obj.isoformat()
-        elif isinstance(obj, dict):
-            # Add to visited set before recursion
+            return str(obj)
+            
+        if isinstance(obj, dict):
             _visited.add(obj_id)
             try:
-                return {key: self._clean_for_json_serialization(value, _visited) for key, value in obj.items()}
+                return {k: self._clean_for_json_serialization(v, _visited) for k, v in obj.items()}
             finally:
-                # Remove after processing to allow same object in different branches
                 _visited.discard(obj_id)
         elif isinstance(obj, (list, tuple)):
-            # Add to visited set before recursion
             _visited.add(obj_id)
             try:
                 return [self._clean_for_json_serialization(item, _visited) for item in obj]
@@ -549,8 +623,8 @@ class SessionManagementService:
         elif isinstance(obj, (str, int, float, bool)):
             return obj
         else:
-            # Try to serialize to test, if it fails, convert to string
             try:
+                import json
                 json.dumps(obj)
                 return obj
             except (TypeError, ValueError, RecursionError):
@@ -558,7 +632,7 @@ class SessionManagementService:
 
     def _session_to_dict(self, session: ConversationSession) -> Dict[str, Any]:
         """Convert ConversationSession object to dict for Redis storage."""
-        from app.models import WorkflowType, ConversationOutcome
+        from app.models import WorkflowType, ConversationOutcome, UserType
         from datetime import date, datetime
         from app.services.helpers.session_helpers import SessionHelpers
 
@@ -570,10 +644,13 @@ class SessionManagementService:
                 return value.isoformat()
             return str(value)
 
+        u_type_str = session.user_type.value if hasattr(session, "user_type") and hasattr(session.user_type, "value") else str(getattr(session, "user_type", None) or "unknown")
+
         # Build the dictionary with top-level serialization
         session_dict = {
             'session_id': session.session_id,
             'external_user_id': session.external_user_id,
+            'user_type': u_type_str,
             'workflow_type': session.workflow_type.value if isinstance(session.workflow_type, WorkflowType) else session.workflow_type,
             'outcome': session.outcome.value if isinstance(session.outcome, ConversationOutcome) else session.outcome,
             'workflow_state': session.workflow_state or {},
@@ -592,11 +669,21 @@ class SessionManagementService:
     def _dict_to_session(self, data: Dict[str, Any]) -> ConversationSession:
         """Convert dict from Redis to ConversationSession object."""
         from datetime import datetime
-        from app.models import WorkflowType, ConversationOutcome
+        from app.models import WorkflowType, ConversationOutcome, UserType
+
+        raw_u_type = data.get('user_type')
+        if raw_u_type:
+            try:
+                user_type_enum = UserType(raw_u_type.lower())
+            except Exception:
+                user_type_enum = UserType.unknown
+        else:
+            user_type_enum = UserType.unknown
 
         session = ConversationSession(
             session_id=data['session_id'],
             external_user_id=data['external_user_id'],
+            user_type=user_type_enum,
             workflow_state=data.get('workflow_state', {}),
             conversation_history=data.get('conversation_history', {}),
             extracted_entities=data.get('extracted_entities', {}),

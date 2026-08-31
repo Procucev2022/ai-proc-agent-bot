@@ -17,9 +17,10 @@ Key responsibilities:
 - Integrate with existing authentication flow
 """
 
+import asyncio
 import logging
 from typing import Dict, Any, List, Optional, Tuple
-from app.models import ConversationSession, WorkflowType
+from app.models import ConversationSession, WorkflowType, UserType
 from app.schemas.user import User
 from app.services.whatsapp_service import WhatsAppService
 from app.services.authentication_service import AuthenticationService
@@ -262,7 +263,9 @@ class ProfileSelectionService:
                 "(Just type 1 or 2, or type 'Buy' or 'Sell' to continue.)"
             )
 
-            # Store in session for later reference
+            # Store in session for later reference (preserve established buyer/seller role)
+            if not getattr(session, 'user_type', None) or session.user_type not in (UserType.buyer, UserType.seller):
+                session.user_type = UserType.unknown
             session.workflow_state = session.workflow_state or {}
             session.workflow_state['profile_selection_stage'] = 'neutral_greeting'
             session.workflow_state['profiles'] = profiles
@@ -284,6 +287,21 @@ class ProfileSelectionService:
                                    session: ConversationSession, intent_result: Dict[str, Any]) -> Dict[str, Any]:
         """Handle Case 2: Buyer Intent Detected."""
         try:
+            session.user_type = UserType.buyer
+            try:
+                from app.services.realtime_analytics_service import get_realtime_analytics_service
+                asyncio.create_task(
+                    get_realtime_analytics_service().publish_event(
+                        event_type="role_selected",
+                        user_id=user_phone,
+                        data={"role": "buyer", "session_id": getattr(session, "session_id", "")},
+                        session_id=getattr(session, "session_id", None),
+                        persist_db=True
+                    )
+                )
+            except Exception:
+                pass
+
             buyer_profiles = [p for p in profiles if p['role'] == 'buyer']
 
             if not buyer_profiles:
@@ -369,6 +387,21 @@ class ProfileSelectionService:
                                     session: ConversationSession, intent_result: Dict[str, Any]) -> Dict[str, Any]:
         """Handle Case 3: Seller Intent Detected."""
         try:
+            session.user_type = UserType.seller
+            try:
+                from app.services.realtime_analytics_service import get_realtime_analytics_service
+                asyncio.create_task(
+                    get_realtime_analytics_service().publish_event(
+                        event_type="role_selected",
+                        user_id=user_phone,
+                        data={"role": "seller", "session_id": getattr(session, "session_id", "")},
+                        session_id=getattr(session, "session_id", None),
+                        persist_db=True
+                    )
+                )
+            except Exception:
+                pass
+
             seller_profiles = [p for p in profiles if p['role'] == 'seller']
 
             if not seller_profiles:
@@ -575,6 +608,36 @@ class ProfileSelectionService:
                 'register a new', 'create a new', 'new buyer', 'new seller',
                 'register me', 'sign me up', 'create account'
             ]
+
+            # FAST PATH: Try direct numeric selection first — this must happen before
+            # any AI/LLM call so that simple replies like "1", "2", "3" are matched
+            # immediately without triggering a clarification loop.
+            try:
+                selection_num = int(message.strip())
+                for option in profile_options:
+                    if option.get('number') == selection_num:
+                        logger.info(f"[FAST_PATH] Numeric match: '{message}' → option {selection_num}")
+                        return option
+            except ValueError:
+                pass
+
+            # FAST PATH: Keyword matching for buyer/seller/exit before AI
+            msg_stripped = message_lower.strip()
+            if msg_stripped in ('buyer', 'register as buyer', 'register buyer'):
+                for option in profile_options:
+                    if option.get('action') == 'register_buyer':
+                        logger.info("[FAST_PATH] Keyword 'buyer' matched register_buyer")
+                        return option
+            if msg_stripped in ('seller', 'register as seller', 'register seller'):
+                for option in profile_options:
+                    if option.get('action') == 'register_seller':
+                        logger.info("[FAST_PATH] Keyword 'seller' matched register_seller")
+                        return option
+            if msg_stripped in ('exit', 'quit', 'no', 'cancel'):
+                for option in profile_options:
+                    if option.get('action') == 'exit':
+                        logger.info("[FAST_PATH] Keyword 'exit' matched exit action")
+                        return option
 
             # Use the user selection tool for comprehensive analysis if available
             if self.user_selection_tool:
@@ -954,6 +1017,13 @@ class ProfileSelectionService:
                 logger.error(f"Failed to store session for {user_phone}")
                 return {"status": "error", "error": "Failed to store session"}
 
+            # Set user_type on session
+            role_val = str(profile.get('role') or '').lower()
+            if role_val == 'buyer':
+                session.user_type = UserType.buyer
+            elif role_val == 'seller':
+                session.user_type = UserType.seller
+
             # Clear profile selection state
             session.workflow_state = session.workflow_state or {}
             session.workflow_state.pop('profile_selection_stage', None)
@@ -1090,6 +1160,7 @@ class ProfileSelectionService:
             )
 
             # Set workflow type to registration
+            session.user_type = UserType.buyer
             WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="profile_selection")
 
             # Initialize session state for registration
@@ -1138,6 +1209,7 @@ class ProfileSelectionService:
             )
 
             # Set workflow type to registration
+            session.user_type = UserType.seller
             WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="profile_selection")
 
             # Initialize session state for registration
@@ -1466,11 +1538,17 @@ class ProfileSelectionService:
                                                      session: ConversationSession) -> Dict[str, Any]:
         """Handle user response to new user registration options."""
         try:
-            profile_options = session.workflow_state.get('profile_options', [])
-
+            profile_options = session.workflow_state.get('profile_options')
             if not profile_options:
-                logger.error(f"No profile options found for new user registration response from {user_phone}")
-                return {"status": "restart_profile_selection"}
+                logger.info(f"Populating default profile_options for new_user_registration for {user_phone}")
+                profile_options = [
+                    {"number": 1, "action": "register_buyer", "display": "Register as Buyer"},
+                    {"number": 2, "action": "register_seller", "display": "Register as Seller"},
+                    {"number": 3, "action": "exit", "display": "Exit"}
+                ]
+                session.workflow_state = session.workflow_state or {}
+                session.workflow_state['profile_options'] = profile_options
+
 
             # Parse user selection
             selected_option = await self._parse_profile_selection(message, profile_options)

@@ -350,9 +350,16 @@ class AuthenticationOrchestrator:
             if session.workflow_state.get("profile_selection_stage"):
                 logger.info(f"Handling profile selection response for stage: {session.workflow_state.get('profile_selection_stage')}")
                 msg_lower = str(message_content).strip().lower()
-                intent = (intent_result or {}).get("intent")
-                if intent == "greeting" or msg_lower in ["hi", "hello", "hey", "start", "hi!", "hello!"]:
-                    logger.info(f"Greeting received during profile selection stage for {user_phone}, re-presenting menu")
+                profile_stage = session.workflow_state.get("profile_selection_stage")
+                # Re-present the menu ONLY when the message is a literal greeting word —
+                # NOT based on LLM-classified intent, because bare numeric replies like "1"
+                # are often mis-classified as "greeting" by the LLM and must be treated as
+                # selection responses. Also skip re-presentation for new_user_registration
+                # since that menu only ever needs to be shown once.
+                LITERAL_GREETING_WORDS = {"hi", "hello", "hey", "start", "hi!", "hello!", "hii", "hiii"}
+                is_literal_greeting = msg_lower in LITERAL_GREETING_WORDS
+                if is_literal_greeting and profile_stage != "new_user_registration":
+                    logger.info(f"Literal greeting '{msg_lower}' received during profile selection stage for {user_phone}, re-presenting menu")
                     return await self.profile_selection_service.handle_profile_selection(
                         user_phone, message_content, session, intent_result or {"intent": "greeting", "confidence": 100}
                     )
@@ -364,6 +371,7 @@ class AuthenticationOrchestrator:
                     logger.info(f"Exit completed during profile selection - stopping further processing")
                     return result
                 return result
+
             
             # Check for switch response
             switch_result = await self._check_switch_response(user_phone, session, message_content, intent_result)

@@ -25,6 +25,7 @@ from typing import Dict, Any, List
 import json
 import asyncio
 
+from app.models import UserType, WorkflowType, ConversationOutcome
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
 from app.utils.datetime_utils import utc_now
@@ -817,8 +818,19 @@ class ChatService:
                 await self.session_manager.save_session(session, session.workflow_type)
                 return cancel_result
 
-            # Handle irrelevant messages using reusable function
-            if intent in ('general_inquiry','greeting','support') or message_intent_result.get("irrelevant_message"):
+            # Handle irrelevant messages using reusable function.
+            # IMPORTANT: Skip this when user is responding to a menu (profile_selection_stage
+            # or registration_stage is active). Bare numeric replies like "1" are
+            # classified as "greeting" by the LLM, which would fire a spurious greeting
+            # WhatsApp message before the auth-orchestrator processes the real selection.
+            _ws = session.workflow_state or {}
+            _in_menu_response = bool(
+                _ws.get("profile_selection_stage") or _ws.get("registration_stage")
+            )
+            if not _in_menu_response and (
+                intent in ('general_inquiry', 'greeting', 'support')
+                or message_intent_result.get("irrelevant_message")
+            ):
                 with stage("irrelevant_message_flow", intent=intent):
                     await self.handle_irrelevant_message_flow(user_phone, message_intent_result, session)
 
@@ -1115,6 +1127,13 @@ class ChatService:
 
             # Only proceed to main flow if user is properly authenticated
             user = auth_result
+            if hasattr(user, 'role') and user.role:
+                role_val = user.role.value if hasattr(user.role, 'value') else str(user.role).lower()
+                if role_val == 'buyer':
+                    session.user_type = UserType.buyer
+                elif role_val == 'seller':
+                    session.user_type = UserType.seller
+
             if message_type == "text" and (message_intent_result.get('relevant_message') or message_content):
                 result = await self._process_text_message(user, session, message_intent_result.get('relevant_message') or message_content, message_intent_result)
             elif message_type == "interactive":
@@ -1157,12 +1176,12 @@ class ChatService:
             else:
                 result = {"status": "error", "error": f"Unknown message type: {message_type}"}
 
-            # # Log OpenAI call summary for performance monitoring
-            # call_summary = self.openai_service.get_call_summary(user_phone)
-            # if call_summary:
-            #     total_calls = sum(call_summary.values())
-            #     call_breakdown = ", ".join([f"{call_type}: {count}" for call_type, count in call_summary.items()])
-            #     logger.info(f"OpenAI calls for {user_phone}: {total_calls} total ({call_breakdown})")
+            # Ensure the session with all latest turns and messages is saved to Redis & DB
+            try:
+                if not (result and isinstance(result, dict) and result.get("exit_completed")):
+                    await self.session_manager.save_session(session, session.workflow_type)
+            except Exception as save_err:
+                logger.warning(f"Failed to auto-save session at end of process_message: {save_err}")
 
             return result
 
@@ -3027,6 +3046,9 @@ class ChatService:
                 session_id=session
             )
 
+
+            # Save session
+            await self.session_manager.save_session(session, WorkflowType.general_inquiry)
 
             return {"status": "greeting_handled"}
 

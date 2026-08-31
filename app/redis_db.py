@@ -318,7 +318,23 @@ class SessionRedisService(BaseRedisService):
             True if session exists
         """
         key = f"session:{session_id}"
-        return await super().exists(key)
+        return await self.exists(key)
+
+    async def get_user_active_session_id(self, phone_number: str) -> Optional[str]:
+        """Get the current active session_id for a phone number."""
+        key = f"user_active_session:{str(phone_number).lstrip('+').strip()}"
+        return await self.get(key)
+
+    async def set_user_active_session_id(self, phone_number: str, session_id: str, ttl: Optional[int] = None) -> bool:
+        """Set the current active session_id for a phone number."""
+        key = f"user_active_session:{str(phone_number).lstrip('+').strip()}"
+        ttl = ttl or self.default_ttl
+        return await self.set(key, session_id, ex=ttl)
+
+    async def clear_user_active_session_id(self, phone_number: str) -> bool:
+        """Clear the current active session_id pointer for a phone number."""
+        key = f"user_active_session:{str(phone_number).lstrip('+').strip()}"
+        return await self.delete(key)
 
     async def get_session_ttl(self, session_id: str) -> Optional[int]:
         """

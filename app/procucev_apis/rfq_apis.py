@@ -116,6 +116,26 @@ class RFQAPIService:
                 if rfq_id:
                     logger.info(f"RFQ ID: {rfq_id}")
                 
+                try:
+                    import asyncio
+                    from app.services.realtime_analytics_service import get_realtime_analytics_service
+                    categories = [item.get("categoryName") for item in gmt_rfq_data.get("items", []) if item.get("categoryName")]
+                    asyncio.create_task(
+                        get_realtime_analytics_service().publish_event(
+                            event_type="rfq_created",
+                            user_id=user_id or "buyer",
+                            data={
+                                "rfq_id": rfq_id,
+                                "categories": categories,
+                                "item_count": len(gmt_rfq_data.get("items", [])),
+                                "location": gmt_rfq_data.get("deliveryLocation", {})
+                            },
+                            persist_db=True
+                        )
+                    )
+                except Exception:
+                    pass
+
                 return {
                     "success": True,
                     "response": response,

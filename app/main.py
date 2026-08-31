@@ -29,6 +29,7 @@ from slowapi.errors import RateLimitExceeded
 from typing import Dict, Any, Union
 from app.config import get_settings
 from app.api.webhook import router as webhook_router
+from app.api.dashboard import router as dashboard_router
 from app.database import init_database, get_db_session_context
 from app.services.chat_service import ChatService
 from app.services.global_error_handler import handle_server_error
@@ -407,6 +408,7 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 # Include API routers
 app.include_router(webhook_router, prefix="/webhook", tags=["webhook"])
+app.include_router(dashboard_router)
 
 # Don't create global ChatService - create per-request with proper session management
 # chat_service = ChatService()  # REMOVED: Causes database connection leaks
@@ -440,7 +442,8 @@ async def root():
             "message": "AI Procurement Agent API",
             "docs": "/docs",
             "health": "/health",
-            "chat": "/chat"
+            "chat": "/chat",
+            "dashboard": "/dashboard"
         }
     )
 
@@ -449,6 +452,18 @@ async def root():
 async def chat_page(request: Request):
     """Serve the chat UI page."""
     return templates.TemplateResponse(request, "chat.html")
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_page(request: Request):
+    """Serve the Real-Time Analytics Dashboard UI."""
+    return templates.TemplateResponse(request, "dashboard.html")
+
+
+@app.get("/dashboard/classification-details", response_class=HTMLResponse)
+async def classification_details_page(request: Request):
+    """Serve the User Classification Details page."""
+    return templates.TemplateResponse(request, "classification_details.html")
 
 
 @app.post("/api/chat")

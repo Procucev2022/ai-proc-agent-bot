@@ -1,0 +1,2516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Procurement Agent — Live Dashboard</title>
+    <meta name="description" content="Live Real-Time Dashboard tracking active WhatsApp users, visitors, created RFQs, and seller responses with flexible date filtering.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-base: #f8fafc;
+            --bg-surface: #ffffff;
+            --bg-card: #ffffff;
+            --bg-card-hover: #f1f5f9;
+            --border-subtle: #e2e8f0;
+            --border-highlight: #cbd5e1;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --text-dim: #94a3b8;
+            --primary: #4f46e5;
+            --primary-light: #eef2ff;
+            --success: #059669;
+            --success-light: #ecfdf5;
+            --warning: #d97706;
+            --warning-light: #fffbeb;
+            --info: #0284c7;
+            --info-light: #f0f9ff;
+            --purple: #7c3aed;
+            --purple-light: #f5f3ff;
+            --radius-lg: 16px;
+            --radius-md: 12px;
+            --radius-sm: 8px;
+            --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.07);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+            --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-base);
+            color: var(--text-main);
+            min-height: 100vh;
+            padding: 32px 24px;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(79, 70, 229, 0.04) 0px, transparent 50%),
+                radial-gradient(at 100% 0%, rgba(2, 132, 199, 0.04) 0px, transparent 50%);
+        }
+
+        .dashboard-container {
+            max-width: 1320px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        /* Card Style */
+        .clean-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 24px;
+            box-shadow: var(--shadow-sm);
+            transition: var(--transition);
+        }
+
+        .clean-card:hover {
+            box-shadow: var(--shadow-md);
+            border-color: var(--border-highlight);
+        }
+
+        /* Header Bar */
+        .dashboard-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+            padding: 20px 28px;
+            background: #ffffff;
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-subtle);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .brand-section {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .brand-logo {
+            width: 44px;
+            height: 44px;
+            background: linear-gradient(135deg, #4f46e5, #0284c7);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.25);
+        }
+
+        .brand-text h1 {
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .period-pill {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 3px 10px;
+            background: var(--primary-light);
+            color: var(--primary);
+            border: 1px solid #c7d2fe;
+            border-radius: 20px;
+            transition: var(--transition);
+        }
+
+        .brand-text p {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        /* Filter Controls */
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #f8fafc;
+            padding: 4px 6px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-subtle);
+        }
+
+        .filter-select {
+            padding: 8px 12px;
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-main);
+            background: #ffffff;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            outline: none;
+            transition: var(--transition);
+        }
+
+        .filter-select:hover, .filter-select:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.1);
+        }
+
+        .custom-date-container {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            animation: fadeIn 0.2s ease-in-out;
+        }
+
+        .custom-date-container.active {
+            display: flex;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .date-input {
+            padding: 7px 10px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-main);
+            background: #ffffff;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            outline: none;
+            cursor: pointer;
+        }
+
+        .date-input:focus {
+            border-color: var(--primary);
+        }
+
+        .date-sep {
+            font-size: 12px;
+            color: var(--text-dim);
+            font-weight: 600;
+        }
+
+        .apply-btn {
+            background: var(--primary);
+            color: #ffffff;
+            border: none;
+            padding: 7px 14px;
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .apply-btn:hover {
+            background: #4338ca;
+        }
+
+        /* Live Status Badge */
+        .live-status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            background: var(--success-light);
+            border: 1px solid #a7f3d0;
+            border-radius: 30px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--success);
+        }
+
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            background: #10b981;
+            border-radius: 50%;
+            animation: pulseDot 1.8s infinite;
+        }
+
+        @keyframes pulseDot {
+            0% { transform: scale(0.95); opacity: 0.8; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
+            70% { transform: scale(1.15); opacity: 1; box-shadow: 0 0 0 7px rgba(16, 185, 129, 0); }
+            100% { transform: scale(0.95); opacity: 0.8; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+
+        .clock-display {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-muted);
+            background: #f1f5f9;
+            padding: 8px 14px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+        }
+
+        .refresh-btn {
+            background: #ffffff;
+            border: 1px solid var(--border-subtle);
+            color: var(--text-muted);
+            padding: 8px 12px;
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: var(--transition);
+        }
+
+        .refresh-btn:hover {
+            background: var(--primary-light);
+            color: var(--primary);
+            border-color: #c7d2fe;
+        }
+
+        /* 4 Core Focus KPI Grid */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 20px;
+            transition: var(--transition);
+        }
+
+        /* When Active card is hidden → 4 columns */
+        .kpi-grid.four-cards {
+            grid-template-columns: repeat(4, 1fr);
+        }
+
+        @media (max-width: 1300px) {
+            .kpi-grid { grid-template-columns: repeat(3, 1fr); }
+            .kpi-grid.four-cards { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        @media (max-width: 900px) {
+            .kpi-grid, .kpi-grid.four-cards { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        @media (max-width: 640px) {
+            .kpi-grid, .kpi-grid.four-cards { grid-template-columns: 1fr; }
+        }
+
+        .kpi-card {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 190px;
+            border-top: 4px solid transparent;
+            background: #ffffff;
+        }
+
+        .kpi-card.card-active {
+            border-top-color: var(--success);
+        }
+
+        .kpi-card.card-visitors {
+            border-top-color: var(--info);
+        }
+
+        .kpi-card.card-total-visits {
+            border-top-color: #8b5cf6;
+        }
+
+        .kpi-card.card-rfqs {
+            border-top-color: var(--purple);
+        }
+
+        .kpi-card.card-sellers {
+            border-top-color: var(--warning);
+        }
+
+        .kpi-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+        }
+
+        .kpi-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .kpi-badge {
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .badge-live {
+            background: var(--success-light);
+            color: var(--success);
+            border: 1px solid #a7f3d0;
+        }
+
+        .badge-period {
+            background: var(--info-light);
+            color: var(--info);
+            border: 1px solid #bae6fd;
+        }
+
+        .badge-buyer {
+            background: var(--purple-light);
+            color: var(--purple);
+            border: 1px solid #ddd6fe;
+        }
+
+        .badge-seller {
+            background: var(--warning-light);
+            color: var(--warning);
+            border: 1px solid #fde68a;
+        }
+
+        .kpi-value-row {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+
+        .kpi-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 46px;
+            font-weight: 800;
+            line-height: 1;
+            letter-spacing: -0.03em;
+            color: var(--text-main);
+            transition: color 0.3s ease, transform 0.3s ease;
+        }
+
+        .kpi-value.flash {
+            color: var(--success) !important;
+            transform: scale(1.06);
+        }
+
+        .kpi-unit {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-dim);
+        }
+
+        .kpi-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: var(--text-muted);
+            border-top: 1px solid #f1f5f9;
+            padding-top: 12px;
+            margin-top: auto;
+        }
+
+        /* ==========================================================================
+           HIERARCHICAL USER CLASSIFICATION & LIFECYCLE SECTION
+           ========================================================================== */
+        .classification-section {
+            margin-bottom: 24px;
+        }
+
+        .section-header-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .section-title-box {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .section-title-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: #eff6ff;
+            color: #2563eb;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            border: 1px solid #bfdbfe;
+        }
+
+        .section-title-text {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-main);
+            margin: 0;
+        }
+
+        .section-subtitle-text {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin: 2px 0 0 0;
+        }
+
+        .classification-grid {
+            display: grid;
+            grid-template-columns: 280px 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 1100px) {
+            .classification-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .class-card {
+            background: #ffffff;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            box-shadow: var(--shadow-sm);
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            transition: var(--transition);
+        }
+
+        .class-card:hover {
+            box-shadow: var(--shadow-md);
+            border-color: var(--border-highlight);
+        }
+
+        .class-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .class-card-title-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .class-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        .unknown-icon { background: #f1f5f9; color: #475569; }
+        .buyer-icon { background: #f5f3ff; color: #7c3aed; }
+        .seller-icon { background: #fffbeb; color: #d97706; }
+
+        .class-name {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-main);
+            display: block;
+        }
+
+        .class-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+            display: block;
+        }
+
+        .class-badge {
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 6px;
+            text-transform: uppercase;
+        }
+
+        .badge-unknown { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
+        .badge-buyer-main { background: #ede9fe; color: #7c3aed; border: 1px solid #ddd6fe; }
+        .badge-seller-main { background: #fef3c7; color: #d97706; border: 1px solid #fde68a; }
+
+        .class-main-stat {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .class-number-row {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+        }
+
+        .class-big-val {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 34px;
+            font-weight: 800;
+            color: var(--text-main);
+            line-height: 1;
+        }
+
+        .class-sub-count {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .class-tree-box {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: auto;
+        }
+
+        .class-tree-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .tree-item-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .tree-bullet {
+            font-size: 8px;
+            color: #94a3b8;
+        }
+
+        .tree-item-val {
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        .class-branch-container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            flex: 1;
+        }
+
+        .class-branch-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .class-branch-card.registered-branch {
+            background: #f0fdf4;
+            border-color: #bbf7d0;
+        }
+
+        .class-branch-card.registered-branch.seller {
+            background: #fffbeb;
+            border-color: #fde68a;
+        }
+
+        .branch-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .branch-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        .branch-count {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .status-indicator.success { background: #10b981; }
+        .status-indicator.warning { background: #f59e0b; }
+        .status-indicator.neutral { background: #94a3b8; }
+
+        .branch-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .nested-sub-metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 4px;
+            padding-top: 8px;
+            border-top: 1px dashed rgba(0,0,0,0.08);
+        }
+
+        .sub-metric-pill {
+            background: #ffffff;
+            border-radius: 8px;
+            padding: 8px 10px;
+            border: 1px solid rgba(0,0,0,0.06);
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .sub-metric-info {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        .sub-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+
+        .sub-dot.created { background: #059669; }
+        .sub-dot.not-created { background: #94a3b8; }
+        .sub-dot.ss { background: #7c3aed; }
+        .sub-dot.sws { background: #f59e0b; }
+
+        .sub-val {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        /* Clickable Classification Node Styling */
+        .clickable-classification {
+            cursor: pointer !important;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+            position: relative;
+        }
+
+        .class-card.clickable-classification:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(124, 58, 237, 0.12) !important;
+            border-color: #7c3aed !important;
+        }
+
+        .class-branch-card.clickable-classification:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08) !important;
+            border-color: #7c3aed !important;
+        }
+
+        .sub-metric-pill.clickable-classification:hover {
+            transform: translateY(-1px);
+            background: #f5f3ff !important;
+            border-color: #a855f7 !important;
+            box-shadow: 0 2px 8px rgba(168, 85, 247, 0.15) !important;
+        }
+
+        /* Chart Card */
+        .chart-card {
+            background: #ffffff;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 28px 28px 20px;
+            box-shadow: var(--shadow-sm);
+            transition: var(--transition);
+        }
+
+        .chart-card:hover {
+            box-shadow: var(--shadow-md);
+            border-color: var(--border-highlight);
+        }
+
+        .chart-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+
+        .chart-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .chart-title h2 {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .chart-title p {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .chart-icon {
+            width: 36px;
+            height: 36px;
+            background: var(--info-light);
+            border: 1px solid #bae6fd;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        .chart-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .chart-stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: #f8fafc;
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-weight: 600;
+        }
+
+        .chart-stat .label { color: var(--text-dim); font-weight: 400; }
+
+        /* Chart filter toggle buttons */
+        .chart-filter-group {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .chart-filter-btn {
+            padding: 5px 12px;
+            font-size: 11px;
+            font-weight: 600;
+            font-family: 'Inter', sans-serif;
+            border: 1.5px solid var(--border-subtle);
+            border-radius: 20px;
+            background: #f8fafc;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: var(--transition);
+            white-space: nowrap;
+        }
+
+        .chart-filter-btn:hover {
+            border-color: #0284c7;
+            color: #0284c7;
+            background: #f0f9ff;
+        }
+
+        .chart-filter-btn.active {
+            background: #0284c7;
+            color: #ffffff;
+            border-color: #0284c7;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 240px;
+        }
+
+        .chart-empty {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 200px;
+            color: var(--text-dim);
+            font-size: 13px;
+            gap: 8px;
+        }
+
+        /* ==========================================================================
+           LIVE WHATSAPP CONVERSATION VIEWER STYLES
+           ========================================================================== */
+        .chat-viewer-card {
+            background: var(--bg-card);
+            border-radius: 16px;
+            border: 1px solid var(--border-subtle);
+            box-shadow: var(--shadow-sm);
+            margin-top: 24px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-viewer-header {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #ffffff;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .chat-viewer-title-box {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .chat-viewer-icon {
+            width: 38px;
+            height: 38px;
+            border-radius: 10px;
+            background: #ecfdf5;
+            color: #059669;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .chat-viewer-title-box h2 {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-main);
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .chat-viewer-title-box p {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin: 2px 0 0 0;
+        }
+
+        .chat-viewer-body {
+            display: grid;
+            grid-template-columns: 360px 1fr;
+            height: 580px;
+            background: #ffffff;
+        }
+
+        @media (max-width: 900px) {
+            .chat-viewer-body {
+                grid-template-columns: 1fr;
+                height: 750px;
+            }
+        }
+
+        /* Left Sidebar */
+        .chat-sidebar {
+            border-right: 1px solid var(--border-subtle);
+            display: flex;
+            flex-direction: column;
+            background: #f8fafc;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .chat-search-bar {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-subtle);
+            background: #ffffff;
+        }
+
+        .chat-search-input {
+            width: 100%;
+            padding: 8px 12px 8px 34px;
+            font-size: 13px;
+            font-family: 'Inter', sans-serif;
+            border: 1px solid var(--border-subtle);
+            border-radius: 20px;
+            background: #f1f5f9 url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%2394a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>') no-repeat 10px center;
+            color: var(--text-main);
+            outline: none;
+            transition: var(--transition);
+            box-sizing: border-box;
+        }
+
+        .chat-search-input:focus {
+            background-color: #ffffff;
+            border-color: #25d366;
+            box-shadow: 0 0 0 3px rgba(37, 211, 102, 0.15);
+        }
+
+        .chat-users-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .chat-user-card {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            background: transparent;
+            cursor: pointer;
+            transition: var(--transition);
+            border: 1px solid transparent;
+            position: relative;
+        }
+
+        .chat-user-card:hover {
+            background: #f1f5f9;
+        }
+
+        .chat-user-card.active {
+            background: #ffffff;
+            border-color: #e2e8f0;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+        }
+
+        .chat-user-card.active::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 10px;
+            bottom: 10px;
+            width: 3.5px;
+            background: #25d366;
+            border-radius: 0 4px 4px 0;
+        }
+
+        .chat-user-avatar {
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            background: #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 14px;
+            color: #475569;
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        .chat-user-avatar.buyer {
+            background: #ede9fe;
+            color: #7c3aed;
+        }
+
+        .chat-user-avatar.seller {
+            background: #fef3c7;
+            color: #d97706;
+        }
+
+        .online-dot {
+            position: absolute;
+            bottom: 1px;
+            right: 1px;
+            width: 10px;
+            height: 10px;
+            background: #10b981;
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+        }
+
+        .chat-user-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .chat-user-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 2px;
+        }
+
+        .chat-user-phone {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-main);
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .chat-user-time {
+            font-size: 11px;
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+
+        .chat-user-meta {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 2px;
+        }
+
+        .chat-role-pill {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 1px 6px;
+            border-radius: 6px;
+            text-transform: capitalize;
+        }
+
+        .chat-role-pill.buyer { background: #ede9fe; color: #6d28d9; }
+        .chat-role-pill.seller { background: #fef3c7; color: #b45309; }
+        .chat-role-pill.unknown { background: #f1f5f9; color: #64748b; }
+
+        .chat-user-preview {
+            font-size: 12px;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .chat-msg-count {
+            font-size: 10px;
+            background: #e2e8f0;
+            color: #475569;
+            padding: 1px 6px;
+            border-radius: 10px;
+            font-weight: 600;
+            margin-left: auto;
+        }
+
+        /* Right Chat Main Area */
+        .chat-main-panel {
+            display: flex;
+            flex-direction: column;
+            background: #efeae2;
+            background-image: radial-gradient(#d1d7db 0.75px, transparent 0.75px);
+            background-size: 16px 16px;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .chat-header-bar {
+            padding: 12px 20px;
+            background: #ffffff;
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+            z-index: 5;
+        }
+
+        .chat-header-user {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .chat-header-details h3 {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-main);
+            margin: 0;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .chat-header-details p {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin: 2px 0 0 0;
+        }
+
+        .chat-messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .chat-date-pill {
+            align-self: center;
+            background: rgba(255, 255, 255, 0.9);
+            color: var(--text-muted);
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 12px;
+            border-radius: 12px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+            margin: 4px 0 8px 0;
+        }
+
+        /* Message Bubbles */
+        .msg-bubble-wrapper {
+            display: flex;
+            flex-direction: column;
+            max-width: 75%;
+        }
+
+        .msg-bubble-wrapper.user {
+            align-self: flex-end;
+        }
+
+        .msg-bubble-wrapper.assistant {
+            align-self: flex-start;
+        }
+
+        .msg-bubble {
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 13px;
+            line-height: 1.45;
+            position: relative;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+            word-wrap: break-word;
+        }
+
+        .msg-bubble-wrapper.user .msg-bubble {
+            background: #d9fdd3;
+            color: #111b21;
+            border-top-right-radius: 2px;
+        }
+
+        .msg-bubble-wrapper.assistant .msg-bubble {
+            background: #ffffff;
+            color: #111b21;
+            border-top-left-radius: 2px;
+        }
+
+        .msg-header {
+            font-weight: 700;
+            color: #075e54;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+
+        .msg-text {
+            white-space: pre-wrap;
+        }
+
+        .msg-buttons-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #f1f5f9;
+        }
+
+        .msg-action-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: #f8fafc;
+            color: #0284c7;
+            border: 1px solid #e0f2fe;
+            padding: 5px 10px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 600;
+            font-family: 'Inter', sans-serif;
+            pointer-events: none;
+        }
+
+        .msg-meta {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 4px;
+            margin-top: 3px;
+            font-size: 10px;
+            color: #667781;
+        }
+
+        .msg-ticks {
+            color: #53bdeb;
+            font-weight: 700;
+            font-size: 11px;
+        }
+
+        .chat-empty-selection {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-muted);
+            text-align: center;
+            padding: 24px;
+        }
+
+        .chat-empty-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background: #ffffff;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            margin-bottom: 12px;
+            color: #25d366;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="dashboard-container">
+        
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="brand-section">
+                <div class="brand-logo">⚡</div>
+                <div class="brand-text">
+                    <h1>AI Procurement Agent <span class="period-pill" id="header-period-pill">Today</span></h1>
+                    <p>Live WhatsApp user activity, buyer RFQs, and seller responses</p>
+                </div>
+            </div>
+
+            <div class="header-actions">
+                
+                <!-- Date Preset Filter Dropdown -->
+                <div class="filter-group">
+                    <select id="date-preset-select" class="filter-select" onchange="handlePresetChange()">
+                        <option value="today" selected>Today</option>
+                        <option value="yesterday">Yesterday</option>
+                        <option value="7d">Last Week</option>
+                        <option value="custom">Date Range</option>
+                    </select>
+
+                    <!-- Custom Date Picker Container -->
+                    <div id="custom-date-container" class="custom-date-container">
+                        <input type="date" id="custom-start-date" class="date-input" title="Start Date" />
+                        <span class="date-sep">to</span>
+                        <input type="date" id="custom-end-date" class="date-input" title="End Date" />
+                        <button class="apply-btn" onclick="applyCustomDateRange()">Apply</button>
+                    </div>
+                </div>
+
+                <div class="live-status-badge">
+                    <div class="live-dot"></div>
+                    <span id="sse-status">LIVE STREAM CONNECTED</span>
+                </div>
+                <div class="clock-display" id="live-clock">--:--:--</div>
+                <button class="refresh-btn" onclick="fetchDashboardData()" title="Sync now">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+                    Sync
+                </button>
+            </div>
+        </header>
+
+        <!-- 4 Core Real-Time KPI Cards -->
+        <section class="kpi-grid" id="kpi-grid-container">
+            
+            <!-- 1. Active Users (Live) -->
+            <div class="clean-card kpi-card card-active" id="card-active-users">
+                <div class="kpi-header">
+                    <span class="kpi-title">Active on WhatsApp</span>
+                    <span class="kpi-badge badge-live">Live</span>
+                </div>
+                <div class="kpi-value-row">
+                    <span class="kpi-value" id="kpi-active-users">0</span>
+                    <span class="kpi-unit">online now</span>
+                </div>
+                <div class="kpi-footer">
+                    <div class="kpi-subtext" id="kpi-active-breakdown">
+                        <span>0 buyers</span> • <span>0 sellers</span>
+                    </div>
+                    <span style="color: var(--success); font-weight: 600;">Real-time</span>
+                </div>
+            </div>
+
+            <!-- 2. Total Visits (all sessions including repeats) -->
+            <div class="clean-card kpi-card card-total-visits">
+                <div class="kpi-header">
+                    <span class="kpi-title">Total Visits</span>
+                    <span class="kpi-badge" style="background:#ede9fe; color:#7c3aed;" id="kpi-total-visits-badge">Today</span>
+                </div>
+                <div class="kpi-value-row">
+                    <span class="kpi-value" id="kpi-total-visits">0</span>
+                    <span class="kpi-unit">sessions</span>
+                </div>
+                <div class="kpi-footer">
+                    <div class="kpi-subtext">
+                        <span id="kpi-visits-vs-unique">vs 0 unique</span>
+                    </div>
+                    <span style="color: #8b5cf6; font-weight: 600;" id="kpi-repeat-ratio">0% repeat</span>
+                </div>
+            </div>
+
+            <!-- 3. Unique Users Visited -->
+            <div class="clean-card kpi-card card-visitors">
+                <div class="kpi-header">
+                    <span class="kpi-title">Unique Users Visited</span>
+                    <span class="kpi-badge badge-period" id="kpi-visitor-badge">Today</span>
+                </div>
+                <div class="kpi-value-row">
+                    <span class="kpi-value" id="kpi-unique-visitors">0</span>
+                    <span class="kpi-unit">visitors</span>
+                </div>
+                <div class="kpi-footer">
+                    <div class="kpi-subtext" id="kpi-visitor-breakdown">
+                        <span>0 new</span> • <span>0 returning</span>
+                    </div>
+                    <span id="kpi-conversations-count">0 sessions</span>
+                </div>
+            </div>
+
+            <!-- 3. RFQs Created by Buyers -->
+            <div class="clean-card kpi-card card-rfqs">
+                <div class="kpi-header">
+                    <span class="kpi-title">RFQs Created</span>
+                    <span class="kpi-badge badge-buyer">Buyers</span>
+                </div>
+                <div class="kpi-value-row">
+                    <span class="kpi-value" id="kpi-rfqs-created">0</span>
+                    <span class="kpi-unit" id="kpi-rfq-unit">in period</span>
+                </div>
+                <div class="kpi-footer">
+                    <div class="kpi-subtext" id="kpi-rfq-status-breakdown">
+                        <span id="kpi-submitted-rfqs">0 submitted</span>
+                    </div>
+                    <span style="color: var(--purple); font-weight: 600;" id="kpi-conv-rate">100% conv</span>
+                </div>
+            </div>
+
+            <!-- 5. Seller Responses on RFQs -->
+            <div class="clean-card kpi-card card-sellers">
+                <div class="kpi-header">
+                    <span class="kpi-title">Seller Responses</span>
+                    <span class="kpi-badge badge-seller">Sellers</span>
+                </div>
+                <div class="kpi-value-row">
+                    <span class="kpi-value" id="kpi-seller-responses">0</span>
+                    <span class="kpi-unit">quotes / replies</span>
+                </div>
+                <div class="kpi-footer">
+                    <div class="kpi-subtext" id="kpi-seller-breakdown">
+                        <span id="kpi-active-sellers">0 active sellers</span>
+                    </div>
+                    <span style="color: var(--warning); font-weight: 600;" id="kpi-response-rate">0% response</span>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- Hierarchical User Classification & Funnel Section -->
+        <section class="classification-section" id="user-classification-section">
+            <div class="section-header-row" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                <div class="section-title-box">
+                    <div class="section-title-icon">👥</div>
+                    <div>
+                        <h2 class="section-title-text" style="display:flex; align-items:center; gap:8px;">
+                            User Classification & Funnel
+                            <span class="period-pill" style="background:#ede9fe; color:#7c3aed; font-size:12px; font-weight:700; padding:3px 8px; border-radius:6px;" id="classification-badge">Today</span>
+                        </h2>
+                        <p class="section-subtitle-text">Categorized real-time breakdown of today's visitors, registrations, RFQ creation, and subscription status</p>
+                    </div>
+                </div>
+                <div class="export-actions-group" style="display:flex; align-items:center; gap:8px;">
+                    <select id="export-classification-filter" style="background:#ffffff; border:1px solid #cbd5e1; border-radius:8px; padding:7px 12px; font-size:13px; color:#334155; font-weight:600; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                        <option value="all">Export All Users</option>
+                        <option value="unknown">Unknown Only</option>
+                        <option value="buyer">Buyers Only</option>
+                        <option value="buyer_registered">Buyer Registered Only</option>
+                        <option value="buyer_not_registered">Buyer Not Registered Only</option>
+                        <option value="buyer_rfq_created">Buyer (RFQ Created)</option>
+                        <option value="buyer_rfq_not_created">Buyer (RFQ Not Created)</option>
+                        <option value="seller">Sellers Only</option>
+                        <option value="seller_registered">Seller Registered Only</option>
+                        <option value="seller_not_registered">Seller Not Registered Only</option>
+                        <option value="seller_subscribed">Subscribed Sellers Only</option>
+                        <option value="seller_without_subscription">Sellers w/o Subscription Only</option>
+                    </select>
+                    <button id="btn-export-classification-csv" style="background:linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%); color:#ffffff; border:none; border-radius:8px; padding:8px 16px; font-size:13px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 8px rgba(124, 58, 237, 0.25); transition:all 0.2s ease;">
+                        📥 Download CSV
+                    </button>
+                </div>
+            </div>
+
+            <div class="classification-grid">
+                <!-- 1. Unknown Users -->
+                <div class="class-card class-unknown clickable-classification" data-classification-filter="unknown" title="Click to open Unknown Users details in new tab">
+                    <div class="class-card-header">
+                        <div class="class-card-title-group">
+                            <span class="class-icon unknown-icon">❓</span>
+                            <div>
+                                <span class="class-name">Unknown</span>
+                                <span class="class-hint">Unclassified / Greeting only</span>
+                            </div>
+                        </div>
+                        <span class="class-badge badge-unknown" id="kpi-unknown-badge">Today</span>
+                    </div>
+                    
+                    <div class="class-main-stat">
+                        <div class="class-number-row">
+                            <span class="class-big-val" id="kpi-unknown-users">0</span>
+                            <span class="kpi-unit">users</span>
+                        </div>
+                        <span class="class-sub-count" id="kpi-unknown-sessions">0 total sessions</span>
+                    </div>
+
+                    <div class="class-tree-box">
+                        <div class="class-tree-item">
+                            <div class="tree-item-label">
+                                <span class="tree-bullet">●</span>
+                                <span>No Role Selected</span>
+                            </div>
+                            <span class="tree-item-val" id="kpi-unknown-pct">0% traffic</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. Buyer Lifecycle & RFQ Status -->
+                <div class="class-card class-buyer">
+                    <div class="class-card-header clickable-classification" data-classification-filter="buyer" title="Click to open All Buyers details in new tab">
+                        <div class="class-card-title-group">
+                            <span class="class-icon buyer-icon">🛒</span>
+                            <div>
+                                <span class="class-name">Buyer</span>
+                                <span class="class-hint">Procurement / RFQ Intent</span>
+                            </div>
+                        </div>
+                        <span class="class-badge badge-buyer-main" id="kpi-buyer-total-badge">0 Buyers Today</span>
+                    </div>
+
+                    <div class="class-branch-container">
+                        <!-- Branch A: Buyer Registered -->
+                        <div class="class-branch-card registered-branch clickable-classification" data-classification-filter="buyer_registered" title="Click to open Registered Buyers details in new tab">
+                            <div class="branch-header">
+                                <div class="branch-title">
+                                    <span class="status-indicator success"></span>
+                                    <span>Buyer Registered</span>
+                                </div>
+                                <span class="branch-count" id="kpi-buyer-registered-count">0</span>
+                            </div>
+
+                            <!-- Nested Sub-metrics: RFQ Created vs Not Created -->
+                            <div class="nested-sub-metrics">
+                                <div class="sub-metric-pill clickable-classification" data-classification-filter="buyer_rfq_created" title="Click to open Buyer (RFQ Created) details in new tab">
+                                    <div class="sub-metric-info">
+                                        <span class="sub-dot created"></span>
+                                        <span>RFQ Created</span>
+                                    </div>
+                                    <span class="sub-val" id="kpi-buyer-rfq-created">0</span>
+                                </div>
+                                <div class="sub-metric-pill clickable-classification" data-classification-filter="buyer_rfq_not_created" title="Click to open Buyer (RFQ Not Created) details in new tab">
+                                    <div class="sub-metric-info">
+                                        <span class="sub-dot not-created"></span>
+                                        <span>RFQ Not Created</span>
+                                    </div>
+                                    <span class="sub-val" id="kpi-buyer-rfq-not-created">0</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Branch B: Buyer Not Registered -->
+                        <div class="class-branch-card clickable-classification" data-classification-filter="buyer_not_registered" title="Click to open Buyer Not Registered details in new tab">
+                            <div class="branch-header">
+                                <div class="branch-title">
+                                    <span class="status-indicator warning"></span>
+                                    <span>Buyer Not Registered</span>
+                                </div>
+                                <span class="branch-count" id="kpi-buyer-not-registered-count">0</span>
+                            </div>
+                            <div class="branch-hint">Dropped off during registration/OTP</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Seller Lifecycle & Subscription Status -->
+                <div class="class-card class-seller">
+                    <div class="class-card-header clickable-classification" data-classification-filter="seller" title="Click to open All Sellers details in new tab">
+                        <div class="class-card-title-group">
+                            <span class="class-icon seller-icon">🏷️</span>
+                            <div>
+                                <span class="class-name">Seller</span>
+                                <span class="class-hint">Supply / Quotation Intent</span>
+                            </div>
+                        </div>
+                        <span class="class-badge badge-seller-main" id="kpi-seller-total-badge">0 Sellers Today</span>
+                    </div>
+
+                    <div class="class-branch-container">
+                        <!-- Branch A: Seller Registered -->
+                        <div class="class-branch-card registered-branch seller clickable-classification" data-classification-filter="seller_registered" title="Click to open Seller Registered details in new tab">
+                            <div class="branch-header">
+                                <div class="branch-title">
+                                    <span class="status-indicator success"></span>
+                                    <span>Seller Registered</span>
+                                </div>
+                                <span class="branch-count" id="kpi-seller-registered-count">0</span>
+                            </div>
+
+                            <!-- Nested Sub-metrics: Subscribed (SS) vs Without Subscription (SWS) -->
+                            <div class="nested-sub-metrics">
+                                <div class="sub-metric-pill clickable-classification" data-classification-filter="seller_subscribed" title="Click to open Subscribed Sellers (SS) details in new tab">
+                                    <div class="sub-metric-info">
+                                        <span class="sub-dot ss"></span>
+                                        <span>Subscribed (SS)</span>
+                                    </div>
+                                    <span class="sub-val" id="kpi-seller-ss-count">0</span>
+                                </div>
+                                <div class="sub-metric-pill clickable-classification" data-classification-filter="seller_without_subscription" title="Click to open Sellers w/o Sub (SWS) details in new tab">
+                                    <div class="sub-metric-info">
+                                        <span class="sub-dot sws"></span>
+                                        <span>w/o Sub (SWS)</span>
+                                    </div>
+                                    <span class="sub-val" id="kpi-seller-sws-count">0</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Branch B: Seller Not Registered -->
+                        <div class="class-branch-card clickable-classification" data-classification-filter="seller_not_registered" title="Click to open Seller Not Registered details in new tab">
+                            <div class="branch-header">
+                                <div class="branch-title">
+                                    <span class="status-indicator warning"></span>
+                                    <span>Seller Not Registered</span>
+                                </div>
+                                <span class="branch-count" id="kpi-seller-not-registered-count">0</span>
+                            </div>
+                            <div class="branch-hint">Dropped off during registration/OTP</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Daily Visitors Line Chart -->
+        <div class="chart-card" id="chart-daily-visitors-card">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <div class="chart-icon">📈</div>
+                    <div>
+                        <h2>Unique Visitors — Day-wise Trend</h2>
+                        <p id="chart-date-label">Last 7 days</p>
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+                    <!-- Chart-specific filter (independent of KPI filter above) -->
+                    <div class="chart-filter-group" id="chart-filter-group">
+                        <button class="chart-filter-btn active" data-preset="7d" onclick="setChartPreset('7d', this)">Last 7 days</button>
+                        <button class="chart-filter-btn" data-preset="15d" onclick="setChartPreset('15d', this)">Last 15 days</button>
+                        <button class="chart-filter-btn" data-preset="30d" onclick="setChartPreset('30d', this)">Last 30 days</button>
+                    </div>
+                    <!-- Summary stats -->
+                    <div class="chart-meta">
+                        <div class="chart-stat">
+                            <span class="label">Peak day</span>
+                            <span id="chart-peak-day">—</span>
+                        </div>
+                        <div class="chart-stat">
+                            <span class="label">Total</span>
+                            <span id="chart-total-visitors">—</span>
+                        </div>
+                        <div class="chart-stat">
+                            <span class="label">Avg/day</span>
+                            <span id="chart-avg-visitors">—</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="visitors-line-chart"></canvas>
+            </div>
+            <div class="chart-empty" id="chart-empty-state">
+                <span style="font-size:28px;">📊</span>
+                <span>No visitor data for this period.</span>
+            </div>
+        </div>
+
+        <!-- Live WhatsApp Conversation Viewer (Today's Users) -->
+        <div class="chat-viewer-card" id="chat-viewer-card">
+            <div class="chat-viewer-header">
+                <div class="chat-viewer-title-box">
+                    <div class="chat-viewer-icon">💬</div>
+                    <div>
+                        <h2>Live WhatsApp Conversations <span class="period-pill" style="background:#ecfdf5; color:#059669;" id="chat-users-count-pill">0 Users Today</span></h2>
+                        <p>Real-time conversation stream for today's visitors</p>
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:12px;">
+                    <button class="chart-filter-btn" onclick="fetchTodayConversations()" title="Refresh conversations">
+                        ↻ Refresh
+                    </button>
+                </div>
+            </div>
+
+            <div class="chat-viewer-body">
+                <!-- Left Sidebar: Today's Visited Users -->
+                <div class="chat-sidebar">
+                    <div class="chat-search-bar">
+                        <input type="text" id="chat-search-input" class="chat-search-input" placeholder="Search by phone number..." oninput="filterTodayUsers()" />
+                    </div>
+                    <div class="chat-users-list" id="chat-users-list">
+                        <div style="padding: 24px 16px; text-align: center; color: var(--text-dim); font-size: 13px;">
+                            Loading today's users...
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Main Panel: Selected User's Chat -->
+                <div class="chat-main-panel" id="chat-main-panel">
+                    <!-- Empty State -->
+                    <div class="chat-empty-selection" id="chat-empty-selection">
+                        <div class="chat-empty-icon">💬</div>
+                        <h3 style="font-size: 15px; font-weight: 700; color: var(--text-main); margin-bottom: 4px;">No Conversation Selected</h3>
+                        <p style="font-size: 13px; max-width: 280px; margin: 0;">Click on any user from the left sidebar to view their full live WhatsApp chat history.</p>
+                    </div>
+
+                    <!-- Active Chat View (hidden by default) -->
+                    <div id="chat-active-view" style="display: none; flex-direction: column; height: 100%;">
+                        <!-- Chat Header Bar -->
+                        <div class="chat-header-bar">
+                            <div class="chat-header-user">
+                                <div class="chat-user-avatar" id="active-chat-avatar">
+                                    <span id="active-chat-avatar-text">WA</span>
+                                    <span class="online-dot" id="active-chat-online-dot" style="display: none;"></span>
+                                </div>
+                                <div class="chat-header-details">
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <h3 id="active-chat-phone">+91 0000000000</h3>
+                                        <span class="chat-role-pill unknown" id="active-chat-role">Visitor</span>
+                                    </div>
+                                    <p id="active-chat-status">Last active: today</p>
+                                </div>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--text-dim);" id="active-chat-session-id"></span>
+                            </div>
+                        </div>
+
+                        <!-- Messages Stream -->
+                        <div class="chat-messages-container" id="chat-messages-container">
+                            <div class="chat-date-pill">Today</div>
+                            <!-- Dynamic messages populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        // Clock
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('live-clock').textContent = now.toLocaleTimeString('en-US', {
+                hour12: false,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // Default custom dates (last 7 days to today)
+        function initDateInputs() {
+            const today = new Date();
+            const lastWeek = new Date();
+            lastWeek.setDate(today.getDate() - 7);
+
+            const formatYMD = d => d.toISOString().split('T')[0];
+            document.getElementById('custom-start-date').value = formatYMD(lastWeek);
+            document.getElementById('custom-end-date').value = formatYMD(today);
+            document.getElementById('custom-start-date').max = formatYMD(today);
+            document.getElementById('custom-end-date').max = formatYMD(today);
+        }
+
+        // Filter Handlers
+        function handlePresetChange() {
+            const select = document.getElementById('date-preset-select');
+            const customContainer = document.getElementById('custom-date-container');
+            const pill = document.getElementById('header-period-pill');
+            const visitorBadge = document.getElementById('kpi-visitor-badge');
+
+            if (select.value === 'custom') {
+                customContainer.classList.add('active');
+            } else {
+                customContainer.classList.remove('active');
+                const label = select.options[select.selectedIndex].text;
+                pill.textContent = label;
+                visitorBadge.textContent = label;
+                fetchDashboardData();
+            }
+        }
+
+        function applyCustomDateRange() {
+            const start = document.getElementById('custom-start-date').value;
+            const end = document.getElementById('custom-end-date').value;
+            if (!start || !end) {
+                alert('Please select both start and end dates.');
+                return;
+            }
+            if (start > end) {
+                alert('Start date cannot be after end date.');
+                return;
+            }
+            const pill = document.getElementById('header-period-pill');
+            const visitorBadge = document.getElementById('kpi-visitor-badge');
+            const label = `${start} to ${end}`;
+            pill.textContent = label;
+            visitorBadge.textContent = 'Range';
+            fetchDashboardData();
+        }
+
+        // Animated Value Counter Helper
+        function animateValue(elementId, targetValue) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            const currentVal = parseInt(el.textContent, 10) || 0;
+            if (currentVal === targetValue) return;
+
+            el.classList.add('flash');
+            setTimeout(() => el.classList.remove('flash'), 600);
+
+            const duration = 400;
+            const start = currentVal;
+            const diff = targetValue - start;
+            const startTime = performance.now();
+
+            function updateStep(timestamp) {
+                const elapsed = timestamp - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                el.textContent = Math.round(start + diff * progress);
+                if (progress < 1) {
+                    requestAnimationFrame(updateStep);
+                } else {
+                    el.textContent = targetValue;
+                }
+            }
+            requestAnimationFrame(updateStep);
+        }
+
+        // Update Active Card Visibility based on date selection
+        function updateActiveCardVisibility(preset, start, end) {
+            const activeCard = document.getElementById('card-active-users');
+            const kpiGrid = document.getElementById('kpi-grid-container');
+            const totalVisitsBadge = document.getElementById('kpi-total-visits-badge');
+            const visitorBadge = document.getElementById('kpi-visitor-badge');
+            if (!activeCard || !kpiGrid) return;
+
+            const todayStr = new Date().toISOString().split('T')[0];
+            let showActive = false;
+
+            if (preset === 'today') {
+                showActive = true;
+            } else if (preset === 'custom' && start && end) {
+                if (start <= todayStr && end >= todayStr) {
+                    showActive = true;
+                }
+            }
+
+            // Badge label
+            const presetLabels = { today: 'Today', yesterday: 'Yesterday', '7d': 'Last 7d', '30d': 'Last 30d', '90d': 'Last 90d', custom: 'Range' };
+            const label = presetLabels[preset] || preset;
+            if (totalVisitsBadge) totalVisitsBadge.textContent = label;
+            if (visitorBadge) visitorBadge.textContent = label;
+
+            if (showActive) {
+                activeCard.style.display = 'flex';
+                kpiGrid.classList.remove('four-cards');
+            } else {
+                activeCard.style.display = 'none';
+                kpiGrid.classList.add('four-cards');
+            }
+        }
+
+        // Fetch Analytics Data based on active filter
+        async function fetchDashboardData() {
+            try {
+                const select = document.getElementById('date-preset-select');
+                const preset = select ? select.value : 'today';
+                const start = document.getElementById('custom-start-date').value;
+                const end = document.getElementById('custom-end-date').value;
+
+                updateActiveCardVisibility(preset, start, end);
+
+                let url = `/api/dashboard/stats?date_preset=${encodeURIComponent(preset)}`;
+                if (preset === 'custom' && start && end) {
+                    url += `&start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`;
+                }
+
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    renderDashboard(data);
+                }
+            } catch (err) {
+                console.error('Error fetching dashboard data:', err);
+            }
+        }
+
+        // Render Dashboard UI Elements
+        function renderDashboard(data) {
+            const exec = data.executive || {};
+            const sellers = data.seller_response || {};
+
+            // 1. Active Users (Live)
+            animateValue('kpi-active-users', exec.visitors_live || 0);
+            document.getElementById('kpi-active-breakdown').innerHTML = 
+                `<span>${exec.active_buyers || 0} buyers</span> • <span>${exec.active_sellers || 0} sellers</span>`;
+
+            // 2. Unique Users Visited
+            animateValue('kpi-unique-visitors', exec.visitors_today || 0);
+            document.getElementById('kpi-visitor-breakdown').innerHTML = 
+                `<span>${exec.new_users || 0} new</span> • <span>${exec.returning_users || 0} returning</span>`;
+            document.getElementById('kpi-conversations-count').textContent = 
+                `${exec.total_conversations || 0} sessions`;
+
+            // 3. RFQs Created (Buyers)
+            animateValue('kpi-rfqs-created', exec.rfqs_created || 0);
+            document.getElementById('kpi-submitted-rfqs').textContent = 
+                `${exec.submitted_rfqs || 0} submitted`;
+            document.getElementById('kpi-conv-rate').textContent = 
+                `${exec.buyer_to_rfq_conversion || 0}% conv`;
+
+            // 4. Seller Responses
+            animateValue('kpi-seller-responses', exec.seller_responses || 0);
+            document.getElementById('kpi-active-sellers').textContent = 
+                `${sellers.active_responding_sellers || 0} responding sellers`;
+            document.getElementById('kpi-response-rate').textContent = 
+                `${sellers.response_rate || 0}% rate`;
+
+            // 5. Total Visits (all sessions including repeat visits)
+            const totalVisits = exec.total_conversations || 0;
+            const uniqueVisits = exec.visitors_today || 0;
+            animateValue('kpi-total-visits', totalVisits);
+            document.getElementById('kpi-visits-vs-unique').textContent = `vs ${uniqueVisits} unique`;
+            const repeatPct = totalVisits > 0 ? Math.round(((totalVisits - uniqueVisits) / totalVisits) * 100) : 0;
+            document.getElementById('kpi-repeat-ratio').textContent = `${repeatPct}% repeat`;
+
+            // 6. Detailed User Classification & Lifecycle KPIs
+            const uClass = data.user_classification || {};
+            const unknown = uClass.unknown || {};
+            const buyer = uClass.buyer || {};
+            const seller = uClass.seller || {};
+
+            // Unknown
+            animateValue('kpi-unknown-users', unknown.users || 0);
+            document.getElementById('kpi-unknown-sessions').textContent = `${unknown.sessions || 0} total sessions`;
+            const unkPct = totalVisits > 0 ? Math.round(((unknown.sessions || 0) / totalVisits) * 100) : 0;
+            document.getElementById('kpi-unknown-pct').textContent = `${unkPct}% traffic`;
+
+            // Buyer
+            document.getElementById('kpi-buyer-total-badge').textContent = `${buyer.total || 0} Buyers`;
+            animateValue('kpi-buyer-registered-count', buyer.registered || 0);
+            animateValue('kpi-buyer-not-registered-count', buyer.not_registered || 0);
+            animateValue('kpi-buyer-rfq-created', buyer.registered_rfq_created || 0);
+            animateValue('kpi-buyer-rfq-not-created', buyer.registered_rfq_not_created || 0);
+
+            // Seller
+            document.getElementById('kpi-seller-total-badge').textContent = `${seller.total || 0} Sellers`;
+            animateValue('kpi-seller-registered-count', seller.registered || 0);
+            animateValue('kpi-seller-not-registered-count', seller.not_registered || 0);
+            animateValue('kpi-seller-ss-count', seller.registered_ss || 0);
+            animateValue('kpi-seller-sws-count', seller.registered_sws || 0);
+        }
+
+        // Server-Sent Events (SSE) Connection for Real-Time Updates
+        let eventSource = null;
+
+        function connectSSE() {
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            const statusBadge = document.getElementById('sse-status');
+            eventSource = new EventSource('/api/dashboard/live-stream');
+
+            eventSource.onopen = function() {
+                statusBadge.textContent = 'LIVE STREAM CONNECTED';
+                statusBadge.style.color = '#059669';
+            };
+
+            eventSource.onmessage = function(e) {
+                try {
+                    const event = JSON.parse(e.data);
+                    if (event.event_type === 'heartbeat' || event.event_type === 'stream_connected') {
+                        return;
+                    }
+                    // Refresh counters and live conversations immediately when any real-time event occurs
+                    fetchDashboardData();
+                    fetchTodayConversations();
+                } catch (err) {
+                    console.debug('SSE parse error:', err);
+                }
+            };
+
+            eventSource.onerror = function() {
+                statusBadge.textContent = 'RECONNECTING...';
+                statusBadge.style.color = '#d97706';
+                setTimeout(connectSSE, 5000);
+            };
+        }
+
+
+        // ─── Line Chart: Daily Visitors (independent filter state) ───────────
+        let visitorsChart = null;
+        let chartPreset = '7d';  // chart has its own state, never touched by KPI filters
+
+        function setChartPreset(preset, btn) {
+            chartPreset = preset;
+            // Update active button styling
+            document.querySelectorAll('#chart-filter-group .chart-filter-btn').forEach(b => b.classList.remove('active'));
+            if (btn) btn.classList.add('active');
+            fetchDailyVisitors();
+        }
+
+        async function fetchDailyVisitors() {
+            try {
+                // Uses chartPreset — completely independent of the KPI date filter
+                const presetMap = { '7d': '7d', '15d': 'custom', '30d': '30d' };
+                const apiPreset = presetMap[chartPreset] || '7d';
+
+                let url = `/api/dashboard/daily-visitors?date_preset=${encodeURIComponent(apiPreset)}`;
+
+                // 15d has no direct preset, use custom with explicit range
+                if (chartPreset === '15d') {
+                    const end = new Date();
+                    const start = new Date();
+                    start.setDate(end.getDate() - 14);
+                    const fmt = d => d.toISOString().split('T')[0];
+                    url += `&start_date=${fmt(start)}&end_date=${fmt(end)}`;
+                }
+
+                const response = await fetch(url);
+                if (!response.ok) return;
+                const result = await response.json();
+                if (result.status === 'success') {
+                    renderVisitorsChart(result.data, chartPreset);
+                }
+            } catch (err) {
+                console.error('Error fetching daily visitors:', err);
+            }
+        }
+
+        function formatChartDate(dateStr, totalDays) {
+            const d = new Date(dateStr + 'T00:00:00');
+            if (totalDays <= 14) {
+                return d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+            }
+            return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+        }
+
+        function renderVisitorsChart(data, activePreset) {
+            const canvas = document.getElementById('visitors-line-chart');
+            const emptyState = document.getElementById('chart-empty-state');
+            const wrapper = canvas.closest('.chart-wrapper');
+            const dateLabel = document.getElementById('chart-date-label');
+
+            const presetLabels = { '7d': 'Last 7 days', '15d': 'Last 15 days', '30d': 'Last 30 days' };
+            dateLabel.textContent = presetLabels[activePreset] || 'Last 7 days';
+
+            // If API returned no data, generate empty day slots so line chart still renders
+            if (!data || data.length === 0) {
+                const totalDaysMap = { '7d': 7, '15d': 15, '30d': 30 };
+                const numDays = totalDaysMap[activePreset] || 7;
+                data = [];
+                for (let i = numDays - 1; i >= 0; i--) {
+                    const d = new Date();
+                    d.setDate(d.getDate() - i);
+                    data.push({ date: d.toISOString().split('T')[0], visitors: 0 });
+                }
+            }
+
+            wrapper.style.display = 'block';
+            if (emptyState) emptyState.style.display = 'none';
+
+            const labels = data.map(d => formatChartDate(d.date, data.length));
+            const values = data.map(d => d.visitors);
+            const total = values.reduce((s, v) => s + v, 0);
+            const avg = data.length > 0 ? Math.round(total / data.length) : 0;
+
+            // Peak day
+            const hasData = values.some(v => v > 0);
+            if (hasData) {
+                const peakIdx = values.indexOf(Math.max(...values));
+                const peakDate = peakIdx >= 0
+                    ? new Date(data[peakIdx].date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+                    : '—';
+                document.getElementById('chart-peak-day').textContent = `${peakDate} (${values[peakIdx] || 0})`;
+            } else {
+                document.getElementById('chart-peak-day').textContent = '—';
+            }
+
+            document.getElementById('chart-total-visitors').textContent = total.toLocaleString();
+            document.getElementById('chart-avg-visitors').textContent = avg;
+
+            // Chart gradient
+            const ctx = canvas.getContext('2d');
+            const gradient = ctx.createLinearGradient(0, 0, 0, 220);
+            gradient.addColorStop(0, 'rgba(2, 132, 199, 0.18)');
+            gradient.addColorStop(1, 'rgba(2, 132, 199, 0.00)');
+
+            if (visitorsChart) {
+                visitorsChart.data.labels = labels;
+                visitorsChart.data.datasets[0].data = values;
+                visitorsChart.data.datasets[0].backgroundColor = gradient;
+                visitorsChart.update('active');
+                return;
+            }
+
+            visitorsChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'Unique Visitors',
+                        data: values,
+                        borderColor: '#0284c7',
+                        backgroundColor: gradient,
+                        borderWidth: 2.5,
+                        pointBackgroundColor: '#0284c7',
+                        pointBorderColor: '#ffffff',
+                        pointBorderWidth: 2,
+                        pointRadius: data.length <= 14 ? 5 : 3,
+                        pointHoverRadius: 7,
+                        tension: 0.4,
+                        fill: true,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#0f172a',
+                            titleColor: '#94a3b8',
+                            bodyColor: '#f1f5f9',
+                            padding: 12,
+                            cornerRadius: 10,
+                            callbacks: {
+                                title: (items) => items[0].label,
+                                label: (item) => ` ${item.parsed.y} unique visitors`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { display: false },
+                            ticks: {
+                                font: { family: 'Inter', size: 11 },
+                                color: '#94a3b8',
+                                maxRotation: 0,
+                                maxTicksLimit: data.length <= 14 ? data.length : 10
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            suggestedMax: 5,
+                            grid: { color: '#f1f5f9', lineWidth: 1 },
+                            ticks: {
+                                font: { family: 'JetBrains Mono', size: 11 },
+                                color: '#94a3b8',
+                                precision: 0,
+                                stepSize: 1,
+                                maxTicksLimit: 5
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // ─── Live WhatsApp Conversation Viewer Logic ─────────────────────────
+        let todayUsersList = [];
+        let selectedUserPhone = null;
+        let isFetchingMessages = false;
+
+        function formatTimeAgo(dateStr) {
+            if (!dateStr) return '';
+            try {
+                const date = new Date(dateStr);
+                return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            } catch (e) {
+                return '';
+            }
+        }
+
+        function formatChatText(rawText) {
+            if (!rawText) return '';
+            if (typeof rawText === 'object') {
+                if (rawText.text && typeof rawText.text === 'string') {
+                    rawText = rawText.text;
+                } else if (rawText.body) {
+                    rawText = (typeof rawText.body === 'object' && rawText.body.text) ? rawText.body.text : String(rawText.body);
+                } else if (rawText.title) {
+                    rawText = rawText.title;
+                } else {
+                    rawText = '';
+                }
+            }
+            let text = String(rawText);
+            // HTML escape
+            text = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            // WhatsApp markdown *bold*
+            text = text.replace(/\*([^\*]+)\*/g, '<strong>$1</strong>');
+            // WhatsApp markdown _italic_
+            text = text.replace(/_([^_]+)_/g, '<em>$1</em>');
+            // WhatsApp ~strikethrough~
+            text = text.replace(/~([^~]+)~/g, '<del>$1</del>');
+            // Line breaks
+            text = text.replace(/\n/g, '<br/>');
+            return text;
+        }
+
+        async function fetchTodayConversations() {
+            try {
+                const res = await fetch('/api/dashboard/today-conversations');
+                if (!res.ok) return;
+                const json = await res.json();
+                if (json.status === 'success' && Array.isArray(json.data)) {
+                    todayUsersList = json.data;
+                    const pill = document.getElementById('chat-users-count-pill');
+                    if (pill) {
+                        pill.textContent = `${todayUsersList.length} User${todayUsersList.length === 1 ? '' : 's'} Today`;
+                    }
+                    renderTodayUsers(todayUsersList);
+
+                    // Auto-select first user if none is selected, or silently refresh currently open user
+                    if (!selectedUserPhone && todayUsersList.length > 0) {
+                        selectConversation(todayUsersList[0].phone);
+                    } else if (selectedUserPhone) {
+                        const currentUser = todayUsersList.find(u => u.phone === selectedUserPhone || u.phone.replace('+', '') === selectedUserPhone.replace('+', ''));
+                        if (currentUser) {
+                            selectConversation(currentUser.phone, true);
+                        }
+                    }
+                }
+            } catch (err) {
+                console.debug('Error fetching today conversations:', err);
+            }
+        }
+
+        function filterTodayUsers() {
+            const query = (document.getElementById('chat-search-input')?.value || '').toLowerCase().trim();
+            if (!query) {
+                renderTodayUsers(todayUsersList);
+                return;
+            }
+            const filtered = todayUsersList.filter(u => 
+                (u.phone && u.phone.toLowerCase().includes(query)) ||
+                (u.latest_message_preview && u.latest_message_preview.toLowerCase().includes(query)) ||
+                (u.user_type && u.user_type.toLowerCase().includes(query)) ||
+                (u.rfq_id && u.rfq_id.toLowerCase().includes(query))
+            );
+            renderTodayUsers(filtered);
+        }
+
+        function renderTodayUsers(users) {
+            const listEl = document.getElementById('chat-users-list');
+            if (!listEl) return;
+
+            if (!users || users.length === 0) {
+                listEl.innerHTML = `
+                    <div style="padding: 32px 16px; text-align: center; color: var(--text-dim); font-size: 13px;">
+                        <span style="font-size: 24px; display: block; margin-bottom: 6px;">💬</span>
+                        No visitors recorded today yet.
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+            users.forEach(user => {
+                const isSelected = selectedUserPhone && (selectedUserPhone === user.phone || selectedUserPhone.replace('+', '') === user.phone.replace('+', ''));
+                const activeClass = isSelected ? 'active' : '';
+                const role = (user.user_type || 'unknown').toLowerCase();
+                const initials = user.phone.slice(-4) || 'WA';
+                const timeStr = formatTimeAgo(user.last_activity_at || user.started_at);
+                const onlineDot = user.is_online ? '<span class="online-dot" title="Online now"></span>' : '';
+                const countBadge = user.total_messages > 0 ? `<span class="chat-msg-count">${user.total_messages}</span>` : '';
+                const rfqBadge = user.rfq_id ? `<span class="chat-role-pill" style="background:#f0fdf4; color:#16a34a; font-size:9px;">${user.rfq_id}</span>` : '';
+
+                html += `
+                    <div class="chat-user-card ${activeClass}" onclick="selectConversation('${escape(user.phone)}')">
+                        <div class="chat-user-avatar ${role}">
+                            <span>${initials}</span>
+                            ${onlineDot}
+                        </div>
+                        <div class="chat-user-info">
+                            <div class="chat-user-top">
+                                <span class="chat-user-phone">${user.phone}</span>
+                                <span class="chat-user-time">${timeStr}</span>
+                            </div>
+                            <div class="chat-user-meta">
+                                <span class="chat-role-pill ${role}">${role}</span>
+                                ${rfqBadge}
+                                ${countBadge}
+                            </div>
+                            <div class="chat-user-preview">${user.latest_message_preview || 'Conversation initiated'}</div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            listEl.innerHTML = html;
+        }
+
+        async function selectConversation(phone, silent = false) {
+            if (!phone) return;
+            selectedUserPhone = unescape(phone);
+
+            // Highlight in sidebar
+            document.querySelectorAll('.chat-user-card').forEach(card => {
+                const cardPhone = card.querySelector('.chat-user-phone')?.textContent;
+                if (cardPhone && (cardPhone === selectedUserPhone || cardPhone.replace('+', '') === selectedUserPhone.replace('+', ''))) {
+                    card.classList.add('active');
+                } else {
+                    card.classList.remove('active');
+                }
+            });
+
+            // Show active chat panel, hide empty state
+            const emptyEl = document.getElementById('chat-empty-selection');
+            const activeEl = document.getElementById('chat-active-view');
+            if (emptyEl) emptyEl.style.display = 'none';
+            if (activeEl) activeEl.style.display = 'flex';
+
+            if (isFetchingMessages) return;
+            isFetchingMessages = true;
+
+            try {
+                const url = `/api/dashboard/conversation-messages?phone=${encodeURIComponent(selectedUserPhone)}`;
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+
+                if (data.status === 'success') {
+                    // Update header bar
+                    const info = data.session_info || {};
+                    const phoneDisplay = document.getElementById('active-chat-phone');
+                    const roleDisplay = document.getElementById('active-chat-role');
+                    const statusDisplay = document.getElementById('active-chat-status');
+                    const sessionDisplay = document.getElementById('active-chat-session-id');
+                    const avatarText = document.getElementById('active-chat-avatar-text');
+                    const avatarEl = document.getElementById('active-chat-avatar');
+                    const onlineDotEl = document.getElementById('active-chat-online-dot');
+
+                    const userRole = (info.user_type || 'unknown').toLowerCase();
+                    if (phoneDisplay) phoneDisplay.textContent = info.phone || selectedUserPhone;
+                    if (roleDisplay) {
+                        roleDisplay.textContent = userRole;
+                        roleDisplay.className = `chat-role-pill ${userRole}`;
+                    }
+                    if (statusDisplay) {
+                        statusDisplay.textContent = info.outcome ? `Status: ${info.outcome}` : (info.last_activity_at ? `Last active: ${formatTimeAgo(info.last_activity_at)}` : 'Active today');
+                    }
+                    if (sessionDisplay) sessionDisplay.textContent = info.session_id || '';
+                    if (avatarText) avatarText.textContent = (selectedUserPhone || 'WA').slice(-4);
+                    if (avatarEl) avatarEl.className = `chat-user-avatar ${userRole}`;
+
+                    // Check online state from todayUsersList
+                    const matchedUser = todayUsersList.find(u => u.phone === selectedUserPhone || u.phone.replace('+', '') === selectedUserPhone.replace('+', ''));
+                    if (onlineDotEl) {
+                        onlineDotEl.style.display = (matchedUser && matchedUser.is_online) ? 'block' : 'none';
+                    }
+
+                    // Render Messages
+                    renderChatMessages(data.messages || [], silent);
+                }
+            } catch (err) {
+                console.error('Error fetching conversation messages:', err);
+            } finally {
+                isFetchingMessages = false;
+            }
+        }
+
+        function renderChatMessages(messages, silent = false) {
+            const container = document.getElementById('chat-messages-container');
+            if (!container) return;
+
+            if (!messages || messages.length === 0) {
+                container.innerHTML = `
+                    <div class="chat-date-pill">Today</div>
+                    <div style="text-align: center; color: var(--text-dim); font-size: 13px; margin: 40px auto;">
+                        Conversation initiated. Waiting for user's message...
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '<div class="chat-date-pill">Today</div>';
+            messages.forEach(msg => {
+                const isUser = (msg.role === 'user' || msg.sender === 'user');
+                const roleClass = isUser ? 'user' : 'assistant';
+                const timeStr = formatTimeAgo(msg.timestamp);
+                const ticksHtml = isUser ? '<span class="msg-ticks">✓✓</span>' : '';
+
+                // Header
+                let headerHtml = '';
+                if (msg.header) {
+                    headerHtml = `<div class="msg-header">${formatChatText(msg.header)}</div>`;
+                }
+
+                // Body text
+                const textContent = msg.body || msg.content || '';
+                const bodyHtml = `<div class="msg-text">${formatChatText(textContent)}</div>`;
+
+                // Interactive Buttons
+                let buttonsHtml = '';
+                if (Array.isArray(msg.buttons) && msg.buttons.length > 0) {
+                    buttonsHtml = '<div class="msg-buttons-container">';
+                    msg.buttons.forEach(btn => {
+                        const title = btn.title || btn.id || 'Option';
+                        buttonsHtml += `<span class="msg-action-btn">🔘 ${formatChatText(title)}</span>`;
+                    });
+                    buttonsHtml += '</div>';
+                }
+
+                html += `
+                    <div class="msg-bubble-wrapper ${roleClass}">
+                        <div class="msg-bubble">
+                            ${headerHtml}
+                            ${bodyHtml}
+                            ${buttonsHtml}
+                            <div class="msg-meta">
+                                <span>${timeStr}</span>
+                                ${ticksHtml}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            // Check if user was near bottom before rendering
+            const wasNearBottom = (container.scrollHeight - container.scrollTop - container.clientHeight) < 150;
+
+            container.innerHTML = html;
+
+            // Smooth scroll to latest message if not a background silent refresh, or if user is near bottom
+            if (!silent || wasNearBottom) {
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+
+        // Initial Load
+        document.addEventListener('DOMContentLoaded', () => {
+            initDateInputs();
+            fetchDashboardData();
+            fetchDailyVisitors();
+            fetchTodayConversations();
+            connectSSE();
+            
+            // CSV Export Handler for User Classification & Funnel
+            const exportBtn = document.getElementById('btn-export-classification-csv');
+            if (exportBtn) {
+                exportBtn.addEventListener('click', () => {
+                    const filterSelect = document.getElementById('export-classification-filter');
+                    const filterType = filterSelect ? filterSelect.value : 'all';
+
+                    const select = document.getElementById('date-preset-select');
+                    const datePreset = select ? select.value : 'today';
+
+                    const startElem = document.getElementById('custom-start-date');
+                    const endElem = document.getElementById('custom-end-date');
+                    const startDate = startElem ? startElem.value : '';
+                    const endDate = endElem ? endElem.value : '';
+
+                    let exportUrl = `/api/dashboard/export-user-classification-csv?date_preset=${encodeURIComponent(datePreset)}&filter_type=${encodeURIComponent(filterType)}`;
+                    if (datePreset === 'custom' && startDate && endDate) {
+                        exportUrl += `&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
+                    }
+                    window.location.href = exportUrl;
+                });
+            }
+
+            // Click Handler for User Classification Cards/Branches/Sub-metrics -> Open in New Chrome Tab
+            document.querySelectorAll('.clickable-classification').forEach(el => {
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const filterType = el.getAttribute('data-classification-filter');
+                    if (!filterType) return;
+
+                    const select = document.getElementById('date-preset-select');
+                    const datePreset = select ? select.value : 'today';
+
+                    const startElem = document.getElementById('custom-start-date');
+                    const endElem = document.getElementById('custom-end-date');
+                    const startDate = startElem ? startElem.value : '';
+                    const endDate = endElem ? endElem.value : '';
+
+                    let detailsUrl = `/dashboard/classification-details?filter_type=${encodeURIComponent(filterType)}&date_preset=${encodeURIComponent(datePreset)}`;
+                    if (datePreset === 'custom' && startDate && endDate) {
+                        detailsUrl += `&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
+                    }
+
+                    window.open(detailsUrl, '_blank');
+                });
+            });
+
+            // Polling schedules
+            setInterval(fetchDashboardData, 10000);
+            setInterval(fetchDailyVisitors, 30000);
+            setInterval(fetchTodayConversations, 8000);
+        });
+    </script>
+</body>
+</html>
+

@@ -90,14 +90,19 @@ class RFQStatusService:
                 await self.whatsapp_service.send_configurable_buttons(
                     recipient_id=user.phone_number,
                     body=response_message,
-                    buttons_config=menu_buttons
+                    buttons_config=menu_buttons,
+                    session_id=session
                 )
             else:
                 # Send simple message if no buttons available
                 await self.whatsapp_service.send_message(
                     recipient_id=user.phone_number,
-                    message=response_message
+                    message=response_message,
+                    session_id=session
                 )
+
+            if session:
+                self.session_manager.add_message_to_history(session, "assistant", response_message)
 
             # Update session workflow type for tracking
             WorkflowManager.set_workflow_type(session, WorkflowType.rfq_status_check, caller="rfq_status_service")

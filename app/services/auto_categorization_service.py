@@ -110,9 +110,9 @@ def get_project_root() -> Path:
     """
     current_dir = Path(__file__).resolve().parent
     
-    # Walk up the directory tree to find the project root (directory containing 'app')
+    # Walk up the directory tree to find the project root (directory containing 'app/main.py')
     for parent in [current_dir] + list(current_dir.parents):
-        if (parent / 'app').exists():
+        if (parent / 'app' / 'main.py').is_file():
             return parent
     
     # Fallback: use the directory containing this file

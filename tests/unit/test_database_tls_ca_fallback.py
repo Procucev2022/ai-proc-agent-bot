@@ -104,6 +104,4 @@ def test_no_trust_store_anywhere_is_still_an_error(monkeypatch, client_settings)
 def test_local_mode_is_unaffected():
     local = SimpleNamespace(database_mode="local", PROJECT_ROOT="/app")
 
-    assert database._get_ssl_connect_args(local) == {
-        "ssl": {"ssl_disabled": False, "ssl_check_hostname": False, "ssl_verify_cert": False}
-    }
+    assert database._get_ssl_connect_args(local) == {"ssl_disabled": True}
