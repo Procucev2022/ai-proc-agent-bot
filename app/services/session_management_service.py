@@ -279,7 +279,7 @@ class SessionManagementService:
             # Debug: Check workflow_state immediately after retrieval
             if session.workflow_state:
                 has_optional = 'pending_optional_rfq' in session.workflow_state or 'pending_optional_combined_rfq' in session.workflow_state
-                logger.info(f"[GET_CONTEXT_DEBUG] Session {session_id} has_optional_fields={has_optional}, keys={list(session.workflow_state.keys())}")
+                logger.info(f"[GET_CONTEXT_DEBUG] Session {session.session_id} has_optional_fields={has_optional}, keys={list(session.workflow_state.keys())}")
 
         # Emit real-time analytics event
         try:
@@ -686,8 +686,8 @@ class SessionManagementService:
             'session_id': session.session_id,
             'external_user_id': session.external_user_id,
             'user_type': u_type_str,
-            'workflow_type': session.workflow_type.value if isinstance(session.workflow_type, WorkflowType) else session.workflow_type,
-            'outcome': session.outcome.value if isinstance(session.outcome, ConversationOutcome) else session.outcome,
+            'workflow_type': session.workflow_type.value if hasattr(session.workflow_type, "value") else session.workflow_type,
+            'outcome': session.outcome.value if hasattr(session.outcome, "value") else session.outcome,
             'workflow_state': session.workflow_state or {},
             'conversation_history': session.conversation_history or {},
             'extracted_entities': session.extracted_entities or {},

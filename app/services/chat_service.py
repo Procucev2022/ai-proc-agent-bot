@@ -3913,7 +3913,7 @@ class ChatService:
         """
         try:
             logger.info(f"message is:{message}")
-            workflow_state = session.workflow_state or {}
+            workflow_state: Dict[str, Any] = dict(getattr(session, "workflow_state", None) or {})
             current_seller_state = workflow_state.get("seller_workflow_state")
 
             logger.debug(f"ChatService: Handling seller flow - Current state: {current_seller_state}")
@@ -4112,7 +4112,7 @@ class ChatService:
         to rfq_status_check intent and supports multiple IDs.
         """
         try:
-            workflow_state = session.workflow_state or {}
+            workflow_state: Dict[str, Any] = dict(getattr(session, "workflow_state", None) or {})
             candidate_rfqs = workflow_state.get("seller_candidate_rfqs", [])
             candidate_ids = {str(r.get("rfq_id")) for r in candidate_rfqs if r.get("rfq_id") is not None}
 
@@ -4824,7 +4824,7 @@ class ChatService:
         """Get the most meaningful message to process after auth/registration completes."""
         try:
             # Check if we have a tracked meaningful message from during the auth/registration flow
-            workflow_state = session.workflow_state or {}
+            workflow_state: Dict[str, Any] = dict(getattr(session, "workflow_state", None) or {})
             tracked_message = workflow_state.get("last_meaningful_message")
             tracked_intent_result = workflow_state.get("last_meaningful_intent_result")
 

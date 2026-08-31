@@ -308,8 +308,8 @@ class AuthenticationOrchestrator:
             WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="authentication_orchestrator")
             
             # CRITICAL FIX: Preserve existing workflow_state data to prevent context loss
-            existing_state = session.workflow_state or {}
-            session.workflow_state = {
+            existing_state: Dict[str, Any] = dict(getattr(session, "workflow_state", None) or {})
+            session.workflow_state = {  # type: ignore[assignment]
                 **existing_state,  # Preserve all existing data
                 "authentication_stage": "email_confirmation",
                 "filtered_users": filtered_users,
@@ -572,8 +572,8 @@ class AuthenticationOrchestrator:
                 return await self._redirect_to_registration_flow(user_phone, session, "buyer")
             elif intent in ["cancel", "stop"]:
                 # Cancel authentication
-                session.workflow_type = None
-                session.workflow_state = {}
+                session.workflow_type = None  # type: ignore[assignment]
+                session.workflow_state = {}  # type: ignore[assignment]
                 await self.whatsapp_service.send_message(
                     user_phone, "Authentication cancelled. How can I help you?"
                 )
