@@ -999,3 +999,135 @@ def test_api_dashboard_remaining_error_endpoints():
     with patch("app.api.dashboard.DashboardAggregationService.get_dashboard_stats", AsyncMock(side_effect=RuntimeError("export fail"))):
         res = client.get("/api/dashboard/export")
         assert res.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_dashboard_sse_stream_all_branches():
+    """Test SSE live_events_stream branches in app/api/dashboard.py."""
+    from app.api.dashboard import live_events_stream
+    from starlette.requests import Request
+
+    # 1. Stream with active events and disconnection
+    async def fake_events():
+        yield {"event_type": "visitor", "data": 1}
+        yield {"event_type": "heartbeat", "data": 2}
+
+    mock_rt = MagicMock()
+    mock_rt.subscribe_events = fake_events
+
+    fake_scope = {"type": "http", "method": "GET", "path": "/api/dashboard/live-stream", "headers": []}
+    fake_request = Request(fake_scope)
+    fake_request.is_disconnected = AsyncMock(side_effect=[False, False, True])
+
+    with patch("app.api.dashboard.get_realtime_analytics_service", return_value=mock_rt):
+        resp = await live_events_stream(fake_request)
+        assert resp.status_code == 200
+        chunks = []
+        async for chunk in resp.body_iterator:
+            chunks.append(chunk)
+        assert len(chunks) >= 2
+
+    # 2. Stream with Exception inside generator
+    async def error_events():
+        raise RuntimeError("stream failure")
+        yield {}
+
+    mock_rt.subscribe_events = error_events
+    with patch("app.api.dashboard.get_realtime_analytics_service", return_value=mock_rt):
+        resp = await live_events_stream(fake_request)
+        chunks = []
+        async for chunk in resp.body_iterator:
+            chunks.append(chunk)
+        assert len(chunks) >= 1
+
+
+@pytest.mark.asyncio
+async def test_realtime_analytics_service_comprehensive():
+    """Test RealtimeAnalyticsService publish, heartbeat, and subscription edge cases."""
+    from app.services.realtime_analytics_service import RealtimeAnalyticsService
+
+    svc = RealtimeAnalyticsService()
+    
+    # 1. Test publish_event Redis failure fallback
+    mock_redis = MagicMock()
+    mock_redis.publish = AsyncMock(side_effect=RuntimeError("redis down"))
+    mock_redis.lpush = AsyncMock(side_effect=RuntimeError("redis down"))
+    mock_redis.ltrim = AsyncMock(side_effect=RuntimeError("redis down"))
+    mock_redis.zremrangebyscore = AsyncMock(side_effect=RuntimeError("redis down"))
+    mock_redis.zcount = AsyncMock(side_effect=RuntimeError("redis down"))
+    mock_redis.zrange = AsyncMock(return_value=[b'{"user_type": "buyer"}', b'invalid-json', b'{"user_type": "seller"}'])
+    mock_redis.lrange = AsyncMock(return_value=[json.dumps({"event_type": "test"})])
+
+    with patch("app.redis_db.AsyncRedisConnectionManager.get_client", AsyncMock(return_value=mock_redis)):
+        await svc.publish_event("test_event", {"foo": "bar"})
+        await svc.record_heartbeat("919876543210", user_type="buyer")
+
+        # Counts with invalid JSON in Redis
+        counts = await svc.get_active_users_count()
+        assert counts["total"] >= 0
+
+        # Feed with Redis
+        feed = await svc.get_recent_feed(limit=5)
+        assert len(feed) >= 1
+
+
+@pytest.mark.asyncio
+async def test_dashboard_aggregation_full_metrics_coverage():
+    """Execute complete _generate_metrics calculation path with realistic DB rows."""
+    fake_db = MagicMock()
+    now_naive = datetime.utcnow()
+
+    # Create mock return queries
+    fake_db.query.return_value.filter.return_value.scalar.side_effect = [
+        10,  # total_sessions
+        5,   # comp_sessions
+        8,   # unique_users
+        4,   # comp_unique_users
+        6,   # new_buyers
+        2,   # new_sellers
+        1,   # unknown_sessions_count
+        3,   # active_conversations
+        1,   # drop_off_count
+    ]
+
+    fake_db.query.return_value.filter.return_value.all.side_effect = [
+        [("919876543210",), ("919876543211",)],  # users_in_period
+        [("919876543210",), ("919876543211",)],  # all_today_users
+        [("919876543210",)],                      # buyer_users_set
+        [("919876543211",)],                      # seller_users_set
+        [("919876543210",)],                      # rfq_phones_in_period
+        [(["r1"], "r1", "919876543210")],        # rfq_ids
+        [(WorkflowType.registration, {"registration_stage": "completed"}, ConversationOutcome.completed, "r1", ["r1"])],  # user_sess for buyer
+        [(WorkflowType.registration, {"registration_stage": "completed"}, ConversationOutcome.completed)],                 # user_sess for seller
+        [(["r1"], "r1", ConversationOutcome.completed, WorkflowType.rfq_creation)],                                       # session_rfq_rows
+        [("r1", RFQStatus.submitted)],                                                                                      # db_rfqs
+        [(["r1"], "r1")],                                                                                                   # comp_session_rfq_rows
+        [("r1", RFQStatus.submitted)],                                                                                      # comp_db_rfqs
+        [(now_naive,)],                                                                                                     # sessions_in_window
+        [("Fasteners", 10, 8)],                                                                                             # cat_rows
+        [("919876543210", 5, now_naive)],                                                                                   # buyer_rows
+    ]
+
+    seller_mock = SimpleNamespace(
+        seller_id="sel_1",
+        seller_name="Acme Corp",
+        phone_number="919876543211",
+        categories=["Fasteners"],
+        ranking=SimpleNamespace(value="Gold"),
+        subscription_credits=10
+    )
+    fake_db.query.return_value.limit.return_value.all.return_value = [seller_mock]
+    fake_db.query.return_value.filter.return_value.count.return_value = 2
+
+    svc = DashboardAggregationService(db_session=fake_db)
+    with patch.object(svc.realtime_service, "get_active_users_count", AsyncMock(return_value={"total": 2, "buyers": 1, "sellers": 1, "unknown": 0})), \
+         patch.object(svc.realtime_service, "get_recent_feed", AsyncMock(return_value=[{"event_type": "visitor"}])):
+
+        stats = await svc.get_dashboard_stats(date_preset="today", role="buyer", rfq_status="submitted")
+        assert stats["status"] == "success"
+        assert "executive_kpis" in stats
+        assert "marketplace_health" in stats
+        assert "buyer_funnel" in stats
+        assert "seller_funnel" in stats
+
+
