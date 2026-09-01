@@ -1570,6 +1570,9 @@ async def test_session_management_all_residual_branches():
     service.redis_session.get_session = AsyncMock(return_value=None)
     service.redis_session.store_session = AsyncMock()
     service.redis_session.set_user_active_session_id = AsyncMock()
+    service.redis_session.clear_user_active_session_id = AsyncMock()
+    service.redis_session.refresh_ttl = AsyncMock()
+    service.redis_session.session_exists = AsyncMock(return_value=True)
     service.redis_session.exists = AsyncMock(return_value=True)
     db.get_conversation_session.return_value = None
     s1 = await service.get_conversation_context("+919999999999")

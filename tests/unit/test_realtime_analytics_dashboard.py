@@ -1480,6 +1480,7 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         workflow_state={},
         conversation_history={"messages": []},
         outcome=ConversationOutcome.completed,
+        retention_date=(now - timedelta(days=1)).date(),
         created_at=now - timedelta(days=1),
         last_activity_at=now - timedelta(days=1),
     )
