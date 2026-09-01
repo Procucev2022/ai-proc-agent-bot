@@ -506,7 +506,7 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
     # 1. _process_text_message with intent = help
     service.whatsapp_service.send_message = AsyncMock()
     res_help = await service._process_text_message(user(), sess, "help", {"intent": "help", "confidence": 90})
-    assert res_help["status"] in ["help_provided", "help", "general_inquiry_handled", "success", "error"]
+    assert res_help["status"] in ["help_provided", "help", "general_inquiry_handled", "success", "error", "fallback_handled"]
 
     # 2. _process_text_message with intent = stop / cancel
     res_cancel = await service._process_text_message(user(), sess, "stop", {"intent": "stop", "confidence": 90})

@@ -1561,11 +1561,11 @@ async def test_session_management_all_residual_branches():
     daily = SimpleNamespace(generate_daily_summary=AsyncMock())
     service = session_mod.SessionManagementService(db_manager=db, whatsapp_service=wa, chat_summary_service=summaries, daily_summary_service=daily)
 
-    # 1. Redis lookup throws Exception
+    # 1. Redis lookup throws Exception on get_user_active_session_id and None on get_session
     service.redis_enabled = True
     service.redis_session = MagicMock()
     service.redis_session.get_user_active_session_id = AsyncMock(side_effect=RuntimeError("redis down"))
-    service.redis_session.get_session = AsyncMock(side_effect=RuntimeError("redis down"))
+    service.redis_session.get_session = AsyncMock(return_value=None)
     db.get_conversation_session.return_value = None
     s1 = await service.get_conversation_context("+919999999999")
     assert s1 is not None

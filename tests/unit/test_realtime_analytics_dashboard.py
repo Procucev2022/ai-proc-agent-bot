@@ -1116,7 +1116,8 @@ async def test_dashboard_aggregation_full_metrics_coverage():
         rfq_id="r1",
         external_user_id="919876543210",
         status=RFQStatus.submitted,
-        created_at=now
+        created_at=now,
+        api_payload={"product_name": "Steel"}
     )
     sel1 = Seller(
         seller_id="sel1",
