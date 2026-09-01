@@ -1566,6 +1566,8 @@ async def test_session_management_all_residual_branches():
     service.redis_session = MagicMock()
     service.redis_session.get_user_active_session_id = AsyncMock(side_effect=RuntimeError("redis down"))
     service.redis_session.get_session = AsyncMock(return_value=None)
+    service.redis_session.store_session = AsyncMock()
+    service.redis_session.set_user_active_session_id = AsyncMock()
     db.get_conversation_session.return_value = None
     s1 = await service.get_conversation_context("+919999999999")
     assert s1 is not None

@@ -1124,6 +1124,7 @@ async def test_dashboard_aggregation_full_metrics_coverage():
         phone_number="919876543211",
         seller_name="Acme Sellers",
         categories=["Fasteners"],
+        location="Mumbai",
         subscription_credits=10
     )
     db.add_all([s1, s2, r1, sel1])
