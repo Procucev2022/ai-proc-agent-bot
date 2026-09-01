@@ -585,55 +585,42 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
         assert res_exit is not None
 
     # Test button clicks
+    service.authentication_service = SimpleNamespace(store_user_session=AsyncMock(), otp_service=None)
+    service.session_manager.get_conversation_context = AsyncMock(return_value=sess)
+    service.session_manager.add_message_to_history = MagicMock()
+    service.session_manager.save_session = AsyncMock()
+
     with patch("app.services.handlers.seller_rfq_interest_handler.SellerRFQInterestHandler.handle_check_details_click", AsyncMock(return_value={"status": "ok"})):
         btn_details = {"button_reply": {"id": "rfq_check_details_RFQ123_SELLER1", "title": "Check Details"}}
-        try:
-            res_btn = await service.process_message(user().phone_number, btn_details, message_type="interactive")
-            assert res_btn is not None
-        except Exception:
-            pass
+        res_btn = await service.process_message(user().phone_number, btn_details, message_type="interactive")
+        assert res_btn == {"status": "ok"}
 
     with patch("app.services.handlers.seller_rfq_interest_handler.SellerRFQInterestHandler.handle_request_rfq_click", AsyncMock(return_value={"status": "ok"})):
         btn_req = {"button_reply": {"id": "rfq_request_RFQ123_SELLER1", "title": "Request RFQ"}}
-        try:
-            res_btn2 = await service.process_message(user().phone_number, btn_req, message_type="interactive")
-            assert res_btn2 is not None
-        except Exception:
-            pass
+        res_btn2 = await service.process_message(user().phone_number, btn_req, message_type="interactive")
+        assert res_btn2 == {"status": "ok"}
 
     # BFS accept and reject buttons
     with patch("app.services.handlers.bfs_seller_bid_handler.BFSSellerBidHandler.handle_accept_bid_click", AsyncMock(return_value={"status": "ok"})), \
          patch("app.services.handlers.bfs_seller_bid_handler.BFSSellerBidHandler.handle_reject_bid_click", AsyncMock(return_value={"status": "ok"})):
         btn_bfs_acc = {"button_reply": {"id": "bfs_seller_accept_UUID123_SELLER1", "title": "Accept Bid"}}
-        try:
-            res_bfs1 = await service.process_message(user().phone_number, btn_bfs_acc, message_type="interactive")
-            assert res_bfs1 is not None
-        except Exception:
-            pass
+        res_bfs1 = await service.process_message(user().phone_number, btn_bfs_acc, message_type="interactive")
+        assert res_bfs1 == {"status": "ok"}
 
         btn_bfs_rej = {"button_reply": {"id": "bfs_seller_reject_UUID123_SELLER1", "title": "Reject Bid"}}
-        try:
-            res_bfs2 = await service.process_message(user().phone_number, btn_bfs_rej, message_type="interactive")
-            assert res_bfs2 is not None
-        except Exception:
-            pass
+        res_bfs2 = await service.process_message(user().phone_number, btn_bfs_rej, message_type="interactive")
+        assert res_bfs2 == {"status": "ok"}
 
     # Exit and cancel buttons
     with patch("app.services.exit_service.ExitService.handle_exit_intent", AsyncMock(return_value={"status": "exited"})):
         btn_exit = {"button_reply": {"id": "confirm_exit_yes", "title": "Yes, Exit"}}
-        try:
-            res_ex = await service.process_message(user().phone_number, btn_exit, message_type="interactive")
-            assert res_ex is not None
-        except Exception:
-            pass
+        res_ex = await service.process_message(user().phone_number, btn_exit, message_type="interactive")
+        assert res_ex == {"status": "exited"}
 
     with patch("app.services.cancel_service.CancelService.handle_cancel_intent", AsyncMock(return_value={"status": "cancelled"})):
         btn_cancel = {"button_reply": {"id": "confirm_cancel_yes", "title": "Yes, Cancel"}}
-        try:
-            res_can = await service.process_message(user().phone_number, btn_cancel, message_type="interactive")
-            assert res_can is not None
-        except Exception:
-            pass
+        res_can = await service.process_message(user().phone_number, btn_cancel, message_type="interactive")
+        assert res_can == {"status": "cancelled"}
 
 
 

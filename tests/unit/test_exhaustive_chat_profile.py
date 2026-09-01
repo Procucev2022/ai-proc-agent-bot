@@ -1242,5 +1242,18 @@ async def test_profile_selection_exhaustive_residual_branches():
     no_prof_res = await service._handle_no_profiles_found("+919999999999", "greeting", sess_menu)
     assert no_prof_res["status"] == "new_user_registration_presented"
 
+    # 15. Fast path option matches
+    reg_opts = [
+        {"number": 1, "action": "register_buyer", "display": "Register as Buyer"},
+        {"number": 2, "action": "register_seller", "display": "Register as Seller"},
+        {"number": 3, "action": "exit", "display": "Exit"}
+    ]
+    assert (await service._parse_profile_selection("1", reg_opts))["action"] == "register_buyer"
+    assert (await service._parse_profile_selection("2", reg_opts))["action"] == "register_seller"
+    assert (await service._parse_profile_selection("3", reg_opts))["action"] == "exit"
+    assert (await service._parse_profile_selection("buyer", reg_opts))["action"] == "register_buyer"
+    assert (await service._parse_profile_selection("seller", reg_opts))["action"] == "register_seller"
+    assert (await service._parse_profile_selection("exit", reg_opts))["action"] == "exit"
+
 
 
