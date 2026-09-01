@@ -484,6 +484,10 @@ def test_seller_wrapper_disabled_empty_mixed_and_outer_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_seller_single_target_empty_categories_and_no_eligible(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.enhanced_seller_matching_service.EnhancedSellerMatchingService",
+        lambda: SimpleNamespace(find_sellers_for_item=AsyncMock(return_value={"matched_sellers": []}))
+    )
     reached = {"rfq_id": "r", "subscribed_notified": 10, "unsubscribed_notified": 25}
     assert (await seller.process_single_rfq_matching(reached, object(), set()))["sellers_matched"] == 0
     monkeypatch.setattr(seller, "get_sellers_already_notified_for_rfq", lambda _: set())
@@ -498,6 +502,10 @@ async def test_seller_single_target_empty_categories_and_no_eligible(monkeypatch
 
 @pytest.mark.asyncio
 async def test_seller_single_success_deduplicates_splits_messages_and_records(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.enhanced_seller_matching_service.EnhancedSellerMatchingService",
+        lambda: SimpleNamespace(find_sellers_for_item=AsyncMock(return_value={"matched_sellers": []}))
+    )
     monkeypatch.setattr(seller, "get_sellers_already_notified_for_rfq", lambda _: {"rfq-old"})
     monkeypatch.setattr(seller, "get_rfq_item_categories", lambda _: ["A", "B"])
     subscribed = {"seller_id": "s1", "phone_number": "+111", "seller_name": "S1", "categories": ["A"]}

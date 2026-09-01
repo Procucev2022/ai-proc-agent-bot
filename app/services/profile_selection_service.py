@@ -255,6 +255,14 @@ class ProfileSelectionService:
                                        session: ConversationSession) -> Dict[str, Any]:
         """Handle Case 1: Neutral/Greeting Start."""
         try:
+            # Enforce sequence: ensure the Qua welcome greeting message is sent and confirmed
+            # before the Buy/Sell message is dispatched to the user.
+            from app.services.welcome_message_service import get_welcome_service
+            welcome_service = get_welcome_service()
+            if await welcome_service.should_send_welcome(user_phone):
+                logger.info(f"[PROFILE_SELECTION] Sending welcome greeting before Buy/Sell message for {user_phone}")
+                await welcome_service.check_and_send_welcome(user_phone, self.whatsapp_service)
+
             message = (
                 "Reply with the number or word:\n"
                 "1. Buy — Create or check my RFQs\n"

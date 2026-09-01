@@ -112,7 +112,7 @@ def get_project_root() -> Path:
     
     # Walk up the directory tree to find the project root (directory containing 'app')
     for parent in [current_dir] + list(current_dir.parents):
-        if (parent / 'app').exists():
+        if (parent / 'app' / '__init__.py').is_file():
             return parent
     
     # Fallback: use the directory containing this file

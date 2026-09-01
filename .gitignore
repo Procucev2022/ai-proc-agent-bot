@@ -20,6 +20,8 @@ dist/
 .sonar
 .scannerwork
 venv/
+.venv/
+procurement.db
 documentation/
 # Environment files (production branch includes .env)
 .env

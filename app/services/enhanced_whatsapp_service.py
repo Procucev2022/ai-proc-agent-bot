@@ -25,29 +25,30 @@ class EnhancedWhatsAppService(WhatsAppService):
         super().__init__()
         self.service_monitor = get_service_monitor()
     
-    async def send_message(self, recipient_id: str, message: str) -> MessageResponse:
+    async def send_message(self, recipient_id: str, message: str, *args, **kwargs) -> MessageResponse:
         """Send message with automatic error monitoring."""
         async with self.service_monitor.monitor_whatsapp_operation("send_message"):
-            return await super().send_message(recipient_id, message)
+            return await super().send_message(recipient_id, message, *args, **kwargs)
     
     async def send_template_message(self, recipient_id: str, template_name: str, 
-                                  parameters: list) -> MessageResponse:
+                                  parameters: list, *args, **kwargs) -> MessageResponse:
         """Send template message with automatic error monitoring."""
         async with self.service_monitor.monitor_whatsapp_operation("send_template_message"):
-            return await super().send_template_message(recipient_id, template_name, parameters)
+            return await super().send_template_message(recipient_id, template_name, parameters, *args, **kwargs)
     
     async def send_interactive_message(self, recipient_id: str, message_type: str, 
-                                     content: Dict[str, Any]) -> MessageResponse:
+                                     content: Dict[str, Any], *args, **kwargs) -> MessageResponse:
         """Send interactive message with automatic error monitoring."""
         async with self.service_monitor.monitor_whatsapp_operation("send_interactive_message"):
-            return await super().send_interactive_message(recipient_id, message_type, content)
+            return await super().send_interactive_message(recipient_id, message_type, content, *args, **kwargs)
     
     async def send_configurable_buttons(self, recipient_id: str, body: str, 
                                       buttons_config: List[Dict[str, str]], 
                                       header: Optional[str] = None,
-                                      footer: str = "Type ‘Exit’ anytime to end the chat, or type ‘Support’ to reach our support team for further assistance") -> MessageResponse:
+                                      footer: str = "Type ‘Exit’ anytime to end the chat, or type ‘Support’ to reach our support team for further assistance",
+                                      *args, **kwargs) -> MessageResponse:
         """Send configurable buttons with automatic error monitoring."""
         async with self.service_monitor.monitor_whatsapp_operation("send_configurable_buttons"):
             return await super().send_configurable_buttons(
-                recipient_id, body, buttons_config, header, footer
+                recipient_id, body, buttons_config, header, footer, *args, **kwargs
             )

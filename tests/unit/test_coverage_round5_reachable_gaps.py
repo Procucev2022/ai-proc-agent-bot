@@ -806,10 +806,13 @@ def test_configuration_database_and_singleton_initializers(monkeypatch):
     welcome_mod._welcome_service = None
     monkeypatch.setattr(welcome_mod, "WelcomeMessageService", lambda: welcome)
     assert welcome_mod.get_welcome_service() is welcome
+    welcome_mod._welcome_service = None
     interaction = object()
     interaction_mod._interaction_logger = None
     monkeypatch.setattr(interaction_mod, "InteractionLogger", lambda: interaction)
     assert interaction_mod.get_interaction_logger() is interaction
+    interaction_mod._interaction_logger = None
+    media_mod._media_downloader = None
 
 
 def test_pincode_distance_lazy_singleton_and_cache(monkeypatch):
