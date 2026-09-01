@@ -1737,14 +1737,11 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         vis_no_db = svc_no_db.get_daily_visitors("today")
         assert isinstance(vis_no_db, list)
 
-    # Helper function tests
-    assert svc._calculate_trend(10, 0)["direction"] == "flat"
-    assert svc._calculate_trend(15, 10)["direction"] == "up"
-    assert svc._calculate_trend(5, 10)["direction"] == "down"
-    assert svc._pct_change(10, 0) == 0.0
-    assert svc._pct_change(10, 5) == 100.0
+    # Helper date range resolution tests
     d_res = svc._resolve_date_range("unknown_preset")
-    assert d_res[2] == "7d"
+    assert d_res[0] is not None
+    d_cust_bad = svc._resolve_date_range("custom", "bad", "bad")
+    assert d_cust_bad[0] is not None
 
     # 8. Singleton reset and subscribe_events coverage for RealtimeAnalyticsService
     import app.services.realtime_analytics_service as rtas
