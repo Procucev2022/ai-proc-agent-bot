@@ -1161,11 +1161,25 @@ async def test_dashboard_aggregation_full_metrics_coverage():
         stats_custom = await svc.get_dashboard_stats(date_preset="custom", start_date="2026-01-01", end_date="2026-12-31")
         assert stats_custom["status"] == "success"
 
-        # Test get_user_classification_details_json
+        # Test get_user_classification_details_json and export_user_classification_csv
         for ftype in ["all", "unknown", "buyer", "buyer_registered", "buyer_not_registered", "buyer_rfq_created", "buyer_rfq_not_created", "seller", "seller_registered", "seller_not_registered", "seller_subscribed", "seller_without_subscription"]:
             details = svc.get_user_classification_details_json("today", filter_type=ftype)
             assert "users" in details
-            assert "total_matching" in details
+            assert "count" in details
+            csv_data = svc.export_user_classification_csv("today", filter_type=ftype)
+            assert isinstance(csv_data, str)
+
+        visitors = svc.get_daily_visitors(date_preset="today")
+        assert isinstance(visitors, list)
+
+        today_conv = svc.get_today_conversations(date_preset="today")
+        assert isinstance(today_conv, dict)
+
+        msgs = svc.get_conversation_messages("s1")
+        assert isinstance(msgs, dict)
+
+        msgs_unknown = svc.get_conversation_messages("unknown_sess")
+        assert msgs_unknown["status"] == "error"
 
     db.close()
 
