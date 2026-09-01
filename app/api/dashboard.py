@@ -6,10 +6,12 @@ for the live executive analytics dashboard.
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 from typing import Optional
-from fastapi import APIRouter, Request, Query, Depends, Header, HTTPException
+from fastapi import APIRouter, Request, Query, Depends, Header, Cookie, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse, Response
 from sqlalchemy.orm import Session
 
@@ -22,11 +24,45 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 
+DASHBOARD_SESSION_COOKIE = "dashboard_session"
+DASHBOARD_SESSION_MAX_AGE = 8 * 60 * 60  # 8 hour operator session
 
-def require_dashboard_operator(x_dashboard_key: Optional[str] = Header(None)) -> None:
-    """Require the configured operator key for dashboard data."""
-    expected = get_settings().dashboard_api_key
-    if not expected or x_dashboard_key != expected:
+
+def build_dashboard_session_token(api_key: str) -> str:
+    """Derive the opaque session token stored in the dashboard HttpOnly cookie."""
+    return hmac.new(api_key.encode("utf-8"), b"dashboard-operator", hashlib.sha256).hexdigest()
+
+
+def is_valid_dashboard_credential(
+    api_key: Optional[str],
+    provided_key: Optional[str],
+    session_cookie: Optional[str],
+) -> bool:
+    """Return True when the operator key or its session cookie token is valid."""
+    if not api_key:
+        return False
+    provided = provided_key if isinstance(provided_key, str) else None
+    cookie = session_cookie if isinstance(session_cookie, str) else None
+    if provided and hmac.compare_digest(provided, api_key):
+        return True
+    if cookie and hmac.compare_digest(cookie, build_dashboard_session_token(api_key)):
+        return True
+    return False
+
+
+def require_dashboard_operator(
+    x_dashboard_key: Optional[str] = Header(None),
+    dashboard_session: Optional[str] = Cookie(None),
+) -> None:
+    """Require the configured operator key, sent as a header or session cookie.
+
+    Browser clients (``fetch``, ``EventSource``, download navigations) authenticate
+    with the HttpOnly cookie issued when the dashboard page is opened, while
+    programmatic clients may keep using the ``X-Dashboard-Key`` header.
+    """
+    if not is_valid_dashboard_credential(
+        get_settings().dashboard_api_key, x_dashboard_key, dashboard_session
+    ):
         raise HTTPException(status_code=401, detail="Dashboard authentication required")
 
 

@@ -605,9 +605,8 @@ class SessionManagementService:
     async def _run_background_summarization(self, session: ConversationSession, enhanced_data: Dict[str, Any]) -> None:
         """Run summarization in background with rich context."""
         try:
-            from app.services.chat_summary_service import ChatSummaryService
-            summary_service = ChatSummaryService()
-            await summary_service.generate_and_save_summary(session, enhanced_data)
+            await self.chat_summary_service.generate_session_summary(session)
+            await self.daily_summary_service.generate_daily_summary(session.external_user_id)
         except Exception as e:
             logger.error(f"Background summarization failed for session {session.session_id}: {e}")
     

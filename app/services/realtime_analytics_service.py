@@ -29,6 +29,18 @@ REDIS_FEED_MAX_ITEMS = 100
 ACTIVE_USER_EXPIRY_SECONDS = 300  # 5 minutes window for live active status
 
 
+def is_phone_identifier(value: Optional[str]) -> bool:
+    """Return True when the identifier looks like a real phone number.
+
+    Events may carry non-phone identities (account IDs, role literals), and those
+    must not be counted as live WhatsApp visitors.
+    """
+    if not value:
+        return False
+    digits = str(value).strip().lstrip("+")
+    return digits.isdigit() and 10 <= len(digits) <= 15
+
+
 class RealtimeAnalyticsService:
     """Service managing live event streams, active user tracking, and activity feed."""
 
@@ -155,9 +167,10 @@ class RealtimeAnalyticsService:
             "data": payload_data,
         }
 
-        # 1. Update heartbeat
-        user_type = payload_data.get("user_type") or payload_data.get("role") or "unknown"
-        await self.record_heartbeat(user_id, user_type, session_id)
+        # 1. Update heartbeat (only for real phone identities)
+        if is_phone_identifier(user_id):
+            user_type = payload_data.get("user_type") or payload_data.get("role") or "unknown"
+            await self.record_heartbeat(user_id, user_type, session_id)
 
         # 2. Publish to Redis Pub/Sub & Feed buffer
         if getattr(self.settings, "redis_session_storage_enabled", True):

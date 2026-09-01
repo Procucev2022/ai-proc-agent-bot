@@ -26,10 +26,16 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from typing import Dict, Any, Union
+from typing import Dict, Any, Optional, Union
 from app.config import get_settings
 from app.api.webhook import router as webhook_router
-from app.api.dashboard import router as dashboard_router
+from app.api.dashboard import (
+    router as dashboard_router,
+    DASHBOARD_SESSION_COOKIE,
+    DASHBOARD_SESSION_MAX_AGE,
+    build_dashboard_session_token,
+    is_valid_dashboard_credential,
+)
 from app.database import init_database, get_db_session_context
 from app.services.chat_service import ChatService
 from app.services.global_error_handler import handle_server_error
@@ -454,16 +460,36 @@ async def chat_page(request: Request):
     return templates.TemplateResponse(request, "chat.html")
 
 
+def _serve_dashboard_template(request: Request, template_name: str, key: Optional[str]):
+    """Render a dashboard page for an authenticated operator and refresh the cookie."""
+    api_key = get_settings().dashboard_api_key
+    provided_key = key or request.headers.get("X-Dashboard-Key")
+    session_cookie = request.cookies.get(DASHBOARD_SESSION_COOKIE)
+    if not is_valid_dashboard_credential(api_key, provided_key, session_cookie):
+        raise HTTPException(status_code=401, detail="Dashboard authentication required")
+
+    response = templates.TemplateResponse(request, template_name)
+    response.set_cookie(
+        DASHBOARD_SESSION_COOKIE,
+        build_dashboard_session_token(api_key),
+        max_age=DASHBOARD_SESSION_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+    )
+    return response
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard_page(request: Request):
+async def dashboard_page(request: Request, key: Optional[str] = None):
     """Serve the Real-Time Analytics Dashboard UI."""
-    return templates.TemplateResponse(request, "dashboard.html")
+    return _serve_dashboard_template(request, "dashboard.html", key)
 
 
 @app.get("/dashboard/classification-details", response_class=HTMLResponse)
-async def classification_details_page(request: Request):
+async def classification_details_page(request: Request, key: Optional[str] = None):
     """Serve the User Classification Details page."""
-    return templates.TemplateResponse(request, "classification_details.html")
+    return _serve_dashboard_template(request, "classification_details.html", key)
 
 
 @app.post("/api/chat")

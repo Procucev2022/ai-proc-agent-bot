@@ -475,6 +475,30 @@ async def test_dashboard_aggregation_service_fallback_categories():
         assert len(stats["rfq_lifecycle"]["category_breakdown"]) == 2
 
 
+def test_dashboard_pages_issue_and_accept_operator_session_cookie():
+    """The bundled dashboard authenticates browsers with an HttpOnly cookie."""
+    from app.api.dashboard import DASHBOARD_SESSION_COOKIE
+
+    anonymous = TestClient(app)
+    assert anonymous.get("/dashboard").status_code == 401
+    assert anonymous.get("/api/dashboard/active-users").status_code == 401
+
+    # Opening the page with the operator key issues the session cookie ...
+    client = TestClient(app)
+    page = client.get("/dashboard?key=unit-test-dashboard-key")
+    assert page.status_code == 200
+    cookie = client.cookies.get(DASHBOARD_SESSION_COOKIE)
+    assert cookie
+
+    # ... which browser transports (fetch, EventSource, downloads) then reuse.
+    with patch("app.api.dashboard.get_realtime_analytics_service") as mock_rt:
+        mock_rt.return_value = MagicMock(
+            get_active_users_count=AsyncMock(return_value={"total": 0}),
+        )
+        assert client.get("/api/dashboard/active-users").status_code == 200
+    assert client.get("/dashboard/classification-details").status_code == 200
+
+
 def test_dashboard_api_endpoints():
     """Test FastAPI dashboard REST and HTML endpoints."""
     client = TestClient(app, headers={"X-Dashboard-Key": "unit-test-dashboard-key"})

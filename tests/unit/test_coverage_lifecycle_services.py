@@ -1462,6 +1462,15 @@ async def test_session_management_context_creation_save_and_completion(monkeypat
     await service.handle_session_completion_enhanced(make_session())
     for coro in created_tasks:
         coro.close()
+
+    # Background summarization delegates to the injected summary services.
+    summarized = make_session()
+    await service._run_background_summarization(summarized, {"x": 1})
+    summaries.generate_session_summary.assert_awaited_with(summarized)
+    daily.generate_daily_summary.assert_awaited_with(summarized.external_user_id)
+    summaries.generate_session_summary.side_effect = RuntimeError("summary down")
+    await service._run_background_summarization(summarized, {"x": 1})
+    summaries.generate_session_summary.side_effect = None
     monkeypatch.setattr(session_mod.SummarizationHelpers, "extract_rich_entities_for_summary", Mock(side_effect=RuntimeError("rich")))
     service._handle_session_completion_fallback = AsyncMock()
     await service.handle_session_completion_enhanced(make_session())
@@ -1661,18 +1670,18 @@ async def test_session_management_all_residual_branches():
         res_end = await service.end_session(s_to_end, ConversationOutcome.completed)
         assert res_end is not None
 
-    # 10. License validation branches
+    # 10. License validation branches (restore the real implementation first,
+    # earlier steps replaced it with a stub)
+    service._validate_license = session_mod.SessionManagementService._validate_license.__get__(service)
     service.settings.license_enabled = False
     is_valid, msg = service._validate_license()
     assert is_valid is True
 
     service.settings.license_enabled = True
-    try:
-        with patch("app.license.validate_license", return_value=(False, "Expired")):
-            is_valid2, msg2 = service._validate_license()
-            assert is_valid2 in [True, False]
-    except Exception:
-        pass
+    with patch("app.license.validate_license", return_value=(False, "Expired")):
+        is_valid2, msg2 = service._validate_license()
+    assert is_valid2 is False
+    assert msg2 == "Expired"
     service.settings.license_enabled = False
 
     # 11. Restoring active DB session to Redis and return visit suffix

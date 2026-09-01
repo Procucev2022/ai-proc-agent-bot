@@ -170,8 +170,10 @@ class DashboardAggregationService:
 
         if role == "buyer":
             session_filter.append(ConversationSession.user_type == UserType.buyer)
+            comp_session_filter.append(ConversationSession.user_type == UserType.buyer)
         elif role == "seller":
             session_filter.append(ConversationSession.user_type == UserType.seller)
+            comp_session_filter.append(ConversationSession.user_type == UserType.seller)
         if location:
             location_filter = cast(ConversationSession.workflow_state, String).ilike(
                 f"%{location}%"
@@ -814,13 +816,24 @@ class DashboardAggregationService:
                     RFQ.created_at <= end_naive
                 ).all() if _row_val(r, 0, "external_user_id")
             }
+            # Single bulk fetch of the period's session rows, grouped by phone,
+            # so classification does not issue one query per user.
+            sessions_by_phone: Dict[str, List[Any]] = {}
             for sess_row in db.query(
-                ConversationSession.rfq_ids, ConversationSession.rfq_id, ConversationSession.external_user_id
+                ConversationSession.external_user_id,
+                ConversationSession.workflow_type,
+                ConversationSession.workflow_state,
+                ConversationSession.outcome,
+                ConversationSession.rfq_id,
+                ConversationSession.rfq_ids,
+                ConversationSession.created_at,
+                ConversationSession.session_id,
             ).filter(*today_session_filter).all():
-                r_ids = _row_val(sess_row, 0, "rfq_ids")
-                r_id = _row_val(sess_row, 1, "rfq_id")
-                ext_user = _row_val(sess_row, 2, "external_user_id")
-                if (r_ids or r_id) and ext_user:
+                ext_user = _row_val(sess_row, 0, "external_user_id")
+                if not ext_user:
+                    continue
+                sessions_by_phone.setdefault(ext_user, []).append(sess_row)
+                if _row_val(sess_row, 4, "rfq_id") or _row_val(sess_row, 5, "rfq_ids"):
                     rfq_phones_in_period.add(ext_user)
 
             registered_sellers_map = {}
@@ -839,15 +852,13 @@ class DashboardAggregationService:
             user_rows = []
 
             for u_phone in sorted(unknown_users_set):
-                sess_info = db.query(
-                    func.count(ConversationSession.session_id),
-                    func.max(ConversationSession.created_at)
-                ).filter(
-                    ConversationSession.external_user_id == u_phone,
-                    *today_session_filter
-                ).first()
-                sessions_count = _row_val(sess_info, 0) or 0
-                last_active_raw = _row_val(sess_info, 1)
+                user_sess = sessions_by_phone.get(u_phone, [])
+                sessions_count = len(user_sess)
+                last_active_raw = None
+                for sess_row in user_sess:
+                    c_at = _row_val(sess_row, 6, "created_at")
+                    if c_at and (last_active_raw is None or c_at > last_active_raw):
+                        last_active_raw = c_at
                 last_active = last_active_raw.strftime("%Y-%m-%d %H:%M:%S") if last_active_raw else "N/A"
 
                 user_rows.append({
@@ -861,29 +872,19 @@ class DashboardAggregationService:
                 })
 
             for b_phone in sorted(buyer_users_set):
-                user_sess = db.query(
-                    ConversationSession.workflow_type,
-                    ConversationSession.workflow_state,
-                    ConversationSession.outcome,
-                    ConversationSession.rfq_id,
-                    ConversationSession.rfq_ids,
-                    ConversationSession.created_at
-                ).filter(
-                    ConversationSession.external_user_id == b_phone,
-                    *today_session_filter
-                ).all()
+                user_sess = sessions_by_phone.get(b_phone, [])
 
                 is_reg = False
                 has_rfq = b_phone in rfq_phones_in_period
                 last_active_dt = None
 
                 for sess_row in user_sess:
-                    w_type = _row_val(sess_row, 0, "workflow_type")
-                    w_state = _row_val(sess_row, 1, "workflow_state")
-                    out = _row_val(sess_row, 2, "outcome")
-                    r_id = _row_val(sess_row, 3, "rfq_id")
-                    r_ids = _row_val(sess_row, 4, "rfq_ids")
-                    c_at = _row_val(sess_row, 5, "created_at")
+                    w_type = _row_val(sess_row, 1, "workflow_type")
+                    w_state = _row_val(sess_row, 2, "workflow_state")
+                    out = _row_val(sess_row, 3, "outcome")
+                    r_id = _row_val(sess_row, 4, "rfq_id")
+                    r_ids = _row_val(sess_row, 5, "rfq_ids")
+                    c_at = _row_val(sess_row, 6, "created_at")
 
                     if c_at and (last_active_dt is None or c_at > last_active_dt):
                         last_active_dt = c_at
@@ -927,15 +928,7 @@ class DashboardAggregationService:
 
             for s_phone in sorted(seller_users_set):
                 p_clean = s_phone.lstrip("+")
-                user_sess = db.query(
-                    ConversationSession.workflow_type,
-                    ConversationSession.workflow_state,
-                    ConversationSession.outcome,
-                    ConversationSession.created_at
-                ).filter(
-                    ConversationSession.external_user_id == s_phone,
-                    *today_session_filter
-                ).all()
+                user_sess = sessions_by_phone.get(s_phone, [])
 
                 is_reg = False
                 last_active_dt = None
@@ -943,10 +936,10 @@ class DashboardAggregationService:
                     is_reg = True
 
                 for sess_row in user_sess:
-                    w_type = _row_val(sess_row, 0, "workflow_type")
-                    w_state = _row_val(sess_row, 1, "workflow_state")
-                    out = _row_val(sess_row, 2, "outcome")
-                    c_at = _row_val(sess_row, 3, "created_at")
+                    w_type = _row_val(sess_row, 1, "workflow_type")
+                    w_state = _row_val(sess_row, 2, "workflow_state")
+                    out = _row_val(sess_row, 3, "outcome")
+                    c_at = _row_val(sess_row, 6, "created_at")
 
                     if c_at and (last_active_dt is None or c_at > last_active_dt):
                         last_active_dt = c_at
@@ -1086,13 +1079,24 @@ class DashboardAggregationService:
                     RFQ.created_at <= end_naive
                 ).all() if _row_val(r, 0, "external_user_id")
             }
+            # Single bulk fetch of the period's session rows, grouped by phone,
+            # so classification does not issue one query per user.
+            sessions_by_phone: Dict[str, List[Any]] = {}
             for sess_row in db.query(
-                ConversationSession.rfq_ids, ConversationSession.rfq_id, ConversationSession.external_user_id
+                ConversationSession.external_user_id,
+                ConversationSession.workflow_type,
+                ConversationSession.workflow_state,
+                ConversationSession.outcome,
+                ConversationSession.rfq_id,
+                ConversationSession.rfq_ids,
+                ConversationSession.created_at,
+                ConversationSession.session_id,
             ).filter(*today_session_filter).all():
-                r_ids = _row_val(sess_row, 0, "rfq_ids")
-                r_id = _row_val(sess_row, 1, "rfq_id")
-                ext_user = _row_val(sess_row, 2, "external_user_id")
-                if (r_ids or r_id) and ext_user:
+                ext_user = _row_val(sess_row, 0, "external_user_id")
+                if not ext_user:
+                    continue
+                sessions_by_phone.setdefault(ext_user, []).append(sess_row)
+                if _row_val(sess_row, 4, "rfq_id") or _row_val(sess_row, 5, "rfq_ids"):
                     rfq_phones_in_period.add(ext_user)
 
             registered_sellers_map = {}
@@ -1111,18 +1115,18 @@ class DashboardAggregationService:
             user_rows = []
 
             for u_phone in sorted(unknown_users_set):
-                sess_info = db.query(
-                    func.count(ConversationSession.session_id),
-                    func.max(ConversationSession.created_at),
-                    func.max(ConversationSession.session_id)
-                ).filter(
-                    ConversationSession.external_user_id == u_phone,
-                    *today_session_filter
-                ).first()
-                sessions_count = _row_val(sess_info, 0) or 0
-                last_active_raw = _row_val(sess_info, 1)
+                user_sess = sessions_by_phone.get(u_phone, [])
+                sessions_count = len(user_sess)
+                last_active_raw = None
+                session_id = None
+                for sess_row in user_sess:
+                    c_at = _row_val(sess_row, 6, "created_at")
+                    if c_at and (last_active_raw is None or c_at > last_active_raw):
+                        last_active_raw = c_at
+                        session_id = _row_val(sess_row, 7, "session_id")
+                if session_id is None and user_sess:
+                    session_id = _row_val(user_sess[-1], 7, "session_id")
                 last_active = last_active_raw.strftime("%Y-%m-%d %H:%M:%S") if last_active_raw else "N/A"
-                session_id = _row_val(sess_info, 2, "session_id")
 
                 user_rows.append({
                     "phone": u_phone,
@@ -1136,18 +1140,7 @@ class DashboardAggregationService:
                 })
 
             for b_phone in sorted(buyer_users_set):
-                user_sess = db.query(
-                    ConversationSession.workflow_type,
-                    ConversationSession.workflow_state,
-                    ConversationSession.outcome,
-                    ConversationSession.rfq_id,
-                    ConversationSession.rfq_ids,
-                    ConversationSession.created_at,
-                    ConversationSession.session_id
-                ).filter(
-                    ConversationSession.external_user_id == b_phone,
-                    *today_session_filter
-                ).all()
+                user_sess = sessions_by_phone.get(b_phone, [])
 
                 is_reg = False
                 has_rfq = b_phone in rfq_phones_in_period
@@ -1155,13 +1148,13 @@ class DashboardAggregationService:
                 latest_session_id = None
 
                 for sess_row in user_sess:
-                    w_type = _row_val(sess_row, 0, "workflow_type")
-                    w_state = _row_val(sess_row, 1, "workflow_state")
-                    out = _row_val(sess_row, 2, "outcome")
-                    r_id = _row_val(sess_row, 3, "rfq_id")
-                    r_ids = _row_val(sess_row, 4, "rfq_ids")
-                    c_at = _row_val(sess_row, 5, "created_at")
-                    s_id = _row_val(sess_row, 6, "session_id")
+                    w_type = _row_val(sess_row, 1, "workflow_type")
+                    w_state = _row_val(sess_row, 2, "workflow_state")
+                    out = _row_val(sess_row, 3, "outcome")
+                    r_id = _row_val(sess_row, 4, "rfq_id")
+                    r_ids = _row_val(sess_row, 5, "rfq_ids")
+                    c_at = _row_val(sess_row, 6, "created_at")
+                    s_id = _row_val(sess_row, 7, "session_id")
 
                     if c_at and (last_active_dt is None or c_at > last_active_dt):
                         last_active_dt = c_at
@@ -1207,16 +1200,7 @@ class DashboardAggregationService:
 
             for s_phone in sorted(seller_users_set):
                 p_clean = s_phone.lstrip("+")
-                user_sess = db.query(
-                    ConversationSession.workflow_type,
-                    ConversationSession.workflow_state,
-                    ConversationSession.outcome,
-                    ConversationSession.created_at,
-                    ConversationSession.session_id
-                ).filter(
-                    ConversationSession.external_user_id == s_phone,
-                    *today_session_filter
-                ).all()
+                user_sess = sessions_by_phone.get(s_phone, [])
 
                 is_reg = False
                 last_active_dt = None
@@ -1225,11 +1209,11 @@ class DashboardAggregationService:
                     is_reg = True
 
                 for sess_row in user_sess:
-                    w_type = _row_val(sess_row, 0, "workflow_type")
-                    w_state = _row_val(sess_row, 1, "workflow_state")
-                    out = _row_val(sess_row, 2, "outcome")
-                    c_at = _row_val(sess_row, 3, "created_at")
-                    s_id = _row_val(sess_row, 4, "session_id")
+                    w_type = _row_val(sess_row, 1, "workflow_type")
+                    w_state = _row_val(sess_row, 2, "workflow_state")
+                    out = _row_val(sess_row, 3, "outcome")
+                    c_at = _row_val(sess_row, 6, "created_at")
+                    s_id = _row_val(sess_row, 7, "session_id")
 
                     if c_at and (last_active_dt is None or c_at > last_active_dt):
                         last_active_dt = c_at
@@ -1394,8 +1378,12 @@ class DashboardAggregationService:
                 for m in members:
                     try:
                         p_str = m.decode("utf-8") if isinstance(m, (bytes, bytearray)) else str(m)
-                        data = json.loads(p_str)
-                        phone = _norm_phone(data.get("phone", ""))
+                        # Presence members are bare phone strings; legacy members
+                        # were JSON objects carrying the phone.
+                        raw_phone = p_str
+                        if p_str.startswith("{"):
+                            raw_phone = json.loads(p_str).get("phone", "")
+                        phone = _norm_phone(raw_phone)
                         if phone:
                             active_phones.add(phone)
                     except Exception:
@@ -1428,12 +1416,16 @@ class DashboardAggregationService:
                 .all()
             )
 
-        try:
+        def _load_db_sessions() -> List[ConversationSession]:
             if self.db is not None:
-                db_sessions = _query_db(self.db)
-            else:
-                with get_db_session_context() as db:
-                    db_sessions = _query_db(db)
+                return _query_db(self.db)
+            with get_db_session_context() as db:
+                return _query_db(db)
+
+        try:
+            # Run the blocking DB work off the event loop so dashboard polling
+            # does not stall webhook processing.
+            db_sessions = await asyncio.to_thread(_load_db_sessions)
         except Exception as e:
             logger.error(f"[DASHBOARD] DB error in get_today_conversations: {e}")
             db_sessions = []
@@ -1623,12 +1615,14 @@ class DashboardAggregationService:
                 )
             return []
 
-        try:
+        def _load_db_sessions() -> List[ConversationSession]:
             if self.db is not None:
-                db_sessions = _query_db(self.db)
-            else:
-                with get_db_session_context() as db:
-                    db_sessions = _query_db(db)
+                return _query_db(self.db)
+            with get_db_session_context() as db:
+                return _query_db(db)
+
+        try:
+            db_sessions = await asyncio.to_thread(_load_db_sessions)
         except Exception as e:
             logger.error(f"[DASHBOARD] DB query error in get_conversation_messages: {e}")
             db_sessions = []

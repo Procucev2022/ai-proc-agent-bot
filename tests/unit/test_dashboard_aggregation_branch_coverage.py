@@ -192,12 +192,15 @@ def _classification_all_side_effect(seller_rows):
         [("919000000002",)],  # buyers
         [("919000000003",)],  # sellers
         [(None,)],            # rfq phones, falsy row skipped
-        [([], None, "919000000002"), (None, None, None)],  # session rfq rows
+        # single bulk session fetch grouped by phone; no created_at, so
+        # last_active stays "N/A" and the null row is skipped
+        [
+            ("919000000002", WorkflowType.registration, {"registration_stage": "completed"},
+             None, None, None, None, "sess-buyer-1"),
+            ("919000000003", WorkflowType.general_inquiry, {}, None, None, None, None, "sess-seller-1"),
+            (None, None, None, None, None, None, None, None),
+        ],
         seller_rows,          # Seller.phone_number / subscription_credits
-        # per-buyer session rows: no created_at, so last_active stays "N/A"
-        [(WorkflowType.registration, {"registration_stage": "completed"}, None, None, None, None, None)],
-        # per-seller session rows: no created_at either
-        [(WorkflowType.general_inquiry, {}, None, None, None)],
     ]
 
 
@@ -861,6 +864,109 @@ def test_require_dashboard_operator_rejects_wrong_and_unset_keys():
         with pytest.raises(HTTPException) as unset:
             dashboard_api.require_dashboard_operator(x_dashboard_key="anything")
         assert unset.value.status_code == 401
+
+
+def test_require_dashboard_operator_accepts_session_cookie():
+    """Browser clients authenticate with the HttpOnly session cookie."""
+    from app.api import dashboard as dashboard_api
+
+    token = dashboard_api.build_dashboard_session_token("expected-key")
+    with patch.object(
+        dashboard_api,
+        "get_settings",
+        return_value=SimpleNamespace(dashboard_api_key="expected-key"),
+    ):
+        assert dashboard_api.require_dashboard_operator(
+            x_dashboard_key=None, dashboard_session=token
+        ) is None
+
+        with pytest.raises(HTTPException) as stale:
+            dashboard_api.require_dashboard_operator(
+                x_dashboard_key=None, dashboard_session="stale-token"
+            )
+        assert stale.value.status_code == 401
+
+
+def test_details_json_groups_bulk_session_rows_per_user():
+    """Every user is classified from one bulk session fetch, not per-user queries."""
+    db = MagicMock()
+    query = _query_mock(db)
+    created = datetime(2026, 8, 27, 9, 30, 0)
+    query.all.side_effect = [
+        [("919000000001",), ("919000000002",)],  # all users
+        [("919000000002",)],                     # buyers
+        [],                                      # sellers
+        [],                                      # rfq phones
+        [
+            ("919000000001", WorkflowType.general_inquiry, {}, None, None, None, None, "sess-unknown-old"),
+            ("919000000001", WorkflowType.general_inquiry, {}, None, None, None, created, "sess-unknown-new"),
+            ("919000000002", WorkflowType.rfq_creation, {}, None, "R1", None, created, "sess-buyer"),
+        ],
+        [],                                      # sellers table
+    ]
+
+    result = DashboardAggregationService(db_session=db).get_user_classification_details_json(
+        date_preset="today", filter_type="all"
+    )
+
+    # One bulk session query replaced the per-user aggregates.
+    assert db.query.call_count == 6
+    unknown_row = next(r for r in result["users"] if r["category"] == "Unknown")
+    assert unknown_row["sessions_count"] == 2
+    assert unknown_row["session_id"] == "sess-unknown-new"
+    assert unknown_row["last_active"] == "2026-08-27 09:30:00"
+    buyer_row = next(r for r in result["users"] if r["category"] == "Buyer")
+    assert buyer_row["key"] == "buyer_registered_rfq_created"
+    assert buyer_row["session_id"] == "sess-buyer"
+
+
+def test_details_json_unknown_user_session_id_falls_back_without_timestamps():
+    """Sessions without a created_at still expose a session id for the viewer."""
+    db = MagicMock()
+    query = _query_mock(db)
+    query.all.side_effect = [
+        [("919000000001",)],  # all users
+        [],                   # buyers
+        [],                   # sellers
+        [],                   # rfq phones
+        [("919000000001", WorkflowType.general_inquiry, {}, None, None, None, None, "sess-no-time")],
+        [],                   # sellers table
+    ]
+
+    result = DashboardAggregationService(db_session=db).get_user_classification_details_json(
+        date_preset="today", filter_type="unknown"
+    )
+
+    unknown_row = result["users"][0]
+    assert unknown_row["session_id"] == "sess-no-time"
+    assert unknown_row["last_active"] == "N/A"
+
+
+def test_export_csv_groups_bulk_session_rows_per_user():
+    """The CSV export classifies users from the same single bulk fetch."""
+    db = MagicMock()
+    query = _query_mock(db)
+    created = datetime(2026, 8, 27, 9, 30, 0)
+    query.all.side_effect = [
+        [("919000000001",), ("919000000003",)],  # all users
+        [],                                      # buyers
+        [("919000000003",)],                     # sellers
+        [],                                      # rfq phones
+        [
+            ("919000000001", WorkflowType.general_inquiry, {}, None, None, None, created, "sess-unknown"),
+            ("919000000003", WorkflowType.registration, {"registration_stage": "completed"},
+             None, None, None, created, "sess-seller"),
+        ],
+        [],                                      # sellers table
+    ]
+
+    csv_out = DashboardAggregationService(db_session=db).export_user_classification_csv(
+        date_preset="today", filter_type="all"
+    )
+
+    assert db.query.call_count == 6
+    assert "919000000001,Unknown,Not Registered,No Role Selected / Greeting Only,1,2026-08-27 09:30:00" in csv_out
+    assert "919000000003,Seller,Registered,Seller without Subscription (0 credits),1,2026-08-27 09:30:00" in csv_out
 
 
 def test_get_dashboard_db_closes_the_session():
