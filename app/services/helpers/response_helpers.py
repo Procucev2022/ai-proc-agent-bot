@@ -6,7 +6,7 @@ extracted from the main ChatService class for better organization.
 """
 
 import logging
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Union, Optional
 from app.utils.rfq_message_formatter import format_rfq_response_message
 from app.utils.datetime_utils import get_ordinal_suffix
 from app.config import get_settings
@@ -57,7 +57,7 @@ class ResponseHelpers:
             logger.error(f"Error generating {message_type} response: {e}")
             return fallback
     
-    async def generate_contextual_response(self, context: dict, base_questions: list = None, conversation_stage: str = "collecting", chat_summaries: list = None) -> str:
+    async def generate_contextual_response(self, context: dict, base_questions: Optional[list] = None, conversation_stage: str = "collecting", chat_summaries: Optional[list] = None) -> str:
         """Generate contextual response using OpenAI with optional chat summary context."""
         try:
             # Enhance context with chat summaries if available
@@ -354,7 +354,7 @@ class ResponseHelpers:
         )
 
     # Fallback methods for when AI generation fails
-    def _get_fallback_message(self, workflow_state: str, user_role: str = None) -> Dict[str, Any]:
+    def _get_fallback_message(self, workflow_state: str, user_role: Optional[str] = None) -> Dict[str, Any]:
         """Get appropriate fallback message based on workflow state and user role."""
         fallbacks = {
             "display_rfqs_to_seller": "Here are the available RFQs in your category. Please let me know which ones interest you.",
@@ -533,7 +533,7 @@ class ResponseHelpers:
             logger.error(f"Error generating completion response: {e}")
             return "Excellent! Your RFQ is now complete. I'll process this request and get back to you soon."
     
-    async def generate_clarification_response(self, questions: list, completeness: float, context: dict, chat_summaries: list = None) -> str:
+    async def generate_clarification_response(self, questions: list, completeness: float, context: dict, chat_summaries: Optional[list] = None) -> str:
         """Generate clarification response using enhanced entity display format."""
         try:
             # Get date validation errors (already formatted)
@@ -579,7 +579,7 @@ class ResponseHelpers:
             questions_text = "\n".join(f"• {q}" for q in questions)
             return f"I need a few more details to complete your RFQ:\n\n{questions_text}"
     
-    async def generate_rfq_summary_and_confirmation(self, rfq_schema, context: dict, chat_summaries: list = None) -> str:
+    async def generate_rfq_summary_and_confirmation(self, rfq_schema, context: dict, chat_summaries: Optional[list] = None) -> str:
         """Generate RFQ summary and ask for confirmation using OpenAI with optional chat summary context."""
         try:
             # Use OpenAI to generate the summary and confirmation naturally

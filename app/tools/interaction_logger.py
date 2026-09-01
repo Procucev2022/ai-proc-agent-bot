@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -18,15 +18,22 @@ logger = logging.getLogger(__name__)
 class InteractionLogger:
     """Logger for OpenAI interactions and responses."""
     
-    def __init__(self, log_dir: str = "logs/openai_interactions"):
-        """Initialize interaction logger with log directory."""
+    _instance = None
+    
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super(InteractionLogger, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self, log_dir: str = "logs/interactions"):
+        if self._initialized:
+            return
+            
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create daily log file
-        today = datetime.now().strftime("%Y-%m-%d")
-        self.log_file = self.log_dir / f"interactions_{today}.jsonl"
-
+        self.log_file = self.log_dir / f"interactions_{datetime.now().strftime('%Y%m%d')}.jsonl"
+        self._initialized = True
         # Reduced to debug level - singleton is created once per worker process
         logger.debug(f"InteractionLogger initialized - Log file: {self.log_file}")
     
@@ -37,12 +44,12 @@ class InteractionLogger:
         confidence: float,
         reasoning: str,
         model_used: str,
-        processing_time: float = None,
-        all_scores: Dict[str, float] = None,
-        phone_number: str = None,
-        openai_input: Dict = None,
-        relevant_message: str = None,
-        irrelevant_message: str = None
+        processing_time: Optional[float] = None,
+        all_scores: Optional[Dict[str, float]] = None,
+        phone_number: Optional[str] = None,
+        openai_input: Optional[Dict] = None,
+        relevant_message: Optional[str] = None,
+        irrelevant_message: Optional[str] = None
     ):
         """Log intent classification interaction with full OpenAI input."""
         log_entry = {
@@ -77,9 +84,9 @@ class InteractionLogger:
         completeness: float,
         workflow_type: str,
         model_used: str,
-        processing_time: float = None,
-        missing_fields: list = None,
-        phone_number: str = None
+        processing_time: Optional[float] = None,
+        missing_fields: Optional[list] = None,
+        phone_number: Optional[str] = None
     ):
         """Log entity extraction interaction."""
         log_entry = {
@@ -106,8 +113,8 @@ class InteractionLogger:
         interaction_type: str,
         user_input: str,
         error_message: str,
-        model_used: str = None,
-        phone_number: str = None
+        model_used: Optional[str] = None,
+        phone_number: Optional[str] = None
     ):
         """Log failed interaction."""
         log_entry = {
@@ -131,8 +138,8 @@ class InteractionLogger:
         generated_response: str,
         conversation_stage: str,
         model_used: str,
-        processing_time: float = None,
-        phone_number: str = None
+        processing_time: Optional[float] = None,
+        phone_number: Optional[str] = None
     ):
         """Log response generation interaction."""
         log_entry = {
