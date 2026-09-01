@@ -1551,3 +1551,48 @@ async def test_session_management_comprehensive_paths(monkeypatch):
     saved_fallback = await service.save_session(s_to_save, persist_to_db=True)
     assert saved_fallback is not None
 
+
+@pytest.mark.asyncio
+async def test_session_management_all_residual_branches():
+    """Test residual branches in SessionManagementService."""
+    db = MagicMock()
+    wa = MagicMock()
+    summaries = SimpleNamespace(generate_session_summary=AsyncMock(), generate_daily_summary=AsyncMock())
+    daily = SimpleNamespace(generate_daily_summary=AsyncMock())
+    service = session_mod.SessionManagementService(db_manager=db, whatsapp_service=wa, chat_summary_service=summaries, daily_summary_service=daily)
+
+    # 1. Redis lookup throws Exception
+    service.redis_enabled = True
+    service.redis_session = MagicMock()
+    service.redis_session.get_user_active_session_id = AsyncMock(side_effect=RuntimeError("redis down"))
+    service.redis_session.get_session = AsyncMock(side_effect=RuntimeError("redis down"))
+    db.get_conversation_session.return_value = None
+    s1 = await service.get_conversation_context("+919999999999")
+    assert s1 is not None
+
+    # 2. Redis active session found with set_user_active_session_id failing
+    sess_dict = {
+        "session_id": "s_active",
+        "external_user_id": "919999999999",
+        "user_type": "buyer",
+        "outcome": None,
+        "workflow_state": {},
+        "conversation_history": {"messages": []},
+        "extracted_entities": {}
+    }
+    service.redis_session.get_user_active_session_id = AsyncMock(return_value="s_active")
+    service.redis_session.get_session = AsyncMock(return_value=sess_dict)
+    service.redis_session.refresh_ttl = AsyncMock()
+    service.redis_session.set_user_active_session_id = AsyncMock(side_effect=RuntimeError("redis fail"))
+    s2 = await service.get_conversation_context("+919999999999")
+    assert s2 is not None
+    assert s2.session_id == "s_active"
+
+    # 3. Redis ended session found with clear_user_active_session_id failing
+    sess_ended = dict(sess_dict, outcome="completed")
+    service.redis_session.get_session = AsyncMock(return_value=sess_ended)
+    service.redis_session.clear_user_active_session_id = AsyncMock(side_effect=RuntimeError("clear fail"))
+    s3 = await service.get_conversation_context("+919999999999")
+    assert s3 is not None
+
+

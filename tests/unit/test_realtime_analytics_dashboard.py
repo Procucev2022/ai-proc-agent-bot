@@ -1139,6 +1139,104 @@ async def test_dashboard_aggregation_full_metrics_coverage():
         assert "buyer_funnel" in stats
         assert "seller_funnel" in stats
 
+        # Test presets: yesterday, 7d, 30d, 90d, custom
+        stats_y = await svc.get_dashboard_stats(date_preset="yesterday", role="seller")
+        assert stats_y["status"] == "success"
+
+        stats_7d = await svc.get_dashboard_stats(date_preset="7d", role="all")
+        assert stats_7d["status"] == "success"
+
+        stats_30d = await svc.get_dashboard_stats(date_preset="30d", category="Fasteners")
+        assert stats_30d["status"] == "success"
+
+        stats_90d = await svc.get_dashboard_stats(date_preset="90d", location="Mumbai")
+        assert stats_90d["status"] == "success"
+
+        stats_custom = await svc.get_dashboard_stats(date_preset="custom", start_date="2026-01-01", end_date="2026-12-31")
+        assert stats_custom["status"] == "success"
+
+        # Test get_user_classification_details_json
+        for ftype in ["all", "unknown", "buyer", "buyer_registered", "buyer_not_registered", "buyer_rfq_created", "buyer_rfq_not_created", "seller", "seller_registered", "seller_not_registered", "seller_subscribed", "seller_without_subscription"]:
+            details = svc.get_user_classification_details_json("today", filter_type=ftype)
+            assert "users" in details
+            assert "total_matching" in details
+
     db.close()
+
+
+def test_api_dashboard_all_remaining_routes():
+    """Test all dashboard API endpoints for 200 and 500 error cases."""
+    client = TestClient(app)
+
+    # 1. /api/dashboard/user-classification-details
+    with patch("app.api.dashboard.DashboardAggregationService.get_user_classification_details_json", return_value={"users": [], "total_matching": 0}):
+        res = client.get("/api/dashboard/user-classification-details?date_preset=today&filter_type=buyer")
+        assert res.status_code == 200
+
+    with patch("app.api.dashboard.DashboardAggregationService.get_user_classification_details_json", side_effect=RuntimeError("err")):
+        res = client.get("/api/dashboard/user-classification-details")
+        assert res.status_code == 500
+
+    # 2. /api/dashboard/export-user-classification-csv
+    with patch("app.api.dashboard.DashboardAggregationService.export_user_classification_csv", return_value="phone,type\n919876543210,buyer\n"):
+        res = client.get("/api/dashboard/export-user-classification-csv?date_preset=today&filter_type=buyer")
+        assert res.status_code == 200
+        assert "attachment" in res.headers.get("Content-Disposition", "")
+
+    with patch("app.api.dashboard.DashboardAggregationService.export_user_classification_csv", side_effect=RuntimeError("err")):
+        res = client.get("/api/dashboard/export-user-classification-csv")
+        assert res.status_code == 500
+
+    # 3. /api/dashboard/daily-visitors
+    with patch("app.api.dashboard.DashboardAggregationService.get_daily_visitors", return_value=[{"date": "2026-08-31", "visitors": 5}]):
+        res = client.get("/api/dashboard/daily-visitors?date_preset=7d")
+        assert res.status_code == 200
+
+    with patch("app.api.dashboard.DashboardAggregationService.get_daily_visitors", side_effect=RuntimeError("err")):
+        res = client.get("/api/dashboard/daily-visitors")
+        assert res.status_code == 500
+
+    # 4. /api/dashboard/today-conversations
+    with patch("app.api.dashboard.DashboardAggregationService.get_today_conversations", AsyncMock(return_value=[{"phone": "919876543210"}])):
+        res = client.get("/api/dashboard/today-conversations")
+        assert res.status_code == 200
+
+    with patch("app.api.dashboard.DashboardAggregationService.get_today_conversations", AsyncMock(side_effect=RuntimeError("err"))):
+        res = client.get("/api/dashboard/today-conversations")
+        assert res.status_code == 500
+
+    # 5. /api/dashboard/conversation-messages
+    with patch("app.api.dashboard.DashboardAggregationService.get_conversation_messages", AsyncMock(return_value={"messages": []})):
+        res = client.get("/api/dashboard/conversation-messages?phone=919876543210")
+        assert res.status_code == 200
+
+    with patch("app.api.dashboard.DashboardAggregationService.get_conversation_messages", AsyncMock(side_effect=RuntimeError("err"))):
+        res = client.get("/api/dashboard/conversation-messages?phone=919876543210")
+        assert res.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_realtime_analytics_service_redis_disabled():
+    """Test RealtimeAnalyticsService when redis is disabled."""
+    from app.services.realtime_analytics_service import RealtimeAnalyticsService, get_realtime_analytics_service
+
+    svc = RealtimeAnalyticsService()
+    svc.settings.redis_session_storage_enabled = False
+
+    # 1. record_heartbeat with redis disabled
+    await svc.record_heartbeat("919876543210", "buyer")
+
+    # 2. get_active_users_count with redis disabled
+    counts = await svc.get_active_users_count()
+    assert counts["total"] == 0
+
+    # 3. get_recent_feed with DB fallback
+    feed = await svc.get_recent_feed(limit=5)
+    assert isinstance(feed, list)
+
+    # 4. singleton function
+    singleton = get_realtime_analytics_service()
+    assert singleton is not None
+
 
 

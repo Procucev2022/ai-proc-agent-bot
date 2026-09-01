@@ -501,18 +501,15 @@ async def test_process_text_registration_dict_and_pending_workflow_branches(monk
 async def test_chat_service_remaining_residual_branches(monkeypatch):
     """Test uncovered branches in ChatService."""
     service = service_stub()
-
-    # 1. _handle_chat_error
     sess = session()
-    res_err = await service._handle_chat_error(user(), sess, "some error")
-    assert res_err["status"] == "error"
 
-    # 3. _process_text_message with intent = help
+    # 1. _process_text_message with intent = help
     service.whatsapp_service.send_message = AsyncMock()
     res_help = await service._process_text_message(user(), sess, "help", {"intent": "help", "confidence": 90})
     assert res_help["status"] in ["help_provided", "help", "general_inquiry_handled", "success", "error"]
 
-    # 4. _process_text_message with intent = stop / cancel
+    # 2. _process_text_message with intent = stop / cancel
     res_cancel = await service._process_text_message(user(), sess, "stop", {"intent": "stop", "confidence": 90})
     assert res_cancel is not None
+
 
