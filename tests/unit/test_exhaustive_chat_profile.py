@@ -1223,6 +1223,12 @@ async def test_profile_selection_exhaustive_residual_branches():
         seller_menu = await service._show_role_based_menu("+919999999999", {"role": "seller", "email": "s@test.com", "user_data": {"fullName": "Bob"}}, sess_menu)
         assert seller_menu is not None
 
+        buyer_menu_fallback = await service._show_role_based_menu("+919999999999", {"role": "buyer", "email": "b@test.com", "user_data": {}}, sess_menu)
+        assert buyer_menu_fallback is not None
+
+        seller_menu_fallback = await service._show_role_based_menu("+919999999999", {"role": "seller", "email": "s@test.com", "user_data": {}}, sess_menu)
+        assert seller_menu_fallback is not None
+
     with patch.object(service, "_set_active_profile_and_proceed", AsyncMock(return_value={"status": "verification_required"})):
         ver_menu = await service._show_role_based_menu("+919999999999", {"role": "buyer", "email": "b@test.com"}, sess_menu)
         assert ver_menu["status"] == "verification_required"

@@ -1709,4 +1709,39 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
     db.close()
 
 
+@pytest.mark.asyncio
+async def test_realtime_analytics_service_subscribe_events_and_singleton():
+    import app.services.realtime_analytics_service as rtas
+    rtas._realtime_analytics_service = None
+    singleton_svc = rtas.get_realtime_analytics_service()
+    assert singleton_svc is not None
+    assert rtas.get_realtime_analytics_service() is singleton_svc
+
+    # 1. Test fallback when redis disabled
+    singleton_svc.settings.redis_session_storage_enabled = False
+    with patch("asyncio.sleep", AsyncMock()):
+        gen = singleton_svc.subscribe_events()
+        ev1 = await gen.__anext__()
+        assert ev1.get("event_type") == "heartbeat"
+    singleton_svc.settings.redis_session_storage_enabled = True
+
+    # 2. Test pubsub events stream
+    mock_pubsub = AsyncMock()
+    mock_pubsub.subscribe = AsyncMock()
+    mock_pubsub.get_message = AsyncMock(side_effect=[
+        {"type": "message", "data": json.dumps({"event_type": "live_event_test"}).encode("utf-8")},
+        {"type": "other_ignore"},
+        asyncio.CancelledError()
+    ])
+    mock_pubsub.unsubscribe = AsyncMock()
+    mock_pubsub.close = AsyncMock()
+    mock_redis = AsyncMock()
+    mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+
+    with patch("app.redis_db.AsyncRedisConnectionManager.get_client", AsyncMock(return_value=mock_redis)), patch("asyncio.sleep", AsyncMock()):
+        gen2 = singleton_svc.subscribe_events()
+        ev2 = await gen2.__anext__()
+        assert ev2.get("event_type") == "live_event_test"
+
+
 
