@@ -1176,10 +1176,10 @@ async def test_dashboard_aggregation_full_metrics_coverage():
         today_conv = await svc.get_today_conversations()
         assert isinstance(today_conv, list)
 
-        msgs = svc.get_conversation_messages("s1")
+        msgs = await svc.get_conversation_messages("s1")
         assert isinstance(msgs, dict)
 
-        msgs_unknown = svc.get_conversation_messages("unknown_sess")
+        msgs_unknown = await svc.get_conversation_messages("unknown_sess")
         assert msgs_unknown["status"] == "error"
 
     db.close()
