@@ -585,7 +585,7 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
         assert res_exit is not None
 
     # Test button clicks
-    service.authentication_service = SimpleNamespace(store_user_session=AsyncMock(), otp_service=None)
+    service._authentication_service = SimpleNamespace(store_user_session=AsyncMock(), otp_service=None)
     service.session_manager.get_conversation_context = AsyncMock(return_value=sess)
     service.session_manager.add_message_to_history = MagicMock()
     service.session_manager.save_session = AsyncMock()
