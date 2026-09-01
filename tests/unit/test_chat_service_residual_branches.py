@@ -570,5 +570,18 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
         res_err = await service._handle_error_response(user().phone_number, "generic_error", "An error occurred", sess)
         assert res_err is not None
 
+    # 8. Classification fallback
+    fallback_res = service._build_classification_fallback("hello need to buy steel")
+    assert "intent" in fallback_res
+
+    # 9. Meaningful message tracking
+    service._track_meaningful_message_during_auth_flow(sess, "need chemicals", {"intent": "rfq_creation", "confidence": 90})
+    assert sess.workflow_state.get("last_meaningful_message") == "need chemicals"
+
+    # 10. User exit handler
+    if hasattr(service, "_handle_user_exit"):
+        res_exit = await service._handle_user_exit(user().phone_number, sess, "User requested exit")
+        assert res_exit is not None
+
 
 

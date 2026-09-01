@@ -1160,4 +1160,18 @@ async def test_profile_selection_exhaustive_residual_branches():
         res_resp = await service.handle_profile_selection_response("+919999999999", "1", s_stage)
         assert res_resp is not None
 
+    # 7. Intent mismatch handling
+    res_mis_b = await service._handle_intent_mismatch("+919999999999", s, "buyer", [{"role": "seller", "email": "s@test.com"}])
+    assert res_mis_b is not None
+
+    res_mis_s = await service._handle_intent_mismatch("+919999999999", s, "seller", [{"role": "buyer", "email": "b@test.com"}])
+    assert res_mis_s is not None
+
+    # 8. _set_active_profile_and_proceed with buyer and seller
+    res_set_b = await service._set_active_profile_and_proceed("+919999999999", {"role": "buyer", "user_id": "u1", "email": "b@t.com"}, s, "buy", "buyer_intent")
+    assert res_set_b is not None
+
+    res_set_s = await service._set_active_profile_and_proceed("+919999999999", {"role": "seller", "user_id": "s1", "email": "s@t.com"}, s, "sell", "seller_intent")
+    assert res_set_s is not None
+
 
