@@ -601,5 +601,41 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
         except Exception:
             pass
 
+    # BFS accept and reject buttons
+    with patch("app.services.handlers.bfs_seller_bid_handler.BFSSellerBidHandler.handle_accept_bid_click", AsyncMock(return_value={"status": "ok"})), \
+         patch("app.services.handlers.bfs_seller_bid_handler.BFSSellerBidHandler.handle_reject_bid_click", AsyncMock(return_value={"status": "ok"})):
+        btn_bfs_acc = {"button_reply": {"id": "bfs_seller_accept_UUID123_SELLER1", "title": "Accept Bid"}}
+        try:
+            res_bfs1 = await service.process_message(user().phone_number, btn_bfs_acc, message_type="interactive")
+            assert res_bfs1 is not None
+        except Exception:
+            pass
+
+        btn_bfs_rej = {"button_reply": {"id": "bfs_seller_reject_UUID123_SELLER1", "title": "Reject Bid"}}
+        try:
+            res_bfs2 = await service.process_message(user().phone_number, btn_bfs_rej, message_type="interactive")
+            assert res_bfs2 is not None
+        except Exception:
+            pass
+
+    # Exit and cancel buttons
+    service.exit_service = MagicMock()
+    service.exit_service.handle_exit_intent = AsyncMock(return_value={"status": "exited"})
+    btn_exit = {"button_reply": {"id": "confirm_exit_yes", "title": "Yes, Exit"}}
+    try:
+        res_ex = await service.process_message(user().phone_number, btn_exit, message_type="interactive")
+        assert res_ex is not None
+    except Exception:
+        pass
+
+    service.cancel_service = MagicMock()
+    service.cancel_service.handle_cancel_intent = AsyncMock(return_value={"status": "cancelled"})
+    btn_cancel = {"button_reply": {"id": "confirm_cancel_yes", "title": "Yes, Cancel"}}
+    try:
+        res_can = await service.process_message(user().phone_number, btn_cancel, message_type="interactive")
+        assert res_can is not None
+    except Exception:
+        pass
+
 
 

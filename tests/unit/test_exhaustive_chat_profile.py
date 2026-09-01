@@ -1233,5 +1233,14 @@ async def test_profile_selection_exhaustive_residual_branches():
         ver_menu = await service._show_role_based_menu("+919999999999", {"role": "buyer", "email": "b@test.com"}, sess_menu)
         assert ver_menu["status"] == "verification_required"
 
+    # 14. Ambiguous and no profile handlers
+    service.whatsapp_service = MagicMock()
+    service.whatsapp_service.send_message = AsyncMock(return_value={"success": True})
+    amb_res = await service._handle_invalid_ambiguous("+919999999999", [{"role": "buyer", "email": "b@test.com"}, {"role": "seller", "email": "s@test.com"}], sess_menu)
+    assert amb_res["status"] == "ambiguous_profile_selection_presented"
+
+    no_prof_res = await service._handle_no_profiles_found("+919999999999", "greeting", sess_menu)
+    assert no_prof_res["status"] == "new_user_registration_presented"
+
 
 

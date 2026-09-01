@@ -1641,14 +1641,15 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         v = svc.get_daily_visitors(date_preset=preset, start_date_str="2026-08-01", end_date_str="2026-08-31")
         assert isinstance(v, list)
 
-    # 5. Export and Details for all filter types
+    # 5. Export and Details for all filter types across presets
     filters = ["all", "unknown", "buyer", "buyer_registered", "buyer_not_registered", "buyer_rfq_created", "buyer_rfq_not_created", "seller", "seller_registered", "seller_not_registered", "seller_subscribed", "seller_without_subscription"]
-    for f in filters:
-        csv_data = svc.export_user_classification_csv("7d", filter_type=f)
-        assert isinstance(csv_data, str)
-        details = svc.get_user_classification_details_json("7d", filter_type=f)
-        assert "users" in details
-        assert "total_users" in details
+    for p in ["today", "7d"]:
+        for f in filters:
+            csv_data = svc.export_user_classification_csv(p, filter_type=f)
+            assert isinstance(csv_data, str)
+            details = svc.get_user_classification_details_json(p, filter_type=f)
+            assert "users" in details
+            assert "total_users" in details
 
     # 6. Today conversations and Conversation messages with mocked Redis
     mock_redis = AsyncMock()
