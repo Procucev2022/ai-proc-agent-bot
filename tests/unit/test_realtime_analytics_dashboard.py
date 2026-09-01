@@ -33,15 +33,23 @@ from app.models import (
     SessionEvent,
 )
 from app.database import get_db_session
+from app.api.dashboard import get_dashboard_db
 
 
 @pytest.fixture(autouse=True)
 def override_db_dependency():
-    """Ensure TestClient uses a mocked DB session."""
+    """Ensure TestClient uses a mocked DB session.
+
+    The dashboard routes declare ``Depends(get_dashboard_db)``, which calls
+    ``get_db_session()`` for real, so both have to be overridden for the API
+    tests to be independent of any engine the rest of the suite may have built.
+    """
     mock_session = MagicMock()
     app.dependency_overrides[get_db_session] = lambda: mock_session
+    app.dependency_overrides[get_dashboard_db] = lambda: mock_session
     yield mock_session
     app.dependency_overrides.pop(get_db_session, None)
+    app.dependency_overrides.pop(get_dashboard_db, None)
 
 
 @pytest.fixture
@@ -51,12 +59,26 @@ def mock_redis_client():
     client.zadd = AsyncMock()
     client.zremrangebyscore = AsyncMock()
     client.expire = AsyncMock()
+    client.hset = AsyncMock()
+
+    async def _hget(_key, field):
+        # Bare-phone members resolve their user_type from the metadata hash.
+        return {
+            "919876543299": b'{"user_type": "seller"}',
+            "919876543298": '{"user_type": "buyer"}',
+            "invalid-json-entry": "not-valid-json",
+        }.get(field)
+
+    client.hget = AsyncMock(side_effect=_hget)
     client.zrange = AsyncMock(return_value=[
         json.dumps({"phone": "919876543210", "user_type": "buyer"}),
         json.dumps({"phone": "919876543211", "user_type": "seller"}),
         json.dumps({"phone": "919876543212", "user_type": "unknown"}),
         json.dumps({"phone": "919876543210", "user_type": "buyer"}),  # duplicate phone
-        "invalid-json-entry"
+        b"919876543299",       # bytes member, metadata as bytes
+        "919876543298",        # str member, metadata as str
+        "919876543297",        # str member, no metadata recorded
+        "invalid-json-entry",  # metadata present but undecodable
     ])
     client.publish = AsyncMock()
     client.lpush = AsyncMock()
@@ -101,10 +123,10 @@ async def test_realtime_analytics_service_heartbeat_and_counts(mock_redis_client
 
         # Test get active users count
         counts = await service.get_active_users_count()
-        assert counts["total"] == 3
-        assert counts["buyers"] == 1
-        assert counts["sellers"] == 1
-        assert counts["unknown"] == 1
+        assert counts["total"] == 6
+        assert counts["buyers"] == 2
+        assert counts["sellers"] == 2
+        assert counts["unknown"] == 2
 
 
 @pytest.mark.asyncio
@@ -330,9 +352,35 @@ async def test_dashboard_aggregation_service_full_stats():
         [("919876543211",)],  # seller_users_set
         [("919876543210",)],  # rfq_phones_in_period
         [([], None, "919876543210")],  # session rfq_ids
-        [(WorkflowType.general_inquiry, {}, None, None, None)],  # buyer_sessions for user
+        [
+            # sessions_by_phone rows: (ext_user, workflow_type, workflow_state,
+            # outcome, rfq_id, rfq_ids)
+            (
+                "919876543210",
+                WorkflowType.registration,
+                {"registration_stage": "completed"},
+                None,
+                None,
+                None,
+            ),
+            (
+                "919876543210",
+                WorkflowType.general_inquiry,
+                {"selected_user": {"id": 1}},
+                None,
+                "RFQ12345",
+                None,
+            ),
+            (
+                "919876543211",
+                WorkflowType.registration,
+                {},
+                ConversationOutcome.completed,
+                None,
+                None,
+            ),
+        ],  # sessions_by_phone
         [SimpleNamespace(phone_number="919876543211", subscription_credits=100)],  # registered_sellers_map
-        [(WorkflowType.general_inquiry, {}, None)],  # seller_sessions for user
         [
             (["RFQ12345", "RFQ12346"], None, ConversationOutcome.completed, None),
             (None, "RFQ12347", ConversationOutcome.abandoned, None),
@@ -405,6 +453,7 @@ async def test_dashboard_aggregation_service_fallback_categories():
         [],  # seller_users_set
         [],  # rfq_phones_in_period
         [],  # session rfq_ids
+        [],  # sessions_by_phone
         [],  # registered_sellers_map
         [],  # session_rfq_rows
         [],  # db_rfqs

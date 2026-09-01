@@ -530,17 +530,36 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
         res = await service._process_text_message(user(), sess, text, {"intent": intent_name, "confidence": 85})
         assert res is not None
 
-    # 4. Interactive messages
+    # 4. Interactive messages: button_reply routes to _handle_button_response
     buttons = ["btn_buy", "btn_sell", "btn_help", "btn_exit", "btn_retry", "btn_register_buyer", "btn_register_seller"]
-    for btn_id in buttons:
-        interactive_content = {"button_reply": {"id": btn_id, "title": btn_id}}
-        res_btn = await service.handle_interactive_message(user(), interactive_content, sess)
-        assert res_btn is not None
+    with patch.object(service, "_handle_button_response", AsyncMock(return_value={"status": "button"})):
+        for btn_id in buttons:
+            interactive_content = {
+                "type": "button_reply",
+                "button_reply": {"id": btn_id, "title": btn_id},
+            }
+            res_btn = await service._process_interactive_message(user(), sess, interactive_content)
+            assert res_btn == {"status": "button"}
 
     # 5. List reply interactive messages
-    list_content = {"list_reply": {"id": "list_opt_1", "title": "Option 1"}}
-    res_list = await service.handle_interactive_message(user(), list_content, sess)
-    assert res_list is not None
+    list_content = {"type": "list_reply", "list_reply": {"id": "list_opt_1", "title": "Option 1"}}
+    res_list = await service._process_interactive_message(user(), sess, list_content)
+    assert res_list == {"status": "list_handled", "list_id": "list_opt_1"}
+
+    # 5b. Interactive payload delivered as a JSON string and as invalid JSON
+    res_json = await service._process_interactive_message(
+        user(), sess, '{"type": "list_reply", "list_reply": {"id": "from_json"}}'
+    )
+    assert res_json == {"status": "list_handled", "list_id": "from_json"}
+
+    with patch.object(service, "_process_text_message", AsyncMock(return_value={"status": "text"})):
+        res_plain = await service._process_interactive_message(user(), sess, "not-json-at-all")
+        assert res_plain == {"status": "text"}
+
+    # 5c. Exceptions inside interactive routing propagate to the caller
+    with patch.object(service, "_handle_list_response", AsyncMock(side_effect=RuntimeError("boom"))):
+        with pytest.raises(RuntimeError):
+            await service._process_interactive_message(user(), sess, list_content)
 
     # 6. Process various message types
     msg_types = [
@@ -554,9 +573,10 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
         assert res_m is not None
 
     # 7. Error handling helper
-    if hasattr(service, "_handle_error_response"):
-        res_err = await service._handle_error_response(user().phone_number, "generic_error", "An error occurred", sess)
-        assert res_err is not None
+    res_err = await service._handle_error_response(
+        RuntimeError("boom"), user().phone_number, "generic_error", "An error occurred"
+    )
+    assert res_err == {"status": "error", "error": "boom"}
 
     # 8. Classification fallback
     fallback_res = service._build_classification_fallback("hello need to buy steel")

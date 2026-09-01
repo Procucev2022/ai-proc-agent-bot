@@ -249,7 +249,13 @@ async def test_chat_process_message_bfs_exit_and_cancel_buttons(monkeypatch):
     service.cancel_service.handle_cancel_intent.return_value = {"status": "cancelled"}
     assert (await service.process_message("1", {"button_reply": {"id": "confirm_cancel"}}, "interactive"))["status"] == "cancelled"
     assert (await service.process_message("1", {"button_reply": {"id": "cancel_no_credits"}}, "interactive"))["status"] == "cancelled"
-    assert service.session_manager.save_session.await_count >= 2
+    # The exit/cancel shortcuts record the button press in history before delegating.
+    history_titles = [
+        call.args[2] for call in service.session_manager.add_message_to_history.call_args_list
+    ]
+    assert "[Button: Yes, Exit]" in history_titles
+    assert "[Button: Yes, Cancel]" in history_titles
+    assert "[Button: No, Continue]" in history_titles
 
 
 @pytest.mark.asyncio
