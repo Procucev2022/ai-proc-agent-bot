@@ -1427,11 +1427,9 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
 
     r = RFQ(
         rfq_id="RFQ100",
-        buyer_user_id="b1",
+        external_user_id="919999999991",
         status=RFQStatus.collecting,
-        product_name="Chemicals",
-        location="Delhi",
-        api_payload={"product_name": "Chemicals"},
+        api_payload={"product_name": "Chemicals", "location": "Delhi"},
         created_at=now,
     )
     sess = ConversationSession(
