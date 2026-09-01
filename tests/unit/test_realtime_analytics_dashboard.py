@@ -1261,4 +1261,224 @@ async def test_realtime_analytics_service_redis_disabled():
     assert singleton is not None
 
 
+@pytest.mark.asyncio
+async def test_live_events_stream_generator_coverage():
+    """Test live_events_stream SSE generator branch coverage."""
+    from app.api.dashboard import live_events_stream
+    from unittest.mock import MagicMock
+
+    # 1. Normal event flow then disconnected
+    mock_request = MagicMock()
+    mock_request.is_disconnected = AsyncMock(side_effect=[False, True])
+
+    async def mock_events():
+        yield {"type": "event_1"}
+        yield {"type": "event_2"}
+
+    with patch("app.api.dashboard.get_realtime_analytics_service") as mock_get_svc:
+        mock_svc = MagicMock()
+        mock_svc.subscribe_events = mock_events
+        mock_get_svc.return_value = mock_svc
+
+        response = await live_events_stream(mock_request)
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk)
+        assert len(chunks) >= 2
+        assert "stream_connected" in chunks[0]
+
+    # 2. CancelledError in stream
+    mock_request2 = MagicMock()
+    mock_request2.is_disconnected = AsyncMock(return_value=False)
+
+    async def mock_events_cancel():
+        raise asyncio.CancelledError()
+        yield {"type": "event_1"}
+
+    with patch("app.api.dashboard.get_realtime_analytics_service") as mock_get_svc:
+        mock_svc = MagicMock()
+        mock_svc.subscribe_events = mock_events_cancel
+        mock_get_svc.return_value = mock_svc
+
+        response = await live_events_stream(mock_request2)
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk)
+        assert len(chunks) == 1
+
+    # 3. Generic Exception in stream
+    async def mock_events_error():
+        raise RuntimeError("stream failure")
+        yield {"type": "event_1"}
+
+    with patch("app.api.dashboard.get_realtime_analytics_service") as mock_get_svc:
+        mock_svc = MagicMock()
+        mock_svc.subscribe_events = mock_events_error
+        mock_get_svc.return_value = mock_svc
+
+        response = await live_events_stream(mock_request2)
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk)
+        assert len(chunks) == 1
+
+
+@pytest.mark.asyncio
+async def test_realtime_analytics_service_full_branches():
+    """Test RealtimeAnalyticsService branches with simulated redis and database."""
+    from app.services.realtime_analytics_service import RealtimeAnalyticsService
+    from unittest.mock import MagicMock
+
+    svc = RealtimeAnalyticsService()
+    svc.settings.redis_session_storage_enabled = True
+
+    # 1. Mock Redis client for active user counts & heartbeats
+    mock_redis = AsyncMock()
+    mock_redis.zrange = AsyncMock(return_value=[
+        json.dumps({"phone": "919876543210", "user_type": "buyer"}).encode("utf-8"),
+        json.dumps({"phone": "919876543210", "user_type": "buyer"}),  # duplicate
+        json.dumps({"phone": "919876543211", "user_type": "seller"}),
+        json.dumps({"phone": "919876543212", "user_type": "unknown"}),
+        b"invalid json payload",
+    ])
+    mock_redis.lrange = AsyncMock(return_value=[
+        json.dumps({"event_type": "rfq_created", "user_id": "919876543210"}),
+        "invalid json",
+    ])
+
+    with patch("app.redis_db.AsyncRedisConnectionManager.get_client", AsyncMock(return_value=mock_redis)):
+        # Heartbeat
+        await svc.record_heartbeat("919876543210", "buyer", session_id="s1")
+
+        # Counts
+        counts = await svc.get_active_users_count()
+        assert counts["buyers"] == 1
+        assert counts["sellers"] == 1
+        assert counts["unknown"] == 1
+        assert counts["total"] == 3
+
+        # Publish Event
+        ev = await svc.publish_event(
+            event_type="test_event",
+            user_id="919876543210",
+            data={"user_type": "buyer"},
+            session_id="s1",
+            persist_db=True
+        )
+        assert ev["user_masked"] == "9198****10"
+
+        # Short user id
+        ev2 = await svc.publish_event(
+            event_type="test_event",
+            user_id="user_123",
+            data={"role": "seller"},
+            session_id=None,
+            persist_db=False
+        )
+        assert ev2["user_masked"] == "user_123"
+
+        # Recent feed from redis
+        feed = await svc.get_recent_feed(limit=5)
+        assert len(feed) == 1
+
+    # 2. subscribe_events with redis
+    mock_pubsub = AsyncMock()
+    mock_pubsub.get_message = AsyncMock(side_effect=[
+        {"type": "message", "data": json.dumps({"event_type": "stream_test"}).encode("utf-8")},
+        {"type": "subscribe"},
+        asyncio.CancelledError(),
+    ])
+    mock_redis_pubsub = AsyncMock()
+    mock_redis_pubsub.pubsub = MagicMock(return_value=mock_pubsub)
+
+    with patch("app.redis_db.AsyncRedisConnectionManager.get_client", AsyncMock(return_value=mock_redis_pubsub)):
+        events = []
+        async for e in svc.subscribe_events():
+            events.append(e)
+        assert len(events) == 1
+        assert events[0]["event_type"] == "stream_test"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_aggregation_service_exhaustive_filters():
+    """Test DashboardAggregationService with all date presets and filter dimensions."""
+    from app.services.dashboard_aggregation_service import DashboardAggregationService
+    from app.models import ConversationSession, RFQ, Seller, ProductCategory, RFQNotificationFact, SessionState, WorkflowType, ConversationOutcome, RFQStatus
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    from app.database import Base
+    Base.metadata.create_all(bind=engine)
+    SessionTest = sessionmaker(bind=engine)
+    db = SessionTest()
+
+    now = datetime.now(timezone.utc)
+
+    # Seed data
+    p = ProductCategory(name="Chemicals", is_active=True)
+    s = Seller(organization_id="org_c", company_name="ChemCo", email="c@test.com", phone_number="919999999991", location="Delhi")
+    db.add_all([p, s])
+    db.commit()
+
+    r = RFQ(rfq_id="RFQ100", buyer_user_id="b1", status=RFQStatus.QUOTED, product_name="Chemicals", location="Delhi", api_payload={"product_name": "Chemicals"}, created_at=now)
+    sess = ConversationSession(
+        session_id="s_chem",
+        external_user_id="919999999991",
+        session_state=SessionState.ACTIVE,
+        workflow_type=WorkflowType.RFQ_CREATION,
+        outcome=ConversationOutcome.RFQ_COMPLETED,
+        retention_date=now.date(),
+        created_at=now,
+        updated_at=now
+    )
+    db.add_all([r, sess])
+    db.commit()
+
+    svc = DashboardAggregationService(db_session=db)
+
+    # 1. Test all date presets
+    for preset in ["today", "yesterday", "7d", "30d", "90d"]:
+        stats = await svc.get_dashboard_stats(date_preset=preset)
+        assert stats["status"] == "success"
+
+    # 2. Custom date range (valid and invalid)
+    stats_custom = await svc.get_dashboard_stats(date_preset="custom", start_date="2026-08-01", end_date="2026-08-31")
+    assert stats_custom["status"] == "success"
+
+    stats_custom_inv = await svc.get_dashboard_stats(date_preset="custom", start_date="invalid", end_date="invalid")
+    assert stats_custom_inv["status"] == "success"
+
+    # 3. Role and dimension filters
+    stats_buyer = await svc.get_dashboard_stats(role="buyer", category="Chemicals", location="Delhi", rfq_status="QUOTED")
+    assert stats_buyer["status"] == "success"
+
+    stats_seller = await svc.get_dashboard_stats(role="seller")
+    assert stats_seller["status"] == "success"
+
+    # 4. Daily visitors with various presets
+    for preset in ["yesterday", "7d", "30d", "custom"]:
+        v = svc.get_daily_visitors(date_preset=preset, start_date="2026-08-01", end_date="2026-08-31")
+        assert isinstance(v, list)
+
+    # 5. Export and Details for all filter types
+    filters = ["all", "unknown", "buyer", "buyer_registered", "buyer_not_registered", "buyer_rfq_created", "buyer_rfq_not_created", "seller", "seller_registered", "seller_not_registered", "seller_subscribed", "seller_without_subscription"]
+    for f in filters:
+        csv_data = svc.export_user_classification_csv("7d", filter_type=f)
+        assert isinstance(csv_data, str)
+        details = svc.get_user_classification_details_json("7d", filter_type=f)
+        assert "users" in details
+
+    # 6. Conversation messages with phone
+    msgs = await svc.get_conversation_messages(phone="919999999991")
+    assert isinstance(msgs, dict)
+
+    db.close()
+
+
 
