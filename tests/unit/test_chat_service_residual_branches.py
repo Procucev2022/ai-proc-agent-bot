@@ -567,7 +567,7 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
 
     # 7. Error handling helper
     if hasattr(service, "_handle_error_response"):
-        res_err = await service._handle_error_response(user().phone_number, "generic_error", sess)
+        res_err = await service._handle_error_response(user().phone_number, "generic_error", "An error occurred", sess)
         assert res_err is not None
 
 

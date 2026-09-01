@@ -1499,12 +1499,20 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         created_at=now,
         last_activity_at=now,
     )
+    # Test get_realtime_analytics_service singleton
+    from app.services.realtime_analytics_service import get_realtime_analytics_service
+    singleton = get_realtime_analytics_service()
+    assert singleton is not None
+
     fact = RFQNotificationFact(
+        date=now.date(),
+        session_id="s_seller",
         rfq_id="RFQ100",
-        seller_phone="919999999992",
-        notified_at=now,
-        read_at=now,
-        clicked_at=now
+        seller_id="seller_123",
+        category="Chemicals",
+        rfq_notified_at=now,
+        seller_response_at=now,
+        created_at=now,
     )
     db.add_all([sess_prior, r, sess, sess_seller, sess_unknown, fact])
     db.commit()
