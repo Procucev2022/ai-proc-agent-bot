@@ -1607,6 +1607,7 @@ async def test_session_management_all_residual_branches():
         await service.get_conversation_context("+919999999999")
 
     # 5. History management
+    from app.models import ConversationSession
     service._validate_license = MagicMock(return_value=(True, "OK"))
     sess_test = ConversationSession(session_id="s_test", external_user_id="919999999999")
     service.add_message_to_history(sess_test, "user", "Hello", "text", "greeting", 90)

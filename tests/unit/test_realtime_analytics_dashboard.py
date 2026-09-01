@@ -1428,7 +1428,7 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
     r = RFQ(
         rfq_id="RFQ100",
         buyer_user_id="b1",
-        status=RFQStatus.in_progress,
+        status=RFQStatus.collecting,
         product_name="Chemicals",
         location="Delhi",
         api_payload={"product_name": "Chemicals"},
