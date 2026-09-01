@@ -6,7 +6,7 @@ credit checking, email sending, and subscription management.
 """
 
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from app.config import get_settings
 from app.procucev_apis.procucev_api_client import get_procucev_api_client
 

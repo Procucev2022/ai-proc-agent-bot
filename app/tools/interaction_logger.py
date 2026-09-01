@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -18,22 +18,15 @@ logger = logging.getLogger(__name__)
 class InteractionLogger:
     """Logger for OpenAI interactions and responses."""
     
-    _instance = None
-    
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super(InteractionLogger, cls).__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-    
-    def __init__(self, log_dir: str = "logs/interactions"):
-        if self._initialized:
-            return
-            
+    def __init__(self, log_dir: str = "logs/openai_interactions"):
+        """Initialize interaction logger with log directory."""
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.log_file = self.log_dir / f"interactions_{datetime.now().strftime('%Y%m%d')}.jsonl"
-        self._initialized = True
+
+        # Create daily log file
+        today = datetime.now().strftime("%Y-%m-%d")
+        self.log_file = self.log_dir / f"interactions_{today}.jsonl"
+
         # Reduced to debug level - singleton is created once per worker process
         logger.debug(f"InteractionLogger initialized - Log file: {self.log_file}")
     
