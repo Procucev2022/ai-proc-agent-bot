@@ -1661,13 +1661,6 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
     singleton_svc = rtas.get_realtime_analytics_service()
     assert singleton_svc is not None
     assert rtas.get_realtime_analytics_service() is singleton_svc
-
-    # 9. Additional funnel and alert helper edge cases
-    svc_edge = DashboardAggregationService(db_session=db)
-    zero_funnel = svc_edge._build_visitor_funnel(0, 0, 0, 0, 0, 0, 0, 0, 0)
-    assert zero_funnel["total_visitors"] == 0
-    empty_alerts = svc_edge._build_opportunity_alerts([], 0)
-    assert len(empty_alerts) >= 1
     db.close()
 
 

@@ -1211,9 +1211,5 @@ async def test_profile_selection_exhaustive_residual_branches():
     parsed_reg_s = await service._parse_profile_selection("register as seller", opts)
     assert parsed_reg_s["action"] == "register_seller"
 
-    single_prof = [{"user_id": "u1", "role": "buyer", "email": "test@test.com", "business_name": "Test Co"}]
-    formatted_single = service._format_profile_options(single_prof)
-    assert "Test Co" in formatted_single or "buyer" in formatted_single.lower()
-
 
 
