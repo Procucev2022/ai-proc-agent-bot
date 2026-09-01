@@ -1214,5 +1214,18 @@ async def test_profile_selection_exhaustive_residual_branches():
 
     assert service._convert_api_data_to_profiles([{"invalid": "data"}]) == []
 
+    # 13. Role based menus
+    sess_menu = ConversationSession(session_id="s_menu", external_user_id="919999999999")
+    with patch.object(service, "_set_active_profile_and_proceed", AsyncMock(return_value={"status": "profile_selected_and_authenticated"})):
+        buyer_menu = await service._show_role_based_menu("+919999999999", {"role": "buyer", "email": "b@test.com", "user_data": {"fullName": "Alice"}}, sess_menu)
+        assert buyer_menu is not None
+
+        seller_menu = await service._show_role_based_menu("+919999999999", {"role": "seller", "email": "s@test.com", "user_data": {"fullName": "Bob"}}, sess_menu)
+        assert seller_menu is not None
+
+    with patch.object(service, "_set_active_profile_and_proceed", AsyncMock(return_value={"status": "verification_required"})):
+        ver_menu = await service._show_role_based_menu("+919999999999", {"role": "buyer", "email": "b@test.com"}, sess_menu)
+        assert ver_menu["status"] == "verification_required"
+
 
 

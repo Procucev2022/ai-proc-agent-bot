@@ -1698,11 +1698,12 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
     assert singleton_svc is not None
     assert rtas.get_realtime_analytics_service() is singleton_svc
 
-    # Test subscribe_events generator fallback
+    # Test subscribe_events generator fallback with mocked sleep
     singleton_svc.settings.redis_session_storage_enabled = False
-    gen = singleton_svc.subscribe_events()
-    ev_hb = await gen.__anext__()
-    assert ev_hb.get("event_type") == "heartbeat"
+    with patch("asyncio.sleep", AsyncMock()):
+        gen = singleton_svc.subscribe_events()
+        ev_hb = await gen.__anext__()
+        assert ev_hb.get("event_type") == "heartbeat"
     singleton_svc.settings.redis_session_storage_enabled = True
 
     db.close()
