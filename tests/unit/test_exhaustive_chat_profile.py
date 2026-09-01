@@ -1174,4 +1174,27 @@ async def test_profile_selection_exhaustive_residual_branches():
     res_set_s = await service._set_active_profile_and_proceed("+919999999999", {"role": "seller", "user_id": "s1", "email": "s@t.com"}, s, "sell", "seller_intent")
     assert res_set_s is not None
 
+    # 9. _fuzzy_email_match and _string_similarity
+    sim = service._string_similarity("steel buyer", "steel buyer inc")
+    assert sim > 0.0
+    fuzz1 = service._fuzzy_email_match("alice", "alice@example.com")
+    assert fuzz1.get("confidence", 0) > 0
+    fuzz2 = service._fuzzy_email_match("ab", "alice@example.com")
+    assert fuzz2.get("confidence", 0) == 0.0
+
+    # 10. _parse_profile_selection with user_selection_tool
+    tool = MagicMock()
+    tool.analyze_user_selection = AsyncMock(return_value={"register": {"type": "buyer"}})
+    service.user_selection_tool = tool
+    parsed_reg = await service._parse_profile_selection("register as buyer", opts)
+    assert parsed_reg["action"] == "register_buyer"
+
+    tool.analyze_user_selection = AsyncMock(return_value={"selected_option": 1, "requires_clarification": False})
+    parsed_sel = await service._parse_profile_selection("first one", opts)
+    assert parsed_sel["number"] == 1
+
+    tool.analyze_user_selection = AsyncMock(return_value={"requires_clarification": True})
+    parsed_clar = await service._parse_profile_selection("which one?", opts)
+    assert parsed_clar is None
+
 

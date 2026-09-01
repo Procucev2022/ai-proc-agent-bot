@@ -1410,6 +1410,11 @@ async def test_realtime_analytics_service_full_branches():
         break
     svc.settings.redis_session_storage_enabled = True
 
+    # 4. get_realtime_analytics_service singleton
+    from app.services.realtime_analytics_service import get_realtime_analytics_service
+    singleton = get_realtime_analytics_service()
+    assert singleton is not None
+
 
 @pytest.mark.asyncio
 async def test_dashboard_aggregation_service_exhaustive_filters():
@@ -1460,12 +1465,21 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         api_payload={"product_name": "Chemicals", "location": "Delhi"},
         created_at=now,
     )
+    r2 = RFQ(
+        rfq_id="RFQ101",
+        external_user_id="919999999991",
+        status=RFQStatus.submitted,
+        api_payload={"product_name": "Steel", "location": "Mumbai"},
+        created_at=past,
+    )
     sess = ConversationSession(
         session_id="s_chem",
         external_user_id="919999999991",
         user_type=UserType.buyer,
         session_state=SessionState.active,
         workflow_type=WorkflowType.rfq_creation,
+        rfq_id="RFQ100",
+        rfq_ids=["RFQ100"],
         workflow_state={"status": "completed", "registration_stage": "completed"},
         conversation_history={"messages": [{"role": "user", "content": "Need chemicals", "timestamp": "2026-08-27T10:00:00Z"}]},
         outcome=ConversationOutcome.completed,
@@ -1499,10 +1513,6 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         created_at=now,
         last_activity_at=now,
     )
-    # Test get_realtime_analytics_service singleton
-    from app.services.realtime_analytics_service import get_realtime_analytics_service
-    singleton = get_realtime_analytics_service()
-    assert singleton is not None
 
     fact = RFQNotificationFact(
         date=now.date(),
@@ -1514,7 +1524,7 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         seller_response_at=now,
         created_at=now,
     )
-    db.add_all([sess_prior, r, sess, sess_seller, sess_unknown, fact])
+    db.add_all([sess_prior, r, r2, sess, sess_seller, sess_unknown, fact])
     db.commit()
 
     svc = DashboardAggregationService(db_session=db)
@@ -1555,15 +1565,31 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         assert "users" in details
         assert "total_users" in details
 
-    # 6. Today conversations and Conversation messages
-    today_conv = await svc.get_today_conversations()
-    assert isinstance(today_conv, list)
+    # 6. Today conversations and Conversation messages with mocked Redis
+    mock_redis = AsyncMock()
+    mock_redis.keys = AsyncMock(return_value=["session:s_active"])
+    mock_redis.get = AsyncMock(return_value=json.dumps({
+        "session_id": "s_active",
+        "external_user_id": "919999999991",
+        "user_type": "buyer",
+        "conversation_history": {
+            "messages": [
+                {"role": "user", "content": {"body": "Need 5 tons steel", "buttons": [{"reply": {"id": "1", "title": "Buy"}}]}},
+                {"role": "assistant", "content": {"header": "Welcome", "footer": "ProcAgent", "action": {"buttons": [{"id": "2", "title": "Help"}]}}}
+            ]
+        }
+    }))
+    mock_redis.zrange = AsyncMock(return_value=[json.dumps({"phone": "919999999991", "user_type": "buyer"}).encode("utf-8")])
 
-    msgs_phone = await svc.get_conversation_messages(phone="919999999991")
-    assert msgs_phone["status"] == "success"
+    with patch("app.redis_db.AsyncRedisConnectionManager.get_client", AsyncMock(return_value=mock_redis)):
+        today_conv = await svc.get_today_conversations()
+        assert isinstance(today_conv, list)
 
-    msgs_sess = await svc.get_conversation_messages(session_id="s_chem")
-    assert msgs_sess["status"] == "success"
+        msgs_phone = await svc.get_conversation_messages(phone="919999999991")
+        assert msgs_phone["status"] == "success"
+
+        msgs_sess = await svc.get_conversation_messages(session_id="s_chem")
+        assert msgs_sess["status"] == "success"
 
     msgs_err = await svc.get_conversation_messages()
     assert msgs_err["status"] == "error"
@@ -1573,6 +1599,12 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
     with patch("app.services.dashboard_aggregation_service.get_db_session_context", return_value=db):
         stats_no_db = await svc_no_db.get_dashboard_stats(date_preset="today")
         assert stats_no_db["status"] == "success"
+        csv_no_db = svc_no_db.export_user_classification_csv("today")
+        assert isinstance(csv_no_db, str)
+        det_no_db = svc_no_db.get_user_classification_details_json("today")
+        assert "users" in det_no_db
+        vis_no_db = svc_no_db.get_daily_visitors("today")
+        assert isinstance(vis_no_db, list)
 
     db.close()
 
