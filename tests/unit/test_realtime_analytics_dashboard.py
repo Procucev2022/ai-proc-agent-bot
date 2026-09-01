@@ -1437,6 +1437,8 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         external_user_id="919999999991",
         session_state=SessionState.active,
         workflow_type=WorkflowType.rfq_creation,
+        workflow_state={"status": "completed"},
+        conversation_history={"messages": []},
         outcome=ConversationOutcome.completed,
         retention_date=now.date(),
         created_at=now,
