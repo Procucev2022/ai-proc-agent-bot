@@ -1282,21 +1282,21 @@ async def test_profile_selection_exhaustive_residual_branches():
         assert (await service._process_selected_profile("+919999999999", {"registration_type": "buyer"}, sess_menu))["status"] == "buyer_reg"
         assert (await service._process_selected_profile("+919999999999", {"registration_type": "seller"}, sess_menu))["status"] == "seller_reg"
 
-    # 18. handle_profile_selection_flow registration branches
+    # 18. handle_profile_selection registration branches
     with patch.object(service, "_detect_registration_intent", AsyncMock(side_effect=["buyer", "seller", "buyer", "seller"])), \
          patch.object(service, "_redirect_to_buyer_registration", AsyncMock(return_value={"status": "buyer_reg"})), \
          patch.object(service, "_redirect_to_seller_registration", AsyncMock(return_value={"status": "seller_reg"})):
         
         # Explicit registration intent
-        res_b = await service.handle_profile_selection_flow("+919999999999", {"button_reply": {"title": "Register Buyer"}}, sess_menu, intent="unknown")
+        res_b = await service.handle_profile_selection("+919999999999", {"button_reply": {"title": "Register Buyer"}}, sess_menu, intent="unknown")
         assert res_b["status"] == "buyer_reg"
-        res_s = await service.handle_profile_selection_flow("+919999999999", "seller", sess_menu, intent="unknown")
+        res_s = await service.handle_profile_selection("+919999999999", "seller", sess_menu, intent="unknown")
         assert res_s["status"] == "seller_reg"
 
         # Intent == register_account
-        res_acc_b = await service.handle_profile_selection_flow("+919999999999", {"other_key": "val"}, sess_menu, intent="register_account")
+        res_acc_b = await service.handle_profile_selection("+919999999999", {"other_key": "val"}, sess_menu, intent="register_account")
         assert res_acc_b["status"] == "buyer_reg"
-        res_acc_s = await service.handle_profile_selection_flow("+919999999999", "seller", sess_menu, intent="register_account")
+        res_acc_s = await service.handle_profile_selection("+919999999999", "seller", sess_menu, intent="register_account")
         assert res_acc_s["status"] == "seller_reg"
 
 
