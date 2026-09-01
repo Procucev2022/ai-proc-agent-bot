@@ -1470,7 +1470,7 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
 
     # 4. Daily visitors with various presets
     for preset in ["yesterday", "7d", "30d", "custom"]:
-        v = svc.get_daily_visitors(date_preset=preset, start_date="2026-08-01", end_date="2026-08-31")
+        v = svc.get_daily_visitors(date_preset=preset, start_date_str="2026-08-01", end_date_str="2026-08-31")
         assert isinstance(v, list)
 
     # 5. Export and Details for all filter types
