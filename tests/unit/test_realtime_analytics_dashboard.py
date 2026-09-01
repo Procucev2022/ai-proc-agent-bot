@@ -1421,7 +1421,7 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
     now = datetime.now(timezone.utc)
 
     # Seed data
-    p = ProductCategory(name="Chemicals", is_active=True)
+    p = ProductCategory(category_name="Chemicals")
     s = Seller(organization_id="org_c", company_name="ChemCo", email="c@test.com", phone_number="919999999991", location="Delhi")
     db.add_all([p, s])
     db.commit()
