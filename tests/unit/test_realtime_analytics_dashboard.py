@@ -1165,7 +1165,8 @@ async def test_dashboard_aggregation_full_metrics_coverage():
         for ftype in ["all", "unknown", "buyer", "buyer_registered", "buyer_not_registered", "buyer_rfq_created", "buyer_rfq_not_created", "seller", "seller_registered", "seller_not_registered", "seller_subscribed", "seller_without_subscription"]:
             details = svc.get_user_classification_details_json("today", filter_type=ftype)
             assert "users" in details
-            assert "count" in details
+            assert "total_users" in details
+            assert "total_overall_users" in details
             csv_data = svc.export_user_classification_csv("today", filter_type=ftype)
             assert isinstance(csv_data, str)
 
