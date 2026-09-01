@@ -1090,3 +1090,74 @@ async def test_profile_selection_comprehensive_branch_coverage(monkeypatch):
     assert res_reg_seller is not None
 
 
+@pytest.mark.asyncio
+async def test_profile_selection_exhaustive_residual_branches():
+    """Test all remaining branch cases in ProfileSelectionService."""
+    wa = MagicMock()
+    wa.send_message = AsyncMock()
+    auth = MagicMock()
+    openai = MagicMock()
+    service = ProfileSelectionService(wa, auth, openai)
+
+    # 1. _handle_seller_intent with 0, 1, and 2 seller profiles
+    s = session_obj(workflow_state={})
+    res_s0 = await service._handle_seller_intent("+919999999999", [], s)
+    assert res_s0["status"] == "seller_no_accounts_message_sent"
+
+    res_s1 = await service._handle_seller_intent("+919999999999", [{"role": "seller", "email": "s1@test.com", "user_id": "s1"}], s)
+    assert res_s1 is not None
+
+    res_s2 = await service._handle_seller_intent("+919999999999", [
+        {"role": "seller", "email": "s1@test.com", "user_id": "s1"},
+        {"role": "seller", "email": "s2@test.com", "user_id": "s2"}
+    ], s)
+    assert res_s2["status"] == "seller_profile_selection_presented"
+
+    # 2. _handle_buyer_intent with 0, 1, and 2 buyer profiles
+    res_b0 = await service._handle_buyer_intent("+919999999999", [], s)
+    assert res_b0["status"] == "buyer_no_accounts_message_sent"
+
+    res_b1 = await service._handle_buyer_intent("+919999999999", [{"role": "buyer", "email": "b1@test.com", "user_id": "b1"}], s)
+    assert res_b1 is not None
+
+    res_b2 = await service._handle_buyer_intent("+919999999999", [
+        {"role": "buyer", "email": "b1@test.com", "user_id": "b1"},
+        {"role": "buyer", "email": "b2@test.com", "user_id": "b2"}
+    ], s)
+    assert res_b2["status"] == "buyer_profile_selection_presented"
+
+    # 3. _handle_rfq_status_check with 1 and 2 profiles
+    res_rfq1 = await service._handle_rfq_status_check("+919999999999", [{"role": "buyer", "email": "b1@test.com"}], s)
+    assert res_rfq1 is not None
+
+    res_rfq2 = await service._handle_rfq_status_check("+919999999999", [
+        {"role": "buyer", "email": "b1@test.com"},
+        {"role": "seller", "email": "s1@test.com"}
+    ], s)
+    assert res_rfq2["status"] == "rfq_status_profile_selection_presented"
+
+    # 4. _handle_invalid_ambiguous and _handle_no_profiles_found
+    res_amb = await service._handle_invalid_ambiguous("+919999999999", [{"role": "buyer", "email": "b1@test.com"}], s)
+    assert res_amb["status"] == "ambiguous_profile_selection_presented"
+
+    res_no = await service._handle_no_profiles_found("+919999999999", "greeting", s)
+    assert res_no["status"] == "new_user_registration_presented"
+
+    # 5. _parse_profile_selection with fast path keywords
+    opts = [
+        {"number": 1, "action": "register_buyer", "display": "Buyer"},
+        {"number": 2, "action": "register_seller", "display": "Seller"},
+        {"number": 3, "action": "exit", "display": "Exit"}
+    ]
+    assert (await service._parse_profile_selection("buyer", opts))["action"] == "register_buyer"
+    assert (await service._parse_profile_selection("seller", opts))["action"] == "register_seller"
+    assert (await service._parse_profile_selection("exit", opts))["action"] == "exit"
+    assert (await service._parse_profile_selection("1", opts))["number"] == 1
+
+    # 6. _handle_profile_selection_response across stages
+    for stage_name in ["neutral_greeting", "buyer_intent", "seller_intent", "rfq_status_check", "invalid_ambiguous", "buyer_intent_no_accounts", "seller_no_accounts", "new_user_registration"]:
+        s_stage = session_obj(workflow_state={"profile_selection_stage": stage_name, "profile_options": opts})
+        res_resp = await service.handle_profile_selection_response("+919999999999", "1", s_stage)
+        assert res_resp is not None
+
+
