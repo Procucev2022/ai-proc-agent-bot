@@ -1140,9 +1140,10 @@ async def test_dashboard_aggregation_full_metrics_coverage():
         stats = await svc.get_dashboard_stats(date_preset="today", role="buyer", rfq_status="submitted")
         assert stats["status"] == "success"
         assert "executive" in stats
-        assert "buyer_funnel" in stats
-        assert "seller_funnel" in stats
+        assert "funnel" in stats
+        assert "buyer_seller" in stats
         assert "rfq_lifecycle" in stats
+        assert "marketplace_health" in stats
 
         # Test presets: yesterday, 7d, 30d, 90d, custom
         stats_y = await svc.get_dashboard_stats(date_preset="yesterday", role="seller")

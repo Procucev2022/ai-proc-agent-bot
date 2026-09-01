@@ -1060,7 +1060,7 @@ async def test_profile_selection_comprehensive_branch_coverage(monkeypatch):
     # 7. handle_profile_selection when no profiles exist
     s2 = session_obj(workflow_state={})
     cache.get_user_data.return_value = []
-    res_show = await service.handle_profile_selection("+919999999999", "hello", {"intent": "greeting", "confidence": 90}, s2)
+    res_show = await service.handle_profile_selection("+919999999999", "hello", s2, {"intent": "greeting", "confidence": 90})
     assert res_show is not None
 
     # 8. Confidence boundary tests for buy/sell/rfq_status
@@ -1070,23 +1070,23 @@ async def test_profile_selection_comprehensive_branch_coverage(monkeypatch):
     service._handle_seller_intent = AsyncMock(return_value={"status": "seller_handled"})
     service._handle_rfq_status_check = AsyncMock(return_value={"status": "rfq_checked"})
 
-    res_buy_mid = await service.handle_profile_selection("+919999999999", "buy steel", {"intent": "buy_something", "confidence": 60}, s2)
+    res_buy_mid = await service.handle_profile_selection("+919999999999", "buy steel", s2, {"intent": "buy_something", "confidence": 60})
     assert res_buy_mid["status"] == "buyer_handled"
 
-    res_sell_high = await service.handle_profile_selection("+919999999999", "sell steel", {"intent": "sell_something", "confidence": 85}, s2)
+    res_sell_high = await service.handle_profile_selection("+919999999999", "sell steel", s2, {"intent": "sell_something", "confidence": 85})
     assert res_sell_high["status"] == "seller_handled"
 
-    res_rfq_high = await service.handle_profile_selection("+919999999999", "status of rfq", {"intent": "rfq_status_check", "confidence": 85}, s2)
+    res_rfq_high = await service.handle_profile_selection("+919999999999", "status of rfq", s2, {"intent": "rfq_status_check", "confidence": 85})
     assert res_rfq_high["status"] == "rfq_checked"
 
     # 9. Explicit registration intent detection in handle_profile_selection
     service._redirect_to_buyer_registration = AsyncMock(return_value={"status": "buyer_reg"})
     service._redirect_to_seller_registration = AsyncMock(return_value={"status": "seller_reg"})
 
-    res_reg_buyer = await service.handle_profile_selection("+919999999999", "I want to register as a buyer", {"intent": "register_account", "confidence": 90}, s2)
+    res_reg_buyer = await service.handle_profile_selection("+919999999999", "I want to register as a buyer", s2, {"intent": "register_account", "confidence": 90})
     assert res_reg_buyer is not None
 
-    res_reg_seller = await service.handle_profile_selection("+919999999999", "I want to register as a seller", {"intent": "register_account", "confidence": 90}, s2)
+    res_reg_seller = await service.handle_profile_selection("+919999999999", "I want to register as a seller", s2, {"intent": "register_account", "confidence": 90})
     assert res_reg_seller is not None
 
 
