@@ -71,7 +71,7 @@ async def get_dashboard_stats(
         logger.error(f"[DASHBOARD_API] Error computing stats: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={"status": "error", "message": f"Failed to compute dashboard stats: {str(e)}"}
+            content={"status": "error", "message": "Failed to compute dashboard stats"}
         )
 
 
@@ -105,7 +105,7 @@ async def export_user_classification_csv(
         logger.error(f"[DASHBOARD_API] Error exporting CSV: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={"status": "error", "message": f"Failed to export CSV: {str(e)}"}
+            content={"status": "error", "message": "Failed to export CSV"}
         )
 
 
@@ -135,7 +135,7 @@ async def get_user_classification_details(
         logger.error(f"[DASHBOARD_API] Error fetching classification details: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={"status": "error", "message": f"Failed to fetch user classification details: {str(e)}"}
+            content={"status": "error", "message": "Failed to fetch user classification details"}
         )
 
 
@@ -150,7 +150,7 @@ async def get_active_users():
         return JSONResponse(content={"status": "success", "active_users": counts})
     except Exception as e:
         logger.error(f"[DASHBOARD_API] Error fetching active users: {e}")
-        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Dashboard request failed"})
 
 
 @router.get("/feed")
@@ -164,7 +164,7 @@ async def get_recent_feed(limit: int = Query(50, ge=1, le=100)):
         return JSONResponse(content={"status": "success", "feed": feed})
     except Exception as e:
         logger.error(f"[DASHBOARD_API] Error fetching feed: {e}")
-        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Dashboard request failed"})
 
 
 @router.get("/live-stream")
@@ -221,7 +221,7 @@ async def export_dashboard_data(
             headers={"Content-Disposition": f"attachment; filename=procurement_analytics_{date_preset}.json"}
         )
     except Exception as e:
-        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Dashboard request failed"})
 
 
 @router.get("/daily-visitors")
@@ -247,7 +247,7 @@ async def get_daily_visitors(
         return JSONResponse(content={"status": "success", "data": data})
     except Exception as e:
         logger.error(f"[DASHBOARD_API] Error fetching daily visitors: {e}", exc_info=True)
-        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Dashboard request failed"})
 
 
 @router.get("/today-conversations")
@@ -263,7 +263,7 @@ async def get_today_conversations(
         return JSONResponse(content={"status": "success", "data": conversations})
     except Exception as e:
         logger.error(f"[DASHBOARD_API] Error fetching today conversations: {e}", exc_info=True)
-        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Dashboard request failed"})
 
 
 @router.get("/conversation-messages")
@@ -281,4 +281,4 @@ async def get_conversation_messages(
         return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"[DASHBOARD_API] Error fetching conversation messages: {e}", exc_info=True)
-        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Dashboard request failed"})
