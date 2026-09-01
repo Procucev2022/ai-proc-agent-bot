@@ -1097,7 +1097,7 @@ async def test_profile_selection_exhaustive_residual_branches():
     wa.send_message = AsyncMock()
     auth = MagicMock()
     openai = MagicMock()
-    service = ProfileSelectionService(wa, auth, openai)
+    service = profile_module.ProfileSelectionService(wa, auth, openai)
 
     # 1. _handle_seller_intent with 0, 1, and 2 seller profiles
     s = session_obj(workflow_state={})
