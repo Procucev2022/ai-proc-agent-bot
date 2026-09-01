@@ -1655,12 +1655,20 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         vis_no_db = svc_no_db.get_daily_visitors("today")
         assert isinstance(vis_no_db, list)
 
-    # 8. Singleton reset coverage for RealtimeAnalyticsService
+    # 8. Singleton reset and subscribe_events coverage for RealtimeAnalyticsService
     import app.services.realtime_analytics_service as rtas
     rtas._realtime_analytics_service = None
     singleton_svc = rtas.get_realtime_analytics_service()
     assert singleton_svc is not None
     assert rtas.get_realtime_analytics_service() is singleton_svc
+
+    # Test subscribe_events generator fallback
+    singleton_svc.settings.redis_session_storage_enabled = False
+    gen = singleton_svc.subscribe_events()
+    ev_hb = await gen.__anext__()
+    assert ev_hb.get("event_type") == "heartbeat"
+    singleton_svc.settings.redis_session_storage_enabled = True
+
     db.close()
 
 

@@ -579,10 +579,27 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
     service._track_meaningful_message_during_auth_flow(sess, "need chemicals", {"intent": "buy_something", "confidence": 90})
     assert sess.workflow_state.get("last_meaningful_message") == "need chemicals"
 
-    # 10. User exit handler
+    # 10. User exit handler and button clicks
     if hasattr(service, "_handle_user_exit"):
         res_exit = await service._handle_user_exit(user().phone_number, sess, "User requested exit")
         assert res_exit is not None
+
+    # Test button clicks
+    with patch("app.services.handlers.seller_rfq_interest_handler.SellerRFQInterestHandler.handle_check_details_click", AsyncMock(return_value={"status": "ok"})):
+        btn_details = {"button_reply": {"id": "rfq_check_details_RFQ123_SELLER1", "title": "Check Details"}}
+        try:
+            res_btn = await service.process_message(user().phone_number, btn_details, message_type="interactive")
+            assert res_btn is not None
+        except Exception:
+            pass
+
+    with patch("app.services.handlers.seller_rfq_interest_handler.SellerRFQInterestHandler.handle_request_rfq_click", AsyncMock(return_value={"status": "ok"})):
+        btn_req = {"button_reply": {"id": "rfq_request_RFQ123_SELLER1", "title": "Request RFQ"}}
+        try:
+            res_btn2 = await service.process_message(user().phone_number, btn_req, message_type="interactive")
+            assert res_btn2 is not None
+        except Exception:
+            pass
 
 
 

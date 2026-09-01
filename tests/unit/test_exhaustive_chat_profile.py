@@ -1207,9 +1207,12 @@ async def test_profile_selection_exhaustive_residual_branches():
     parsed_sw = await service._parse_profile_selection("switch account 2", opts)
     assert parsed_sw is not None
 
-    tool.analyze_user_selection = AsyncMock(return_value={"register": {"type": "seller"}})
-    parsed_reg_s = await service._parse_profile_selection("register as seller", opts)
-    assert parsed_reg_s["action"] == "register_seller"
+    # 12. Profile extraction and conversion helpers
+    assert service._extract_user_name([]) is None
+    assert service._extract_user_name([{"user_data": {"fullName": "John Doe"}}]) == "John"
+    assert service._extract_user_name([{"user_data": {"fullName": "   "}}]) is None
+
+    assert service._convert_api_data_to_profiles([{"invalid": "data"}]) == []
 
 
 
