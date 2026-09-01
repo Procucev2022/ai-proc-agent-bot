@@ -1173,8 +1173,8 @@ async def test_dashboard_aggregation_full_metrics_coverage():
         visitors = svc.get_daily_visitors(date_preset="today")
         assert isinstance(visitors, list)
 
-        today_conv = svc.get_today_conversations(date_preset="today")
-        assert isinstance(today_conv, dict)
+        today_conv = await svc.get_today_conversations()
+        assert isinstance(today_conv, list)
 
         msgs = svc.get_conversation_messages("s1")
         assert isinstance(msgs, dict)
