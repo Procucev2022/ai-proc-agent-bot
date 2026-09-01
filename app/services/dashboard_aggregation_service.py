@@ -780,12 +780,16 @@ class DashboardAggregationService:
         ]
 
         def _generate(db: Session) -> str:
-            def _row_val(row, idx: int, attr: Optional[str] = None):
-                if isinstance(row, (tuple, list)):
-                    return row[idx] if len(row) > idx else None
+            def _row_val(row, idx: int = 0, attr: Optional[str] = None):
+                if row is None:
+                    return None
+                try:
+                    return row[idx]
+                except (IndexError, TypeError, KeyError):
+                    pass
                 if attr and hasattr(row, attr):
                     return getattr(row, attr)
-                return None
+                return row
 
             all_period_users = [
                 _row_val(u, 0, "external_user_id") for u in db.query(distinct(ConversationSession.external_user_id)).filter(
@@ -1048,12 +1052,16 @@ class DashboardAggregationService:
         ]
 
         def _generate(db: Session) -> Dict[str, Any]:
-            def _row_val(row, idx: int, attr: Optional[str] = None):
-                if isinstance(row, (tuple, list)):
-                    return row[idx] if len(row) > idx else None
+            def _row_val(row, idx: int = 0, attr: Optional[str] = None):
+                if row is None:
+                    return None
+                try:
+                    return row[idx]
+                except (IndexError, TypeError, KeyError):
+                    pass
                 if attr and hasattr(row, attr):
                     return getattr(row, attr)
-                return None
+                return row
 
             all_period_users = [
                 _row_val(u, 0, "external_user_id") for u in db.query(distinct(ConversationSession.external_user_id)).filter(

@@ -1255,5 +1255,12 @@ async def test_profile_selection_exhaustive_residual_branches():
     assert (await service._parse_profile_selection("seller", reg_opts))["action"] == "register_seller"
     assert (await service._parse_profile_selection("exit", reg_opts))["action"] == "exit"
 
+    # 16. Fuzzy email matching and string similarity branches
+    assert service._fuzzy_email_match("ab", "alice@example.com")["confidence"] == 0.0
+    assert service._fuzzy_email_match("alice", "alice@example.com")["confidence"] > 0.5
+    assert service._fuzzy_email_match("exampl", "alice@example.com")["confidence"] > 0.0
+    assert service._string_similarity("abc", "abc") == 1.0
+    assert service._string_similarity("a", "xyz") == 0.0
+
 
 
