@@ -1098,6 +1098,7 @@ async def test_dashboard_aggregation_full_metrics_coverage():
         rfq_id="r1",
         created_at=now,
         last_activity_at=now,
+        retention_date=now.date(),
         conversation_history={"messages": [{"role": "user", "content": "Hi"}]}
     )
     s2 = ConversationSession(
@@ -1110,6 +1111,7 @@ async def test_dashboard_aggregation_full_metrics_coverage():
         workflow_state={},
         created_at=now,
         last_activity_at=now,
+        retention_date=now.date(),
         conversation_history={"messages": []}
     )
     r1 = RFQ(
