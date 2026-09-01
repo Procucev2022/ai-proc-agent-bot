@@ -1064,6 +1064,7 @@ async def test_profile_selection_comprehensive_branch_coverage(monkeypatch):
     assert res_show is not None
 
     # 8. Confidence boundary tests for buy/sell/rfq_status
+    service._detect_registration_intent = AsyncMock(return_value=None)
     service._get_user_profiles = AsyncMock(return_value={"success": True, "profiles": [{"role": "buyer", "user_id": "u1", "username": "b1"}]})
     service._handle_buyer_intent = AsyncMock(return_value={"status": "buyer_handled"})
     service._handle_seller_intent = AsyncMock(return_value={"status": "seller_handled"})
