@@ -1418,24 +1418,31 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
     SessionTest = sessionmaker(bind=engine)
     db = SessionTest()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
 
     # Seed data
     p = ProductCategory(category_name="Chemicals")
-    s = Seller(organization_id="org_c", company_name="ChemCo", email="c@test.com", phone_number="919999999991", location="Delhi")
-    db.add_all([p, s])
+    db.add(p)
     db.commit()
 
-    r = RFQ(rfq_id="RFQ100", buyer_user_id="b1", status=RFQStatus.QUOTED, product_name="Chemicals", location="Delhi", api_payload={"product_name": "Chemicals"}, created_at=now)
+    r = RFQ(
+        rfq_id="RFQ100",
+        buyer_user_id="b1",
+        status=RFQStatus.in_progress,
+        product_name="Chemicals",
+        location="Delhi",
+        api_payload={"product_name": "Chemicals"},
+        created_at=now,
+    )
     sess = ConversationSession(
         session_id="s_chem",
         external_user_id="919999999991",
-        session_state=SessionState.ACTIVE,
-        workflow_type=WorkflowType.RFQ_CREATION,
-        outcome=ConversationOutcome.RFQ_COMPLETED,
+        session_state=SessionState.active,
+        workflow_type=WorkflowType.rfq_creation,
+        outcome=ConversationOutcome.completed,
         retention_date=now.date(),
         created_at=now,
-        updated_at=now
+        last_activity_at=now,
     )
     db.add_all([r, sess])
     db.commit()

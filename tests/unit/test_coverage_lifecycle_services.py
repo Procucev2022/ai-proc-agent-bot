@@ -1601,5 +1601,23 @@ async def test_session_management_all_residual_branches():
     s3 = await service.get_conversation_context("+919999999999")
     assert s3 is not None
 
+    # 4. Invalid license raises exception
+    service._validate_license = MagicMock(return_value=(False, "License invalid"))
+    with pytest.raises(Exception):
+        await service.get_conversation_context("+919999999999")
+
+    # 5. History management
+    service._validate_license = MagicMock(return_value=(True, "OK"))
+    sess_test = ConversationSession(session_id="s_test", external_user_id="919999999999")
+    service.add_message_to_history(sess_test, "user", "Hello", "text", "greeting", 90)
+    service.add_message_to_history(sess_test, "assistant", "Hi there", "text")
+    assert "messages" in sess_test.conversation_history
+    assert len(sess_test.conversation_history["messages"]) == 2
+
+    # 6. Save session
+    service.db_manager.save_session = AsyncMock()
+    await service.save_session(sess_test)
+    assert service.redis_session.store_session.called
+
 
 

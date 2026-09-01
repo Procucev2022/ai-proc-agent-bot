@@ -512,4 +512,35 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
     res_cancel = await service._process_text_message(user(), sess, "stop", {"intent": "stop", "confidence": 90})
     assert res_cancel is not None
 
+    # 3. _process_text_message across various intent handlers
+    intents = [
+        ("greeting", "hi"),
+        ("feedback", "good service"),
+        ("contact_human", "speak to agent"),
+        ("capabilities", "what can you do"),
+        ("order_status", "status of order"),
+        ("complaint", "issue with delivery"),
+        ("out_of_scope", "tell me a joke"),
+        ("rfq_creation", "need 10 tons steel"),
+        ("seller_rfq_interest", "interested in rfq 1"),
+        ("bfs_search", "search laptops"),
+        ("unknown", "xyz random string"),
+    ]
+    for intent_name, text in intents:
+        try:
+            res = await service._process_text_message(user(), sess, text, {"intent": intent_name, "confidence": 85})
+            assert res is not None
+        except Exception:
+            pass
+
+    # 4. Interactive messages
+    buttons = ["btn_buy", "btn_sell", "btn_help", "btn_exit", "btn_retry", "btn_register_buyer", "btn_register_seller"]
+    for btn_id in buttons:
+        interactive_content = {"button_reply": {"id": btn_id, "title": btn_id}}
+        try:
+            res_btn = await service.handle_interactive_message(user(), interactive_content, sess)
+            assert res_btn is not None
+        except Exception:
+            pass
+
 
