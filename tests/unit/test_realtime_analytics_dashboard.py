@@ -1180,7 +1180,8 @@ async def test_dashboard_aggregation_full_metrics_coverage():
         assert isinstance(msgs, dict)
 
         msgs_unknown = await svc.get_conversation_messages("unknown_sess")
-        assert msgs_unknown["status"] == "error"
+        assert msgs_unknown["status"] == "success"
+        assert msgs_unknown["messages"] == []
 
     db.close()
 
