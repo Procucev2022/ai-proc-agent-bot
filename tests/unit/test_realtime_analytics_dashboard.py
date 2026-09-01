@@ -1616,6 +1616,32 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         created_at=now,
         last_activity_at=now,
     )
+    sess_s_stage_reg = ConversationSession(
+        session_id="s_s_stage_reg",
+        external_user_id="919999999981",
+        user_type=UserType.seller,
+        session_state=SessionState.active,
+        workflow_type=WorkflowType.registration,
+        workflow_state={"registration_stage": "completed"},
+        conversation_history={"messages": []},
+        outcome=None,
+        retention_date=now.date(),
+        created_at=now,
+        last_activity_at=now,
+    )
+    sess_s_selected_reg = ConversationSession(
+        session_id="s_s_selected_reg",
+        external_user_id="919999999982",
+        user_type=UserType.seller,
+        session_state=SessionState.active,
+        workflow_type=WorkflowType.registration,
+        workflow_state={"selected_user": True},
+        conversation_history={"messages": []},
+        outcome=None,
+        retention_date=now.date(),
+        created_at=now,
+        last_activity_at=now,
+    )
 
     facts = [
         RFQNotificationFact(
@@ -1649,7 +1675,7 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
             created_at=now,
         ),
     ]
-    db.add_all([sess_prior, sess_comp, r, r2, sess, sess_seller, sess_unknown, sess_b_notreg, sess_s_notreg, seller_no_credits, sess_s_no_credits, sess_b_reg_no_rfq, sess_repeat] + facts)
+    db.add_all([sess_prior, sess_comp, r, r2, sess, sess_seller, sess_unknown, sess_b_notreg, sess_s_notreg, seller_no_credits, sess_s_no_credits, sess_b_reg_no_rfq, sess_repeat, sess_s_stage_reg, sess_s_selected_reg] + facts)
     db.commit()
 
     svc = DashboardAggregationService(db_session=db)
@@ -1666,9 +1692,12 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
     stats_custom_inv = await svc.get_dashboard_stats(date_preset="custom", start_date="invalid", end_date="invalid")
     assert stats_custom_inv["status"] == "success"
 
-    # 3. Role and dimension filters
+    # 3. Role and dimension filters (including invalid rfq_status)
     stats_buyer = await svc.get_dashboard_stats(role="buyer", category="Chemicals", location="Delhi", rfq_status="collecting")
     assert stats_buyer["status"] == "success"
+
+    stats_inv_rfq = await svc.get_dashboard_stats(role="buyer", rfq_status="invalid_rfq_enum_value")
+    assert stats_inv_rfq["status"] == "success"
 
     stats_seller = await svc.get_dashboard_stats(role="seller")
     assert stats_seller["status"] == "success"
