@@ -428,7 +428,7 @@ async def test_dashboard_aggregation_service_fallback_categories():
 
 def test_dashboard_api_endpoints():
     """Test FastAPI dashboard REST and HTML endpoints."""
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-Dashboard-Key": "unit-test-dashboard-key"})
 
     # 1. Test HTML Dashboard Page
     response = client.get("/dashboard")
@@ -653,7 +653,7 @@ def test_daily_visitors_api_endpoint_success():
     """GET /api/dashboard/daily-visitors returns 200 with expected structure."""
     fake_data = [{"date": "2026-08-27", "visitors": 5}, {"date": "2026-08-26", "visitors": 3}]
     with patch("app.api.dashboard.DashboardAggregationService.get_daily_visitors", return_value=fake_data):
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Dashboard-Key": "unit-test-dashboard-key"})
         res = client.get("/api/dashboard/daily-visitors?date_preset=7d")
         assert res.status_code == 200
         body = res.json()
@@ -665,7 +665,7 @@ def test_daily_visitors_api_endpoint_custom_range():
     """GET /api/dashboard/daily-visitors with custom range passes params through."""
     fake_data = [{"date": "2026-08-20", "visitors": 1}]
     with patch("app.api.dashboard.DashboardAggregationService.get_daily_visitors", return_value=fake_data):
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Dashboard-Key": "unit-test-dashboard-key"})
         res = client.get("/api/dashboard/daily-visitors?date_preset=custom&start_date=2026-08-20&end_date=2026-08-20")
         assert res.status_code == 200
         assert res.json()["data"][0]["date"] == "2026-08-20"
@@ -674,7 +674,7 @@ def test_daily_visitors_api_endpoint_custom_range():
 def test_daily_visitors_api_endpoint_error():
     """GET /api/dashboard/daily-visitors returns 500 on service exception."""
     with patch("app.api.dashboard.DashboardAggregationService.get_daily_visitors", side_effect=RuntimeError("fail")):
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Dashboard-Key": "unit-test-dashboard-key"})
         res = client.get("/api/dashboard/daily-visitors?date_preset=7d")
         assert res.status_code == 500
         assert res.json()["status"] == "error"
@@ -730,7 +730,7 @@ def test_user_classification_details_json_and_filters():
 
 def test_dashboard_api_endpoints_coverage():
     """Test coverage for API endpoints in app/api/dashboard.py."""
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-Dashboard-Key": "unit-test-dashboard-key"})
 
     # 1. GET /api/dashboard/user-classification-details
     fake_details = {"status": "success", "users": []}
@@ -757,7 +757,7 @@ def test_dashboard_api_endpoints_coverage():
 
 def test_today_conversations_api_endpoint():
     """Test GET /api/dashboard/today-conversations success and error paths."""
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-Dashboard-Key": "unit-test-dashboard-key"})
 
     # Success path
     fake_convos = [{"phone": "919876543210", "user_type": "buyer"}]
@@ -777,7 +777,7 @@ def test_today_conversations_api_endpoint():
 
 def test_conversation_messages_api_endpoint():
     """Test GET /api/dashboard/conversation-messages success and error paths."""
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-Dashboard-Key": "unit-test-dashboard-key"})
 
     fake_result = {"status": "success", "messages": [{"role": "user", "content": "Hello"}]}
 
@@ -976,7 +976,7 @@ async def test_redis_db_services_and_operations():
 
 def test_api_dashboard_remaining_error_endpoints():
     """Test API error handling in get_dashboard_stats, get_recent_feed, and export_dashboard_data."""
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-Dashboard-Key": "unit-test-dashboard-key"})
 
     # 1. GET /api/dashboard/stats error
     with patch("app.api.dashboard.DashboardAggregationService.get_dashboard_stats", AsyncMock(side_effect=RuntimeError("stats fail"))):
@@ -1188,7 +1188,7 @@ async def test_dashboard_aggregation_full_metrics_coverage():
 
 def test_api_dashboard_all_remaining_routes():
     """Test all dashboard API endpoints for 200 and 500 error cases."""
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-Dashboard-Key": "unit-test-dashboard-key"})
 
     # 1. /api/dashboard/user-classification-details
     with patch("app.api.dashboard.DashboardAggregationService.get_user_classification_details_json", return_value={"users": [], "total_matching": 0}):

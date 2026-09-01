@@ -9,17 +9,36 @@ import asyncio
 import json
 import logging
 from typing import Optional
-from fastapi import APIRouter, Request, Query, Depends
+from fastapi import APIRouter, Request, Query, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db_session
+from app.config import get_settings
 from app.services.dashboard_aggregation_service import DashboardAggregationService
 from app.services.realtime_analytics_service import get_realtime_analytics_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
+
+
+def require_dashboard_operator(x_dashboard_key: Optional[str] = Header(None)) -> None:
+    """Require the configured operator key for dashboard data."""
+    expected = get_settings().dashboard_api_key
+    if not expected or x_dashboard_key != expected:
+        raise HTTPException(status_code=401, detail="Dashboard authentication required")
+
+
+def get_dashboard_db():
+    db = get_db_session()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+router.dependencies.append(Depends(require_dashboard_operator))
 
 
 @router.get("/stats")
@@ -31,7 +50,7 @@ async def get_dashboard_stats(
     category: Optional[str] = Query(None, description="Filter by product category"),
     location: Optional[str] = Query(None, description="Filter by geographic location"),
     rfq_status: Optional[str] = Query(None, description="Filter by RFQ status"),
-    db: Session = Depends(get_db_session)
+    db: Session = Depends(get_dashboard_db)
 ):
     """
     Retrieve comprehensive aggregated KPIs, funnels, and breakdown metrics.
@@ -62,7 +81,7 @@ async def export_user_classification_csv(
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
     filter_type: str = Query("all", description="all, unknown, buyer, buyer_registered, buyer_not_registered, seller, seller_registered, seller_not_registered, seller_subscribed, seller_without_subscription"),
-    db: Session = Depends(get_db_session)
+    db: Session = Depends(get_dashboard_db)
 ):
     """
     Export phone numbers and classification metrics for User Classification & Funnel as a CSV file.
@@ -97,7 +116,7 @@ async def get_user_classification_details(
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
     filter_type: str = Query("all", description="all, unknown, buyer, buyer_registered, buyer_not_registered, seller, seller_registered, seller_not_registered, seller_subscribed, seller_without_subscription"),
-    db: Session = Depends(get_db_session)
+    db: Session = Depends(get_dashboard_db)
 ):
     """
     Retrieve structured user classification details JSON for the details view.
@@ -189,7 +208,7 @@ async def live_events_stream(request: Request):
 @router.get("/export")
 async def export_dashboard_data(
     date_preset: str = Query("today"),
-    db: Session = Depends(get_db_session)
+    db: Session = Depends(get_dashboard_db)
 ):
     """
     Export current dashboard data as JSON.
@@ -210,7 +229,7 @@ async def get_daily_visitors(
     date_preset: str = Query("7d", description="today, yesterday, 7d, 30d, custom"),
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
-    db: Session = Depends(get_db_session)
+    db: Session = Depends(get_dashboard_db)
 ):
     """
     Return day-wise unique visitor counts over the selected period.
@@ -233,7 +252,7 @@ async def get_daily_visitors(
 
 @router.get("/today-conversations")
 async def get_today_conversations(
-    db: Session = Depends(get_db_session)
+    db: Session = Depends(get_dashboard_db)
 ):
     """
     Return the list of users who visited or interacted today for the live chat viewer.
@@ -251,7 +270,7 @@ async def get_today_conversations(
 async def get_conversation_messages(
     phone: Optional[str] = Query(None, description="User phone number"),
     session_id: Optional[str] = Query(None, description="Specific session ID"),
-    db: Session = Depends(get_db_session)
+    db: Session = Depends(get_dashboard_db)
 ):
     """
     Return the full interactive chat message history for the selected user/session.
@@ -263,4 +282,3 @@ async def get_conversation_messages(
     except Exception as e:
         logger.error(f"[DASHBOARD_API] Error fetching conversation messages: {e}", exc_info=True)
         return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
-

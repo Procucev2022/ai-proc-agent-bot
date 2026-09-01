@@ -290,9 +290,9 @@ class SessionManagementService:
                 rt_service.publish_event(
                     event_type="whatsapp_visitor",
                     user_id=phone_number,
-                    data={"session_id": session_id, "user_type": u_type},
-                    session_id=session_id,
-                    persist_db=False
+                    data={"session_id": session.session_id, "user_type": u_type},
+                    session_id=session.session_id,
+                    persist_db=True
                 )
             )
         except Exception:

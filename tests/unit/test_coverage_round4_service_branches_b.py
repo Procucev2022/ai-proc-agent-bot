@@ -422,8 +422,8 @@ async def test_profile_selection_redirect_exit_and_detector_edges(monkeypatch):
     service._parse_profile_selection.return_value = None
     mismatch = make_session({"target_role": "seller", "profile_options": [{"action": "register_seller"}]})
     assert (await service._handle_intent_mismatch_response("1", "x", mismatch))["status"] == "intent_mismatch_retry_sent"
-    assert (await service._handle_new_user_registration_response("1", "x", make_session()))["status"] in ("restart_profile_selection", "new_user_registration_retry_sent")
-    assert (await service._handle_new_user_registration_response("1", "x", make_session({"profile_options": []})))["status"] in ("restart_profile_selection", "new_user_registration_retry_sent")
+    assert (await service._handle_new_user_registration_response("1", "x", make_session()))["status"] == "restart_profile_selection"
+    assert (await service._handle_new_user_registration_response("1", "x", make_session({"profile_options": []})))["status"] == "restart_profile_selection"
 
 
 # Registration --------------------------------------------------------------

@@ -527,29 +527,20 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
         ("unknown", "xyz random string"),
     ]
     for intent_name, text in intents:
-        try:
-            res = await service._process_text_message(user(), sess, text, {"intent": intent_name, "confidence": 85})
-            assert res is not None
-        except Exception:
-            pass
+        res = await service._process_text_message(user(), sess, text, {"intent": intent_name, "confidence": 85})
+        assert res is not None
 
     # 4. Interactive messages
     buttons = ["btn_buy", "btn_sell", "btn_help", "btn_exit", "btn_retry", "btn_register_buyer", "btn_register_seller"]
     for btn_id in buttons:
         interactive_content = {"button_reply": {"id": btn_id, "title": btn_id}}
-        try:
-            res_btn = await service.handle_interactive_message(user(), interactive_content, sess)
-            assert res_btn is not None
-        except Exception:
-            pass
+        res_btn = await service.handle_interactive_message(user(), interactive_content, sess)
+        assert res_btn is not None
 
     # 5. List reply interactive messages
     list_content = {"list_reply": {"id": "list_opt_1", "title": "Option 1"}}
-    try:
-        res_list = await service.handle_interactive_message(user(), list_content, sess)
-        assert res_list is not None
-    except Exception:
-        pass
+    res_list = await service.handle_interactive_message(user(), list_content, sess)
+    assert res_list is not None
 
     # 6. Process various message types
     msg_types = [
@@ -559,11 +550,8 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
         ("location", {"latitude": 28.6139, "longitude": 77.2090}),
     ]
     for mtype, payload in msg_types:
-        try:
-            res_m = await service.process_message(user().phone_number, payload, message_type=mtype)
-            assert res_m is not None
-        except Exception:
-            pass
+        res_m = await service.process_message(user().phone_number, payload, message_type=mtype)
+        assert res_m is not None
 
     # 7. Error handling helper
     if hasattr(service, "_handle_error_response"):
@@ -644,6 +632,5 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
     sess_empty.workflow_state = {}
     s_sum_empty = await service._generate_session_summary(sess_empty)
     assert isinstance(s_sum_empty, str)
-
 
 

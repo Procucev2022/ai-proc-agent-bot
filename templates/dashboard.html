@@ -2304,7 +2304,7 @@
                                 ${rfqBadge}
                                 ${countBadge}
                             </div>
-                            <div class="chat-user-preview">${user.latest_message_preview || 'Conversation initiated'}</div>
+                            <div class="chat-user-preview">${formatChatText(user.latest_message_preview || 'Conversation initiated')}</div>
                         </div>
                     </div>
                 `;
@@ -2513,4 +2513,3 @@
     </script>
 </body>
 </html>
-

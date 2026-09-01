@@ -11,7 +11,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Tuple
-from sqlalchemy import func, or_, distinct, desc
+from sqlalchemy import func, or_, distinct, desc, cast, String
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -172,6 +172,12 @@ class DashboardAggregationService:
             session_filter.append(ConversationSession.user_type == UserType.buyer)
         elif role == "seller":
             session_filter.append(ConversationSession.user_type == UserType.seller)
+        if location:
+            location_filter = cast(ConversationSession.workflow_state, String).ilike(
+                f"%{location}%"
+            )
+            session_filter.append(location_filter)
+            comp_session_filter.append(location_filter)
 
         # 2. Executive & WhatsApp Visitor Counts
         total_sessions = db.query(func.count(ConversationSession.session_id)).filter(*session_filter).scalar() or 0
@@ -210,34 +216,28 @@ class DashboardAggregationService:
         ).scalar() or 0
 
         # =========================================================================
-        # DETAILED USER CLASSIFICATION & FUNNEL KPIS (Strictly Today Only)
+        # DETAILED USER CLASSIFICATION & FUNNEL KPIS
         # =========================================================================
-        now_utc = datetime.now(timezone.utc)
-        today_start_naive = datetime(now_utc.year, now_utc.month, now_utc.day, 0, 0, 0)
-        today_end_naive = datetime(now_utc.year, now_utc.month, now_utc.day, 23, 59, 59)
-        today_session_filter = [
-            ConversationSession.created_at >= today_start_naive,
-            ConversationSession.created_at <= today_end_naive,
-        ]
+        period_session_filter = list(session_filter)
 
         # 1. Total Unique Users and Classification Sets (Today)
         all_today_users = [
             u[0] for u in db.query(distinct(ConversationSession.external_user_id)).filter(
-                *today_session_filter
+                *period_session_filter
             ).all() if u[0]
         ]
 
         buyer_users_set = {
             u[0] for u in db.query(distinct(ConversationSession.external_user_id)).filter(
                 ConversationSession.user_type == UserType.buyer,
-                *today_session_filter
+                *period_session_filter
             ).all() if u[0]
         }
 
         seller_users_set = {
             u[0] for u in db.query(distinct(ConversationSession.external_user_id)).filter(
                 ConversationSession.user_type == UserType.seller,
-                *today_session_filter
+                *period_session_filter
             ).all() if u[0]
         }
 
@@ -247,19 +247,19 @@ class DashboardAggregationService:
 
         unknown_sessions_count = db.query(func.count(ConversationSession.session_id)).filter(
             ConversationSession.user_type == UserType.unknown,
-            *today_session_filter
+            *period_session_filter
         ).scalar() or 0
 
         # Pre-fetch RFQ phones in today's window
         rfq_phones_in_period = {
             r[0] for r in db.query(distinct(RFQ.external_user_id)).filter(
-                RFQ.created_at >= today_start_naive,
-                RFQ.created_at <= today_end_naive
+                RFQ.created_at >= start_naive,
+                RFQ.created_at <= end_naive
             ).all() if r[0]
         }
         for r_ids, r_id, ext_user in db.query(
             ConversationSession.rfq_ids, ConversationSession.rfq_id, ConversationSession.external_user_id
-        ).filter(*today_session_filter).all():
+        ).filter(*period_session_filter).all():
             if (r_ids or r_id) and ext_user:
                 rfq_phones_in_period.add(ext_user)
 
@@ -272,17 +272,19 @@ class DashboardAggregationService:
         buyer_rfq_created_count = 0
         buyer_rfq_not_created_count = 0
 
+        sessions_by_phone = {}
+        for row in db.query(
+            ConversationSession.external_user_id,
+            ConversationSession.workflow_type,
+            ConversationSession.workflow_state,
+            ConversationSession.outcome,
+            ConversationSession.rfq_id,
+            ConversationSession.rfq_ids,
+        ).filter(*period_session_filter).all():
+            sessions_by_phone.setdefault(row[0], []).append(row[1:])
+
         for b_phone in buyer_users_period:
-            user_sess = db.query(
-                ConversationSession.workflow_type,
-                ConversationSession.workflow_state,
-                ConversationSession.outcome,
-                ConversationSession.rfq_id,
-                ConversationSession.rfq_ids
-            ).filter(
-                ConversationSession.external_user_id == b_phone,
-                *today_session_filter
-            ).all()
+            user_sess = sessions_by_phone.get(b_phone, [])
 
             is_reg = False
             has_rfq = b_phone in rfq_phones_in_period
@@ -309,7 +311,7 @@ class DashboardAggregationService:
             else:
                 buyer_not_registered_count += 1
 
-        # 3. Seller Breakdown (Today)
+        # 3. Seller Breakdown
         seller_users_period = list(seller_users_set)
         total_sellers_count = len(seller_users_period)
 
@@ -332,14 +334,7 @@ class DashboardAggregationService:
 
         for s_phone in seller_users_period:
             p_clean = s_phone.lstrip("+")
-            user_sess = db.query(
-                ConversationSession.workflow_type,
-                ConversationSession.workflow_state,
-                ConversationSession.outcome
-            ).filter(
-                ConversationSession.external_user_id == s_phone,
-                *today_session_filter
-            ).all()
+            user_sess = [row[:3] for row in sessions_by_phone.get(s_phone, [])]
 
             is_reg = False
             if p_clean in registered_sellers_map or s_phone in registered_sellers_map:
@@ -1407,8 +1402,7 @@ class DashboardAggregationService:
                         pass
 
                 # Active session keys
-                s_keys = await client.keys("session:*")
-                for k in s_keys:
+                async for k in client.scan_iter(match="session:*"):
                     try:
                         raw = await client.get(k)
                         if raw:
@@ -1595,8 +1589,7 @@ class DashboardAggregationService:
             from app.redis_db import AsyncRedisConnectionManager
             client = await AsyncRedisConnectionManager.get_client()
             if client:
-                s_keys = await client.keys("session:*")
-                for k in s_keys:
+                async for k in client.scan_iter(match="session:*"):
                     try:
                         raw = await client.get(k)
                         if raw:
@@ -1790,4 +1783,3 @@ class DashboardAggregationService:
             },
             "messages": formatted
         }
-

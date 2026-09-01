@@ -1391,7 +1391,7 @@ async def test_round6_profile_registration_and_background_error_branches(monkeyp
     assert result["status"] == "intent_mismatch_retry_sent"
 
     empty_registration_session = SimpleNamespace(workflow_state={})
-    assert (await service._handle_new_user_registration_response("1", "1", empty_registration_session))["status"] in ("restart_profile_selection", "redirected_to_buyer_registration", "buyer")
+    assert (await service._handle_new_user_registration_response("1", "1", empty_registration_session))["status"] == "restart_profile_selection"
 
     background = object.__new__(background_mod.RFQBackgroundService)
     query = SimpleNamespace(filter=lambda *_args, **_kwargs: query, first=lambda: None)

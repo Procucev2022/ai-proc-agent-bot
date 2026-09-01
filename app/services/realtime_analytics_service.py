@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 REDIS_CHANNEL_LIVE_EVENTS = "analytics:live_events"
 REDIS_KEY_ACTIVE_USERS = "analytics:active_users"
+REDIS_KEY_ACTIVE_USER_METADATA = "analytics:active_user_metadata"
 REDIS_KEY_RECENT_FEED = "analytics:recent_feed"
 REDIS_FEED_MAX_ITEMS = 100
 ACTIVE_USER_EXPIRY_SECONDS = 300  # 5 minutes window for live active status
@@ -49,17 +50,17 @@ class RealtimeAnalyticsService:
                 return
 
             now = time.time()
-            member_data = json.dumps({
-                "phone": user_phone,
-                "user_type": user_type,
-                "session_id": session_id or "",
-            })
-            # Add to active set with current timestamp
-            await client.zadd(REDIS_KEY_ACTIVE_USERS, {member_data: now})
+            await client.zadd(REDIS_KEY_ACTIVE_USERS, {user_phone: now})
+            await client.hset(
+                REDIS_KEY_ACTIVE_USER_METADATA,
+                user_phone,
+                json.dumps({"user_type": user_type, "session_id": session_id or ""}),
+            )
             # Clean up users older than ACTIVE_USER_EXPIRY_SECONDS
             cutoff = now - ACTIVE_USER_EXPIRY_SECONDS
             await client.zremrangebyscore(REDIS_KEY_ACTIVE_USERS, 0, cutoff)
             await client.expire(REDIS_KEY_ACTIVE_USERS, ACTIVE_USER_EXPIRY_SECONDS * 2)
+            await client.expire(REDIS_KEY_ACTIVE_USER_METADATA, ACTIVE_USER_EXPIRY_SECONDS * 2)
         except Exception as e:
             logger.debug(f"[REALTIME_ANALYTICS] Failed to record heartbeat: {e}")
 
@@ -86,9 +87,17 @@ class RealtimeAnalyticsService:
             seen_phones = set()
             for m in members:
                 try:
-                    payload = m.decode("utf-8") if isinstance(m, (bytes, bytearray)) else str(m)
-                    data = json.loads(payload)
-                    phone = data.get("phone")
+                    phone = m.decode("utf-8") if isinstance(m, (bytes, bytearray)) else str(m)
+                    data = {}
+                    if phone.startswith("{"):
+                        data = json.loads(phone)
+                        phone = data.get("phone")
+                    else:
+                        metadata = await client.hget(REDIS_KEY_ACTIVE_USER_METADATA, phone)
+                        if metadata:
+                            data = json.loads(
+                                metadata.decode("utf-8") if isinstance(metadata, bytes) else metadata
+                            )
                     if phone in seen_phones:
                         continue
                     seen_phones.add(phone)

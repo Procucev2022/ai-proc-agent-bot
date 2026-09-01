@@ -425,7 +425,7 @@ async def test_profile_response_state_machine_and_ai(monkeypatch):
     new = session_obj(workflow_state={"profile_options": [{"action": "exit"}]})
     service._parse_profile_selection.return_value = {"action": "exit"}
     assert (await service._handle_new_user_registration_response("1", "1", new))["status"] == "exit"
-    assert (await service._handle_new_user_registration_response("1", "1", session_obj(workflow_state={})))["status"] in ("restart_profile_selection", "redirected_to_buyer_registration", "buyer")
+    assert (await service._handle_new_user_registration_response("1", "1", session_obj(workflow_state={})))["status"] == "restart_profile_selection"
     service._parse_profile_selection.return_value = None
     assert (await service._handle_new_user_registration_response("1", "x", session_obj(workflow_state={"profile_options": [{"action": "x"}]})))["status"] == "new_user_registration_retry_sent"
 
@@ -1298,6 +1298,5 @@ async def test_profile_selection_exhaustive_residual_branches():
         assert res_acc_b["status"] == "buyer_reg"
         res_acc_s = await service.handle_profile_selection_flow("+919999999999", "seller", sess_menu, intent="register_account")
         assert res_acc_s["status"] == "seller_reg"
-
 
 

@@ -590,7 +590,6 @@ class ChatService:
                         session, "user", f"[Button: {button_title}]", "interactive"
                     )
                     cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message_content)
-                    await self.session_manager.save_session(session, session.workflow_type)
                     return cancel_result
 
             # CRITICAL: Handle seller_rfq_intimation workflow BEFORE intent classification
@@ -815,7 +814,9 @@ class ChatService:
             if intent == "cancel_workflow" and confidence > 50 and is_in_auth_workflow:
                 logger.info(f"Cancel workflow intent detected in auth workflow with {confidence}% confidence - handling immediately to prevent loop")
                 cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message_content)
-                await self.session_manager.save_session(session, session.workflow_type)
+                await self.session_manager.save_session(
+                    session, session.workflow_type, persist_to_db=True
+                )
                 return cancel_result
 
             # Handle irrelevant messages using reusable function.
