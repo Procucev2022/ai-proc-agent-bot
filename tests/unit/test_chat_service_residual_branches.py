@@ -619,23 +619,21 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
             pass
 
     # Exit and cancel buttons
-    service.exit_service = MagicMock()
-    service.exit_service.handle_exit_intent = AsyncMock(return_value={"status": "exited"})
-    btn_exit = {"button_reply": {"id": "confirm_exit_yes", "title": "Yes, Exit"}}
-    try:
-        res_ex = await service.process_message(user().phone_number, btn_exit, message_type="interactive")
-        assert res_ex is not None
-    except Exception:
-        pass
+    with patch("app.services.exit_service.ExitService.handle_exit_intent", AsyncMock(return_value={"status": "exited"})):
+        btn_exit = {"button_reply": {"id": "confirm_exit_yes", "title": "Yes, Exit"}}
+        try:
+            res_ex = await service.process_message(user().phone_number, btn_exit, message_type="interactive")
+            assert res_ex is not None
+        except Exception:
+            pass
 
-    service.cancel_service = MagicMock()
-    service.cancel_service.handle_cancel_intent = AsyncMock(return_value={"status": "cancelled"})
-    btn_cancel = {"button_reply": {"id": "confirm_cancel_yes", "title": "Yes, Cancel"}}
-    try:
-        res_can = await service.process_message(user().phone_number, btn_cancel, message_type="interactive")
-        assert res_can is not None
-    except Exception:
-        pass
+    with patch("app.services.cancel_service.CancelService.handle_cancel_intent", AsyncMock(return_value={"status": "cancelled"})):
+        btn_cancel = {"button_reply": {"id": "confirm_cancel_yes", "title": "Yes, Cancel"}}
+        try:
+            res_can = await service.process_message(user().phone_number, btn_cancel, message_type="interactive")
+            assert res_can is not None
+        except Exception:
+            pass
 
 
 

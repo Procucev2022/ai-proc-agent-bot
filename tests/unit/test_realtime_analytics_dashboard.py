@@ -1577,6 +1577,33 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         subscription_credits=0,
     )
 
+    sess_s_no_credits = ConversationSession(
+        session_id="s_no_cred",
+        external_user_id="919999999995",
+        user_type=UserType.seller,
+        session_state=SessionState.active,
+        workflow_type=WorkflowType.seller_rfq_interest,
+        workflow_state={},
+        conversation_history={"messages": []},
+        outcome=None,
+        retention_date=now.date(),
+        created_at=now,
+        last_activity_at=now,
+    )
+    sess_b_reg_no_rfq = ConversationSession(
+        session_id="s_b_reg_no_rfq",
+        external_user_id="919999999997",
+        user_type=UserType.buyer,
+        session_state=SessionState.active,
+        workflow_type=WorkflowType.registration,
+        workflow_state={"selected_user": True},
+        conversation_history={"messages": []},
+        outcome=None,
+        retention_date=now.date(),
+        created_at=now,
+        last_activity_at=now,
+    )
+
     facts = [
         RFQNotificationFact(
             date=now.date(),
@@ -1609,7 +1636,7 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
             created_at=now,
         ),
     ]
-    db.add_all([sess_prior, sess_comp, r, r2, sess, sess_seller, sess_unknown, sess_b_notreg, sess_s_notreg, seller_no_credits] + facts)
+    db.add_all([sess_prior, sess_comp, r, r2, sess, sess_seller, sess_unknown, sess_b_notreg, sess_s_notreg, seller_no_credits, sess_s_no_credits, sess_b_reg_no_rfq] + facts)
     db.commit()
 
     svc = DashboardAggregationService(db_session=db)
