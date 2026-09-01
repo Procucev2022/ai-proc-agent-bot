@@ -1673,6 +1673,7 @@ async def test_session_management_all_residual_branches():
 
     # 11. Restoring active DB session to Redis and return visit suffix
     service.redis_enabled = True
+    service.whatsapp_service = None
     active_db_sess = ConversationSession(
         session_id="s_active_db",
         external_user_id="919999999999",
@@ -1684,8 +1685,6 @@ async def test_session_management_all_residual_branches():
     service.redis_session.set_user_active_session_id = AsyncMock()
     service.redis_session.get_session = AsyncMock(return_value=None)
     service.redis_session.store_session = AsyncMock()
-    if hasattr(service, "welcome_message_service"):
-        service.welcome_message_service.check_and_send_welcome_message = AsyncMock()
     service.db_manager.get_conversation_session = MagicMock(return_value=active_db_sess)
     s_restored = await service.get_conversation_context("+919999999999")
     assert s_restored is not None

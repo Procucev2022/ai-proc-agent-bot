@@ -1447,7 +1447,7 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         seller_name="Acme Chemicals",
         phone_number="919999999992",
         categories=["Chemicals"],
-        ranking=SellerRanking.gold,
+        ranking=SellerRanking.Gold,
         subscription_credits=10,
     )
     db.add_all([p, seller_row])
