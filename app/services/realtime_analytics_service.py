@@ -277,7 +277,8 @@ _realtime_analytics_service: Optional[RealtimeAnalyticsService] = None
 
 def get_realtime_analytics_service() -> RealtimeAnalyticsService:
     """Get RealtimeAnalyticsService singleton."""
-    global _realtime_analytics_service
-    if _realtime_analytics_service is None:
-        _realtime_analytics_service = RealtimeAnalyticsService()
-    return _realtime_analytics_service
+    _svc = globals().get("_realtime_analytics_service")
+    if _svc is None:
+        _svc = RealtimeAnalyticsService()
+        globals()["_realtime_analytics_service"] = _svc
+    return _svc

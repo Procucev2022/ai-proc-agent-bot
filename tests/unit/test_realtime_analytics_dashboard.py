@@ -1652,25 +1652,43 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
 
     # 6. Today conversations and Conversation messages with mocked Redis
     mock_redis = AsyncMock()
-    mock_redis.keys = AsyncMock(return_value=["session:s_active"])
-    mock_redis.get = AsyncMock(return_value=json.dumps({
-        "session_id": "s_active",
-        "external_user_id": "919999999991",
-        "user_type": "buyer",
-        "conversation_history": {
-            "messages": [
-                {"role": "user", "content": {"body": "Need 5 tons steel", "buttons": [{"reply": {"id": "1", "title": "Buy"}}]}},
-                {"role": "assistant", "content": {"header": "Welcome", "footer": "ProcAgent", "action": {"buttons": [{"id": "2", "title": "Help"}]}}}
-            ]
-        }
-    }))
+    mock_redis.keys = AsyncMock(return_value=["session:s_chem", "session:s_brand_new"])
+    
+    def _mock_redis_get(key):
+        if key == "session:s_chem":
+            return json.dumps({
+                "session_id": "s_chem",
+                "external_user_id": "919999999991",
+                "user_type": "buyer",
+                "conversation_history": {
+                    "messages": [
+                        {"role": "user", "content": {"text": "Hello text", "buttons": [{"id": "b1", "title": "Button 1"}]}},
+                        {"role": "assistant", "content": {"title": "Header Title", "message": {"body": "Nested body", "header": "H1"}}},
+                        {"role": "assistant", "content": {"body": "Body text", "footer": "F1", "action": {"buttons": [{"reply": {"id": "r1", "title": "Reply 1"}}]}}},
+                        {"role": "user", "content": "Simple string message"}
+                    ]
+                }
+            })
+        return json.dumps({
+            "session_id": "s_brand_new",
+            "external_user_id": "+919999999998",
+            "user_type": "unknown",
+            "started_at": now.isoformat(),
+            "last_activity_at": now.isoformat(),
+            "conversation_history": {
+                "messages": [
+                    {"role": "user", "content": {"header": "Inquiry", "message": "Need quote"}}
+                ]
+            }
+        })
+    mock_redis.get = AsyncMock(side_effect=_mock_redis_get)
     mock_redis.zrange = AsyncMock(return_value=[json.dumps({"phone": "919999999991", "user_type": "buyer"}).encode("utf-8")])
 
     with patch("app.redis_db.AsyncRedisConnectionManager.get_client", AsyncMock(return_value=mock_redis)):
         today_conv = await svc.get_today_conversations()
         assert isinstance(today_conv, list)
 
-        msgs_phone = await svc.get_conversation_messages(phone="919999999991")
+        msgs_phone = await svc.get_conversation_messages(phone="+919999999991")
         assert msgs_phone["status"] == "success"
 
         msgs_sess = await svc.get_conversation_messages(session_id="s_chem")
