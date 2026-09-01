@@ -1441,7 +1441,16 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
 
     # Seed data
     p = ProductCategory(category_name="Chemicals")
-    db.add(p)
+    from app.models import Seller, SellerRanking
+    seller_row = Seller(
+        seller_id="seller_123",
+        seller_name="Acme Chemicals",
+        phone_number="919999999992",
+        categories=["Chemicals"],
+        ranking=SellerRanking.gold,
+        subscription_credits=10,
+    )
+    db.add_all([p, seller_row])
     db.commit()
 
     # Prior session for returning user calculation
@@ -1457,6 +1466,20 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         retention_date=past.date(),
         created_at=past,
         last_activity_at=past,
+    )
+
+    # Comparison session
+    sess_comp = ConversationSession(
+        session_id="s_comp",
+        external_user_id="919999999991",
+        user_type=UserType.buyer,
+        session_state=SessionState.active,
+        workflow_type=WorkflowType.rfq_creation,
+        rfq_ids=["RFQ100"],
+        conversation_history={"messages": []},
+        outcome=ConversationOutcome.completed,
+        created_at=now - timedelta(days=1),
+        last_activity_at=now - timedelta(days=1),
     )
 
     r = RFQ(
@@ -1515,17 +1538,39 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         last_activity_at=now,
     )
 
-    fact = RFQNotificationFact(
-        date=now.date(),
-        session_id="s_seller",
-        rfq_id="RFQ100",
-        seller_id="seller_123",
-        category="Chemicals",
-        rfq_notified_at=now,
-        seller_response_at=now,
-        created_at=now,
-    )
-    db.add_all([sess_prior, r, r2, sess, sess_seller, sess_unknown, fact])
+    facts = [
+        RFQNotificationFact(
+            date=now.date(),
+            session_id="s_seller",
+            rfq_id="RFQ100",
+            seller_id="seller_123",
+            category="Chemicals",
+            rfq_notified_at=now,
+            seller_response_at=now,
+            created_at=now,
+        ),
+        RFQNotificationFact(
+            date=now.date(),
+            session_id="s_seller",
+            rfq_id="RFQ100",
+            seller_id="seller_124",
+            category="Chemicals",
+            rfq_notified_at=now,
+            seller_response_at=None,
+            created_at=now,
+        ),
+        RFQNotificationFact(
+            date=now.date(),
+            session_id="s_seller",
+            rfq_id="RFQ100",
+            seller_id="seller_125",
+            category="Chemicals",
+            rfq_notified_at=now,
+            seller_response_at=None,
+            created_at=now,
+        ),
+    ]
+    db.add_all([sess_prior, sess_comp, r, r2, sess, sess_seller, sess_unknown] + facts)
     db.commit()
 
     svc = DashboardAggregationService(db_session=db)
