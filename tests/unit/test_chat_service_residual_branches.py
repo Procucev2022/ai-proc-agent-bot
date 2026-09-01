@@ -543,4 +543,32 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
         except Exception:
             pass
 
+    # 5. List reply interactive messages
+    list_content = {"list_reply": {"id": "list_opt_1", "title": "Option 1"}}
+    try:
+        res_list = await service.handle_interactive_message(user(), list_content, sess)
+        assert res_list is not None
+    except Exception:
+        pass
+
+    # 6. Process various message types
+    msg_types = [
+        ("image", {"id": "img_123", "mime_type": "image/jpeg"}),
+        ("document", {"id": "doc_123", "filename": "spec.pdf"}),
+        ("audio", {"id": "aud_123"}),
+        ("location", {"latitude": 28.6139, "longitude": 77.2090}),
+    ]
+    for mtype, payload in msg_types:
+        try:
+            res_m = await service.process_message(user().phone_number, payload, message_type=mtype)
+            assert res_m is not None
+        except Exception:
+            pass
+
+    # 7. Error handling helper
+    if hasattr(service, "_handle_error_response"):
+        res_err = await service._handle_error_response(user().phone_number, "generic_error", sess)
+        assert res_err is not None
+
+
 

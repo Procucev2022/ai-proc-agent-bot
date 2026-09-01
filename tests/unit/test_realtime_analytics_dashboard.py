@@ -1381,6 +1381,11 @@ async def test_realtime_analytics_service_full_branches():
         feed = await svc.get_recent_feed(limit=5)
         assert len(feed) == 1
 
+        # Recent feed DB fallback when Redis returns empty
+        mock_redis.lrange = AsyncMock(return_value=[])
+        feed_db = await svc.get_recent_feed(limit=5)
+        assert isinstance(feed_db, list)
+
     # 2. subscribe_events with redis
     mock_pubsub = AsyncMock()
     mock_pubsub.get_message = AsyncMock(side_effect=[
@@ -1398,12 +1403,19 @@ async def test_realtime_analytics_service_full_branches():
         assert len(events) == 1
         assert events[0]["event_type"] == "stream_test"
 
+    # 3. subscribe_events with redis disabled
+    svc.settings.redis_session_storage_enabled = False
+    async for e in svc.subscribe_events():
+        assert e["event_type"] == "heartbeat"
+        break
+    svc.settings.redis_session_storage_enabled = True
+
 
 @pytest.mark.asyncio
 async def test_dashboard_aggregation_service_exhaustive_filters():
     """Test DashboardAggregationService with all date presets and filter dimensions."""
     from app.services.dashboard_aggregation_service import DashboardAggregationService
-    from app.models import ConversationSession, RFQ, Seller, ProductCategory, RFQNotificationFact, SessionState, WorkflowType, ConversationOutcome, RFQStatus
+    from app.models import ConversationSession, RFQ, ProductCategory, RFQNotificationFact, SessionState, WorkflowType, ConversationOutcome, RFQStatus, UserType
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
@@ -1419,11 +1431,27 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
     db = SessionTest()
 
     now = datetime.utcnow()
+    past = now - timedelta(days=2)
 
     # Seed data
     p = ProductCategory(category_name="Chemicals")
     db.add(p)
     db.commit()
+
+    # Prior session for returning user calculation
+    sess_prior = ConversationSession(
+        session_id="s_prior",
+        external_user_id="919999999991",
+        user_type=UserType.buyer,
+        session_state=SessionState.active,
+        workflow_type=WorkflowType.registration,
+        workflow_state={"status": "completed", "registration_stage": "completed"},
+        conversation_history={"messages": [{"role": "user", "content": "Hi"}]},
+        outcome=ConversationOutcome.completed,
+        retention_date=past.date(),
+        created_at=past,
+        last_activity_at=past,
+    )
 
     r = RFQ(
         rfq_id="RFQ100",
@@ -1435,16 +1463,50 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
     sess = ConversationSession(
         session_id="s_chem",
         external_user_id="919999999991",
+        user_type=UserType.buyer,
         session_state=SessionState.active,
         workflow_type=WorkflowType.rfq_creation,
-        workflow_state={"status": "completed"},
+        workflow_state={"status": "completed", "registration_stage": "completed"},
+        conversation_history={"messages": [{"role": "user", "content": "Need chemicals", "timestamp": "2026-08-27T10:00:00Z"}]},
+        outcome=ConversationOutcome.completed,
+        retention_date=now.date(),
+        created_at=now,
+        last_activity_at=now,
+    )
+    sess_seller = ConversationSession(
+        session_id="s_seller",
+        external_user_id="919999999992",
+        user_type=UserType.seller,
+        session_state=SessionState.active,
+        workflow_type=WorkflowType.seller_rfq_interest,
+        workflow_state={"seller_subscribed": True},
         conversation_history={"messages": []},
         outcome=ConversationOutcome.completed,
         retention_date=now.date(),
         created_at=now,
         last_activity_at=now,
     )
-    db.add_all([r, sess])
+    sess_unknown = ConversationSession(
+        session_id="s_unk",
+        external_user_id="919999999993",
+        user_type=UserType.unknown,
+        session_state=SessionState.active,
+        workflow_type=None,
+        workflow_state={},
+        conversation_history={"messages": []},
+        outcome=None,
+        retention_date=now.date(),
+        created_at=now,
+        last_activity_at=now,
+    )
+    fact = RFQNotificationFact(
+        rfq_id="RFQ100",
+        seller_phone="919999999992",
+        notified_at=now,
+        read_at=now,
+        clicked_at=now
+    )
+    db.add_all([sess_prior, r, sess, sess_seller, sess_unknown, fact])
     db.commit()
 
     svc = DashboardAggregationService(db_session=db)
@@ -1462,14 +1524,17 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
     assert stats_custom_inv["status"] == "success"
 
     # 3. Role and dimension filters
-    stats_buyer = await svc.get_dashboard_stats(role="buyer", category="Chemicals", location="Delhi", rfq_status="QUOTED")
+    stats_buyer = await svc.get_dashboard_stats(role="buyer", category="Chemicals", location="Delhi", rfq_status="collecting")
     assert stats_buyer["status"] == "success"
 
     stats_seller = await svc.get_dashboard_stats(role="seller")
     assert stats_seller["status"] == "success"
 
+    stats_all = await svc.get_dashboard_stats(role="all")
+    assert stats_all["status"] == "success"
+
     # 4. Daily visitors with various presets
-    for preset in ["yesterday", "7d", "30d", "custom"]:
+    for preset in ["today", "yesterday", "7d", "30d", "90d", "custom"]:
         v = svc.get_daily_visitors(date_preset=preset, start_date_str="2026-08-01", end_date_str="2026-08-31")
         assert isinstance(v, list)
 
@@ -1480,10 +1545,26 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         assert isinstance(csv_data, str)
         details = svc.get_user_classification_details_json("7d", filter_type=f)
         assert "users" in details
+        assert "total_users" in details
 
-    # 6. Conversation messages with phone
-    msgs = await svc.get_conversation_messages(phone="919999999991")
-    assert isinstance(msgs, dict)
+    # 6. Today conversations and Conversation messages
+    today_conv = await svc.get_today_conversations()
+    assert isinstance(today_conv, list)
+
+    msgs_phone = await svc.get_conversation_messages(phone="919999999991")
+    assert msgs_phone["status"] == "success"
+
+    msgs_sess = await svc.get_conversation_messages(session_id="s_chem")
+    assert msgs_sess["status"] == "success"
+
+    msgs_err = await svc.get_conversation_messages()
+    assert msgs_err["status"] == "error"
+
+    # 7. Test get_dashboard_stats with db=None fallback
+    svc_no_db = DashboardAggregationService(db_session=None)
+    with patch("app.services.dashboard_aggregation_service.get_db_session_context", return_value=db):
+        stats_no_db = await svc_no_db.get_dashboard_stats(date_preset="today")
+        assert stats_no_db["status"] == "success"
 
     db.close()
 

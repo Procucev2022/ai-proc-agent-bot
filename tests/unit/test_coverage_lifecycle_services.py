@@ -1620,5 +1620,53 @@ async def test_session_management_all_residual_branches():
     await service.save_session(sess_test)
     assert service.redis_session.store_session.called
 
+    # 7. Redis disabled get_conversation_context
+    service.redis_enabled = False
+    service.db_manager.get_conversation_session = MagicMock(return_value=None)
+    service.db_manager.save_conversation_session = MagicMock(side_effect=lambda x: ConversationSession(**x))
+    s_no_redis = await service.get_conversation_context("+919999999999")
+    assert s_no_redis is not None
+
+    # 8. Redis disabled with ended session in DB
+    sess_ended_db = ConversationSession(
+        session_id="s_ended_db",
+        external_user_id="919999999999",
+        outcome=ConversationOutcome.completed,
+        workflow_state={"status": "completed"},
+        conversation_history={"messages": []}
+    )
+    service.db_manager.get_conversation_session = MagicMock(return_value=sess_ended_db)
+    s_reset = await service.get_conversation_context("+919999999999")
+    assert s_reset is not None
+
+    # 9. End session lifecycle
+    service.redis_enabled = True
+    service.redis_session.clear_user_active_session_id = AsyncMock()
+    service.redis_session.store_session = AsyncMock()
+    service.chat_summary_service.generate_summary = AsyncMock(return_value="Summary")
+    service.daily_summary_service.update_daily_summary = AsyncMock()
+
+    s_to_end = ConversationSession(
+        session_id="s_to_end",
+        external_user_id="919999999999",
+        workflow_type=WorkflowType.rfq_creation,
+        workflow_state={"status": "completed"},
+        conversation_history={"messages": [{"role": "user", "content": "hello"}]}
+    )
+    if hasattr(service, "end_session"):
+        res_end = await service.end_session(s_to_end, ConversationOutcome.completed)
+        assert res_end is not None
+
+    # 10. License validation branches
+    service.settings.license_enabled = False
+    is_valid, msg = service._validate_license()
+    assert is_valid is True
+
+    service.settings.license_enabled = True
+    with patch("app.license.validate_license", return_value=(False, "Expired")):
+        is_valid2, msg2 = service._validate_license()
+        assert is_valid2 is False
+
+
 
 
