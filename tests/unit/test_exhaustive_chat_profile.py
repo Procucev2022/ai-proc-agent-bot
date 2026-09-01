@@ -1197,4 +1197,23 @@ async def test_profile_selection_exhaustive_residual_branches():
     parsed_clar = await service._parse_profile_selection("which one?", opts)
     assert parsed_clar is None
 
+    # 11. Additional profile selection and format options branches
+    fuzz3 = service._fuzzy_email_match("alice.smith", "alice.smith@domain.co")
+    assert fuzz3.get("confidence", 0) > 0.5
+    fuzz4 = service._fuzzy_email_match("bob@example.com", "bob@example.com")
+    assert fuzz4.get("confidence", 0) == 1.0
+
+    tool.analyze_user_selection = AsyncMock(return_value={"switch_account": True, "selected_option": 2})
+    parsed_sw = await service._parse_profile_selection("switch account 2", opts)
+    assert parsed_sw is not None
+
+    tool.analyze_user_selection = AsyncMock(return_value={"register": {"type": "seller"}})
+    parsed_reg_s = await service._parse_profile_selection("register as seller", opts)
+    assert parsed_reg_s["action"] == "register_seller"
+
+    single_prof = [{"user_id": "u1", "role": "buyer", "email": "test@test.com", "business_name": "Test Co"}]
+    formatted_single = service._format_profile_options(single_prof)
+    assert "Test Co" in formatted_single or "buyer" in formatted_single.lower()
+
+
 
