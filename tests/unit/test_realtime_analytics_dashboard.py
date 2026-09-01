@@ -1603,6 +1603,19 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
         created_at=now,
         last_activity_at=now,
     )
+    sess_repeat = ConversationSession(
+        session_id="s_chem_repeat",
+        external_user_id="919999999991",
+        user_type=UserType.buyer,
+        session_state=SessionState.active,
+        workflow_type=WorkflowType.rfq_creation,
+        workflow_state={"rfq_id": "RFQ200"},
+        conversation_history={"messages": [{"role": "user", "content": "Another session message"}]},
+        outcome=ConversationOutcome.completed,
+        retention_date=now.date(),
+        created_at=now,
+        last_activity_at=now,
+    )
 
     facts = [
         RFQNotificationFact(
@@ -1636,7 +1649,7 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
             created_at=now,
         ),
     ]
-    db.add_all([sess_prior, sess_comp, r, r2, sess, sess_seller, sess_unknown, sess_b_notreg, sess_s_notreg, seller_no_credits, sess_s_no_credits, sess_b_reg_no_rfq] + facts)
+    db.add_all([sess_prior, sess_comp, r, r2, sess, sess_seller, sess_unknown, sess_b_notreg, sess_s_notreg, seller_no_credits, sess_s_no_credits, sess_b_reg_no_rfq, sess_repeat] + facts)
     db.commit()
 
     svc = DashboardAggregationService(db_session=db)
@@ -1680,7 +1693,7 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
 
     # 6. Today conversations and Conversation messages with mocked Redis
     mock_redis = AsyncMock()
-    mock_redis.keys = AsyncMock(return_value=["session:s_chem", "session:s_brand_new"])
+    mock_redis.keys = AsyncMock(return_value=["session:s_chem", "session:s_extra_active", "session:s_brand_new"])
     
     def _mock_redis_get(key):
         if key == "session:s_chem":
@@ -1693,7 +1706,24 @@ async def test_dashboard_aggregation_service_exhaustive_filters():
                         {"role": "user", "content": {"text": "Hello text", "buttons": [{"id": "b1", "title": "Button 1"}]}},
                         {"role": "assistant", "content": {"title": "Header Title", "message": {"body": "Nested body", "header": "H1"}}},
                         {"role": "assistant", "content": {"body": "Body text", "footer": "F1", "action": {"buttons": [{"reply": {"id": "r1", "title": "Reply 1"}}]}}},
+                        {"role": "assistant", "content": {"header": "Welcome Header", "message": "Here is response"}},
+                        {"role": "user", "content": 12345},
                         {"role": "user", "content": "Simple string message"}
+                    ]
+                }
+            })
+        if key == "session:s_extra_active":
+            return json.dumps({
+                "session_id": "s_extra_active",
+                "external_user_id": "+919999999991",
+                "user_type": "buyer",
+                "outcome": "completed",
+                "rfq_id": "RFQ999",
+                "started_at": now.isoformat(),
+                "last_activity_at": now.isoformat(),
+                "conversation_history": {
+                    "messages": [
+                        {"role": "user", "content": {"header": "New Request", "message": "Need chemicals urgent"}}
                     ]
                 }
             })

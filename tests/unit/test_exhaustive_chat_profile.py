@@ -1262,5 +1262,25 @@ async def test_profile_selection_exhaustive_residual_branches():
     assert service._string_similarity("abc", "abc") == 1.0
     assert service._string_similarity("a", "xyz") == 0.0
 
+    # 17. Enhanced simple parse and process selected profile actions
+    p_reg = await service._enhanced_simple_parse_profile_selection("register new account", [{"action": "register_buyer"}])
+    assert p_reg is not None
+    p_exist = await service._enhanced_simple_parse_profile_selection("continue with existing", [{"profile": {"email": "a@b.com"}}])
+    assert p_exist is not None
+
+    with patch.object(service, "_handle_new_registration_choice", AsyncMock(return_value={"status": "reg_choice"})), \
+         patch.object(service, "_redirect_to_buyer_registration", AsyncMock(return_value={"status": "buyer_reg"})), \
+         patch.object(service, "_redirect_to_seller_registration", AsyncMock(return_value={"status": "seller_reg"})), \
+         patch.object(service, "_show_all_profiles", AsyncMock(return_value={"status": "all_profiles"})), \
+         patch.object(service, "_handle_exit_action", AsyncMock(return_value={"status": "exit"})):
+        
+        assert (await service._process_selected_profile("+919999999999", {"action": "register_new"}, sess_menu))["status"] == "reg_choice"
+        assert (await service._process_selected_profile("+919999999999", {"action": "register_buyer"}, sess_menu))["status"] == "buyer_reg"
+        assert (await service._process_selected_profile("+919999999999", {"action": "register_seller"}, sess_menu))["status"] == "seller_reg"
+        assert (await service._process_selected_profile("+919999999999", {"action": "show_all_profiles"}, sess_menu))["status"] == "all_profiles"
+        assert (await service._process_selected_profile("+919999999999", {"action": "exit"}, sess_menu))["status"] == "exit"
+        assert (await service._process_selected_profile("+919999999999", {"registration_type": "buyer"}, sess_menu))["status"] == "buyer_reg"
+        assert (await service._process_selected_profile("+919999999999", {"registration_type": "seller"}, sess_menu))["status"] == "seller_reg"
+
 
 

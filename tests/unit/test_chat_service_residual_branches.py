@@ -623,5 +623,17 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
         assert res_can is not None
         assert res_can.get("status") in ("cancel", "cancelled")
 
+    # 11. Extract products from workflow state branches
+    prods1 = service._extract_products_from_workflow_state({"pending_rfq": {"entities": {"product_name": "Steel"}}})
+    assert len(prods1) == 1
+    prods2 = service._extract_products_from_workflow_state({"pending_rfq": {"entities": [{"product_name": "Steel"}]}})
+    assert len(prods2) == 1
+    prods3 = service._extract_products_from_workflow_state({"pending_combined_rfq": {"products": [{"entities": {"product_name": "Cement"}}]}})
+    assert len(prods3) == 1
+    prods4 = service._extract_products_from_workflow_state({"custom_dict": {"product_name": "Wood"}, "custom_list": [{"description": "Sand"}]})
+    assert len(prods4) == 2
+    prods_empty = service._extract_products_from_workflow_state({})
+    assert len(prods_empty) == 0
+
 
 
