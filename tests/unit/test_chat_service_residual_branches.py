@@ -575,8 +575,8 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
     assert "intent" in fallback_res
 
     # 9. Meaningful message tracking
-    sess.workflow_state = {"auth_stage": "awaiting_name"}
-    service._track_meaningful_message_during_auth_flow(sess, "need chemicals", {"intent": "rfq_creation", "confidence": 90})
+    sess.workflow_state = {}
+    service._track_meaningful_message_during_auth_flow(sess, "need chemicals", {"intent": "buy_something", "confidence": 90})
     assert sess.workflow_state.get("last_meaningful_message") == "need chemicals"
 
     # 10. User exit handler
