@@ -8,13 +8,13 @@ WhatsApp clients.
 
 from datetime import date, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import app.services.chat_service as chat_module
 import app.services.profile_selection_service as profile_module
-from app.models import WorkflowType
+from app.models import WorkflowType, ConversationSession
 
 
 class FakeRedis:
