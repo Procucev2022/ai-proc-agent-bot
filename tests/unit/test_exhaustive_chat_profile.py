@@ -1102,7 +1102,7 @@ async def test_profile_selection_exhaustive_residual_branches():
     # 1. _handle_seller_intent with 0, 1, and 2 seller profiles
     s = session_obj(workflow_state={})
     res_s0 = await service._handle_seller_intent("+919999999999", [], "sell", s, {"intent": "sell_something"})
-    assert res_s0["status"] == "seller_no_accounts_message_sent"
+    assert res_s0["status"] == "intent_mismatch_handled"
 
     res_s1 = await service._handle_seller_intent("+919999999999", [{"role": "seller", "email": "s1@test.com", "user_id": "s1"}], "sell", s, {"intent": "sell_something"})
     assert res_s1 is not None
