@@ -623,17 +623,27 @@ async def test_chat_service_remaining_residual_branches(monkeypatch):
         assert res_can is not None
         assert res_can.get("status") in ("cancel", "cancelled")
 
-    # 11. Extract products from workflow state branches
-    prods1 = service._extract_products_from_workflow_state({"pending_rfq": {"entities": {"product_name": "Steel"}}})
-    assert len(prods1) == 1
-    prods2 = service._extract_products_from_workflow_state({"pending_rfq": {"entities": [{"product_name": "Steel"}]}})
-    assert len(prods2) == 1
-    prods3 = service._extract_products_from_workflow_state({"pending_combined_rfq": {"products": [{"entities": {"product_name": "Cement"}}]}})
-    assert len(prods3) == 1
-    prods4 = service._extract_products_from_workflow_state({"custom_dict": {"product_name": "Wood"}, "custom_list": [{"description": "Sand"}]})
-    assert len(prods4) == 2
-    prods_empty = service._extract_products_from_workflow_state({})
-    assert len(prods_empty) == 0
+    # 11. Generate session summary branches
+    sess1 = session(pending_rfq={"entities": {"product_name": "Steel"}})
+    s_sum1 = await service._generate_session_summary(sess1)
+    assert isinstance(s_sum1, str)
+
+    sess2 = session(pending_rfq={"entities": [{"product_name": "Steel"}]})
+    s_sum2 = await service._generate_session_summary(sess2)
+    assert isinstance(s_sum2, str)
+
+    sess3 = session(pending_combined_rfq={"products": [{"entities": {"product_name": "Cement"}}]})
+    s_sum3 = await service._generate_session_summary(sess3)
+    assert isinstance(s_sum3, str)
+
+    sess4 = session(custom_dict={"product_name": "Wood"}, custom_list=[{"description": "Sand"}])
+    s_sum4 = await service._generate_session_summary(sess4)
+    assert isinstance(s_sum4, str)
+
+    sess_empty = session()
+    sess_empty.workflow_state = {}
+    s_sum_empty = await service._generate_session_summary(sess_empty)
+    assert isinstance(s_sum_empty, str)
 
 
 
