@@ -1670,6 +1670,38 @@ async def test_session_management_all_residual_branches():
     except Exception:
         pass
 
+    # 11. Restoring active DB session to Redis and return visit suffix
+    service.redis_enabled = True
+    active_db_sess = ConversationSession(
+        session_id="s_active_db",
+        external_user_id="919999999999",
+        outcome=None,
+        workflow_state={"status": "in_progress"},
+        conversation_history={"messages": []}
+    )
+    service.redis_session.get_user_active_session_id = AsyncMock(return_value=None)
+    service.redis_session.get_session = AsyncMock(return_value=None)
+    service.db_manager.get_conversation_session = MagicMock(return_value=active_db_sess)
+    s_restored = await service.get_conversation_context("+919999999999")
+    assert s_restored is not None
+
+    # 12. Return visit with ended DB session and past buyer profile
+    ended_db_sess = ConversationSession(
+        session_id="s_ended_db",
+        external_user_id="919999999999",
+        outcome=ConversationOutcome.completed,
+        user_type=UserType.buyer,
+        workflow_state={"status": "completed"},
+        conversation_history={"messages": []}
+    )
+    service.db_manager.get_conversation_session = MagicMock(return_value=ended_db_sess)
+    mock_query = MagicMock()
+    mock_query.filter.return_value.order_by.return_value.first.return_value = ended_db_sess
+    service.db_manager.session = MagicMock()
+    service.db_manager.session.query.return_value = mock_query
+    s_return = await service.get_conversation_context("+919999999999")
+    assert s_return is not None
+
 
 
 

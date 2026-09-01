@@ -1411,8 +1411,9 @@ async def test_realtime_analytics_service_full_branches():
     svc.settings.redis_session_storage_enabled = True
 
     # 4. get_realtime_analytics_service singleton
-    from app.services.realtime_analytics_service import get_realtime_analytics_service
-    singleton = get_realtime_analytics_service()
+    import app.services.realtime_analytics_service as r_mod
+    r_mod._realtime_analytics_service = None
+    singleton = r_mod.get_realtime_analytics_service()
     assert singleton is not None
 
 
