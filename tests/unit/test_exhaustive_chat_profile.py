@@ -1064,19 +1064,19 @@ async def test_profile_selection_comprehensive_branch_coverage(monkeypatch):
     assert res_show is not None
 
     # 8. Confidence boundary tests for buy/sell/rfq_status
-    cache.get_user_data.return_value = [{"role": "buyer", "user_id": "u1", "username": "b1"}]
+    service._get_user_profiles = AsyncMock(return_value={"success": True, "profiles": [{"role": "buyer", "user_id": "u1", "username": "b1"}]})
     service._handle_buyer_intent = AsyncMock(return_value={"status": "buyer_handled"})
     service._handle_seller_intent = AsyncMock(return_value={"status": "seller_handled"})
     service._handle_rfq_status_check = AsyncMock(return_value={"status": "rfq_checked"})
 
     res_buy_mid = await service.handle_profile_selection("+919999999999", "buy steel", {"intent": "buy_something", "confidence": 60}, s2)
-    assert res_buy_mid is not None
+    assert res_buy_mid["status"] == "buyer_handled"
 
     res_sell_high = await service.handle_profile_selection("+919999999999", "sell steel", {"intent": "sell_something", "confidence": 85}, s2)
-    assert res_sell_high is not None
+    assert res_sell_high["status"] == "seller_handled"
 
     res_rfq_high = await service.handle_profile_selection("+919999999999", "status of rfq", {"intent": "rfq_status_check", "confidence": 85}, s2)
-    assert res_rfq_high is not None
+    assert res_rfq_high["status"] == "rfq_checked"
 
     # 9. Explicit registration intent detection in handle_profile_selection
     service._redirect_to_buyer_registration = AsyncMock(return_value={"status": "buyer_reg"})

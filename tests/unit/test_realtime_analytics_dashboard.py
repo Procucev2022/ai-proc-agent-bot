@@ -1079,7 +1079,8 @@ async def test_dashboard_aggregation_full_metrics_coverage():
     from app.database import Base
     from app.models import ConversationSession, RFQ, Seller, ProductCategory, RFQNotificationFact, UserType, SessionState, ConversationOutcome, RFQStatus
 
-    engine = create_engine("sqlite:///:memory:")
+    from sqlalchemy.pool import StaticPool
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(bind=engine)
     SessionLocal = sessionmaker(bind=engine)
     db = SessionLocal()
