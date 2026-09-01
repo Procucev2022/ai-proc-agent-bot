@@ -1669,6 +1669,7 @@ async def test_session_management_all_residual_branches():
             assert is_valid2 in [True, False]
     except Exception:
         pass
+    service.settings.license_enabled = False
 
     # 11. Restoring active DB session to Redis and return visit suffix
     service.redis_enabled = True
@@ -1680,7 +1681,11 @@ async def test_session_management_all_residual_branches():
         conversation_history={"messages": []}
     )
     service.redis_session.get_user_active_session_id = AsyncMock(return_value=None)
+    service.redis_session.set_user_active_session_id = AsyncMock()
     service.redis_session.get_session = AsyncMock(return_value=None)
+    service.redis_session.store_session = AsyncMock()
+    if hasattr(service, "welcome_message_service"):
+        service.welcome_message_service.check_and_send_welcome_message = AsyncMock()
     service.db_manager.get_conversation_session = MagicMock(return_value=active_db_sess)
     s_restored = await service.get_conversation_context("+919999999999")
     assert s_restored is not None
