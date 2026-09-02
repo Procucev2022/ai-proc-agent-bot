@@ -120,14 +120,12 @@ class DashboardAggregationService:
         recent_feed = await self.realtime_service.get_recent_feed(limit=40)
 
         # Run synchronous heavy DB queries off the event-loop thread
-        if self.db is not None:
-            return await asyncio.to_thread(
-                self._compute_all_metrics,
-                self.db, date_preset, start_dt, end_dt, comp_start_dt, comp_end_dt,
-                role, category, location, rfq_status, active_users_snapshot, recent_feed
-            )
-
         def _run_with_context() -> Dict[str, Any]:
+            if self.db is not None:
+                return self._compute_all_metrics(
+                    self.db, date_preset, start_dt, end_dt, comp_start_dt, comp_end_dt,
+                    role, category, location, rfq_status, active_users_snapshot, recent_feed
+                )
             with get_db_session_context() as db:
                 return self._compute_all_metrics(
                     db, date_preset, start_dt, end_dt, comp_start_dt, comp_end_dt,
