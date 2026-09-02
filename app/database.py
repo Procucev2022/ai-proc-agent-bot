@@ -77,7 +77,7 @@ def _get_ssl_connect_args(settings) -> dict:
 
         raise ValueError("Database TLS CA certificate is required in client mode")
     else:
-        return {"ssl": {"ssl_disabled": False, "ssl_check_hostname": False, "ssl_verify_cert": False}}
+        return {}
 
 
 engine = None

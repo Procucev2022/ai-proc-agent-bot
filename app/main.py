@@ -26,9 +26,16 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from typing import Dict, Any, Union
+from typing import Dict, Any, Optional, Union
 from app.config import get_settings
 from app.api.webhook import router as webhook_router
+from app.api.dashboard import (
+    router as dashboard_router,
+    DASHBOARD_SESSION_COOKIE,
+    DASHBOARD_SESSION_MAX_AGE,
+    build_dashboard_session_token,
+    is_valid_dashboard_credential,
+)
 from app.database import init_database, get_db_session_context
 from app.services.chat_service import ChatService
 from app.services.global_error_handler import handle_server_error
@@ -311,7 +318,7 @@ app = FastAPI(
 
 # Add rate limiting error handler
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 
 # Add global exception handler for unhandled server errors
@@ -407,6 +414,7 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 # Include API routers
 app.include_router(webhook_router, prefix="/webhook", tags=["webhook"])
+app.include_router(dashboard_router)
 
 # Don't create global ChatService - create per-request with proper session management
 # chat_service = ChatService()  # REMOVED: Causes database connection leaks
@@ -440,7 +448,8 @@ async def root():
             "message": "AI Procurement Agent API",
             "docs": "/docs",
             "health": "/health",
-            "chat": "/chat"
+            "chat": "/chat",
+            "dashboard": "/dashboard"
         }
     )
 
@@ -449,6 +458,58 @@ async def root():
 async def chat_page(request: Request):
     """Serve the chat UI page."""
     return templates.TemplateResponse(request, "chat.html")
+
+
+def _set_dashboard_cookie(response, api_key: str, request: Request):
+    response.set_cookie(
+        DASHBOARD_SESSION_COOKIE,
+        build_dashboard_session_token(api_key),
+        max_age=DASHBOARD_SESSION_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+    )
+    return response
+
+
+def _serve_dashboard_template(request: Request, template_name: str):
+    """Render a dashboard page for an authenticated operator and refresh the cookie."""
+    api_key = get_settings().dashboard_api_key
+    provided_key = request.headers.get("X-Dashboard-Key")
+    session_cookie = request.cookies.get(DASHBOARD_SESSION_COOKIE)
+    if not is_valid_dashboard_credential(api_key, provided_key, session_cookie):
+        raise HTTPException(status_code=401, detail="Dashboard authentication required")
+
+    return _set_dashboard_cookie(
+        templates.TemplateResponse(request, template_name), api_key, request
+    )
+
+
+class DashboardLoginRequest(BaseModel):
+    key: str
+
+
+@app.post("/dashboard/login")
+async def dashboard_login(request: Request, credentials: DashboardLoginRequest):
+    """Authenticate an operator without placing the key in a URL."""
+    api_key = get_settings().dashboard_api_key
+    if not is_valid_dashboard_credential(api_key, credentials.key, None):
+        raise HTTPException(status_code=401, detail="Dashboard authentication required")
+    return _set_dashboard_cookie(
+        JSONResponse(content={"status": "success"}), api_key, request
+    )
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_page(request: Request):
+    """Serve the Real-Time Analytics Dashboard UI."""
+    return _serve_dashboard_template(request, "dashboard.html")
+
+
+@app.get("/dashboard/classification-details", response_class=HTMLResponse)
+async def classification_details_page(request: Request):
+    """Serve the User Classification Details page."""
+    return _serve_dashboard_template(request, "classification_details.html")
 
 
 @app.post("/api/chat")

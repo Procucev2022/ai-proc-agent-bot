@@ -8,13 +8,13 @@ WhatsApp clients.
 
 from datetime import date, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import app.services.chat_service as chat_module
 import app.services.profile_selection_service as profile_module
-from app.models import WorkflowType
+from app.models import WorkflowType, ConversationSession
 
 
 class FakeRedis:
@@ -425,7 +425,7 @@ async def test_profile_response_state_machine_and_ai(monkeypatch):
     new = session_obj(workflow_state={"profile_options": [{"action": "exit"}]})
     service._parse_profile_selection.return_value = {"action": "exit"}
     assert (await service._handle_new_user_registration_response("1", "1", new))["status"] == "exit"
-    assert (await service._handle_new_user_registration_response("1", "1", session_obj(workflow_state={}))) ["status"] == "restart_profile_selection"
+    assert (await service._handle_new_user_registration_response("1", "1", session_obj(workflow_state={})))["status"] == "restart_profile_selection"
     service._parse_profile_selection.return_value = None
     assert (await service._handle_new_user_registration_response("1", "x", session_obj(workflow_state={"profile_options": [{"action": "x"}]})))["status"] == "new_user_registration_retry_sent"
 
@@ -1012,3 +1012,304 @@ async def test_chat_remaining_helpers_and_state_branches(monkeypatch):
     session.workflow_state = {"extracted_entities": [{"description": "bolt"}]}
     blocked = {"contextual_response": "base", "contextual_actions": [{"type": "restart_workflow"}], "context_understanding": {}}
     assert (await service._handle_contextual_interaction(user, session, "q", blocked))["destructive_blocked"]
+
+
+@pytest.mark.asyncio
+async def test_profile_selection_comprehensive_branch_coverage(monkeypatch):
+    """Test uncovered branches in ProfileSelectionService."""
+    service, wa, auth, cache = profile_service(monkeypatch)
+
+    # 1. _handle_new_user_registration_response with missing options
+    s = session_obj(workflow_state={})
+    res = await service._handle_new_user_registration_response("+919999999999", "1", s)
+    assert res["status"] == "restart_profile_selection"
+
+    # 2. _handle_new_user_registration_response with valid buyer choice
+    def _make_opts_session():
+        sess = session_obj(workflow_state={})
+        sess.workflow_state["profile_options"] = [
+            {"number": 1, "action": "register_buyer", "display": "Register as Buyer"},
+            {"number": 2, "action": "register_seller", "display": "Register as Seller"},
+            {"number": 3, "action": "exit", "display": "Exit"}
+        ]
+        return sess
+
+    res_buyer = await service._handle_new_user_registration_response("+919999999999", "1", _make_opts_session())
+    assert res_buyer["status"] == "redirected_to_buyer_registration"
+
+    # 3. _handle_new_user_registration_response with valid seller choice
+    res_seller = await service._handle_new_user_registration_response("+919999999999", "2", _make_opts_session())
+    assert res_seller["status"] == "redirected_to_seller_registration"
+
+    # 4. _handle_new_user_registration_response with exit choice
+    res_exit = await service._handle_new_user_registration_response("+919999999999", "3", _make_opts_session())
+    assert res_exit["status"] in ["exit", "exit_completed", "exit_intent_acknowledged"]
+
+    # 5. _handle_new_user_registration_response invalid selection under limit
+    s_inv = _make_opts_session()
+    s_inv.workflow_state["registration_retries"] = 0
+    res_invalid = await service._handle_new_user_registration_response("+919999999999", "99", s_inv)
+    assert res_invalid["status"] == "new_user_registration_retry_sent"
+
+    # 6. handle_profile_selection when no profiles exist
+    s2 = session_obj(workflow_state={})
+    cache.get_user_data.return_value = []
+    res_show = await service.handle_profile_selection("+919999999999", "hello", s2, {"intent": "greeting", "confidence": 90})
+    assert res_show is not None
+
+    # 7. Confidence boundary tests for buy/sell/rfq_status
+    service._detect_registration_intent = AsyncMock(return_value=None)
+    service._get_user_profiles = AsyncMock(return_value={"success": True, "profiles": [{"role": "buyer", "user_id": "u1", "username": "b1"}]})
+    service._handle_buyer_intent = AsyncMock(return_value={"status": "buyer_handled"})
+    service._handle_seller_intent = AsyncMock(return_value={"status": "seller_handled"})
+    service._handle_rfq_status_check = AsyncMock(return_value={"status": "rfq_checked"})
+
+    res_buy_mid = await service.handle_profile_selection("+919999999999", "buy steel", s2, {"intent": "buy_something", "confidence": 60})
+    assert res_buy_mid["status"] == "buyer_handled"
+
+    res_sell_high = await service.handle_profile_selection("+919999999999", "sell steel", s2, {"intent": "sell_something", "confidence": 85})
+    assert res_sell_high["status"] == "seller_handled"
+
+    res_rfq_high = await service.handle_profile_selection("+919999999999", "status of rfq", s2, {"intent": "rfq_status_check", "confidence": 85})
+    assert res_rfq_high["status"] == "rfq_checked"
+
+    # 8. Explicit registration intent detection in handle_profile_selection
+    service._redirect_to_buyer_registration = AsyncMock(return_value={"status": "buyer_reg"})
+    service._redirect_to_seller_registration = AsyncMock(return_value={"status": "seller_reg"})
+
+    res_reg_buyer = await service.handle_profile_selection("+919999999999", "I want to register as a buyer", s2, {"intent": "register_account", "confidence": 90})
+    assert res_reg_buyer is not None
+
+    res_reg_seller = await service.handle_profile_selection("+919999999999", "I want to register as a seller", s2, {"intent": "register_account", "confidence": 90})
+    assert res_reg_seller is not None
+
+
+@pytest.mark.asyncio
+async def test_profile_selection_exhaustive_residual_branches():
+    """Test all remaining branch cases in ProfileSelectionService."""
+    wa = MagicMock()
+    wa.send_message = AsyncMock()
+    auth = MagicMock()
+    openai = MagicMock()
+    service = profile_module.ProfileSelectionService(wa, auth, openai)
+
+    # 1. _handle_seller_intent with 0, 1, and 2 seller profiles
+    s = session_obj(workflow_state={})
+    res_s0 = await service._handle_seller_intent("+919999999999", [], "sell", s, {"intent": "sell_something"})
+    assert res_s0["status"] == "intent_mismatch_handled"
+
+    res_s1 = await service._handle_seller_intent("+919999999999", [{"role": "seller", "email": "s1@test.com", "user_id": "s1"}], "sell", s, {"intent": "sell_something"})
+    assert res_s1 is not None
+
+    res_s2 = await service._handle_seller_intent("+919999999999", [
+        {"role": "seller", "email": "s1@test.com", "user_id": "s1"},
+        {"role": "seller", "email": "s2@test.com", "user_id": "s2"}
+    ], "sell", s, {"intent": "sell_something"})
+    assert res_s2["status"] == "seller_profile_selection_presented"
+
+    # 2. _handle_buyer_intent with 0, 1, and 2 buyer profiles
+    res_b0 = await service._handle_buyer_intent("+919999999999", [], "buy", s, {"intent": "buy_something"})
+    assert res_b0["status"] == "buyer_no_accounts_message_sent"
+
+    res_b1 = await service._handle_buyer_intent("+919999999999", [{"role": "buyer", "email": "b1@test.com", "user_id": "b1"}], "buy", s, {"intent": "buy_something"})
+    assert res_b1 is not None
+
+    res_b2 = await service._handle_buyer_intent("+919999999999", [
+        {"role": "buyer", "email": "b1@test.com", "user_id": "b1"},
+        {"role": "buyer", "email": "b2@test.com", "user_id": "b2"}
+    ], "buy", s, {"intent": "buy_something"})
+    assert res_b2["status"] == "buyer_profile_selection_presented"
+
+    # 3. _handle_rfq_status_check with 1 and 2 profiles
+    res_rfq1 = await service._handle_rfq_status_check("+919999999999", [{"role": "buyer", "email": "b1@test.com"}], s)
+    assert res_rfq1 is not None
+
+    res_rfq2 = await service._handle_rfq_status_check("+919999999999", [
+        {"role": "buyer", "email": "b1@test.com"},
+        {"role": "seller", "email": "s1@test.com"}
+    ], s)
+    assert res_rfq2["status"] == "rfq_status_profile_selection_presented"
+
+    # 4. _handle_invalid_ambiguous and _handle_no_profiles_found
+    res_amb = await service._handle_invalid_ambiguous("+919999999999", [{"role": "buyer", "email": "b1@test.com"}], s)
+    assert res_amb["status"] == "ambiguous_profile_selection_presented"
+
+    res_no = await service._handle_no_profiles_found("+919999999999", "greeting", s)
+    assert res_no["status"] == "new_user_registration_presented"
+
+    # 5. _parse_profile_selection with fast path keywords
+    opts = [
+        {"number": 1, "action": "register_buyer", "display": "Buyer"},
+        {"number": 2, "action": "register_seller", "display": "Seller"},
+        {"number": 3, "action": "exit", "display": "Exit"}
+    ]
+    assert (await service._parse_profile_selection("buyer", opts))["action"] == "register_buyer"
+    assert (await service._parse_profile_selection("seller", opts))["action"] == "register_seller"
+    assert (await service._parse_profile_selection("exit", opts))["action"] == "exit"
+    assert (await service._parse_profile_selection("1", opts))["number"] == 1
+
+    # 6. _handle_profile_selection_response across stages
+    for stage_name in ["neutral_greeting", "buyer_intent", "seller_intent", "rfq_status_check", "invalid_ambiguous", "buyer_intent_no_accounts", "seller_no_accounts", "new_user_registration"]:
+        s_stage = session_obj(workflow_state={"profile_selection_stage": stage_name, "profile_options": opts})
+        res_resp = await service.handle_profile_selection_response("+919999999999", "1", s_stage)
+        assert res_resp is not None
+
+    # 7. Intent mismatch handling
+    res_mis_b = await service._handle_intent_mismatch("+919999999999", s, "buyer", [{"role": "seller", "email": "s@test.com"}])
+    assert res_mis_b is not None
+
+    res_mis_s = await service._handle_intent_mismatch("+919999999999", s, "seller", [{"role": "buyer", "email": "b@test.com"}])
+    assert res_mis_s is not None
+
+    # 8. _set_active_profile_and_proceed with buyer and seller
+    res_set_b = await service._set_active_profile_and_proceed("+919999999999", {"role": "buyer", "user_id": "u1", "email": "b@t.com"}, s, "buy", "buyer_intent")
+    assert res_set_b is not None
+
+    res_set_s = await service._set_active_profile_and_proceed("+919999999999", {"role": "seller", "user_id": "s1", "email": "s@t.com"}, s, "sell", "seller_intent")
+    assert res_set_s is not None
+
+    # 9. _fuzzy_email_match and _string_similarity
+    sim = service._string_similarity("steel buyer", "steel buyer inc")
+    assert sim > 0.0
+    fuzz1 = service._fuzzy_email_match("alice", "alice@example.com")
+    assert fuzz1.get("confidence", 0) > 0
+    fuzz2 = service._fuzzy_email_match("ab", "alice@example.com")
+    assert fuzz2.get("confidence", 0) == 0.0
+
+    # 10. _parse_profile_selection with user_selection_tool
+    tool = MagicMock()
+    tool.analyze_user_selection = AsyncMock(return_value={"register": {"type": "buyer"}})
+    service.user_selection_tool = tool
+    parsed_reg = await service._parse_profile_selection("register as buyer", opts)
+    assert parsed_reg["action"] == "register_buyer"
+
+    tool.analyze_user_selection = AsyncMock(return_value={"selected_option": 1, "requires_clarification": False})
+    parsed_sel = await service._parse_profile_selection("first one", opts)
+    assert parsed_sel["number"] == 1
+
+    tool.analyze_user_selection = AsyncMock(return_value={"requires_clarification": True})
+    parsed_clar = await service._parse_profile_selection("which one?", opts)
+    assert parsed_clar is None
+
+    # 11. Additional profile selection and format options branches
+    fuzz3 = service._fuzzy_email_match("alice.smith", "alice.smith@domain.co")
+    assert fuzz3.get("confidence", 0) > 0.5
+    fuzz4 = service._fuzzy_email_match("bob@example.com", "bob@example.com")
+    assert fuzz4.get("confidence", 0) >= 0.8
+
+    tool.analyze_user_selection = AsyncMock(return_value={"switch_account": True, "selected_option": 2})
+    parsed_sw = await service._parse_profile_selection("switch account 2", opts)
+    assert parsed_sw is not None
+
+    # 12. Profile extraction and conversion helpers
+    assert service._extract_user_name([]) is None
+    assert service._extract_user_name([{"user_data": {"fullName": "John Doe"}}]) == "John"
+    assert service._extract_user_name([{"user_data": {"fullName": "   "}}]) is None
+
+    assert service._convert_api_data_to_profiles([{"invalid": "data"}]) == []
+
+    # 13. Role based menus
+    sess_menu = ConversationSession(session_id="s_menu", external_user_id="919999999999")
+    with patch.object(service, "_set_active_profile_and_proceed", AsyncMock(return_value={"status": "profile_selected_and_authenticated"})):
+        buyer_menu = await service._show_role_based_menu("+919999999999", {"role": "buyer", "email": "b@test.com", "user_data": {"fullName": "Alice"}}, sess_menu)
+        assert buyer_menu is not None
+
+        seller_menu = await service._show_role_based_menu("+919999999999", {"role": "seller", "email": "s@test.com", "user_data": {"fullName": "Bob"}}, sess_menu)
+        assert seller_menu is not None
+
+        buyer_menu_fallback = await service._show_role_based_menu("+919999999999", {"role": "buyer", "email": "b@test.com", "user_data": {}}, sess_menu)
+        assert buyer_menu_fallback is not None
+
+        seller_menu_fallback = await service._show_role_based_menu("+919999999999", {"role": "seller", "email": "s@test.com", "user_data": {}}, sess_menu)
+        assert seller_menu_fallback is not None
+
+    with patch.object(service, "_set_active_profile_and_proceed", AsyncMock(return_value={"status": "verification_required"})):
+        ver_menu = await service._show_role_based_menu("+919999999999", {"role": "buyer", "email": "b@test.com"}, sess_menu)
+        assert ver_menu["status"] == "verification_required"
+
+    # 14. Ambiguous and no profile handlers
+    service.whatsapp_service = MagicMock()
+    service.whatsapp_service.send_message = AsyncMock(return_value={"success": True})
+    amb_res = await service._handle_invalid_ambiguous("+919999999999", [{"role": "buyer", "email": "b@test.com"}, {"role": "seller", "email": "s@test.com"}], sess_menu)
+    assert amb_res["status"] == "ambiguous_profile_selection_presented"
+
+    no_prof_res = await service._handle_no_profiles_found("+919999999999", "greeting", sess_menu)
+    assert no_prof_res["status"] == "new_user_registration_presented"
+
+    # 15. Fast path option matches
+    reg_opts = [
+        {"number": 1, "action": "register_buyer", "display": "Register as Buyer"},
+        {"number": 2, "action": "register_seller", "display": "Register as Seller"},
+        {"number": 3, "action": "exit", "display": "Exit"}
+    ]
+    assert (await service._parse_profile_selection("1", reg_opts))["action"] == "register_buyer"
+    assert (await service._parse_profile_selection("2", reg_opts))["action"] == "register_seller"
+    assert (await service._parse_profile_selection("3", reg_opts))["action"] == "exit"
+    assert (await service._parse_profile_selection("buyer", reg_opts))["action"] == "register_buyer"
+    assert (await service._parse_profile_selection("seller", reg_opts))["action"] == "register_seller"
+    assert (await service._parse_profile_selection("exit", reg_opts))["action"] == "exit"
+
+    # 16. Fuzzy email matching and string similarity branches
+    assert service._fuzzy_email_match("ab", "alice@example.com")["confidence"] == 0.0
+    assert service._fuzzy_email_match("alice", "alice@example.com")["confidence"] > 0.5
+    assert service._fuzzy_email_match("exampl", "alice@example.com")["confidence"] > 0.0
+    assert service._string_similarity("abc", "abc") == 1.0
+    assert service._string_similarity("a", "xyz") == 0.0
+
+    # 17. Enhanced simple parse and process selected profile actions
+    p_reg = await service._enhanced_simple_parse_profile_selection("register new account", [{"action": "register_buyer"}])
+    assert p_reg is not None
+    p_exist = await service._enhanced_simple_parse_profile_selection("continue with existing", [{"profile": {"email": "a@b.com"}}])
+    assert p_exist is not None
+
+    with patch.object(service, "_handle_new_registration_choice", AsyncMock(return_value={"status": "reg_choice"})), \
+         patch.object(service, "_redirect_to_buyer_registration", AsyncMock(return_value={"status": "buyer_reg"})), \
+         patch.object(service, "_redirect_to_seller_registration", AsyncMock(return_value={"status": "seller_reg"})), \
+         patch.object(service, "_show_all_profiles", AsyncMock(return_value={"status": "all_profiles"})), \
+         patch.object(service, "_handle_exit_action", AsyncMock(return_value={"status": "exit"})):
+        
+        assert (await service._process_selected_profile("+919999999999", {"action": "register_new"}, sess_menu))["status"] == "reg_choice"
+        assert (await service._process_selected_profile("+919999999999", {"action": "register_buyer"}, sess_menu))["status"] == "buyer_reg"
+        assert (await service._process_selected_profile("+919999999999", {"action": "register_seller"}, sess_menu))["status"] == "seller_reg"
+        assert (await service._process_selected_profile("+919999999999", {"action": "show_all_profiles"}, sess_menu))["status"] == "all_profiles"
+        assert (await service._process_selected_profile("+919999999999", {"action": "exit"}, sess_menu))["status"] == "exit"
+        assert (await service._process_selected_profile("+919999999999", {"registration_type": "buyer"}, sess_menu))["status"] == "buyer_reg"
+        assert (await service._process_selected_profile("+919999999999", {"registration_type": "seller"}, sess_menu))["status"] == "seller_reg"
+
+    # 18. handle_profile_selection registration branches
+    # side_effect order: direct buyer, direct seller, then two register_account
+    # rounds where the first probe finds nothing and the in-branch probe decides.
+    with patch.object(service, "_detect_registration_intent", AsyncMock(side_effect=["buyer", "seller", None, "buyer", None, "seller"])), \
+         patch.object(service, "_redirect_to_buyer_registration", AsyncMock(return_value={"status": "buyer_reg"})), \
+         patch.object(service, "_redirect_to_seller_registration", AsyncMock(return_value={"status": "seller_reg"})):
+        
+        # Explicit registration intent
+        res_b = await service.handle_profile_selection(
+            "+919999999999",
+            {"button_reply": {"title": "Register Buyer"}},
+            sess_menu,
+            {"intent": "unknown", "confidence": 90},
+        )
+        assert res_b["status"] == "buyer_reg"
+        res_s = await service.handle_profile_selection(
+            "+919999999999", "seller", sess_menu, {"intent": "unknown", "confidence": 90}
+        )
+        assert res_s["status"] == "seller_reg"
+
+        # Intent == register_account
+        res_acc_b = await service.handle_profile_selection(
+            "+919999999999",
+            {"other_key": "val"},
+            sess_menu,
+            {"intent": "register_account", "confidence": 90},
+        )
+        assert res_acc_b["status"] == "buyer_reg"
+        res_acc_s = await service.handle_profile_selection(
+            "+919999999999",
+            "seller",
+            sess_menu,
+            {"intent": "register_account", "confidence": 90},
+        )
+        assert res_acc_s["status"] == "seller_reg"
+
+

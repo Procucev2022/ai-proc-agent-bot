@@ -575,3 +575,62 @@ async def test_main_lifespan_shutdown_timeout_errors_and_open_session(monkeypatc
     monitor._close_session.assert_awaited_once()
     timeout.stop_monitoring.assert_awaited_once()
     session.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_main_lifespan_skips_redis_dependent_tasks_when_storage_disabled(monkeypatch):
+    """With Redis session storage off, the queue and timeout monitors never start.
+
+    Both are gated on ``redis_session_storage_enabled``, and shutdown must then
+    skip the timeout monitor because it was never constructed.
+    """
+    monkeypatch.setattr(
+        main,
+        "settings",
+        _settings(
+            webhook_health_monitoring_enabled=False,
+            redis_session_storage_enabled=False,
+        ),
+    )
+    monkeypatch.setattr(main, "init_database", MagicMock())
+
+    import app.procucev_apis.procucev_api_client as api_client
+
+    monkeypatch.setattr(api_client, "init_procucev_api_client", AsyncMock())
+    monkeypatch.setattr(api_client, "close_procucev_api_client", AsyncMock())
+
+    queue = MagicMock()
+    queue._background_tasks = []
+    queue.run_batch_poller = MagicMock(side_effect=AssertionError("poller must not start"))
+    queue.run_monitoring_loop = MagicMock(side_effect=AssertionError("monitor must not start"))
+    queue.shutdown = AsyncMock()
+    monkeypatch.setattr(webhook, "message_queue_service", queue)
+
+    timeout_module = __import__(
+        "app.services.inactivity_timeout_service", fromlist=["get_timeout_service"]
+    )
+    monkeypatch.setattr(
+        timeout_module,
+        "get_timeout_service",
+        lambda: (_ for _ in ()).throw(AssertionError("timeout service must not load")),
+    )
+
+    tasks = []
+
+    def create_task(coro, **kwargs):
+        coro.close()
+        task = MagicMock(name=kwargs.get("name", "task"))
+        tasks.append(task)
+        return task
+
+    monkeypatch.setattr(main.asyncio, "create_task", create_task)
+    monkeypatch.setattr(main.gc, "get_objects", lambda: [])
+
+    async with main.lifespan(main.app):
+        assert queue._background_tasks == []
+        # Only the event-loop stall monitor is scheduled.
+        assert len(tasks) == 1
+
+    queue.run_batch_poller.assert_not_called()
+    queue.run_monitoring_loop.assert_not_called()
+    queue.shutdown.assert_awaited_once()

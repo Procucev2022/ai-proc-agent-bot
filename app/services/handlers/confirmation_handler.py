@@ -270,6 +270,28 @@ class ConfirmationHandler:
             # Calculate averages based on session data
             from app.services.helpers.session_helpers import SessionHelpers
             session = SessionHelpers.calculate_session_averages(session)
+
+            # Emit real-time analytics event
+            try:
+                from app.services.realtime_analytics_service import get_realtime_analytics_service
+                rt_service = get_realtime_analytics_service()
+                user_phone_val = str(getattr(user, "phone_number", None) or getattr(session, "external_user_id", None) or "buyer")
+                asyncio.create_task(
+                    rt_service.publish_event(
+                        event_type="rfq_created",
+                        user_id=user_phone_val,
+                        data={
+                            "rfq_ids": rfq_ids,
+                            "rfq_id": rfq_ids[0] if rfq_ids else "",
+                            "count": len(rfq_ids),
+                            "session_id": getattr(session, "session_id", "")
+                        },
+                        session_id=getattr(session, "session_id", None),
+                        persist_db=True
+                    )
+                )
+            except Exception as ev_err:
+                logger.debug(f"[REALTIME_ANALYTICS] Failed to emit rfq_created event: {ev_err}")
         
         # Clear session AFTER summarization data is captured
         logger.info(f"successful count is :{successful_count}")

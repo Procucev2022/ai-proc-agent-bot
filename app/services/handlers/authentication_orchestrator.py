@@ -308,8 +308,8 @@ class AuthenticationOrchestrator:
             WorkflowManager.set_workflow_type(session, WorkflowType.authentication, caller="authentication_orchestrator")
             
             # CRITICAL FIX: Preserve existing workflow_state data to prevent context loss
-            existing_state = session.workflow_state or {}
-            session.workflow_state = {
+            existing_state: Dict[str, Any] = dict(getattr(session, "workflow_state", None) or {})
+            session.workflow_state = {  # type: ignore[assignment]
                 **existing_state,  # Preserve all existing data
                 "authentication_stage": "email_confirmation",
                 "filtered_users": filtered_users,
@@ -350,9 +350,16 @@ class AuthenticationOrchestrator:
             if session.workflow_state.get("profile_selection_stage"):
                 logger.info(f"Handling profile selection response for stage: {session.workflow_state.get('profile_selection_stage')}")
                 msg_lower = str(message_content).strip().lower()
-                intent = (intent_result or {}).get("intent")
-                if intent == "greeting" or msg_lower in ["hi", "hello", "hey", "start", "hi!", "hello!"]:
-                    logger.info(f"Greeting received during profile selection stage for {user_phone}, re-presenting menu")
+                profile_stage = session.workflow_state.get("profile_selection_stage")
+                # Re-present the menu ONLY when the message is a literal greeting word —
+                # NOT based on LLM-classified intent, because bare numeric replies like "1"
+                # are often mis-classified as "greeting" by the LLM and must be treated as
+                # selection responses. Also skip re-presentation for new_user_registration
+                # since that menu only ever needs to be shown once.
+                LITERAL_GREETING_WORDS = {"hi", "hello", "hey", "start", "hi!", "hello!", "hii", "hiii"}
+                is_literal_greeting = msg_lower in LITERAL_GREETING_WORDS
+                if is_literal_greeting and profile_stage != "new_user_registration":
+                    logger.info(f"Literal greeting '{msg_lower}' received during profile selection stage for {user_phone}, re-presenting menu")
                     return await self.profile_selection_service.handle_profile_selection(
                         user_phone, message_content, session, intent_result or {"intent": "greeting", "confidence": 100}
                     )
@@ -364,6 +371,7 @@ class AuthenticationOrchestrator:
                     logger.info(f"Exit completed during profile selection - stopping further processing")
                     return result
                 return result
+
             
             # Check for switch response
             switch_result = await self._check_switch_response(user_phone, session, message_content, intent_result)
@@ -475,8 +483,8 @@ class AuthenticationOrchestrator:
                 if result.get("status") == "registration_completed" and result.get("registration_flow_complete"):
                     logger.info(f"Registration flow completely finished - stopping further processing")
                     # Clear workflow to prevent any further processing
-                    session.workflow_type = None
-                    session.workflow_state = {}
+                    session.workflow_type = None  # type: ignore[assignment]
+                    session.workflow_state = {}  # type: ignore[assignment]
                 
                 return result
             elif registration_stage == "domain_matching":
@@ -564,8 +572,8 @@ class AuthenticationOrchestrator:
                 return await self._redirect_to_registration_flow(user_phone, session, "buyer")
             elif intent in ["cancel", "stop"]:
                 # Cancel authentication
-                session.workflow_type = None
-                session.workflow_state = {}
+                session.workflow_type = None  # type: ignore[assignment]
+                session.workflow_state = {}  # type: ignore[assignment]
                 await self.whatsapp_service.send_message(
                     user_phone, "Authentication cancelled. How can I help you?"
                 )
@@ -614,8 +622,8 @@ class AuthenticationOrchestrator:
                 )
             elif intent in ["cancel", "stop"]:
                 # Cancel registration
-                session.workflow_type = None
-                session.workflow_state = {}
+                session.workflow_type = None  # type: ignore[assignment]
+                session.workflow_state = {}  # type: ignore[assignment]
                 await self.whatsapp_service.send_message(
                     user_phone, "Registration cancelled. How can I help you?"
                 )
@@ -651,7 +659,7 @@ class AuthenticationOrchestrator:
             
             # Ensure workflow_type is consistently set
             WorkflowManager.set_workflow_type(session, WorkflowType.registration, caller="authentication_orchestrator")
-            session.workflow_state = {
+            session.workflow_state = {  # type: ignore[assignment]
                 "registration_stage": "data_collection",
                 "user_type": user_type,
                 "registration_entities": existing_entities,
@@ -687,7 +695,7 @@ class AuthenticationOrchestrator:
             )
     
     async def _check_switch_response(self, user_phone: str, session: ConversationSession,
-                                   message_content: str, intent_result: Dict) -> Dict[str, Any]:
+                                   message_content: str, intent_result: Dict) -> Optional[Dict[str, Any]]:
         """Check if user is responding to a switch choice."""
         try:
             # Handle auth/registration switch response

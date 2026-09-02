@@ -25,6 +25,7 @@ from typing import Dict, Any, List
 import json
 import asyncio
 
+from app.models import UserType, WorkflowType, ConversationOutcome
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
 from app.utils.datetime_utils import utc_now
@@ -589,7 +590,6 @@ class ChatService:
                         session, "user", f"[Button: {button_title}]", "interactive"
                     )
                     cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message_content)
-                    await self.session_manager.save_session(session, session.workflow_type)
                     return cancel_result
 
             # CRITICAL: Handle seller_rfq_intimation workflow BEFORE intent classification
@@ -814,11 +814,24 @@ class ChatService:
             if intent == "cancel_workflow" and confidence > 50 and is_in_auth_workflow:
                 logger.info(f"Cancel workflow intent detected in auth workflow with {confidence}% confidence - handling immediately to prevent loop")
                 cancel_result = await self.cancel_service.handle_cancel_intent(user_phone, session, message_content)
-                await self.session_manager.save_session(session, session.workflow_type)
+                await self.session_manager.save_session(
+                    session, session.workflow_type, persist_to_db=True
+                )
                 return cancel_result
 
-            # Handle irrelevant messages using reusable function
-            if intent in ('general_inquiry','greeting','support') or message_intent_result.get("irrelevant_message"):
+            # Handle irrelevant messages using reusable function.
+            # IMPORTANT: Skip this when user is responding to a menu (profile_selection_stage
+            # or registration_stage is active). Bare numeric replies like "1" are
+            # classified as "greeting" by the LLM, which would fire a spurious greeting
+            # WhatsApp message before the auth-orchestrator processes the real selection.
+            _ws = session.workflow_state or {}
+            _in_menu_response = bool(
+                _ws.get("profile_selection_stage") or _ws.get("registration_stage")
+            )
+            if not _in_menu_response and (
+                intent in ('general_inquiry', 'greeting', 'support')
+                or message_intent_result.get("irrelevant_message")
+            ):
                 with stage("irrelevant_message_flow", intent=intent):
                     await self.handle_irrelevant_message_flow(user_phone, message_intent_result, session)
 
@@ -1115,6 +1128,13 @@ class ChatService:
 
             # Only proceed to main flow if user is properly authenticated
             user = auth_result
+            if hasattr(user, 'role') and user.role:
+                role_val = user.role.value if hasattr(user.role, 'value') else str(user.role).lower()
+                if role_val == 'buyer':
+                    session.user_type = UserType.buyer
+                elif role_val == 'seller':
+                    session.user_type = UserType.seller
+
             if message_type == "text" and (message_intent_result.get('relevant_message') or message_content):
                 result = await self._process_text_message(user, session, message_intent_result.get('relevant_message') or message_content, message_intent_result)
             elif message_type == "interactive":
@@ -1157,12 +1177,14 @@ class ChatService:
             else:
                 result = {"status": "error", "error": f"Unknown message type: {message_type}"}
 
-            # # Log OpenAI call summary for performance monitoring
-            # call_summary = self.openai_service.get_call_summary(user_phone)
-            # if call_summary:
-            #     total_calls = sum(call_summary.values())
-            #     call_breakdown = ", ".join([f"{call_type}: {count}" for call_type, count in call_summary.items()])
-            #     logger.info(f"OpenAI calls for {user_phone}: {total_calls} total ({call_breakdown})")
+            # Ensure the session with all latest turns and messages is saved to Redis & DB
+            try:
+                if not (result and isinstance(result, dict) and result.get("exit_completed")):
+                    await self.session_manager.save_session(
+                        session, session.workflow_type, persist_to_db=True, emit_chat_event=True
+                    )
+            except Exception as save_err:
+                logger.warning(f"Failed to auto-save session at end of process_message: {save_err}")
 
             return result
 
@@ -3028,6 +3050,9 @@ class ChatService:
             )
 
 
+            # Save session
+            await self.session_manager.save_session(session, WorkflowType.general_inquiry)
+
             return {"status": "greeting_handled"}
 
         except Exception as e:
@@ -3891,7 +3916,7 @@ class ChatService:
         """
         try:
             logger.info(f"message is:{message}")
-            workflow_state = session.workflow_state or {}
+            workflow_state: Dict[str, Any] = dict(getattr(session, "workflow_state", None) or {})
             current_seller_state = workflow_state.get("seller_workflow_state")
 
             logger.debug(f"ChatService: Handling seller flow - Current state: {current_seller_state}")
@@ -4090,7 +4115,7 @@ class ChatService:
         to rfq_status_check intent and supports multiple IDs.
         """
         try:
-            workflow_state = session.workflow_state or {}
+            workflow_state: Dict[str, Any] = dict(getattr(session, "workflow_state", None) or {})
             candidate_rfqs = workflow_state.get("seller_candidate_rfqs", [])
             candidate_ids = {str(r.get("rfq_id")) for r in candidate_rfqs if r.get("rfq_id") is not None}
 
@@ -4802,16 +4827,17 @@ class ChatService:
         """Get the most meaningful message to process after auth/registration completes."""
         try:
             # Check if we have a tracked meaningful message from during the auth/registration flow
-            workflow_state = session.workflow_state or {}
-            tracked_message = workflow_state.get("last_meaningful_message")
-            tracked_intent_result = workflow_state.get("last_meaningful_intent_result")
+            state_dict = getattr(session, "workflow_state", None) or {}
+            tracked_message = state_dict.get("last_meaningful_message")
+            tracked_intent_result = state_dict.get("last_meaningful_intent_result")
 
             if tracked_message and tracked_intent_result:
                 logger.debug(f"Using tracked meaningful message: '{str(tracked_message)[:50]}...' with intent: {tracked_intent_result.get('intent')}")
 
                 # Clean up the tracked message since we're using it now
-                workflow_state.pop("last_meaningful_message", None)
-                workflow_state.pop("last_meaningful_intent_result", None)
+                if hasattr(session, "workflow_state") and isinstance(session.workflow_state, dict):
+                    session.workflow_state.pop("last_meaningful_message", None)
+                    session.workflow_state.pop("last_meaningful_intent_result", None)
 
                 return tracked_message, tracked_intent_result
             else:

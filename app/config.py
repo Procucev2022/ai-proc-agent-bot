@@ -123,6 +123,7 @@ class Settings:
         
         # Security configuration
         self.secret_key = os.getenv("SECRET_KEY")
+        self.dashboard_api_key = os.getenv("DASHBOARD_API_KEY")
         self.allowed_hosts = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
         self.allowed_ips = os.getenv("ALLOWED_IPS", "").split(",") if os.getenv("ALLOWED_IPS") else []
         

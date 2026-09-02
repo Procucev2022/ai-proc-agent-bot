@@ -5,14 +5,14 @@ This module provides standardized error message formatting for Excel upload issu
 following a common pattern: Error Type + Reason with specific details.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 
 class ExcelErrorFormatter:
     """Utility class for formatting Excel validation errors consistently."""
     
     @staticmethod
-    def format_error(error_type: str, details: Dict[str, Any] = None) -> str:
+    def format_error(error_type: str, details: Optional[Dict[str, Any]] = None) -> str:
         """
         Format Excel validation errors using standardized format: File Processing Failed: <error_message>
         
@@ -78,7 +78,7 @@ class ExcelErrorFormatter:
 
 
 # Convenience function for direct usage
-def format_excel_error(error_type: str, details: Dict[str, Any] = None) -> str:
+def format_excel_error(error_type: str, details: Optional[Dict[str, Any]] = None) -> str:
     """
     Convenience function to format Excel errors.
     

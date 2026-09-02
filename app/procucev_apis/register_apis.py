@@ -6,7 +6,7 @@ for both buyers and sellers in the system, integrating with the GMT Procucev bac
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from datetime import datetime
 
 from app.procucev_apis.procucev_api_client import get_procucev_api_client
@@ -142,7 +142,7 @@ class RegisterAPIService:
                 "type": None
             }
      
-    async def send_otp(self, username: str, phone_number: str = None) -> Dict[str, Any]:
+    async def send_otp(self, username: str, phone_number: Optional[str] = None) -> Dict[str, Any]:
         """
         Send OTP to the provided username for verification.
         
@@ -192,7 +192,7 @@ class RegisterAPIService:
                 "type": None
             }
     
-    async def validate_otp(self, username: str, otp: str, phone_number: str = None) -> Dict[str, Any]:
+    async def validate_otp(self, username: str, otp: str, phone_number: Optional[str] = None) -> Dict[str, Any]:
         """
         Validate OTP for the provided username.
         

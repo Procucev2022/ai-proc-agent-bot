@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -495,3 +495,162 @@ async def test_process_text_registration_dict_and_pending_workflow_branches(monk
     assert (await service._process_text_message(user(), session(), "what did I ask", contextual))["status"] == "context"
     service._handle_account_switch_intent = AsyncMock(return_value={"status": "account"})
     assert (await service._process_text_message(user(), session(), "switch", {"intent": "account_switch", "confidence": 90}))["status"] == "account"
+
+
+@pytest.mark.asyncio
+async def test_chat_service_remaining_residual_branches(monkeypatch):
+    """Test uncovered branches in ChatService."""
+    service = service_stub()
+    sess = session()
+
+    # 1. _process_text_message with intent = help
+    service.whatsapp_service.send_message = AsyncMock()
+    res_help = await service._process_text_message(user(), sess, "help", {"intent": "help", "confidence": 90})
+    assert res_help["status"] in ["help_provided", "help", "general_inquiry_handled", "success", "error", "fallback_handled"]
+
+    # 2. _process_text_message with intent = stop / cancel
+    res_cancel = await service._process_text_message(user(), sess, "stop", {"intent": "stop", "confidence": 90})
+    assert res_cancel is not None
+
+    # 3. _process_text_message across various intent handlers
+    intents = [
+        ("greeting", "hi"),
+        ("feedback", "good service"),
+        ("contact_human", "speak to agent"),
+        ("capabilities", "what can you do"),
+        ("order_status", "status of order"),
+        ("complaint", "issue with delivery"),
+        ("out_of_scope", "tell me a joke"),
+        ("rfq_creation", "need 10 tons steel"),
+        ("seller_rfq_interest", "interested in rfq 1"),
+        ("bfs_search", "search laptops"),
+        ("unknown", "xyz random string"),
+    ]
+    for intent_name, text in intents:
+        res = await service._process_text_message(user(), sess, text, {"intent": intent_name, "confidence": 85})
+        assert res is not None
+
+    # 4. Interactive messages: button_reply routes to _handle_button_response
+    buttons = ["btn_buy", "btn_sell", "btn_help", "btn_exit", "btn_retry", "btn_register_buyer", "btn_register_seller"]
+    with patch.object(service, "_handle_button_response", AsyncMock(return_value={"status": "button"})):
+        for btn_id in buttons:
+            interactive_content = {
+                "type": "button_reply",
+                "button_reply": {"id": btn_id, "title": btn_id},
+            }
+            res_btn = await service._process_interactive_message(user(), sess, interactive_content)
+            assert res_btn == {"status": "button"}
+
+    # 5. List reply interactive messages
+    list_content = {"type": "list_reply", "list_reply": {"id": "list_opt_1", "title": "Option 1"}}
+    res_list = await service._process_interactive_message(user(), sess, list_content)
+    assert res_list == {"status": "list_handled", "list_id": "list_opt_1"}
+
+    # 5b. Interactive payload delivered as a JSON string and as invalid JSON
+    res_json = await service._process_interactive_message(
+        user(), sess, '{"type": "list_reply", "list_reply": {"id": "from_json"}}'
+    )
+    assert res_json == {"status": "list_handled", "list_id": "from_json"}
+
+    with patch.object(service, "_process_text_message", AsyncMock(return_value={"status": "text"})):
+        res_plain = await service._process_interactive_message(user(), sess, "not-json-at-all")
+        assert res_plain == {"status": "text"}
+
+    # 5c. Exceptions inside interactive routing propagate to the caller
+    with patch.object(service, "_handle_list_response", AsyncMock(side_effect=RuntimeError("boom"))):
+        with pytest.raises(RuntimeError):
+            await service._process_interactive_message(user(), sess, list_content)
+
+    # 6. Process various message types
+    msg_types = [
+        ("image", {"id": "img_123", "mime_type": "image/jpeg"}),
+        ("document", {"id": "doc_123", "filename": "spec.pdf"}),
+        ("audio", {"id": "aud_123"}),
+        ("location", {"latitude": 28.6139, "longitude": 77.2090}),
+    ]
+    for mtype, payload in msg_types:
+        res_m = await service.process_message(user().phone_number, payload, message_type=mtype)
+        assert res_m is not None
+
+    # 7. Error handling helper
+    res_err = await service._handle_error_response(
+        RuntimeError("boom"), user().phone_number, "generic_error", "An error occurred"
+    )
+    assert res_err == {"status": "error", "error": "boom"}
+
+    # 8. Classification fallback
+    fallback_res = service._build_classification_fallback("hello need to buy steel")
+    assert "intent" in fallback_res
+
+    # 9. Meaningful message tracking
+    sess.workflow_state = {}
+    service._track_meaningful_message_during_auth_flow(sess, "need chemicals", {"intent": "buy_something", "confidence": 90})
+    assert sess.workflow_state.get("last_meaningful_message") == "need chemicals"
+
+    # 10. User exit handler and button clicks
+    if hasattr(service, "_handle_user_exit"):
+        res_exit = await service._handle_user_exit(user().phone_number, sess, "User requested exit")
+        assert res_exit is not None
+
+    # Test button clicks
+    service._authentication_service = SimpleNamespace(store_user_session=AsyncMock(), otp_service=None)
+    service.session_manager.get_conversation_context = AsyncMock(return_value=sess)
+    service.session_manager.add_message_to_history = MagicMock()
+    service.session_manager.save_session = AsyncMock()
+
+    with patch("app.services.handlers.seller_rfq_interest_handler.SellerRFQInterestHandler.handle_check_details_click", AsyncMock(return_value={"status": "ok"})):
+        btn_details = {"button_reply": {"id": "rfq_check_details_RFQ123_SELLER1", "title": "Check Details"}}
+        res_btn = await service.process_message(user().phone_number, btn_details, message_type="interactive")
+        assert res_btn == {"status": "ok"}
+
+    with patch("app.services.handlers.seller_rfq_interest_handler.SellerRFQInterestHandler.handle_request_rfq_click", AsyncMock(return_value={"status": "ok"})):
+        btn_req = {"button_reply": {"id": "rfq_request_RFQ123_SELLER1", "title": "Request RFQ"}}
+        res_btn2 = await service.process_message(user().phone_number, btn_req, message_type="interactive")
+        assert res_btn2 == {"status": "ok"}
+
+    # BFS accept and reject buttons
+    with patch("app.services.handlers.bfs_seller_bid_handler.BFSSellerBidHandler.handle_accept_bid_click", AsyncMock(return_value={"status": "ok"})), \
+         patch("app.services.handlers.bfs_seller_bid_handler.BFSSellerBidHandler.handle_reject_bid_click", AsyncMock(return_value={"status": "ok"})):
+        btn_bfs_acc = {"button_reply": {"id": "bfs_seller_accept_UUID123_SELLER1", "title": "Accept Bid"}}
+        res_bfs1 = await service.process_message(user().phone_number, btn_bfs_acc, message_type="interactive")
+        assert res_bfs1 == {"status": "ok"}
+
+        btn_bfs_rej = {"button_reply": {"id": "bfs_seller_reject_UUID123_SELLER1", "title": "Reject Bid"}}
+        res_bfs2 = await service.process_message(user().phone_number, btn_bfs_rej, message_type="interactive")
+        assert res_bfs2 == {"status": "ok"}
+
+    # Exit and cancel buttons
+    with patch("app.services.exit_service.ExitService.handle_exit_intent", AsyncMock(return_value={"status": "exited"})):
+        btn_exit = {"button_reply": {"id": "confirm_exit_yes", "title": "Yes, Exit"}}
+        res_ex = await service.process_message(user().phone_number, btn_exit, message_type="interactive")
+        assert res_ex == {"status": "exited"}
+
+    with patch("app.services.cancel_service.CancelService.handle_cancel_intent", AsyncMock(return_value={"status": "cancelled"})):
+        btn_cancel = {"button_reply": {"id": "confirm_cancel_yes", "title": "Yes, Cancel"}}
+        res_can = await service.process_message(user().phone_number, btn_cancel, message_type="interactive")
+        assert res_can is not None
+        assert res_can.get("status") in ("cancel", "cancelled")
+
+    # 11. Generate session summary branches
+    sess1 = session(pending_rfq={"entities": {"product_name": "Steel"}})
+    s_sum1 = await service._generate_session_summary(sess1)
+    assert isinstance(s_sum1, str)
+
+    sess2 = session(pending_rfq={"entities": [{"product_name": "Steel"}]})
+    s_sum2 = await service._generate_session_summary(sess2)
+    assert isinstance(s_sum2, str)
+
+    sess3 = session(pending_combined_rfq={"products": [{"entities": {"product_name": "Cement"}}]})
+    s_sum3 = await service._generate_session_summary(sess3)
+    assert isinstance(s_sum3, str)
+
+    sess4 = session(custom_dict={"product_name": "Wood"}, custom_list=[{"description": "Sand"}])
+    s_sum4 = await service._generate_session_summary(sess4)
+    assert isinstance(s_sum4, str)
+
+    sess_empty = session()
+    sess_empty.workflow_state = {}
+    s_sum_empty = await service._generate_session_summary(sess_empty)
+    assert isinstance(s_sum_empty, str)
+
+

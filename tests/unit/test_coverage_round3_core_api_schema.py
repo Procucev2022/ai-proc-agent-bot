@@ -375,13 +375,7 @@ def test_rfq_mandatory_questions_cover_standalone_dynamic_and_duplicate_paths(mo
 @pytest.mark.asyncio
 async def test_database_ssl_configuration_and_bfs_http_boundary(monkeypatch):
     local_settings = SimpleNamespace(database_mode="local")
-    assert database._get_ssl_connect_args(local_settings) == {
-        "ssl": {
-            "ssl_disabled": False,
-            "ssl_check_hostname": False,
-            "ssl_verify_cert": False,
-        }
-    }
+    assert database._get_ssl_connect_args(local_settings) == {}
 
     client_settings = SimpleNamespace(database_mode="client", PROJECT_ROOT="C:/unit")
     with patch.object(os.path, "exists", return_value=False):

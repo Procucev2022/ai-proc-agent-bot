@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -37,12 +37,12 @@ class InteractionLogger:
         confidence: float,
         reasoning: str,
         model_used: str,
-        processing_time: float = None,
-        all_scores: Dict[str, float] = None,
-        phone_number: str = None,
-        openai_input: Dict = None,
-        relevant_message: str = None,
-        irrelevant_message: str = None
+        processing_time: Optional[float] = None,
+        all_scores: Optional[Dict[str, float]] = None,
+        phone_number: Optional[str] = None,
+        openai_input: Optional[Dict] = None,
+        relevant_message: Optional[str] = None,
+        irrelevant_message: Optional[str] = None
     ):
         """Log intent classification interaction with full OpenAI input."""
         log_entry = {
@@ -77,9 +77,9 @@ class InteractionLogger:
         completeness: float,
         workflow_type: str,
         model_used: str,
-        processing_time: float = None,
-        missing_fields: list = None,
-        phone_number: str = None
+        processing_time: Optional[float] = None,
+        missing_fields: Optional[list] = None,
+        phone_number: Optional[str] = None
     ):
         """Log entity extraction interaction."""
         log_entry = {
@@ -106,8 +106,8 @@ class InteractionLogger:
         interaction_type: str,
         user_input: str,
         error_message: str,
-        model_used: str = None,
-        phone_number: str = None
+        model_used: Optional[str] = None,
+        phone_number: Optional[str] = None
     ):
         """Log failed interaction."""
         log_entry = {
@@ -131,8 +131,8 @@ class InteractionLogger:
         generated_response: str,
         conversation_stage: str,
         model_used: str,
-        processing_time: float = None,
-        phone_number: str = None
+        processing_time: Optional[float] = None,
+        phone_number: Optional[str] = None
     ):
         """Log response generation interaction."""
         log_entry = {

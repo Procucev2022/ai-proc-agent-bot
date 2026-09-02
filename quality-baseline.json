@@ -46,7 +46,7 @@
         "app",
         "scripts"
       ],
-      "max_findings": 556,
+      "max_findings": 555,
       "blocking": false
     },
     "mypy": {
@@ -58,7 +58,7 @@
         "-m",
         "mypy"
       ],
-      "max_findings": 1279,
+      "max_findings": 1257,
       "blocking": true
     }
   }

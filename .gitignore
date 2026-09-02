@@ -1,4 +1,5 @@
 *.pyc
+*.db
 .coverage
 .coverage.*
 coverage.json
@@ -26,6 +27,7 @@ documentation/
 .env.local
 .env.*.local
 !.env.example
+.venv/
 # Ignore OpenAI interaction logs
 app/logs/openai_interactions/*.jsonl
 app/logs/procucev_api_interactions/*.jsonl

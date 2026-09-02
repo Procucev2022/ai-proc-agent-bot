@@ -6,7 +6,7 @@ credit checking, email sending, and subscription management.
 """
 
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from app.config import get_settings
 from app.procucev_apis.procucev_api_client import get_procucev_api_client
 
@@ -115,7 +115,7 @@ class SellerAPIService:
             logger.error(f"Error checking seller credits: {e}")
             return {"success": False, "error": str(e)}
 
-    async def check_seller_rfq_status(self, seller_id: str,rfq_ids: List[str] = None) -> Dict[str, Any]:
+    async def check_seller_rfq_status(self, seller_id: str, rfq_ids: Optional[List[str]] = None) -> Dict[str, Any]:
         """Check seller's RFQ request credit balance."""
         try:
             endpoint = "/rest/gmt/getSellerRfqStatus"
@@ -238,7 +238,7 @@ class SellerAPIService:
             logger.error(f"Error fetching subscription plans: {e}")
             return {"success": False, "error": str(e)}
 
-    async def generate_payment_link(self, plan_id: str, user_email: str = None, user_phone: str = None) -> Dict[str, Any]:
+    async def generate_payment_link(self, plan_id: str, user_email: Optional[str] = None, user_phone: Optional[str] = None) -> Dict[str, Any]:
         """Generate application portal link for subscription plan."""
         try:
             endpoint = "/rest/api/payments/link/generate"

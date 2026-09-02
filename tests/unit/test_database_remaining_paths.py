@@ -83,13 +83,9 @@ def test_init_database_seeds_when_empty_and_uses_expected_configuration(monkeypa
     assert database.engine is engine
     create_engine.assert_called_once_with(
         "mysql://unit-test",
-        connect_args={
-            "ssl": {
-                "ssl_disabled": False,
-                "ssl_check_hostname": False,
-                "ssl_verify_cert": False,
-            }
-        },
+        # Outside client TLS mode the driver gets no ssl_* overrides at all:
+        # _get_ssl_connect_args returns {} rather than disabling verification.
+        connect_args={},
         pool_pre_ping=True,
         pool_recycle=3600,
         pool_size=10,
@@ -206,13 +202,7 @@ def test_remote_session_lazy_initialization_and_error_paths(monkeypatch, main_se
     assert database.get_remote_db_session() is session
     create_engine.assert_called_once_with(
         "mysql://remote-unit-test",
-        connect_args={
-            "ssl": {
-                "ssl_disabled": False,
-                "ssl_check_hostname": False,
-                "ssl_verify_cert": False,
-            }
-        },
+        connect_args={},
         pool_pre_ping=True,
         pool_recycle=3600,
         pool_size=5,

@@ -255,7 +255,7 @@ async def handle_delivery_callback(request: Request):
                 form_data = await request.form()
                 # FormData is a multidict, not a Mapping, so build the dict from
                 # its items rather than relying on dict(mapping).
-                query_params = {key: value for key, value in form_data.items()}
+                query_params = {key: str(value) for key, value in form_data.items()}
                 if not query_params:
                     json_data = await request.json()
                     if isinstance(json_data, dict):

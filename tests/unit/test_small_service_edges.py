@@ -215,11 +215,19 @@ async def test_rfq_status_handle_buttons_simple_send_save_and_failure(rfq_status
     wa.send_configurable_buttons.assert_awaited_once()
     set_workflow.assert_called_once_with(session, WorkflowType.rfq_status_check, caller="rfq_status_service")
     session_manager.save_session.assert_awaited_once_with(session, WorkflowType.rfq_status_check)
+    # send_configurable_buttons already records the response for the session.
+    session_manager.add_message_to_history.assert_not_called()
 
     service._get_role_based_menu_options = MagicMock(return_value=[])
     wa.send_message = AsyncMock()
     assert (await service.handle_rfq_status_inquiry(user, "status", session))["status"] == "found"
     wa.send_message.assert_awaited_once_with(recipient_id=user.phone_number, message="msg")
+    session_manager.add_message_to_history.assert_called_once_with(session, "assistant", "msg")
+
+    # Without a session the plain-message path records nothing.
+    session_manager.add_message_to_history.reset_mock()
+    assert (await service.handle_rfq_status_inquiry(user, "status", None))["status"] == "found"
+    session_manager.add_message_to_history.assert_not_called()
 
     rfq.process_rfq_status_request.side_effect = RuntimeError("rfq error")
     result = await service.handle_rfq_status_inquiry(user, "status", session)

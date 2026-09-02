@@ -71,10 +71,12 @@ def count_findings(tool: str, output: str) -> int:
 
 
 def run_check(name: str, spec: dict[str, Any]) -> Result:
-    command: Sequence[str] = spec["command"]
+    command = list(spec["command"])
+    if command and command[0] == "python":
+        command[0] = sys.executable
     tool = spec["tool"]
     completed = subprocess.run(  # noqa: S603 - command comes from the committed baseline
-        list(command),
+        command,
         capture_output=True,
         text=True,
         encoding="utf-8",

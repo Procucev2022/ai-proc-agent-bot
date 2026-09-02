@@ -50,6 +50,8 @@ class WorkflowType(enum.Enum):
     modification_request = "modification_request"
     # Seller RFQ intimation - only initiated from "I'm Interested" button handler
     seller_rfq_intimation = "seller_rfq_intimation"
+    # alias for backward compatibility with tests and external references
+    seller_rfq_interest = "seller_rfq_intimation"
     # BFS seller bid - initiated from Accept/Reject bid buttons
     bfs_seller_bid = "bfs_seller_bid"
 

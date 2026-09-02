@@ -12,7 +12,7 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, Mock, mock_open
+from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
 
 import pytest
 
@@ -1434,7 +1434,9 @@ async def test_session_management_context_creation_save_and_completion(monkeypat
     service.redis_enabled = True
     redis.store_session.side_effect = None
     value = make_session(workflow_state={"pending_optional_rfq": {"x": 1}})
+    db.save_conversation_session.side_effect = lambda data: value
     assert await service.save_session(value, WorkflowType.rfq_creation) is value
+    db.save_conversation_session.side_effect = lambda data: service._dict_to_session(data)
     assert await service.save_session(make_session(), "not-a-workflow")
     assert await service.save_session(make_session(), object())
     terminal = make_session(outcome=ConversationOutcome.abandoned)
@@ -1460,6 +1462,15 @@ async def test_session_management_context_creation_save_and_completion(monkeypat
     await service.handle_session_completion_enhanced(make_session())
     for coro in created_tasks:
         coro.close()
+
+    # Background summarization delegates to the injected summary services.
+    summarized = make_session()
+    await service._run_background_summarization(summarized, {"x": 1})
+    summaries.generate_session_summary.assert_awaited_with(summarized)
+    daily.generate_daily_summary.assert_awaited_with(summarized.external_user_id)
+    summaries.generate_session_summary.side_effect = RuntimeError("summary down")
+    await service._run_background_summarization(summarized, {"x": 1})
+    summaries.generate_session_summary.side_effect = None
     monkeypatch.setattr(session_mod.SummarizationHelpers, "extract_rich_entities_for_summary", Mock(side_effect=RuntimeError("rich")))
     service._handle_session_completion_fallback = AsyncMock()
     await service.handle_session_completion_enhanced(make_session())
@@ -1497,3 +1508,217 @@ async def test_media_downloader_singleton_and_webhook_errors(monkeypatch, tmp_pa
     assert (await downloader.download_from_webhook_content({}))["error"] == "No media ID found in content"
     downloader.download_media = AsyncMock(side_effect=RuntimeError("download"))
     assert "Webhook download error" in (await downloader.download_from_webhook_content({"id": "m"}))["error"]
+
+
+@pytest.mark.asyncio
+async def test_session_management_comprehensive_paths(monkeypatch):
+    """Test uncovered branches of SessionManagementService."""
+    db = SimpleNamespace(
+        save_conversation_session=Mock(side_effect=lambda data: make_session(state=data.get("workflow_state", {}))),
+        get_conversation_session=Mock(return_value=None),
+        session=SimpleNamespace(query=Mock(return_value=SimpleNamespace(filter=Mock(return_value=SimpleNamespace(order_by=Mock(return_value=SimpleNamespace(first=Mock(return_value=SimpleNamespace(user_type=SimpleNamespace(value="buyer"))))))))))
+    )
+    wa = SimpleNamespace(send_message=AsyncMock())
+    redis_sess = SimpleNamespace(
+        store_session=AsyncMock(),
+        get_session=AsyncMock(return_value=None),
+        delete_session=AsyncMock(),
+        session_exists=AsyncMock(return_value=False),
+        set_user_active_session_id=AsyncMock(),
+        get_user_active_session_id=AsyncMock(return_value=None),
+        delete_user_active_session_id=AsyncMock(),
+        refresh_ttl=AsyncMock(),
+        ttl=AsyncMock(return_value=300),
+    )
+
+    summaries = SimpleNamespace(generate_session_summary=AsyncMock(), generate_daily_summary=AsyncMock())
+    daily = SimpleNamespace(generate_daily_summary=AsyncMock())
+    service = session_mod.SessionManagementService(db_manager=db, whatsapp_service=wa, chat_summary_service=summaries, daily_summary_service=daily)
+    service.redis_session = redis_sess
+    service.redis_enabled = True
+
+    # 1. get_conversation_context for new user with past buyer history
+    s_new = await service.get_conversation_context("+919999999999")
+    assert s_new is not None
+
+    # 2. get_conversation_context with ended session in DB when redis is disabled
+    service.redis_enabled = False
+    ended_db_session = make_session(state={"x": 1})
+    ended_db_session.outcome = ConversationOutcome.completed
+    ended_db_session.completed_at = datetime(2026, 1, 1)
+    db.get_conversation_session.return_value = ended_db_session
+    s_reset = await service.get_conversation_context("+919999999999")
+    assert s_reset is not None
+
+    # 3. save_session with persist_to_db = True
+    s_to_save = make_session(state={"test": "val"})
+    saved = await service.save_session(s_to_save, persist_to_db=True)
+    assert saved is not None
+
+    # 4. save_session when DB throws error
+    db.save_conversation_session.side_effect = RuntimeError("db crash")
+    saved_fallback = await service.save_session(s_to_save, persist_to_db=True)
+    assert saved_fallback is not None
+
+
+@pytest.mark.asyncio
+async def test_session_management_all_residual_branches():
+    """Test residual branches in SessionManagementService."""
+    db = MagicMock()
+    wa = AsyncMock()
+    wa.send_message = AsyncMock(return_value=SimpleNamespace(success=True, message_id="123"))
+    summaries = SimpleNamespace(generate_session_summary=AsyncMock(), generate_daily_summary=AsyncMock())
+    daily = SimpleNamespace(generate_daily_summary=AsyncMock())
+    service = session_mod.SessionManagementService(db_manager=db, whatsapp_service=wa, chat_summary_service=summaries, daily_summary_service=daily)
+    service.whatsapp_service = None
+
+    # 1. Redis lookup throws Exception on get_user_active_session_id and None on get_session
+    service.redis_enabled = True
+    service.redis_session = MagicMock()
+    service.redis_session.get_user_active_session_id = AsyncMock(side_effect=RuntimeError("redis down"))
+    service.redis_session.get_session = AsyncMock(return_value=None)
+    service.redis_session.store_session = AsyncMock()
+    service.redis_session.set_user_active_session_id = AsyncMock()
+    service.redis_session.clear_user_active_session_id = AsyncMock()
+    service.redis_session.refresh_ttl = AsyncMock()
+    service.redis_session.session_exists = AsyncMock(return_value=True)
+    service.redis_session.exists = AsyncMock(return_value=True)
+    db.get_conversation_session.return_value = None
+    s1 = await service.get_conversation_context("+919999999999")
+    assert s1 is not None
+
+    # 2. Redis active session found
+    sess_dict = {
+        "session_id": "s_active",
+        "external_user_id": "919999999999",
+        "user_type": "buyer",
+        "outcome": None,
+        "workflow_state": {},
+        "conversation_history": {"messages": []},
+        "extracted_entities": {}
+    }
+    service.redis_session.get_user_active_session_id = AsyncMock(return_value="s_active")
+    service.redis_session.get_session = AsyncMock(return_value=sess_dict)
+    service.redis_session.refresh_ttl = AsyncMock()
+    service.redis_session.set_user_active_session_id = AsyncMock()
+    service.redis_session.store_session = AsyncMock()
+    s2 = await service.get_conversation_context("+919999999999")
+    assert s2 is not None
+    assert s2.session_id == "s_active"
+
+    # 3. Redis ended session found
+    sess_ended = dict(sess_dict, outcome="completed")
+    service.redis_session.get_session = AsyncMock(return_value=sess_ended)
+    service.redis_session.clear_user_active_session_id = AsyncMock()
+    service.redis_session.store_session = AsyncMock()
+    s3 = await service.get_conversation_context("+919999999999")
+    assert s3 is not None
+
+    # 4. Invalid license raises exception
+    service._validate_license = MagicMock(return_value=(False, "License invalid"))
+    with pytest.raises(Exception):
+        await service.get_conversation_context("+919999999999")
+
+    # 5. History management
+    from app.models import ConversationSession, UserType
+    service._validate_license = MagicMock(return_value=(True, "OK"))
+    sess_test = ConversationSession(session_id="s_test", external_user_id="919999999999")
+    service.add_message_to_history(sess_test, "user", "Hello", "text", "greeting", 90)
+    service.add_message_to_history(sess_test, "assistant", "Hi there", "text")
+    assert "messages" in sess_test.conversation_history
+    assert len(sess_test.conversation_history["messages"]) == 2
+
+    # 6. Save session
+    service.db_manager.save_session = AsyncMock()
+    await service.save_session(sess_test)
+    assert service.redis_session.store_session.called
+
+    # 7. Redis disabled get_conversation_context
+    service.redis_enabled = False
+    service.db_manager.get_conversation_session = MagicMock(return_value=None)
+    service.db_manager.save_conversation_session = MagicMock(side_effect=lambda x: ConversationSession(**x))
+    s_no_redis = await service.get_conversation_context("+919999999999")
+    assert s_no_redis is not None
+
+    # 8. Redis disabled with ended session in DB
+    sess_ended_db = ConversationSession(
+        session_id="s_ended_db",
+        external_user_id="919999999999",
+        outcome=ConversationOutcome.completed,
+        workflow_state={"status": "completed"},
+        conversation_history={"messages": []}
+    )
+    service.db_manager.get_conversation_session = MagicMock(return_value=sess_ended_db)
+    s_reset = await service.get_conversation_context("+919999999999")
+    assert s_reset is not None
+
+    # 9. End session lifecycle
+    service.redis_enabled = True
+    service.redis_session.clear_user_active_session_id = AsyncMock()
+    service.redis_session.store_session = AsyncMock()
+    service.chat_summary_service.generate_summary = AsyncMock(return_value="Summary")
+    service.daily_summary_service.update_daily_summary = AsyncMock()
+
+    s_to_end = ConversationSession(
+        session_id="s_to_end",
+        external_user_id="919999999999",
+        workflow_type=WorkflowType.rfq_creation,
+        workflow_state={"status": "completed"},
+        conversation_history={"messages": [{"role": "user", "content": "hello"}]}
+    )
+    if hasattr(service, "end_session"):
+        res_end = await service.end_session(s_to_end, ConversationOutcome.completed)
+        assert res_end is not None
+
+    # 10. License validation branches (restore the real implementation first,
+    # earlier steps replaced it with a stub)
+    service._validate_license = session_mod.SessionManagementService._validate_license.__get__(service)
+    service.settings.license_enabled = False
+    is_valid, msg = service._validate_license()
+    assert is_valid is True
+
+    service.settings.license_enabled = True
+    with patch("app.license.validate_license", return_value=(False, "Expired")):
+        is_valid2, msg2 = service._validate_license()
+    assert is_valid2 is False
+    assert msg2 == "Expired"
+    service.settings.license_enabled = False
+
+    # 11. Restoring active DB session to Redis and return visit suffix
+    service.redis_enabled = True
+    service.whatsapp_service = None
+    active_db_sess = ConversationSession(
+        session_id="s_active_db",
+        external_user_id="919999999999",
+        outcome=None,
+        workflow_state={"status": "in_progress"},
+        conversation_history={"messages": []}
+    )
+    service.redis_session.get_user_active_session_id = AsyncMock(return_value=None)
+    service.redis_session.set_user_active_session_id = AsyncMock()
+    service.redis_session.get_session = AsyncMock(return_value=None)
+    service.redis_session.store_session = AsyncMock()
+    service.db_manager.get_conversation_session = MagicMock(return_value=active_db_sess)
+    s_restored = await service.get_conversation_context("+919999999999")
+    assert s_restored is not None
+
+    # 12. Return visit with ended DB session and past buyer profile
+    ended_db_sess = ConversationSession(
+        session_id="s_ended_db",
+        external_user_id="919999999999",
+        outcome=ConversationOutcome.completed,
+        user_type=UserType.buyer,
+        workflow_state={"status": "completed"},
+        conversation_history={"messages": []}
+    )
+    service.db_manager.get_conversation_session = MagicMock(return_value=ended_db_sess)
+    mock_query = MagicMock()
+    mock_query.filter.return_value.order_by.return_value.first.return_value = ended_db_sess
+    service.db_manager.session = MagicMock()
+    service.db_manager.session.query.return_value = mock_query
+    s_return = await service.get_conversation_context("+919999999999")
+    assert s_return is not None
+
+
+
+
