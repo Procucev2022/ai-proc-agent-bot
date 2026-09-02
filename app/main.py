@@ -460,7 +460,9 @@ async def chat_page(request: Request):
     return templates.TemplateResponse(request, "chat.html")
 
 
-def _set_dashboard_cookie(response, api_key: str, request: Request):
+def _set_dashboard_cookie(response, api_key: Optional[str], request: Request):
+    if not api_key:
+        return response
     response.set_cookie(
         DASHBOARD_SESSION_COOKIE,
         build_dashboard_session_token(api_key),
