@@ -115,13 +115,12 @@ async def get_dashboard_stats(
     category: Optional[str] = Query(None, description="Filter by product category"),
     location: Optional[str] = Query(None, description="Filter by geographic location"),
     rfq_status: Optional[str] = Query(None, description="Filter by RFQ status"),
-    db: Session = Depends(get_dashboard_db)
 ):
     """
     Retrieve comprehensive aggregated KPIs, funnels, and breakdown metrics.
     """
     try:
-        service = DashboardAggregationService(db_session=db)
+        service = DashboardAggregationService()
         stats = await service.get_dashboard_stats(
             date_preset=date_preset,
             start_date=start_date,
@@ -146,13 +145,12 @@ async def export_user_classification_csv(
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
     filter_type: DashboardFilterType = Query("all", description="all, unknown, buyer, buyer_registered, buyer_not_registered, seller, seller_registered, seller_not_registered, seller_subscribed, seller_without_subscription"),
-    db: Session = Depends(get_dashboard_db)
 ):
     """
     Export phone numbers and classification metrics for User Classification & Funnel as a CSV file.
     """
     try:
-        service = DashboardAggregationService(db_session=db)
+        service = DashboardAggregationService()
         csv_content = await asyncio.to_thread(
             service.export_user_classification_csv,
             date_preset,
@@ -181,13 +179,12 @@ async def get_user_classification_details(
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
     filter_type: DashboardFilterType = Query("all", description="all, unknown, buyer, buyer_registered, buyer_not_registered, seller, seller_registered, seller_not_registered, seller_subscribed, seller_without_subscription"),
-    db: Session = Depends(get_dashboard_db)
 ):
     """
     Retrieve structured user classification details JSON for the details view.
     """
     try:
-        service = DashboardAggregationService(db_session=db)
+        service = DashboardAggregationService()
         data = await asyncio.to_thread(
             service.get_user_classification_details_json,
             date_preset,
