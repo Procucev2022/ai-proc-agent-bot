@@ -506,6 +506,17 @@ def test_dashboard_pages_issue_and_accept_operator_session_cookie():
     assert client.get("/dashboard/classification-details").status_code == 200
 
 
+def test_dashboard_login_rejects_wrong_key_without_issuing_a_cookie():
+    """A failed login must answer 401 and leave the browser unauthenticated."""
+    from app.api.dashboard import DASHBOARD_SESSION_COOKIE
+
+    client = TestClient(app)
+    rejected = client.post("/dashboard/login", json={"key": "not-the-operator-key"})
+    assert rejected.status_code == 401
+    assert client.cookies.get(DASHBOARD_SESSION_COOKIE) is None
+    assert client.get("/dashboard").status_code == 401
+
+
 def test_dashboard_api_endpoints():
     """Test FastAPI dashboard REST and HTML endpoints."""
     client = TestClient(app, headers={"X-Dashboard-Key": "unit-test-dashboard-key"})
