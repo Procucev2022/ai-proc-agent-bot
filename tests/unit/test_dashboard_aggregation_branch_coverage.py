@@ -10,6 +10,7 @@ operator-key dependency on the dashboard router.
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -73,6 +74,8 @@ async def test_compute_all_metrics_survives_every_optional_section_failure():
     boom = RuntimeError("section down")
     query.all.side_effect = [
         [("919000000001",)],  # users_in_period
+        [],                   # returning_buyers role_user_ids
+        [],                   # returning_sellers role_user_ids
         [("919000000001",)],  # all_today_users
         [("919000000001",)],  # buyer_users_set
         [("919000000002",)],  # seller_users_set
@@ -111,6 +114,8 @@ async def test_compute_all_metrics_skips_falsy_rows_in_every_loop():
     query.count.return_value = 0
     query.all.side_effect = [
         [("919000000001",), (None,)],  # users_in_period (falsy filtered out)
+        [],                             # returning_buyers role_user_ids
+        [],                             # returning_sellers role_user_ids
         [("919000000001",), (None,)],  # all_today_users
         [],                            # buyer_users_set
         [("919000000002",)],           # seller_users_set
@@ -533,7 +538,9 @@ async def test_today_conversations_merge_keeps_existing_values_for_blank_fields(
     assert entry["outcome"] == "completed"
     assert entry["rfq_id"] == "RFQ-1"
     assert entry["last_activity_at"] == "2026-08-27T09:30:00"
-    assert entry["total_messages"] == 2
+    # Redis holds the authoritative snapshot for "db-1" (replacing, not appending,
+    # to its already-counted MySQL messages); "db-blank" keeps its own DB messages.
+    assert entry["total_messages"] == 1
 
 
 @pytest.mark.asyncio
@@ -886,6 +893,24 @@ def test_require_dashboard_operator_accepts_session_cookie():
             )
         assert stale.value.status_code == 401
 
+        # Expired token: correctly signed, but issued outside the allowed window.
+        expired_issued_at = int(time.time()) - dashboard_api.DASHBOARD_SESSION_MAX_AGE - 10
+        expired_token = dashboard_api.build_dashboard_session_token("expected-key", expired_issued_at)
+        with pytest.raises(HTTPException) as expired:
+            dashboard_api.require_dashboard_operator(
+                x_dashboard_key=None, dashboard_session=expired_token
+            )
+        assert expired.value.status_code == 401
+
+        # Tampered token: well-formed and unexpired, but the signature does not match.
+        issued_at = int(time.time())
+        tampered_token = f"{issued_at}.deadbeef"
+        with pytest.raises(HTTPException) as tampered:
+            dashboard_api.require_dashboard_operator(
+                x_dashboard_key=None, dashboard_session=tampered_token
+            )
+        assert tampered.value.status_code == 401
+
 
 def test_details_json_groups_bulk_session_rows_per_user():
     """Every user is classified from one bulk session fetch, not per-user queries."""
@@ -1049,6 +1074,8 @@ def test_compute_all_metrics_counts_returning_users_and_outcomes():
     query.scalar.side_effect = [5, 2, 3, 1, 2, 1, 0, 1, 2, 4, 2, 1, 1]
     query.all.side_effect = [
         [("919000000001",)],
+        [],
+        [],
         [("919000000001",)],
         [("919000000001",)],
         [],

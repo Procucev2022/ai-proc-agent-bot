@@ -347,6 +347,8 @@ async def test_dashboard_aggregation_service_full_stats():
     ]
     mock_query.all.side_effect = [
         [("919876543210",), ("919876543211",)],  # users_in_period
+        [],  # returning_buyers role_user_ids
+        [],  # returning_sellers role_user_ids
         [("919876543210",), ("919876543211",)],  # all_today_users
         [("919876543210",)],  # buyer_users_set
         [("919876543211",)],  # seller_users_set
@@ -448,6 +450,8 @@ async def test_dashboard_aggregation_service_fallback_categories():
     mock_query.count.return_value = 0
     mock_query.all.side_effect = [
         [],  # users_in_period
+        [],  # returning_buyers role_user_ids
+        [],  # returning_sellers role_user_ids
         [],  # all_today_users
         [],  # buyer_users_set
         [],  # seller_users_set

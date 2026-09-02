@@ -2193,6 +2193,15 @@
             }
         }
 
+        function escapeHtml(value) {
+            return String(value === null || value === undefined ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         function formatChatText(rawText) {
             if (!rawText) return '';
             if (typeof rawText === 'object') {
@@ -2296,7 +2305,7 @@
                         </div>
                         <div class="chat-user-info">
                             <div class="chat-user-top">
-                                <span class="chat-user-phone">${user.phone}</span>
+                                <span class="chat-user-phone">${escapeHtml(user.phone)}</span>
                                 <span class="chat-user-time">${timeStr}</span>
                             </div>
                             <div class="chat-user-meta">
@@ -2483,7 +2492,10 @@
 
             // Click Handler for User Classification Cards/Branches/Sub-metrics -> Open in New Chrome Tab
             document.querySelectorAll('.clickable-classification').forEach(el => {
-                el.addEventListener('click', (e) => {
+                el.setAttribute('role', 'link');
+                el.setAttribute('tabindex', '0');
+
+                const activateClassificationCard = (e) => {
                     e.stopPropagation();
                     const filterType = el.getAttribute('data-classification-filter');
                     if (!filterType) return;
@@ -2502,6 +2514,14 @@
                     }
 
                     window.open(detailsUrl, '_blank');
+                };
+
+                el.addEventListener('click', activateClassificationCard);
+                el.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+                        e.preventDefault();
+                        activateClassificationCard(e);
+                    }
                 });
             });
 

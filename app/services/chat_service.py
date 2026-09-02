@@ -1180,7 +1180,9 @@ class ChatService:
             # Ensure the session with all latest turns and messages is saved to Redis & DB
             try:
                 if not (result and isinstance(result, dict) and result.get("exit_completed")):
-                    await self.session_manager.save_session(session, session.workflow_type)
+                    await self.session_manager.save_session(
+                        session, session.workflow_type, persist_to_db=True, emit_chat_event=True
+                    )
             except Exception as save_err:
                 logger.warning(f"Failed to auto-save session at end of process_message: {save_err}")
 

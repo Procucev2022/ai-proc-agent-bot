@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 from typing import Optional
 from fastapi import APIRouter, Request, Query, Depends, Header, Cookie, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse, Response
@@ -28,9 +29,18 @@ DASHBOARD_SESSION_COOKIE = "dashboard_session"
 DASHBOARD_SESSION_MAX_AGE = 8 * 60 * 60  # 8 hour operator session
 
 
-def build_dashboard_session_token(api_key: str) -> str:
-    """Derive the opaque session token stored in the dashboard HttpOnly cookie."""
-    return hmac.new(api_key.encode("utf-8"), b"dashboard-operator", hashlib.sha256).hexdigest()
+def build_dashboard_session_token(api_key: str, issued_at: Optional[int] = None) -> str:
+    """Derive a time-bound session token stored in the dashboard HttpOnly cookie.
+
+    The token embeds its issuance timestamp so that ``is_valid_dashboard_credential``
+    can independently enforce expiry server-side, rather than relying solely on the
+    browser honoring the cookie's ``max_age`` (which does not stop replay of a
+    captured cookie value).
+    """
+    ts = issued_at if issued_at is not None else int(time.time())
+    payload = str(ts)
+    signature = hmac.new(api_key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{payload}.{signature}"
 
 
 def is_valid_dashboard_credential(
@@ -38,15 +48,21 @@ def is_valid_dashboard_credential(
     provided_key: Optional[str],
     session_cookie: Optional[str],
 ) -> bool:
-    """Return True when the operator key or its session cookie token is valid."""
+    """Return True when the operator key or its unexpired session cookie token is valid."""
     if not api_key:
         return False
     provided = provided_key if isinstance(provided_key, str) else None
     cookie = session_cookie if isinstance(session_cookie, str) else None
     if provided and hmac.compare_digest(provided, api_key):
         return True
-    if cookie and hmac.compare_digest(cookie, build_dashboard_session_token(api_key)):
-        return True
+    if cookie:
+        issued_at_str, _, signature = cookie.partition(".")
+        if issued_at_str.isdigit() and signature:
+            issued_at = int(issued_at_str)
+            if time.time() - issued_at <= DASHBOARD_SESSION_MAX_AGE:
+                expected = build_dashboard_session_token(api_key, issued_at)
+                if hmac.compare_digest(cookie, expected):
+                    return True
     return False
 
 

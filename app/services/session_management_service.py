@@ -411,7 +411,8 @@ class SessionManagementService:
     
     async def save_session(self, session: ConversationSession,
                           workflow_type: Optional[Union[WorkflowType, str]] = None,
-                          persist_to_db: bool = False) -> ConversationSession:
+                          persist_to_db: bool = False,
+                          emit_chat_event: bool = False) -> ConversationSession:
         """
         Save updated session to Redis (and optionally database).
 
@@ -419,6 +420,12 @@ class SessionManagementService:
             session: Conversation session to save
             workflow_type: Workflow type (MUST be WorkflowType enum, strings deprecated)
             persist_to_db: If True, also persist to database (for RFQ completion, exit, etc.)
+            emit_chat_event: If True, publish a real-time ``chat_message`` dashboard event.
+                ``save_session`` can run multiple times per inbound turn (e.g. workflow
+                handlers save intermediate state before the final save at the end of
+                message processing), so this defaults to False and should only be set
+                by the single call at the message-processing boundary to avoid emitting
+                duplicate/spurious feed events.
 
         Returns:
             Updated conversation session
@@ -525,22 +532,25 @@ class SessionManagementService:
                     pass
                 logger.debug(f"Saved session to Redis: {session.session_id} (persist_to_db={persist_to_db})")
 
-                # Emit real-time chat event so dashboard updates instantly
-                try:
-                    from app.services.realtime_analytics_service import get_realtime_analytics_service
-                    rt_service = get_realtime_analytics_service()
-                    u_type = session.user_type.value if hasattr(session, "user_type") and hasattr(session.user_type, "value") else str(session.user_type or "unknown")
-                    asyncio.create_task(
-                        rt_service.publish_event(
-                            event_type="chat_message",
-                            user_id=str(session.external_user_id or ""),
-                            data={"session_id": session.session_id, "user_type": u_type, "phone": str(session.external_user_id or "")},
-                            session_id=session.session_id,
-                            persist_db=False
+                # Emit real-time chat event so dashboard updates instantly. Gated by
+                # emit_chat_event so intermediate saves within a single turn do not
+                # each publish a separate event.
+                if emit_chat_event:
+                    try:
+                        from app.services.realtime_analytics_service import get_realtime_analytics_service
+                        rt_service = get_realtime_analytics_service()
+                        u_type = session.user_type.value if hasattr(session, "user_type") and hasattr(session.user_type, "value") else str(session.user_type or "unknown")
+                        asyncio.create_task(
+                            rt_service.publish_event(
+                                event_type="chat_message",
+                                user_id=str(session.external_user_id or ""),
+                                data={"session_id": session.session_id, "user_type": u_type, "phone": str(session.external_user_id or "")},
+                                session_id=session.session_id,
+                                persist_db=False
+                            )
                         )
-                    )
-                except Exception:
-                    pass
+                    except Exception:
+                        pass
             elif self.redis_enabled and not should_save_to_redis:
                 try:
                     await self.redis_session.delete_session(session.session_id)

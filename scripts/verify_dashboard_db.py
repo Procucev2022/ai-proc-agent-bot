@@ -39,11 +39,14 @@ def verify_today():
                 created_rfq_ids.add(str(single_id))
                 
         # Also RFQ table
-        rfq_table_count = db.query(func.count(RFQ.rfq_id)).filter(
+        rfq_table_ids = db.query(RFQ.rfq_id).filter(
             RFQ.created_at >= today_start
-        ).scalar() or 0
-        
-        total_rfqs = max(len(created_rfq_ids), rfq_table_count)
+        ).all()
+        for (rfq_id,) in rfq_table_ids:
+            if rfq_id:
+                created_rfq_ids.add(str(rfq_id))
+
+        total_rfqs = len(created_rfq_ids)
         
         # 4. Seller Responses
         responses = db.query(func.count(RFQNotificationFact.id)).filter(

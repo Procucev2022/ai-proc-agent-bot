@@ -217,6 +217,30 @@ class DashboardAggregationService:
             *session_filter
         ).scalar() or 0
 
+        # Returning buyers/sellers: same "seen before this window" logic as returning_users_count,
+        # scoped per role instead of subtracting an arbitrary constant from the current-period count.
+        def _returning_count(user_type: UserType) -> int:
+            role_user_ids = [
+                u[0] for u in db.query(distinct(ConversationSession.external_user_id))
+                .filter(ConversationSession.user_type == user_type, *session_filter)
+                .all()
+                if u[0]
+            ]
+            if not role_user_ids:
+                return 0
+            return (
+                db.query(distinct(ConversationSession.external_user_id))
+                .filter(
+                    ConversationSession.external_user_id.in_(role_user_ids),
+                    ConversationSession.user_type == user_type,
+                    ConversationSession.created_at < start_naive
+                )
+                .count()
+            )
+
+        returning_buyers_count = _returning_count(UserType.buyer)
+        returning_sellers_count = _returning_count(UserType.seller)
+
         # =========================================================================
         # DETAILED USER CLASSIFICATION & FUNNEL KPIS
         # =========================================================================
@@ -395,20 +419,27 @@ class DashboardAggregationService:
 
         for r_ids, r_id, outcome, w_type in session_rfq_rows:
             session_has_rfqs = False
+            new_ids_count = 0
             if r_ids and isinstance(r_ids, list):
                 for single_id in r_ids:
                     if single_id:
-                        seen_rfq_ids.add(str(single_id))
                         session_has_rfqs = True
+                        key = str(single_id)
+                        if key not in seen_rfq_ids:
+                            seen_rfq_ids.add(key)
+                            new_ids_count += 1
             elif r_id:
-                seen_rfq_ids.add(str(r_id))
                 session_has_rfqs = True
+                key = str(r_id)
+                if key not in seen_rfq_ids:
+                    seen_rfq_ids.add(key)
+                    new_ids_count += 1
 
             if session_has_rfqs:
                 if outcome == ConversationOutcome.completed:
-                    submitted_rfqs_count += len(r_ids) if (r_ids and isinstance(r_ids, list)) else 1
+                    submitted_rfqs_count += new_ids_count
                 else:
-                    active_rfqs_count += len(r_ids) if (r_ids and isinstance(r_ids, list)) else 1
+                    active_rfqs_count += new_ids_count
             elif w_type == WorkflowType.rfq_creation:
                 active_rfqs_count += 1
 
@@ -708,8 +739,8 @@ class DashboardAggregationService:
             "buyer_seller": {
                 "new_buyers": new_buyers,
                 "new_sellers": new_sellers,
-                "returning_buyers": max(0, new_buyers - 1) if new_buyers > 0 else 0,
-                "returning_sellers": max(0, new_sellers - 1) if new_sellers > 0 else 0,
+                "returning_buyers": returning_buyers_count,
+                "returning_sellers": returning_sellers_count,
                 "top_buyers": top_buyers,
                 "top_sellers": top_sellers,
             },
@@ -826,7 +857,7 @@ class DashboardAggregationService:
                 ConversationSession.outcome,
                 ConversationSession.rfq_id,
                 ConversationSession.rfq_ids,
-                ConversationSession.created_at,
+                ConversationSession.last_activity_at,
                 ConversationSession.session_id,
             ).filter(*today_session_filter).all():
                 ext_user = _row_val(sess_row, 0, "external_user_id")
@@ -856,7 +887,7 @@ class DashboardAggregationService:
                 sessions_count = len(user_sess)
                 last_active_raw = None
                 for sess_row in user_sess:
-                    c_at = _row_val(sess_row, 6, "created_at")
+                    c_at = _row_val(sess_row, 6, "last_activity_at")
                     if c_at and (last_active_raw is None or c_at > last_active_raw):
                         last_active_raw = c_at
                 last_active = last_active_raw.strftime("%Y-%m-%d %H:%M:%S") if last_active_raw else "N/A"
@@ -884,7 +915,7 @@ class DashboardAggregationService:
                     out = _row_val(sess_row, 3, "outcome")
                     r_id = _row_val(sess_row, 4, "rfq_id")
                     r_ids = _row_val(sess_row, 5, "rfq_ids")
-                    c_at = _row_val(sess_row, 6, "created_at")
+                    c_at = _row_val(sess_row, 6, "last_activity_at")
 
                     if c_at and (last_active_dt is None or c_at > last_active_dt):
                         last_active_dt = c_at
@@ -939,7 +970,7 @@ class DashboardAggregationService:
                     w_type = _row_val(sess_row, 1, "workflow_type")
                     w_state = _row_val(sess_row, 2, "workflow_state")
                     out = _row_val(sess_row, 3, "outcome")
-                    c_at = _row_val(sess_row, 6, "created_at")
+                    c_at = _row_val(sess_row, 6, "last_activity_at")
 
                     if c_at and (last_active_dt is None or c_at > last_active_dt):
                         last_active_dt = c_at
@@ -1089,7 +1120,7 @@ class DashboardAggregationService:
                 ConversationSession.outcome,
                 ConversationSession.rfq_id,
                 ConversationSession.rfq_ids,
-                ConversationSession.created_at,
+                ConversationSession.last_activity_at,
                 ConversationSession.session_id,
             ).filter(*today_session_filter).all():
                 ext_user = _row_val(sess_row, 0, "external_user_id")
@@ -1120,7 +1151,7 @@ class DashboardAggregationService:
                 last_active_raw = None
                 session_id = None
                 for sess_row in user_sess:
-                    c_at = _row_val(sess_row, 6, "created_at")
+                    c_at = _row_val(sess_row, 6, "last_activity_at")
                     if c_at and (last_active_raw is None or c_at > last_active_raw):
                         last_active_raw = c_at
                         session_id = _row_val(sess_row, 7, "session_id")
@@ -1153,7 +1184,7 @@ class DashboardAggregationService:
                     out = _row_val(sess_row, 3, "outcome")
                     r_id = _row_val(sess_row, 4, "rfq_id")
                     r_ids = _row_val(sess_row, 5, "rfq_ids")
-                    c_at = _row_val(sess_row, 6, "created_at")
+                    c_at = _row_val(sess_row, 6, "last_activity_at")
                     s_id = _row_val(sess_row, 7, "session_id")
 
                     if c_at and (last_active_dt is None or c_at > last_active_dt):
@@ -1212,7 +1243,7 @@ class DashboardAggregationService:
                     w_type = _row_val(sess_row, 1, "workflow_type")
                     w_state = _row_val(sess_row, 2, "workflow_state")
                     out = _row_val(sess_row, 3, "outcome")
-                    c_at = _row_val(sess_row, 6, "created_at")
+                    c_at = _row_val(sess_row, 6, "last_activity_at")
                     s_id = _row_val(sess_row, 7, "session_id")
 
                     if c_at and (last_active_dt is None or c_at > last_active_dt):
@@ -1459,7 +1490,7 @@ class DashboardAggregationService:
                     "started_at": s.started_at.isoformat() if s.started_at else (s.created_at.isoformat() if s.created_at else None),
                     "last_activity_at": s.last_activity_at.isoformat() if s.last_activity_at else None,
                     "total_messages": s_msgs_count,
-                    "all_messages": list(messages),
+                    "messages_by_session": {s.session_id: list(messages)},
                     "latest_message_preview": "",
                     "is_online": norm in active_phones,
                     "rfq_id": rfq_val,
@@ -1469,7 +1500,7 @@ class DashboardAggregationService:
                 user_entry = users_map[norm]
                 user_entry["session_count"] += 1
                 user_entry["total_messages"] += s_msgs_count
-                user_entry["all_messages"].extend(messages)
+                user_entry["messages_by_session"][s.session_id] = messages
                 if s.last_activity_at:
                     user_entry["last_activity_at"] = s.last_activity_at.isoformat()
                 if u_type and u_type != "unknown":
@@ -1505,7 +1536,7 @@ class DashboardAggregationService:
                     "started_at": rs.get("started_at"),
                     "last_activity_at": r_last_active,
                     "total_messages": len(r_messages),
-                    "all_messages": list(r_messages),
+                    "messages_by_session": {r_sid: list(r_messages)},
                     "latest_message_preview": "",
                     "is_online": True,
                     "rfq_id": r_rfq,
@@ -1513,17 +1544,15 @@ class DashboardAggregationService:
                 }
             else:
                 user_entry = users_map[r_norm]
-                # If this session was already in MySQL, Redis has newer messages for it
+                # If this session was already in MySQL, Redis holds the complete, more
+                # recent snapshot for it, so replace rather than append to avoid
+                # double-counting messages already captured from MySQL.
                 if r_sid in processed_session_ids:
-                    # Session exists in DB, append the latest active messages from Redis
-                    if r_messages:
-                        user_entry["total_messages"] += len(r_messages)
-                        user_entry["all_messages"].extend(r_messages)
+                    user_entry["messages_by_session"][r_sid] = r_messages
                 else:
                     # Brand new active session in Redis not yet in MySQL
                     user_entry["session_count"] += 1
-                    user_entry["total_messages"] += len(r_messages)
-                    user_entry["all_messages"].extend(r_messages)
+                    user_entry["messages_by_session"][r_sid] = r_messages
 
                 if r_last_active:
                     user_entry["last_activity_at"] = r_last_active
@@ -1536,7 +1565,8 @@ class DashboardAggregationService:
         # Filter and finalize user previews
         result = []
         for norm, user_entry in users_map.items():
-            msgs = user_entry.pop("all_messages", [])
+            messages_by_session = user_entry.pop("messages_by_session", {})
+            msgs = [m for sess_msgs in messages_by_session.values() for m in sess_msgs]
             user_entry["total_messages"] = len(msgs)
             if user_entry["total_messages"] == 0:
                 continue

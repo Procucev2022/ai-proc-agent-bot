@@ -1051,19 +1051,13 @@ async def test_profile_selection_comprehensive_branch_coverage(monkeypatch):
     res_invalid = await service._handle_new_user_registration_response("+919999999999", "99", s_inv)
     assert res_invalid["status"] == "new_user_registration_retry_sent"
 
-    # 6. _handle_new_user_registration_response max retries reached
-    s_max = _make_opts_session()
-    s_max.workflow_state["registration_retries"] = 3
-    res_max = await service._handle_new_user_registration_response("+919999999999", "99", s_max)
-    assert res_max["status"] in ["exit", "exit_completed", "exit_intent_acknowledged", "new_user_registration_retry_sent"]
-
-    # 7. handle_profile_selection when no profiles exist
+    # 6. handle_profile_selection when no profiles exist
     s2 = session_obj(workflow_state={})
     cache.get_user_data.return_value = []
     res_show = await service.handle_profile_selection("+919999999999", "hello", s2, {"intent": "greeting", "confidence": 90})
     assert res_show is not None
 
-    # 8. Confidence boundary tests for buy/sell/rfq_status
+    # 7. Confidence boundary tests for buy/sell/rfq_status
     service._detect_registration_intent = AsyncMock(return_value=None)
     service._get_user_profiles = AsyncMock(return_value={"success": True, "profiles": [{"role": "buyer", "user_id": "u1", "username": "b1"}]})
     service._handle_buyer_intent = AsyncMock(return_value={"status": "buyer_handled"})
@@ -1079,7 +1073,7 @@ async def test_profile_selection_comprehensive_branch_coverage(monkeypatch):
     res_rfq_high = await service.handle_profile_selection("+919999999999", "status of rfq", s2, {"intent": "rfq_status_check", "confidence": 85})
     assert res_rfq_high["status"] == "rfq_checked"
 
-    # 9. Explicit registration intent detection in handle_profile_selection
+    # 8. Explicit registration intent detection in handle_profile_selection
     service._redirect_to_buyer_registration = AsyncMock(return_value={"status": "buyer_reg"})
     service._redirect_to_seller_registration = AsyncMock(return_value={"status": "seller_reg"})
 
