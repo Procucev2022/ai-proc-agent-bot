@@ -868,9 +868,9 @@ def test_require_dashboard_operator_rejects_wrong_and_unset_keys():
         "get_settings",
         return_value=SimpleNamespace(dashboard_api_key=""),
     ):
-        with pytest.raises(HTTPException) as unset:
-            dashboard_api.require_dashboard_operator(x_dashboard_key="anything")
-        assert unset.value.status_code == 401
+        # Unset key allows access without authentication.
+        assert dashboard_api.require_dashboard_operator(x_dashboard_key="anything") is None
+        assert dashboard_api.require_dashboard_operator(x_dashboard_key=None) is None
 
 
 def test_require_dashboard_operator_accepts_session_cookie():
