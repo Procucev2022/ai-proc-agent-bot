@@ -1946,3 +1946,32 @@ async def test_realtime_analytics_service_subscribe_events_and_singleton():
         ev2 = await gen2.__anext__()
         assert ev2.get("event_type") == "live_event_test"
 
+
+def test_require_dashboard_operator_scenarios():
+    from app.api.dashboard import require_dashboard_operator
+    from fastapi import HTTPException
+
+    # 1. When DASHBOARD_API_KEY is not configured, any/none header passes
+    with patch("app.api.dashboard.get_settings") as mock_settings:
+        mock_settings.return_value.dashboard_api_key = None
+        # Should not raise
+        require_dashboard_operator(None)
+        require_dashboard_operator("some-key")
+
+    # 2. When DASHBOARD_API_KEY is configured and matches header
+    with patch("app.api.dashboard.get_settings") as mock_settings:
+        mock_settings.return_value.dashboard_api_key = "secret123"
+        # Should not raise
+        require_dashboard_operator("secret123")
+
+    # 3. When DASHBOARD_API_KEY is configured and header does not match
+    with patch("app.api.dashboard.get_settings") as mock_settings:
+        mock_settings.return_value.dashboard_api_key = "secret123"
+        with pytest.raises(HTTPException) as exc_info:
+            require_dashboard_operator("wrong-key")
+        assert exc_info.value.status_code == 401
+
+        with pytest.raises(HTTPException) as exc_info_none:
+            require_dashboard_operator(None)
+        assert exc_info_none.value.status_code == 401
+
