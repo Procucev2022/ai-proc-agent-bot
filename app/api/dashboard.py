@@ -11,7 +11,7 @@ import hmac
 import json
 import logging
 import time
-from typing import Optional
+from typing import Literal, Optional
 from fastapi import APIRouter, Request, Query, Depends, Header, Cookie, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse, Response
 from sqlalchemy.orm import Session
@@ -24,6 +24,19 @@ from app.services.realtime_analytics_service import get_realtime_analytics_servi
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
+
+DashboardFilterType = Literal[
+    "all",
+    "unknown",
+    "buyer",
+    "buyer_registered",
+    "buyer_not_registered",
+    "seller",
+    "seller_registered",
+    "seller_not_registered",
+    "seller_subscribed",
+    "seller_without_subscription",
+]
 
 DASHBOARD_SESSION_COOKIE = "dashboard_session"
 DASHBOARD_SESSION_MAX_AGE = 8 * 60 * 60  # 8 hour operator session
@@ -132,7 +145,7 @@ async def export_user_classification_csv(
     date_preset: str = Query("today", description="today, yesterday, 7d, 30d, 90d, custom"),
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
-    filter_type: str = Query("all", description="all, unknown, buyer, buyer_registered, buyer_not_registered, seller, seller_registered, seller_not_registered, seller_subscribed, seller_without_subscription"),
+    filter_type: DashboardFilterType = Query("all", description="all, unknown, buyer, buyer_registered, buyer_not_registered, seller, seller_registered, seller_not_registered, seller_subscribed, seller_without_subscription"),
     db: Session = Depends(get_dashboard_db)
 ):
     """
@@ -167,7 +180,7 @@ async def get_user_classification_details(
     date_preset: str = Query("today", description="today, yesterday, 7d, 30d, 90d, custom"),
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
-    filter_type: str = Query("all", description="all, unknown, buyer, buyer_registered, buyer_not_registered, seller, seller_registered, seller_not_registered, seller_subscribed, seller_without_subscription"),
+    filter_type: DashboardFilterType = Query("all", description="all, unknown, buyer, buyer_registered, buyer_not_registered, seller, seller_registered, seller_not_registered, seller_subscribed, seller_without_subscription"),
     db: Session = Depends(get_dashboard_db)
 ):
     """

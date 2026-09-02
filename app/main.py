@@ -460,15 +460,7 @@ async def chat_page(request: Request):
     return templates.TemplateResponse(request, "chat.html")
 
 
-def _serve_dashboard_template(request: Request, template_name: str, key: Optional[str]):
-    """Render a dashboard page for an authenticated operator and refresh the cookie."""
-    api_key = get_settings().dashboard_api_key
-    provided_key = key or request.headers.get("X-Dashboard-Key")
-    session_cookie = request.cookies.get(DASHBOARD_SESSION_COOKIE)
-    if not is_valid_dashboard_credential(api_key, provided_key, session_cookie):
-        raise HTTPException(status_code=401, detail="Dashboard authentication required")
-
-    response = templates.TemplateResponse(request, template_name)
+def _set_dashboard_cookie(response, api_key: str, request: Request):
     response.set_cookie(
         DASHBOARD_SESSION_COOKIE,
         build_dashboard_session_token(api_key),
@@ -480,16 +472,44 @@ def _serve_dashboard_template(request: Request, template_name: str, key: Optiona
     return response
 
 
+def _serve_dashboard_template(request: Request, template_name: str):
+    """Render a dashboard page for an authenticated operator and refresh the cookie."""
+    api_key = get_settings().dashboard_api_key
+    provided_key = request.headers.get("X-Dashboard-Key")
+    session_cookie = request.cookies.get(DASHBOARD_SESSION_COOKIE)
+    if not is_valid_dashboard_credential(api_key, provided_key, session_cookie):
+        raise HTTPException(status_code=401, detail="Dashboard authentication required")
+
+    return _set_dashboard_cookie(
+        templates.TemplateResponse(request, template_name), api_key, request
+    )
+
+
+class DashboardLoginRequest(BaseModel):
+    key: str
+
+
+@app.post("/dashboard/login")
+async def dashboard_login(request: Request, credentials: DashboardLoginRequest):
+    """Authenticate an operator without placing the key in a URL."""
+    api_key = get_settings().dashboard_api_key
+    if not is_valid_dashboard_credential(api_key, credentials.key, None):
+        raise HTTPException(status_code=401, detail="Dashboard authentication required")
+    return _set_dashboard_cookie(
+        JSONResponse(content={"status": "success"}), api_key, request
+    )
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard_page(request: Request, key: Optional[str] = None):
+async def dashboard_page(request: Request):
     """Serve the Real-Time Analytics Dashboard UI."""
-    return _serve_dashboard_template(request, "dashboard.html", key)
+    return _serve_dashboard_template(request, "dashboard.html")
 
 
 @app.get("/dashboard/classification-details", response_class=HTMLResponse)
-async def classification_details_page(request: Request, key: Optional[str] = None):
+async def classification_details_page(request: Request):
     """Serve the User Classification Details page."""
-    return _serve_dashboard_template(request, "classification_details.html", key)
+    return _serve_dashboard_template(request, "classification_details.html")
 
 
 @app.post("/api/chat")

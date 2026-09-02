@@ -485,14 +485,17 @@ def test_dashboard_pages_issue_and_accept_operator_session_cookie():
 
     anonymous = TestClient(app)
     assert anonymous.get("/dashboard").status_code == 401
+    assert anonymous.get("/dashboard?key=unit-test-dashboard-key").status_code == 401
     assert anonymous.get("/api/dashboard/active-users").status_code == 401
 
-    # Opening the page with the operator key issues the session cookie ...
+    # Authenticate with a POST body so the operator key is not placed in a URL.
     client = TestClient(app)
-    page = client.get("/dashboard?key=unit-test-dashboard-key")
-    assert page.status_code == 200
+    login = client.post("/dashboard/login", json={"key": "unit-test-dashboard-key"})
+    assert login.status_code == 200
     cookie = client.cookies.get(DASHBOARD_SESSION_COOKIE)
     assert cookie
+    page = client.get("/dashboard")
+    assert page.status_code == 200
 
     # ... which browser transports (fetch, EventSource, downloads) then reuse.
     with patch("app.api.dashboard.get_realtime_analytics_service") as mock_rt:
@@ -515,6 +518,7 @@ def test_dashboard_api_endpoints():
     # 1b. Test HTML Classification Details Page
     response = client.get("/dashboard/classification-details")
     assert response.status_code == 200
+    assert client.get("/api/dashboard/export-user-classification-csv?filter_type=typo").status_code == 422
 
     # 2. Test Root Endpoint Contains Dashboard Link
     root_res = client.get("/")
@@ -1930,6 +1934,4 @@ async def test_realtime_analytics_service_subscribe_events_and_singleton():
         gen2 = singleton_svc.subscribe_events()
         ev2 = await gen2.__anext__()
         assert ev2.get("event_type") == "live_event_test"
-
-
 

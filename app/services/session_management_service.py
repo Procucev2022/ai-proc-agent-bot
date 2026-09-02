@@ -564,7 +564,9 @@ class SessionManagementService:
             if persist_to_db or not self.redis_enabled:
                 try:
                     if hasattr(self.db_manager, "save_conversation_session"):
-                        saved_session = self.db_manager.save_conversation_session(session_data)
+                        saved_session = await asyncio.to_thread(
+                            self.db_manager.save_conversation_session, session_data
+                        )
                         logger.debug(f"Persisted session to database: {session.session_id}")
                         return saved_session
                 except Exception as db_err:

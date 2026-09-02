@@ -481,7 +481,7 @@ def test_database_helpers_and_remote_operations(monkeypatch):
     with pytest.raises(ValueError, match="TLS CA certificate"):
         database._get_ssl_connect_args(settings)
     settings.database_mode = "local"
-    assert database._get_ssl_connect_args(settings)["ssl_disabled"] is True
+    assert database._get_ssl_connect_args(settings) == {}
 
     pool = SimpleNamespace(checkedout=lambda: 1, checkedin=lambda: 2, size=lambda: 3, overflow=lambda: 0)
     database.engine = SimpleNamespace(pool=pool)

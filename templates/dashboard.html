@@ -1972,6 +1972,18 @@
 
         // Server-Sent Events (SSE) Connection for Real-Time Updates
         let eventSource = null;
+        let refreshTimer = null;
+
+        function scheduleDashboardRefresh() {
+            if (refreshTimer !== null) {
+                return;
+            }
+            refreshTimer = setTimeout(() => {
+                refreshTimer = null;
+                fetchDashboardData();
+                fetchTodayConversations();
+            }, 250);
+        }
 
         function connectSSE() {
             if (eventSource) {
@@ -1993,8 +2005,7 @@
                         return;
                     }
                     // Refresh counters and live conversations immediately when any real-time event occurs
-                    fetchDashboardData();
-                    fetchTodayConversations();
+                    scheduleDashboardRefresh();
                 } catch (err) {
                     console.debug('SSE parse error:', err);
                 }
