@@ -504,11 +504,15 @@ class SessionManagementService:
                 'user_type': u_type_enum,
                 'workflow_type': workflow_value,
                 'outcome': session.outcome.value if session.outcome and hasattr(session.outcome, 'value') else session.outcome,
+                'rfq_id': getattr(session, 'rfq_id', None),
+                'rfq_ids': getattr(session, 'rfq_ids', None),
+                'product_items': getattr(session, 'product_items', None),
                 'workflow_state': clean_workflow_state,
                 'conversation_history': session.conversation_history,
                 'extracted_entities': session.extracted_entities,
                 'retention_date': session.retention_date,
-                'last_activity_at': session.last_activity_at
+                'last_activity_at': session.last_activity_at,
+                'completed_at': getattr(session, 'completed_at', None),
             }
 
             # Only save to Redis if session is NOT completed/abandoned/exited
@@ -560,21 +564,19 @@ class SessionManagementService:
                 logger.info(f"[PREVENT_REDIS_SAVE] Deleted ended session from Redis: {session.session_id}")
                 logger.debug(f"[PREVENT_REDIS_SAVE] Reason - outcome={session.outcome}, exit_completed={session.workflow_state.get('exit_completed') if session.workflow_state else None}")
 
-            # Only persist to DB when explicitly requested or Redis disabled
-            if persist_to_db or not self.redis_enabled:
+            # Always persist to DB in real-time so MySQL is the single source of truth for analytics & conversation history
+            if hasattr(self.db_manager, "save_conversation_session"):
                 try:
-                    if hasattr(self.db_manager, "save_conversation_session"):
-                        saved_session = await asyncio.to_thread(
-                            self.db_manager.save_conversation_session, session_data
-                        )
-                        logger.debug(f"Persisted session to database: {session.session_id}")
+                    saved_session = await asyncio.to_thread(
+                        self.db_manager.save_conversation_session, session_data
+                    )
+                    logger.debug(f"Persisted session to database: {session.session_id}")
+                    if persist_to_db or not self.redis_enabled:
                         return saved_session
                 except Exception as db_err:
                     logger.error(f"[SESSION_SAVE_DB_ERROR] Failed to save session to DB: {db_err}")
-                return session
-            else:
-                # Return the session object unchanged (data saved to Redis)
-                return session
+
+            return session
 
         except Exception as e:
             logger.error(f"Error saving session: {e}")
@@ -686,7 +688,6 @@ class SessionManagementService:
 
     def _session_to_dict(self, session: ConversationSession) -> Dict[str, Any]:
         """Convert ConversationSession object to dict for Redis storage."""
-        from app.models import WorkflowType, ConversationOutcome, UserType
         from datetime import date, datetime
         from app.services.helpers.session_helpers import SessionHelpers
 
@@ -707,6 +708,9 @@ class SessionManagementService:
             'user_type': u_type_str,
             'workflow_type': session.workflow_type.value if hasattr(session.workflow_type, "value") else session.workflow_type,
             'outcome': session.outcome.value if hasattr(session.outcome, "value") else session.outcome,
+            'rfq_id': getattr(session, 'rfq_id', None),
+            'rfq_ids': getattr(session, 'rfq_ids', None),
+            'product_items': getattr(session, 'product_items', None),
             'workflow_state': session.workflow_state or {},
             'conversation_history': session.conversation_history or {},
             'extracted_entities': session.extracted_entities or {},
@@ -738,6 +742,9 @@ class SessionManagementService:
             session_id=data['session_id'],
             external_user_id=data['external_user_id'],
             user_type=user_type_enum,
+            rfq_id=data.get('rfq_id'),
+            rfq_ids=data.get('rfq_ids'),
+            product_items=data.get('product_items'),
             workflow_state=data.get('workflow_state', {}),
             conversation_history=data.get('conversation_history', {}),
             extracted_entities=data.get('extracted_entities', {}),
