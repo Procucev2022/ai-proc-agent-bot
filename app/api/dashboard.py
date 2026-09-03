@@ -31,6 +31,8 @@ DashboardFilterType = Literal[
     "buyer",
     "buyer_registered",
     "buyer_not_registered",
+    "buyer_rfq_created",
+    "buyer_rfq_not_created",
     "seller",
     "seller_registered",
     "seller_not_registered",
@@ -270,13 +272,12 @@ async def live_events_stream(request: Request):
 @router.get("/export")
 async def export_dashboard_data(
     date_preset: str = Query("today"),
-    db: Session = Depends(get_dashboard_db)
 ):
     """
     Export current dashboard data as JSON.
     """
     try:
-        service = DashboardAggregationService(db_session=db)
+        service = DashboardAggregationService()
         stats = await service.get_dashboard_stats(date_preset=date_preset)
         return JSONResponse(
             content=stats,
@@ -291,7 +292,6 @@ async def get_daily_visitors(
     date_preset: str = Query("7d", description="today, yesterday, 7d, 30d, custom"),
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD for custom range"),
-    db: Session = Depends(get_dashboard_db)
 ):
     """
     Return day-wise unique visitor counts over the selected period.
@@ -299,7 +299,7 @@ async def get_daily_visitors(
     Response: {"status": "success", "data": [{"date": "YYYY-MM-DD", "visitors": N}, ...]}
     """
     try:
-        service = DashboardAggregationService(db_session=db)
+        service = DashboardAggregationService()
         data = await asyncio.to_thread(
             service.get_daily_visitors,
             date_preset,
@@ -313,14 +313,12 @@ async def get_daily_visitors(
 
 
 @router.get("/today-conversations")
-async def get_today_conversations(
-    db: Session = Depends(get_dashboard_db)
-):
+async def get_today_conversations():
     """
     Return the list of users who visited or interacted today for the live chat viewer.
     """
     try:
-        service = DashboardAggregationService(db_session=db)
+        service = DashboardAggregationService()
         conversations = await service.get_today_conversations()
         return JSONResponse(content={"status": "success", "data": conversations})
     except Exception as e:
@@ -332,13 +330,12 @@ async def get_today_conversations(
 async def get_conversation_messages(
     phone: Optional[str] = Query(None, description="User phone number"),
     session_id: Optional[str] = Query(None, description="Specific session ID"),
-    db: Session = Depends(get_dashboard_db)
 ):
     """
     Return the full interactive chat message history for the selected user/session.
     """
     try:
-        service = DashboardAggregationService(db_session=db)
+        service = DashboardAggregationService()
         result = await service.get_conversation_messages(phone=phone, session_id=session_id)
         return JSONResponse(content=result)
     except Exception as e:
