@@ -168,7 +168,7 @@ def init_database():
         settings.get_database_url(),
         connect_args=connect_args,
         pool_pre_ping=True,  # Test connections before using
-        pool_recycle=3600,  # Recycle connections after 1 hour (MySQL timeout is 8h)
+        pool_recycle=300,  # Recycle connections after 5 minutes to avoid Azure firewall dropping idle TCP sockets
         pool_size=10,
         max_overflow=20,
         pool_timeout=15,

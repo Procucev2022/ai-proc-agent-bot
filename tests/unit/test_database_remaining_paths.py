@@ -87,7 +87,7 @@ def test_init_database_seeds_when_empty_and_uses_expected_configuration(monkeypa
         # _get_ssl_connect_args returns {} rather than disabling verification.
         connect_args={},
         pool_pre_ping=True,
-        pool_recycle=3600,
+        pool_recycle=300,
         pool_size=10,
         max_overflow=20,
         pool_timeout=15,
