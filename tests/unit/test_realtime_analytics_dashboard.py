@@ -894,8 +894,9 @@ def test_conversation_messages_api_endpoint():
 def test_dashboard_aggregation_daily_visitors_logic():
     """Test get_daily_visitors direct implementation."""
     fake_db = MagicMock()
-    d1 = datetime(2026, 8, 27, 10, 0)
-    d2 = datetime(2026, 8, 26, 12, 0)
+    now = datetime.now(timezone.utc)
+    d1 = (now - timedelta(days=1)).replace(tzinfo=None)
+    d2 = (now - timedelta(days=2)).replace(tzinfo=None)
     fake_db.query.return_value.filter.return_value.all.return_value = [
         (d1, "919876543210"),
         (d1, "919876543210"),  # Duplicate user same day
