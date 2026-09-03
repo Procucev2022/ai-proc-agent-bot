@@ -31,6 +31,8 @@ DashboardFilterType = Literal[
     "buyer",
     "buyer_registered",
     "buyer_not_registered",
+    "buyer_rfq_created",
+    "buyer_rfq_not_created",
     "seller",
     "seller_registered",
     "seller_not_registered",
