@@ -23,7 +23,9 @@ from app.services.entity_service import EntityService, strip_no_products_sentine
 from app.services.whatsapp_service import WhatsAppService
 from app.services.cancel_service import CancelService
 from app.utils import sectioned_rfq_format_parser
-from app.utils.sectioned_rfq_format_parser import generate_delivery_display_with_invalid_pincode
+from app.utils.sectioned_rfq_format_parser import (
+    generate_delivery_display_with_invalid_pincode,
+)
 from app.utils.pincode_lookup import get_location_from_pincode_async
 
 logger = logging.getLogger(__name__)

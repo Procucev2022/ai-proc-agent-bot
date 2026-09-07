@@ -1,8 +1,9 @@
-import requests
+import asyncio
 import logging
 import time
-import asyncio
 from typing import Dict, Optional
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -95,17 +96,26 @@ def get_fallback_location(pincode: str) -> Optional[Dict[str, str]]:
         return {
             "pincode": clean_pincode,
             "city": fallback["city"],
-            "state": fallback["state"]
+            "state": fallback["state"],
         }
     return None
+
+
+def get_location_from_pincode(pincode: str) -> Optional[Dict[str, str]]:
+    """Synchronous version of pincode lookup with fallback."""
+    return get_fallback_location(pincode)
 
 
 def get_pincode_details(pincode, max_retries=1, timeout=3):
     """Fetch location details for a given Indian pincode."""
     url = f"https://api.postalpincode.in/pincode/{pincode}"
-    
+
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/91.0.4472.124 Safari/537.36'
+        ),
         'Accept': 'application/json',
         'Accept-Language': 'en-US,en;q=0.9',
         'Connection': 'keep-alive'
@@ -135,31 +145,35 @@ async def get_location_from_pincode_async(pincode: str) -> Optional[Dict[str, st
     clean_pincode = str(pincode).strip()
     if not clean_pincode.isdigit() or len(clean_pincode) != 6:
         return None
-        
+
     try:
         logger.info(f"Fetching location details for pincode: {clean_pincode}")
         data = await asyncio.to_thread(get_pincode_details, clean_pincode)
-        
+
         if not data or not isinstance(data, list) or len(data) == 0:
             return None
-            
+
         result = data[0]
         if not isinstance(result, dict) or result.get("Status") != "Success" or not result.get("PostOffice"):
             return None
-            
+
         post_office = result["PostOffice"][0]
         if not isinstance(post_office, dict) or "District" not in post_office or "State" not in post_office:
             return None
-            
+
         location = {
             "pincode": clean_pincode,
             "city": post_office["District"],
-            "state": post_office["State"]
+            "state": post_office["State"],
         }
-        logger.info(f"Successfully fetched location for {clean_pincode}: {location['city']}, {location['state']}")
+        logger.info(
+            f"Successfully fetched location for {clean_pincode}: "
+            f"{location['city']}, {location['state']}"
+        )
         return location
-        
+
     except Exception as e:
-        logger.warning(f"Could not fetch location for pincode {clean_pincode} returning none: {e}")
+        logger.warning(
+            f"Could not fetch location for pincode {clean_pincode} returning none: {e}"
+        )
         return None
-
