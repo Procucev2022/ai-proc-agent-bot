@@ -10,6 +10,7 @@ def test_get_fallback_location():
     # Valid pincode with known prefix
     res = module.get_fallback_location("110001")
     assert res == {"pincode": "110001", "city": "Delhi", "state": "Delhi"}
+    assert module.get_location_from_pincode("110001") == {"pincode": "110001", "city": "Delhi", "state": "Delhi"}
 
     # Valid pincode with unknown prefix
     assert module.get_fallback_location("999999") is None

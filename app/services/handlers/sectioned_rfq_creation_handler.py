@@ -23,8 +23,10 @@ from app.services.entity_service import EntityService, strip_no_products_sentine
 from app.services.whatsapp_service import WhatsAppService
 from app.services.cancel_service import CancelService
 from app.utils import sectioned_rfq_format_parser
-from app.utils.sectioned_rfq_format_parser import generate_delivery_display_with_invalid_pincode
-from app.utils.pincode_lookup import get_location_from_pincode_async
+from app.utils.pincode_lookup import (
+    get_fallback_location,
+    get_location_from_pincode_async,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1506,6 +1508,8 @@ class SectionedRFQCreationHandler:
 
             # Lookup location
             location_data = await get_location_from_pincode_async(clean_pincode)
+            if not location_data:
+                location_data = get_fallback_location(clean_pincode)
 
             if location_data:
                 # Always override city/state with pincode lookup results (pincode is authoritative)
@@ -1586,6 +1590,8 @@ class SectionedRFQCreationHandler:
 
             # Lookup location
             location_data = await get_location_from_pincode_async(clean_pincode)
+            if not location_data:
+                location_data = get_fallback_location(clean_pincode)
             if location_data and location_data.get("city") and location_data.get("state"):
                 return {
                     "is_valid": True,

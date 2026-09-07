@@ -14,7 +14,10 @@ from typing import Dict
 
 from ..services.openai_service import OpenAIService
 from ..utils.datetime_utils import format_date_display
-from ..utils.pincode_lookup import get_location_from_pincode_async
+from ..utils.pincode_lookup import (
+    get_fallback_location,
+    get_location_from_pincode_async,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -1462,6 +1465,8 @@ class EntityService:
         else:
             try:
                 location_data = await get_location_from_pincode_async(clean_pincode)
+                if not location_data:
+                    location_data = get_fallback_location(clean_pincode)
                 if not location_data:
                     validation_error = f"Could not find location for pincode {pincode}. Please enter valid pincode"
             except Exception as e:
