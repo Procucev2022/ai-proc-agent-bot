@@ -67,6 +67,14 @@ def sync_category_names(self, clear_existing: bool = False) -> Dict[str, Any]:
         
         settings = get_settings()
 
+        if not getattr(settings, 'enable_vector_search', True):
+            logger.info("Vector search is disabled, skipping category name sync")
+            return {
+                "status": "skipped",
+                "reason": "vector_search_disabled",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
         logger.info("=" * 60)
         logger.info("Starting category name sync task")
         logger.info(f"Options: clear_existing={clear_existing}")

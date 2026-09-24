@@ -1014,7 +1014,10 @@ class ProfileSelectionService:
             )
 
             if not session_stored:
-                logger.error(f"Failed to store session for {user_phone}")
+                logger.error(
+                    f"Failed to store session for {user_phone} after selecting "
+                    f"{profile.get('role')} profile {profile.get('email')} - login aborted"
+                )
                 return {"status": "error", "error": "Failed to store session"}
 
             # Set user_type on session

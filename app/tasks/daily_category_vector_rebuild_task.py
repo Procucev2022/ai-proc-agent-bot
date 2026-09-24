@@ -76,6 +76,17 @@ def rebuild_category_vector_store(self) -> Dict[str, Any]:
         else:
             logger.warning(f"Category mappings sync failed: {sync_result.get('error')} — continuing with rebuild")
 
+        # The MySQL sync above still runs with vector search off: category_mappings
+        # backs FK constraints that have nothing to do with ChromaDB.
+        if not getattr(settings, 'enable_vector_search', True):
+            logger.info("Vector search is disabled, skipping category vector rebuild")
+            return {
+                "status": "skipped",
+                "reason": "vector_search_disabled",
+                "category_mappings_sync": sync_result,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
         # STEP 1: Rebuild vector store
         # Import here to avoid circular imports and ensure fresh instance
         from app.services.auto_categorization_service import AutoCategorizationService

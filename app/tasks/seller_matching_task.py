@@ -399,14 +399,18 @@ async def process_single_rfq_matching(
             # HYBRID TWO-PHASE APPROACH per category
             candidate_seller_ids = None
 
-            # Phase 1: Try enhanced semantic discovery (optional)
+            # Phase 1: Try enhanced semantic discovery (optional). Skipped with vector
+            # search off, leaving candidate_seller_ids None so Phase 2 matches as usual.
             try:
-                from app.services.enhanced_seller_matching_service import EnhancedSellerMatchingService
-
-                enhanced_service = EnhancedSellerMatchingService()
-                item_description = _build_item_description_for_rfq(category_rfq_data)
+                item_description = (
+                    _build_item_description_for_rfq(category_rfq_data)
+                    if getattr(get_settings(), 'enable_vector_search', True) else ""
+                )
 
                 if item_description:
+                    from app.services.enhanced_seller_matching_service import EnhancedSellerMatchingService
+
+                    enhanced_service = EnhancedSellerMatchingService()
                     enhanced_result = await enhanced_service.find_sellers_for_item(
                         item_description=item_description,
                         delivery_location=rfq_data.get('delivery_location'),

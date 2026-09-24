@@ -892,7 +892,9 @@ async def test_webhook_health_constructor_and_standby_cleanup(monkeypatch):
 
 
 def test_auto_categorization_factory_empty_collection_and_project_fallback(monkeypatch):
-    fake = SimpleNamespace(collection=SimpleNamespace(count=MagicMock(return_value=0)), populate_embeddings_from_db=MagicMock())
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "enable_vector_search", True)
+    fake =SimpleNamespace(collection=SimpleNamespace(count=MagicMock(return_value=0)), populate_embeddings_from_db=MagicMock())
     monkeypatch.setattr(auto_mod, "_auto_categorization_service_instance", None)
     monkeypatch.setattr(auto_mod, "AutoCategorizationService", lambda: fake)
     assert auto_mod.get_auto_categorization_service() is fake

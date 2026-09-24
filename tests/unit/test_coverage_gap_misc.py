@@ -525,6 +525,8 @@ def test_cleanup_current_style_and_existing_archive(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_seller_matching_enhanced_candidates_and_notification_flow(monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "enable_vector_search", True)
     monkeypatch.setattr(seller_task, "get_sellers_already_notified_for_rfq", lambda _: set())
     monkeypatch.setattr(seller_task, "get_rfq_item_categories", lambda _: ["Tools"])
     monkeypatch.setattr(seller_task, "get_users_active_in_last_24hrs", lambda phones: {"111"})

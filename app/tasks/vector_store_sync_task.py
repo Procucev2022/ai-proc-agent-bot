@@ -141,7 +141,15 @@ def sync_vector_store(self, clear_existing: bool = False, cleanup_buyer_mappings
             sync_results["status"] = "failed"
             return sync_results
 
-        # STEP 2: Create vector embeddings in ChromaDB
+        # STEP 2: Create vector embeddings in ChromaDB. Step 1 above only touches
+        # MySQL and OpenAI, so it still runs with vector search off.
+        if not getattr(settings, 'enable_vector_search', True):
+            logger.info("Vector search is disabled, skipping Step 2 (ChromaDB embeddings)")
+            sync_results["steps_skipped"] = ["vector_embedding_creation"]
+            sync_results["status"] = "completed"
+            sync_results["completion_timestamp"] = datetime.utcnow().isoformat()
+            return sync_results
+
         logger.info("Step 2/2: Creating vector embeddings in ChromaDB...")
         try:
             embedding_result = _run_vector_embedding_creation(clear_existing=clear_existing)

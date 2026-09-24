@@ -387,8 +387,11 @@ async def test_typed_purchase_message_keeps_an_in_progress_sectioned_workflow(mo
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def clean_categorization_singleton():
+def clean_categorization_singleton(monkeypatch):
     """Reset the module singleton around each test so ordering cannot leak state."""
+    # These tests cover the real (vector) service, which is off by default now.
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "enable_vector_search", True)
     original = auto_cat_mod._auto_categorization_service_instance
     auto_cat_mod._auto_categorization_service_instance = None
     yield

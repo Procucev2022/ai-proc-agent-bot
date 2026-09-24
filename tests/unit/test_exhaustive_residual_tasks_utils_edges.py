@@ -121,6 +121,8 @@ async def test_bfs_no_successful_results_and_wrapper_success(monkeypatch):
 
 
 def test_category_sync_exception_orchestration_and_project_path(monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "enable_vector_search", True)
     original_path = list(category_sync.sys.path)
     project_path = category_sync.os.path.abspath(category_sync.os.path.join(category_sync.os.path.dirname(category_sync.__file__), "../.."))
     category_sync.sys.path[:] = [p for p in category_sync.sys.path if p != project_path]
@@ -211,6 +213,8 @@ def test_log_cleanup_subdirectories_existing_archive_and_unlink_error(monkeypatc
 
 @pytest.mark.asyncio
 async def test_seller_enhanced_candidate_success_exception_and_recording(monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "enable_vector_search", True)
     monkeypatch.setattr(seller, "get_sellers_already_notified_for_rfq", lambda _: set())
     monkeypatch.setattr(seller, "get_rfq_item_categories", lambda _: ["Tools"])
     monkeypatch.setattr(seller, "get_users_active_in_last_24hrs", lambda phones: {"111"})
