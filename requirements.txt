@@ -30,7 +30,7 @@ redis
 slowapi
 
 # Testing framework (pinned to keep the coverage gate reproducible)
-pytest==8.4.1
+pytest==9.0.3
 pytest-asyncio==1.1.0
 pytest-timeout==2.4.0
 coverage==7.10.6
