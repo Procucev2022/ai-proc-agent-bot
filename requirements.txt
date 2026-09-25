@@ -7,7 +7,9 @@ python-dateutil
 pytz
 jinja2
 # Database and ORM
-sqlalchemy
+# Pinned: SQLAlchemy 2.1 changes the ORM column typing and adds ~80 mypy
+# findings, breaking the quality-baseline.json budget on fresh CI installs.
+sqlalchemy==2.0.54
 PyMySQL
 alembic
 
