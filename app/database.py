@@ -52,6 +52,22 @@ def _get_system_ca_bundle() -> Optional[str]:
     return next((path for path in candidates if path and os.path.exists(path)), None)
 
 
+def _with_socket_timeouts(database_url, connect_args: dict, settings) -> dict:
+    """Add pymysql socket timeouts so a dropped connection fails instead of hanging.
+
+    pymysql waits forever for a reply by default. When the network drops a query or
+    its answer, the request then never finishes and the user never gets a reply.
+    """
+    if not str(database_url).startswith("mysql+pymysql"):
+        return connect_args
+    return {
+        **connect_args,
+        "connect_timeout": getattr(settings, "db_connect_timeout_seconds", 10),
+        "read_timeout": getattr(settings, "db_read_timeout_seconds", 60),
+        "write_timeout": getattr(settings, "db_write_timeout_seconds", 60),
+    }
+
+
 def _get_ssl_connect_args(settings) -> dict:
     """Return SQLAlchemy connect_args with SSL config based on database_mode."""
     if settings.database_mode == "client":
@@ -162,7 +178,9 @@ def init_database():
 
     settings = get_settings()
 
-    connect_args = _get_ssl_connect_args(settings)
+    connect_args = _with_socket_timeouts(
+        settings.get_database_url(), _get_ssl_connect_args(settings), settings
+    )
 
     engine = create_engine(
         settings.get_database_url(),
@@ -274,7 +292,9 @@ def get_db_session():
         # Initialize with SSL configuration based on database mode
         settings = get_settings()
 
-        connect_args = _get_ssl_connect_args(settings)
+        connect_args = _with_socket_timeouts(
+            settings.get_database_url(), _get_ssl_connect_args(settings), settings
+        )
 
         try:
             engine = create_engine(
@@ -365,7 +385,9 @@ def get_remote_db_session():
         if not remote_database_url:
             raise ValueError("Remote database URL not configured")
         
-        connect_args = _get_ssl_connect_args(settings)
+        connect_args = _with_socket_timeouts(
+            remote_database_url, _get_ssl_connect_args(settings), settings
+        )
 
         try:
             # Create remote engine with connection pooling

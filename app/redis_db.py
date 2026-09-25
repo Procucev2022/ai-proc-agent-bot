@@ -193,8 +193,24 @@ class AuthRedisService(BaseRedisService):
     async def store(self, phone_number: str, user_data: Dict[str, Any], expiry_seconds: Optional[int] = None) -> bool:
         key = f"auth:{phone_number}"
         if expiry_seconds is None:
-            expiry_seconds = self.settings.redis_expiry_seconds 
-        return await self.set(key, user_data, expiry_seconds)
+            expiry_seconds = self.settings.redis_expiry_seconds
+        # Logins live only in Redis, so say exactly why a store failed: without this
+        # a verified profile selection fails with no reply and no visible cause.
+        if not getattr(self.settings, 'redis_session_storage_enabled', True):
+            logger.error(
+                f"[AUTH-STORE] Cannot store login for {phone_number}: "
+                "REDIS_SESSION_STORAGE_ENABLED=false. Verified profiles cannot sign in "
+                "until it is true and Redis is running."
+            )
+            return False
+        stored = await self.set(key, user_data, expiry_seconds)
+        if not stored:
+            logger.error(
+                f"[AUTH-STORE] Redis did not store login for {phone_number} "
+                f"(client initialized: {self.client is not None}). Check that Redis is "
+                "reachable at REDIS_URL; a preceding 'Redis SET error' log has the cause."
+            )
+        return stored
 
     async def retrieve(self, phone_number: str) -> Optional[User]:
         key = f"auth:{phone_number}"

@@ -1,12 +1,11 @@
 # ====================================================================
 # AI Procurement Agent - Docker Compose Configuration
 # ====================================================================
-# This configuration sets up 5 containers for the procurement system:
+# This configuration sets up 4 containers for the procurement system:
 # 1. Main Application (FastAPI + Gunicorn)
 # 2. Redis (sessions on db 0, Celery on db 1)
-# 3. ChromaDB (vector database server)
-# 4. Celery Worker (background task processing)
-# 5. Celery Beat (task scheduler)
+# 3. Celery Worker (background task processing)
+# 4. Celery Beat (task scheduler)
 # ====================================================================
 
 # PRODUCTION SETUP INFORMATION:
@@ -15,7 +14,6 @@
 # PORT MAPPING:
 # - Main App: http://localhost:8005 (FastAPI + WhatsApp webhook)
 # - Redis: localhost:6379 (DB 0: sessions, DB 1: Celery)
-# - ChromaDB: http://localhost:8000 (Vector database API)
 # - No external ports for Celery (internal communication only)
 #
 # VOLUME MOUNTS:
@@ -29,18 +27,15 @@
 # RESERVED (16GB):
 # - System OS: 2GB
 # - Redis: 2GB
-# - ChromaDB baseline: 8GB
 # - Monitoring/overhead: 4GB
 #
 # DYNAMIC (48GB) - DAY MODE (6 AM - 10 PM):
 # - App: 24GB (heavy WhatsApp traffic, real-time requests)
 # - Celery: 16GB (background tasks secondary)
-# - ChromaDB burst: 8GB
 #
 # DYNAMIC (48GB) - NIGHT MODE (10 PM - 6 AM):
 # - App: 8GB (minimal traffic)
 # - Celery: 32GB (heavy batch processing)
-# - ChromaDB burst: 8GB
 #
 # ENVIRONMENT VARIABLES TO CONTROL MODE:
 # - SERVER_MODE=day (6 AM - 10 PM) - Default
@@ -50,7 +45,6 @@
 # HEALTH CHECKS:
 # - App: GET http://localhost:8005/health
 # - Redis: redis-cli ping
-# - ChromaDB: GET http://localhost:8000/api/v2/heartbeat
 # ====================================================================
 
 services:
@@ -69,17 +63,12 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      chromadb:
-        condition: service_started
     env_file:
       - .env
     environment:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - CHROMA_HOST=chromadb
-      - CHROMA_PORT=8000
-      - CHROMA_USE_SERVER=true
       - WORKERS=${APP_WORKERS:-10}  # 10 workers × ~1.6GB = ~16GB
       - WORKER_THREADS=${APP_WORKER_THREADS:-2}
       - HF_HUB_OFFLINE=1
@@ -108,7 +97,7 @@ services:
       start_period: 40s
 
   # ============================================================================
-  # DATA STORES - REDIS AND CHROMADB
+  # DATA STORE - REDIS
   # ============================================================================
   redis:
     container_name: procucev_redis
@@ -135,36 +124,6 @@ services:
       timeout: 10s
       retries: 3
 
-  chromadb:
-    container_name: procucev_chromadb
-    image: chromadb/chroma:1.5.9
-    ports:
-      - "8000:8000"
-    environment:
-      - CHROMA_SERVER_HOST=0.0.0.0
-      - CHROMA_SERVER_CORS_ALLOW_ORIGINS=["*"]
-      - IS_PERSISTENT=TRUE
-      - ANONYMIZED_TELEMETRY=FALSE
-    volumes:
-      - chroma_data:/chroma/chroma
-    networks:
-      - procucev_network
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '${CHROMA_CPU_LIMIT:-2}'
-          memory: '${CHROMA_MEMORY_LIMIT:-8G}'  # 3GB baseline + 5GB burst
-        reservations:
-          cpus: '${CHROMA_CPU_RESERVE:-1}'
-          memory: '${CHROMA_MEMORY_RESERVE:-3G}'
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'cat < /dev/null > /dev/tcp/localhost/8000' || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s # Give ChromaDB time to initialize
-
   # ============================================================================
   # BACKGROUND TASK PROCESSING - CELERY WORKERS (3-POOL ARCHITECTURE)
   # ============================================================================
@@ -180,8 +139,6 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      chromadb:
-        condition: service_started
     env_file:
       - .env
     environment:
@@ -189,9 +146,6 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - CELERY_APP=app.celery_app
       - C_FORCE_ROOT=1
-      - CHROMA_HOST=chromadb
-      - CHROMA_PORT=8000
-      - CHROMA_USE_SERVER=true
       - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-1}
       - CELERY_SINGLE_WORKER=true
       - HF_HUB_OFFLINE=1
@@ -251,8 +205,6 @@ services:
 # Persistent Storage
 volumes:
   redis_data:
-    driver: local
-  chroma_data:
     driver: local
   celery_beat_data:
     driver: local

@@ -42,6 +42,10 @@ def process_uncategorized_rfqs(self):
             logger.info("Remote categorization is disabled, skipping task")
             return {"status": "skipped", "reason": "remote_categorization_disabled"}
 
+        if not getattr(settings, "enable_vector_search", True):
+            logger.info("Vector search is disabled, skipping task")
+            return {"status": "skipped", "reason": "vector_search_disabled"}
+
         
         # Get uncategorized items
         uncategorized_items = get_uncategorized_items()

@@ -38,6 +38,34 @@ _auto_categorization_service_instance: Optional['AutoCategorizationService'] = N
 _auto_categorization_service_lock = threading.Lock()
 
 
+def is_vector_search_enabled() -> bool:
+    """Return whether vector (ChromaDB) categorization is switched on."""
+    return bool(getattr(get_settings(), "enable_vector_search", True))
+
+
+class DisabledCategorizationService:
+    """
+    Stand-in returned while vector categorization is switched off.
+
+    It answers categorize_item with the same unsuccessful result shape the real
+    service returns, so every caller takes its existing "no category" path without
+    loading the embedding model or contacting ChromaDB.
+    """
+
+    async def categorize_item(self,
+                              item_description: str,
+                              user_id: str,
+                              session_id: Optional[str] = None,
+                              rfq_id: Optional[str] = None) -> Dict:
+        return {
+            "success": False,
+            "method": "disabled",
+            "reason": "vector_search_disabled",
+            "error": "Vector search is disabled",
+            "processing_time_ms": 0
+        }
+
+
 def get_auto_categorization_service() -> 'AutoCategorizationService':
     """
     Get singleton instance of AutoCategorizationService.
@@ -48,6 +76,9 @@ def get_auto_categorization_service() -> 'AutoCategorizationService':
     directly from a coroutine; use get_auto_categorization_service_async instead.
     """
     global _auto_categorization_service_instance
+
+    if not is_vector_search_enabled():
+        return DisabledCategorizationService()  # type: ignore[return-value]
 
     instance = _auto_categorization_service_instance
     if instance is not None:
@@ -94,6 +125,9 @@ async def get_auto_categorization_service_async(
     Raises:
         asyncio.TimeoutError: The instance was not ready within timeout
     """
+    if not is_vector_search_enabled():
+        return DisabledCategorizationService()  # type: ignore[return-value]
+
     instance = _auto_categorization_service_instance
     if instance is not None:
         return instance

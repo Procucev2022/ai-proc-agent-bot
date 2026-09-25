@@ -1120,7 +1120,10 @@ class ChatService:
                     logger.info(f"Auth flow sent registration options for {user_phone} (status: {auth_status})")
                     return auth_result
                 else:
-                    logger.error(f"Unexpected auth_result dict with status: {auth_status}")
+                    logger.error(
+                        f"Unexpected auth_result dict with status: {auth_status} "
+                        f"error={auth_result.get('error')!r} - no reply sent to {user_phone}"
+                    )
                     return {"status": "error", "error": "Authentication failed"}
             else:
                 logger.error(f"Unexpected auth_result type: {type(auth_result)}")

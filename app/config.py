@@ -53,6 +53,11 @@ class Settings:
         self.procucev_db_name = os.getenv("PROCUCEV_DB_NAME", "development_gmtbfs")
         self.whatsapp_db = os.getenv("WHATSAPP_DB", "procurement_db")
         self.enable_remote_categorization = True
+        # MySQL socket timeouts (seconds). Without a read timeout, a connection that
+        # drops mid-query leaves the request waiting forever with no reply or error.
+        self.db_connect_timeout_seconds = int(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "10"))
+        self.db_read_timeout_seconds = int(os.getenv("DB_READ_TIMEOUT_SECONDS", "60"))
+        self.db_write_timeout_seconds = int(os.getenv("DB_WRITE_TIMEOUT_SECONDS", "60"))
         self.sql_debug = os.getenv("SQL_DEBUG", "false").lower() == "true"
         
         # OpenAI configuration
@@ -112,6 +117,11 @@ class Settings:
         self.chroma_host = os.getenv("CHROMA_HOST", "localhost")
         self.chroma_port = int(os.getenv("CHROMA_PORT", "8000"))
         self.chroma_use_server = os.getenv("CHROMA_USE_SERVER", "true").lower() == "true"
+        # Master switch for ChromaDB vector search (RAG). Off by default: the ChromaDB
+        # service was removed from docker-compose. When false, nothing loads the
+        # embedding model or contacts ChromaDB: categorization reports "disabled" and
+        # continues without a category, and seller matching uses its standard rules.
+        self.enable_vector_search = os.getenv("ENABLE_VECTOR_SEARCH", "false").lower() == "true"
         # Fallback paths for PersistentClient (used when server is not available)
         # Use absolute paths based on project root to avoid issues with current working directory
         self.chroma_persist_directory = os.getenv("CHROMA_PERSIST_DIRECTORY", str(PROJECT_ROOT / "chroma_db"))
@@ -474,6 +484,14 @@ class Settings:
         
         if self.api_read_timeout <= 0:
             raise ValueError("API_READ_TIMEOUT must be positive")
+
+        for env_name, value in (
+            ("DB_CONNECT_TIMEOUT_SECONDS", self.db_connect_timeout_seconds),
+            ("DB_READ_TIMEOUT_SECONDS", self.db_read_timeout_seconds),
+            ("DB_WRITE_TIMEOUT_SECONDS", self.db_write_timeout_seconds),
+        ):
+            if value <= 0:
+                raise ValueError(f"{env_name} must be positive")
         
         if self.otp_max_attempts <= 0 or self.otp_max_attempts > 5:
             raise ValueError("OTP_MAX_ATTEMPTS must be between 1 and 5")
