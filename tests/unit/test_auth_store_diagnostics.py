@@ -41,7 +41,7 @@ async def test_store_logs_when_redis_rejects_the_write(monkeypatch, caplog):
 
     auth.set.assert_awaited_once_with("auth:919511876403", {"id": "u"}, 60)
     assert "Redis did not store login for 919511876403" in caplog.text
-    assert "client connected: False" in caplog.text
+    assert "client initialized: False" in caplog.text
 
 
 @pytest.mark.asyncio

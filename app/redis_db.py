@@ -207,7 +207,7 @@ class AuthRedisService(BaseRedisService):
         if not stored:
             logger.error(
                 f"[AUTH-STORE] Redis did not store login for {phone_number} "
-                f"(client connected: {self.client is not None}). Check that Redis is "
+                f"(client initialized: {self.client is not None}). Check that Redis is "
                 "reachable at REDIS_URL; a preceding 'Redis SET error' log has the cause."
             )
         return stored

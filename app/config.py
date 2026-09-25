@@ -484,6 +484,14 @@ class Settings:
         
         if self.api_read_timeout <= 0:
             raise ValueError("API_READ_TIMEOUT must be positive")
+
+        for env_name, value in (
+            ("DB_CONNECT_TIMEOUT_SECONDS", self.db_connect_timeout_seconds),
+            ("DB_READ_TIMEOUT_SECONDS", self.db_read_timeout_seconds),
+            ("DB_WRITE_TIMEOUT_SECONDS", self.db_write_timeout_seconds),
+        ):
+            if value <= 0:
+                raise ValueError(f"{env_name} must be positive")
         
         if self.otp_max_attempts <= 0 or self.otp_max_attempts > 5:
             raise ValueError("OTP_MAX_ATTEMPTS must be between 1 and 5")
