@@ -990,14 +990,6 @@ async def test_openai_learning_excel_seller_and_confirmation_matrix(monkeypatch,
 
     similar = [{"item": "bolt", "category": "Hardware", "similarity_score": 0.9}]
     client.responses.create.side_effect = None
-    client.responses.create.return_value = response({"category": "Hardware", "confidence_score": .9})
-    assert (await service.categorize_with_similar_items("bolt", similar, ["Hardware"]))["success"]
-    client.responses.create.return_value = response({"x": 1}, output_type="text")
-    assert (await service.categorize_with_similar_items("bolt", similar))["category"] == "Hardware"
-    client.responses.create.side_effect = RuntimeError("category")
-    assert (await service.categorize_with_similar_items("bolt", []))["category"] is None
-
-    client.responses.create.side_effect = None
     client.responses.create.return_value = response({"level_1_category": "IT", "level_2_category": "Hardware", "level_3_category": "Laptop"})
     assert (await service.generate_3_level_categorization("laptop", similar, "IT"))["success"]
     client.responses.create.return_value = response({"x": 1}, output_type="text")

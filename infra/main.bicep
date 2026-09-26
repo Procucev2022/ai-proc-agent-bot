@@ -91,16 +91,6 @@ module redisModule 'modules/redis.bicep' = {
   }
 }
 
-// ChromaDB Module
-module chromaModule 'modules/chroma.bicep' = {
-  name: 'chroma-deployment'
-  params: {
-    location: location
-    environment: environment
-    environmentId: environmentModule.outputs.environmentId
-  }
-}
-
 // FastAPI Web App Module
 module appModule 'modules/app-service.bicep' = {
   name: 'app-deployment'
@@ -119,7 +109,6 @@ module appModule 'modules/app-service.bicep' = {
     minReplicas: 0
     maxReplicas: environment == 'dev' ? 3 : 10
     redisHost: redisModule.outputs.redisHost
-    chromaHost: chromaModule.outputs.chromaHost
     databaseUrl: databaseUrl
     azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiKey: azureOpenAiKey
@@ -151,7 +140,6 @@ module celeryModule 'modules/celery-worker.bicep' = {
     minReplicas: environment == 'dev' ? 0 : 1
     maxReplicas: environment == 'dev' ? 3 : 10
     redisHost: redisModule.outputs.redisHost
-    chromaHost: chromaModule.outputs.chromaHost
     databaseUrl: databaseUrl
     azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiKey: azureOpenAiKey

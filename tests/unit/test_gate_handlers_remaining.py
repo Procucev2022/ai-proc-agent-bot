@@ -42,10 +42,6 @@ from app.services.helpers.authentication_helpers import AuthenticationHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.services.helpers.excel_confirmation_helpers import ExcelConfirmationHelpers
 from app.services.helpers.response_helpers import ResponseHelpers
-from app.services.helpers.rfq_processing_helpers import (
-    run_auto_categorization_for_rfqs,
-    run_seller_recommendation_for_rfqs,
-)
 from app.services.helpers.session_helpers import SessionHelpers
 from app.services.helpers.summarization_helpers import SummarizationHelpers
 
@@ -453,13 +449,6 @@ async def test_session_summarization_and_redis_fallback_branches(monkeypatch):
     assert SummarizationHelpers._calculate_completion_level({}) == "initial_stage"
 
 
-@pytest.mark.asyncio
-async def test_rfq_processing_empty_failure_and_outer_exception_paths():
-    auto = MagicMock(); auto.categorize_item.return_value = {"success": False, "error": "bad"}
-    assert "no items" in (await run_auto_categorization_for_rfqs([{"success": True, "rfq_id": "r", "rfq_data": {}}], auto)).lower()
-    assert "failed" in (await run_auto_categorization_for_rfqs([{"success": True, "rfq_id": "r", "rfq_data": {"items": [{"description": "x"}]}}], auto)).lower()
-    sellers = AsyncMock(); sellers.select_sellers_for_rfq.side_effect = RuntimeError("seller")
-    assert "error" in (await run_seller_recommendation_for_rfqs([{"success": True, "rfq_id": "r", "rfq_data": {"items": [{"description": "x"}]}}], sellers)).lower()
 
 
 @pytest.mark.asyncio
@@ -702,44 +691,6 @@ async def test_interest_check_details_otp_missing_and_helpers_cover_remaining_br
     assert ExcelConfirmationHelpers.get_excel_confirmation_data(value) == {}
 
 
-@pytest.mark.asyncio
-async def test_attachment_session_summarization_response_and_processing_branches(monkeypatch):
-    attachment = {"file_name": "a.pdf", "status": "pending"}
-    s = session(pending_attachments=[attachment], extracted_entities=[{"attachments": []}], pending_rfq={"entities": {}})
-    assert AttachmentHelpers.add_attachment_to_session(s, {"file_name": "b.pdf"})["success"]
-    assert AttachmentHelpers.approve_pending_attachment(s, "a.pdf")
-    assert s.workflow_state["pending_rfq"]["entities"]["attachments"]
-    assert AttachmentHelpers.reject_pending_attachments(s)
-    assert AttachmentHelpers.validate_attachment_type("x.pdf", "application/pdf")["valid"]
-    assert "media.example" not in AttachmentHelpers._construct_media_download_url("media") or True
-    monkeypatch.setattr("app.config.get_settings", lambda: SimpleNamespace(WHATSAPP_MEDIA_DOWNLOAD_URL="https://media.example"))
-    assert AttachmentHelpers._construct_media_download_url("old") == "https://media.example/old"
-
-    s = session(); s.conversation_history = None
-    SummarizationHelpers.add_to_conversation_history(s, "user", {"image": True}, "image", "buy_something", 90)
-    assert s.conversation_history["messages"]
-    rich = SummarizationHelpers.extract_rich_entities_for_summary(session(extracted_entities=[{"description": "pump"}], user_preferences={"budget": 1}))
-    assert "products_discussed" in rich
-    data = SummarizationHelpers.prepare_enhanced_summary_data(session(), {"rfq_details": {"id": "r"}})
-    assert data["workflow_stage_reached"] == "rfq_confirmation"
-    chat = SimpleNamespace(generate_session_summary=AsyncMock())
-    daily = SimpleNamespace(generate_daily_summary=AsyncMock())
-    await SummarizationHelpers.handle_session_completion_async(chat, daily, {"session_id": "s", "user_id": "u"})
-    assert chat.generate_session_summary.await_count == 1
-
-    response = ResponseHelpers.__new__(ResponseHelpers)
-    response.settings = SimpleNamespace(PROCUCEV_PORTAL_URL="p", support_email="e", support_contact_info="c", rfq_max_allowed=2)
-    response.openai_service = SimpleNamespace(generate_contextual_response=AsyncMock(side_effect=RuntimeError("ai")), generate_completion_response=AsyncMock(side_effect=RuntimeError("ai")), generate_registration_confirmation=AsyncMock())
-    assert "remaining" in await response.generate_registration_clarification(["unknown"], 0, {})
-    assert "details" in await response.generate_registration_confirmation({"name": "Ada"}, {})
-    assert await response.generate_seller_contextual_response({"workflow_state": "unknown", "user_role": "buyer"})
-
-    auto = MagicMock(); auto.categorize_item.return_value = {"success": True, "category": "Tools", "confidence_score": .9}
-    result = await run_auto_categorization_for_rfqs([{"success": True, "rfq_id": "r", "rfq_data": {"items": [{"description": "x"}]}}], auto)
-    assert "successfully" in result
-    sellers = AsyncMock(); sellers.select_sellers_for_rfq.return_value = {"total_selected": 0, "subscribed_sellers": [], "unsubscribed_sellers": []}
-    result = await run_seller_recommendation_for_rfqs([{"success": True, "rfq_id": "r", "rfq_data": {"items": [{"description": "office chair"}]}}], sellers)
-    assert "no matching" in result
 
 
 @pytest.mark.asyncio
@@ -780,3 +731,39 @@ async def test_session_and_chat_helper_modes_and_auth_validation(monkeypatch):
     monkeypatch.setattr(authentication_helpers_mod, "get_location_from_pincode_async", AsyncMock(return_value=None))
     _, error = await AuthenticationHelpers.validate_entities({"email": "bad", "zipCode": "560001"}, object)
     assert error and "email" in error.lower()
+
+
+@pytest.mark.asyncio
+async def test_attachment_session_summarization_response_and_processing_branches(monkeypatch):
+    attachment = {"file_name": "a.pdf", "status": "pending"}
+    s = session(pending_attachments=[attachment], extracted_entities=[{"attachments": []}], pending_rfq={"entities": {}})
+    assert AttachmentHelpers.add_attachment_to_session(s, {"file_name": "b.pdf"})["success"]
+    assert AttachmentHelpers.approve_pending_attachment(s, "a.pdf")
+    assert s.workflow_state["pending_rfq"]["entities"]["attachments"]
+    assert AttachmentHelpers.reject_pending_attachments(s)
+    assert AttachmentHelpers.validate_attachment_type("x.pdf", "application/pdf")["valid"]
+    assert "media.example" not in AttachmentHelpers._construct_media_download_url("media") or True
+    monkeypatch.setattr("app.config.get_settings", lambda: SimpleNamespace(WHATSAPP_MEDIA_DOWNLOAD_URL="https://media.example"))
+    assert AttachmentHelpers._construct_media_download_url("old") == "https://media.example/old"
+    s = session(); s.conversation_history = None
+    s = session(); s.conversation_history = None
+    SummarizationHelpers.add_to_conversation_history(s, "user", {"image": True}, "image", "buy_something", 90)
+    assert s.conversation_history["messages"]
+    rich = SummarizationHelpers.extract_rich_entities_for_summary(session(extracted_entities=[{"description": "pump"}], user_preferences={"budget": 1}))
+    assert "products_discussed" in rich
+    data = SummarizationHelpers.prepare_enhanced_summary_data(session(), {"rfq_details": {"id": "r"}})
+    assert data["workflow_stage_reached"] == "rfq_confirmation"
+    chat = SimpleNamespace(generate_session_summary=AsyncMock())
+    daily = SimpleNamespace(generate_daily_summary=AsyncMock())
+    await SummarizationHelpers.handle_session_completion_async(chat, daily, {"session_id": "s", "user_id": "u"})
+    assert chat.generate_session_summary.await_count == 1
+    response = ResponseHelpers.__new__(ResponseHelpers)
+    response.settings = SimpleNamespace(PROCUCEV_PORTAL_URL="p", support_email="e", support_contact_info="c", rfq_max_allowed=2)
+    response.openai_service = SimpleNamespace(generate_contextual_response=AsyncMock(side_effect=RuntimeError("ai")), generate_completion_response=AsyncMock(side_effect=RuntimeError("ai")), generate_registration_confirmation=AsyncMock())
+    assert "remaining" in await response.generate_registration_clarification(["unknown"], 0, {})
+    assert "details" in await response.generate_registration_confirmation({"name": "Ada"}, {})
+    assert await response.generate_seller_contextual_response({"workflow_state": "unknown", "user_role": "buyer"})
+    auto = MagicMock(); auto.categorize_item.return_value = {"success": True, "category": "Tools", "confidence_score": .9}
+    auto = MagicMock(); auto.categorize_item.return_value = {"success": True, "category": "Tools", "confidence_score": .9}
+    sellers = AsyncMock(); sellers.select_sellers_for_rfq.return_value = {"total_selected": 0, "subscribed_sellers": [], "unsubscribed_sellers": []}
+    sellers = AsyncMock(); sellers.select_sellers_for_rfq.return_value = {"total_selected": 0, "subscribed_sellers": [], "unsubscribed_sellers": []}

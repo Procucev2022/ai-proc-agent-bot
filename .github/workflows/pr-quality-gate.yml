@@ -34,7 +34,7 @@ jobs:
 
     env:
       # Deterministic placeholders. Unit tests never reach a live service; the
-      # suite mocks the database, Redis, Celery, OpenAI, WhatsApp and Chroma.
+      # suite mocks the database, Redis, Celery, OpenAI and WhatsApp.
       # tests/conftest.py sets the same values via os.environ.setdefault, so
       # these only need to stay consistent with it.
       AZURE_OPENAI_API_KEY: unit-test-key
@@ -67,10 +67,6 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # sentence-transformers pulls torch, which defaults to the multi-GB
-          # CUDA wheels. Dockerfile.base installs the CPU build first for the
-          # same reason; the runner has no GPU either.
-          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           python -m pip install -r requirements.txt
 
       - name: Report tool versions
@@ -148,10 +144,8 @@ jobs:
       # --------------------------------------------------------------- build
       # Runs after the coverage gate so that installing the build frontend and
       # emitting build/ and dist/ cannot influence the measured run. The Docker
-      # images are built by the deploy workflows via `az acr build`; reproducing
-      # that here would mean installing torch and the sentence-transformers
-      # model on every pull request, so the gate verifies the Python build
-      # instead: every module compiles, the tree packages, and the ASGI app
+      # images are built by the deploy workflows via `az acr build`, so the gate
+      # verifies the Python build instead: every module compiles, the tree packages, and the ASGI app
       # constructs.
       - name: Build
         id: build

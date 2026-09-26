@@ -45,10 +45,6 @@ xlrd
 # Multi-process-safe log rotation (10 gunicorn workers share app.log)
 concurrent-log-handler
 
-# Vector database for auto-categorization
-chromadb
-sentence-transformers
-
 # Background job processing for seller recommendation system
 celery
 redis

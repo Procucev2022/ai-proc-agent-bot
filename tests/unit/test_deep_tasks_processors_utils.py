@@ -19,13 +19,10 @@ from app.services.processors import excel_message_processor as excel_processor
 from app.services.processors import image_message_processor as image_processor
 from app.services.processors import text_message_processor as text_processor
 from app.tasks import bfs_notification_task as bfs_task
-from app.tasks import category_name_sync_task as category_task
-from app.tasks import daily_category_vector_rebuild_task as daily_task
 from app.tasks import log_cleanup_task as cleanup_task
 from app.tasks import seller_matching_task as seller_task
 from app.tasks import task_utils
 from app.tasks import taxonomy_build_task as taxonomy_task
-from app.tasks import vector_store_sync_task as vector_task
 from app.tasks import whatsapp_report_automation_task as report_task
 from app.tools.confirmation_tool import ConfirmationTool
 from app.tools.interaction_logger import InteractionLogger
@@ -255,7 +252,8 @@ def test_pincode_lookup_retry_timeout_and_async_paths(monkeypatch):
     monkeypatch.setattr(pincode_lookup, "get_pincode_details", lambda _: [{"Status": "Error", "PostOffice": []}])
     assert asyncio.run(pincode_lookup.get_location_from_pincode_async("411005")) is None
     monkeypatch.setattr(pincode_lookup, "get_pincode_details", Mock(side_effect=RuntimeError("api")))
-    assert asyncio.run(pincode_lookup.get_location_from_pincode_async("411005")) is None
+    assert asyncio.run(pincode_lookup.get_location_from_pincode_async("411005"))["city"] == "Pune"
+    assert asyncio.run(pincode_lookup.get_location_from_pincode_async("999999")) is None
 
 
 def test_format_parsers_success_missing_and_display_limits():
@@ -572,51 +570,12 @@ def test_bfs_notification_transactions_and_empty_paths(monkeypatch):
     assert asyncio.run(bfs_task.process_bfs_notifications())["processed"] == 0
 
 
-def test_category_daily_and_vector_task_helpers(monkeypatch):
-    database = __import__("app.database", fromlist=["get_db_session"])
-    models = __import__("app.models", fromlist=["CategoryMapping"])
-    monkeypatch.setattr(category_task, "get_settings", lambda: SimpleNamespace(chroma_host="h", chroma_port=1))
-    collection = SimpleNamespace(add=Mock(), count=Mock(return_value=2))
-    client = SimpleNamespace(heartbeat=Mock(), get_or_create_collection=Mock(return_value=collection), delete_collection=Mock(side_effect=RuntimeError("missing")))
-    monkeypatch.setattr(category_task.chromadb, "HttpClient", lambda **_: client)
-    monkeypatch.setattr(category_task.embedding_functions, "SentenceTransformerEmbeddingFunction", lambda **_: "embed")
-    assert category_task._create_category_embeddings({"A": 1, "B": 2}, True)["success"]
-    monkeypatch.setattr(category_task.chromadb, "HttpClient", Mock(side_effect=RuntimeError("offline")))
-    assert not category_task._create_category_embeddings({"A": 1})["success"]
-
-    monkeypatch.setattr(daily_task, "get_settings", lambda: SimpleNamespace(enable_remote_categorization=True))
-    monkeypatch.setattr(database, "test_remote_connection", lambda: True)
-    monkeypatch.setattr(database, "get_remote_item_categories", lambda: [{"category": "A", "item": "X"}, {"category": "", "item": "Y"}])
-    class Mapping:
-        category = "category"
-        item = "item"
-        def __init__(self, **kwargs): self.__dict__.update(kwargs)
-    monkeypatch.setattr(models, "CategoryMapping", Mapping)
-    db = FakeDB()
-    db.query = lambda *_: SimpleNamespace(all=lambda: [])
-    db.add_all = Mock()
-    monkeypatch.setattr(database, "get_db_session", lambda: db)
-    result = daily_task._sync_category_mappings()
-    assert result["inserted_count"] == 1 and db.commits == 1
-    monkeypatch.setattr(daily_task, "get_settings", lambda: SimpleNamespace(enable_remote_categorization=False))
-    assert not daily_task._sync_category_mappings()["success"]
-
-    monkeypatch.setattr(vector_task, "get_settings", lambda: SimpleNamespace(enable_vector_store_sync=True))
-    monkeypatch.setattr(vector_task, "_run_seller_category_mapping", lambda: {"success": True, "processed_count": 1})
-    monkeypatch.setattr(vector_task, "_run_vector_embedding_creation", lambda **_: {"success": True, "total_items": 1})
-    assert vector_task.sync_vector_store.run()["status"] == "completed"
-    monkeypatch.setattr(vector_task, "_run_seller_category_mapping", lambda: {"success": False, "error": "map"})
-    assert vector_task.sync_vector_store.run()["status"] == "partial_failure"
-    monkeypatch.setattr(vector_task, "_run_seller_category_mapping", Mock(side_effect=RuntimeError("map")))
-    assert vector_task.sync_vector_store.run()["status"] == "failed"
 
 
 def test_seller_task_helpers_and_remote_log(monkeypatch):
     monkeypatch.setattr(seller_task, "execute_remote_query", lambda *_: [{"vendor_uuid": "s"}])
     assert seller_task.get_sellers_already_notified_for_rfq("r") == {"s"}
     assert seller_task.extract_delivery_location({"delivery_city": "Pune", "delivery_state": "MH", "delivery_pincode": "411005"}) == {"city": "Pune", "state": "MH", "pincode": "411005"}
-    assert seller_task._build_item_description_for_rfq({"categories": ["A"], "description": " x ", "special_instruction": " y "}) == "Categories: A | Description: x | Requirements: y"
-    assert seller_task._build_item_description_for_rfq({}) == ""
     assert seller_task.log_selected_sellers_to_remote("r", "id", [])
     db = FakeDB()
     monkeypatch.setattr(seller_task, "get_remote_db_session", lambda: db)

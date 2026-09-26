@@ -16,13 +16,11 @@ import app.services.seller_service as seller_module
 import app.services.inactivity_timeout_service as timeout_module
 import app.services.session_management_service as session_module
 import app.services.learning_categorization_service as learning_module
-import app.services.auto_categorization_service as auto_module
 import app.services.seller_notification_service as notification_module
 import app.services.seller_recommendation_service as recommendation_module
 import app.services.seller_categorization_service as seller_cat_module
 import app.services.rfq_background_service as background_module
 import app.services.rfq_intimation_service as intimation_module
-import app.services.enhanced_seller_matching_service as matching_module
 import app.services.cancel_service as cancel_module
 import app.services.exit_service as exit_module
 import app.services.intent_service as intent_module
@@ -105,8 +103,6 @@ def settings(**overrides):
         worker_timeout_threshold_seconds=135,
         pending_reply_ttl_seconds=180,
         redis_url="redis://localhost:6379/0",
-        chroma_host="localhost",
-        chroma_port=8000,
         enable_remote_categorization=False,
         WHATSAPP_TEMPLATE_RFQ_NOTIFICATION="rfq-template",
         WHATSAPP_TEMPLATE_BFS_BID_NOTIFICATION="bfs-template",
@@ -373,65 +369,6 @@ async def test_learning_async_success_and_validation(monkeypatch):
     assert (await service.validate_learning_category("A", "B", "C", "pump"))["is_valid"] is False
 
 
-def chroma_fixture(monkeypatch, module, collection=None):
-    collection = collection or MagicMock(name="collection")
-    client = MagicMock()
-    client.heartbeat.return_value = True
-    client.get_or_create_collection.return_value = collection
-    monkeypatch.setattr(module.embedding_functions, "SentenceTransformerEmbeddingFunction", lambda **_: "embed")
-    monkeypatch.setattr(module.chromadb, "HttpClient", lambda **_: client)
-    monkeypatch.setattr(module, "get_settings", lambda: settings())
-    monkeypatch.setattr(module, "OpenAIService", lambda: MagicMock())
-    return collection, client
-
-
-@pytest.mark.asyncio
-async def test_auto_categorization_constructor_search_and_branches(monkeypatch):
-    collection, _ = chroma_fixture(monkeypatch, auto_module)
-    monkeypatch.setattr(auto_module, "LearningCategorizationService", lambda: MagicMock())
-    service = auto_module.AutoCategorizationService()
-    collection.query.return_value = {"documents": [["pump"]], "metadatas": [[{"category": "Tools", "item": "pump"}]], "distances": [[.2]]}
-    assert service.find_similar_items("pump")[0]["similarity_score"] == .9
-    collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
-    assert service.find_similar_items("none") == []
-    service._get_similar_items = MagicMock(return_value=[])
-    service._log_categorization = MagicMock()
-    assert (await service.categorize_item("x", "u"))["reason"] == "no_similar_items_found"
-    service._get_similar_items = MagicMock(return_value=[{"item": "pump", "category": "Tools", "similarity_score": .9}])
-    service._log_categorization = MagicMock()
-    high = await service.categorize_item("pump", "u")
-    assert high["success"] and high["category"] == "Tools"
-    service._get_similar_items = MagicMock(return_value=[{"item": "x", "category": "Other", "similarity_score": .4}])
-    service.openai_service.categorize_with_similar_items = AsyncMock(return_value={"success": True, "category": "Other", "confidence": .7})
-    service._log_categorization = MagicMock()
-    assert (await service.categorize_item("x", "u"))["success"]
-    service.openai_service.categorize_with_similar_items.return_value = {"success": False, "reasoning": "not sure"}
-    assert (await service.categorize_item("x", "u"))["success"] is False
-    service.openai_service.client = object()
-    collection.count.return_value = 2
-    assert service.get_collection_stats()["total_items"] == 2
-    service.collection.upsert = MagicMock()
-    monkeypatch.setattr(auto_module, "get_db_session", lambda: FakeDB())
-    mapping_id = service.add_category_mapping("A", "item")
-    assert isinstance(mapping_id, str)
-
-
-@pytest.mark.asyncio
-async def test_auto_learning_wrapper_and_collection_error(monkeypatch):
-    collection, _ = chroma_fixture(monkeypatch, auto_module)
-    monkeypatch.setattr(auto_module, "LearningCategorizationService", lambda: MagicMock())
-    service = auto_module.AutoCategorizationService()
-    service.categorize_item = AsyncMock(return_value={"success": True, "category": "A", "similar_items_used": []})
-    service.learning_service.create_3_level_category = AsyncMock(return_value={"success": True})
-    result = await service.categorize_with_learning("x", "u")
-    assert result["success"] and result["learning_categorization"]["success"]
-    service.categorize_item.side_effect = RuntimeError("bad")
-    assert (await service.categorize_with_learning("x", "u"))["success"] is False
-    collection.count.side_effect = RuntimeError("chroma")
-    assert "error" in service.get_collection_stats()
-
-
-# Notifications, recommendation, and seller categorization ----------------
 def notification_fixture(monkeypatch):
     wa = MagicMock()
     monkeypatch.setattr(notification_module, "WhatsAppService", lambda: wa)
@@ -547,22 +484,6 @@ async def test_rfq_intimation_eligibility_subscription_and_missing_seller(monkey
 
 
 # Matching, cancel, exit, intent, email -----------------------------------
-@pytest.mark.asyncio
-async def test_enhanced_matching_vector_and_helpers(monkeypatch):
-    collection, _ = chroma_fixture(monkeypatch, matching_module)
-    service = matching_module.EnhancedSellerMatchingService()
-    metadata = {"seller_id": "s1", "seller_name": "S", "phone_number": "1", "email": "e", "original_category": "A", "level_1_category": "A", "level_2_category": "B", "level_3_category": "C", "category_path": "A > B > C", "confidence_score": .9, "ranking": "Gold", "location": '{"lat": 0, "lng": 0}'}
-    collection.query.return_value = {"documents": [["x"]], "metadatas": [[metadata]], "distances": [[.1]]}
-    result = await service.find_sellers_for_item("x", {"lat": 0, "lng": 0})
-    assert result["success"] and result["sellers"][0]["seller_id"] == "s1"
-    collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
-    assert (await service.find_sellers_for_item("x"))["success"] is False
-    assert service._ranking_priority("Diamond") == 4
-    assert service._ranking_priority("unknown") == 0
-    assert service._calculate_distance(0, 0, 0, 0) == 0
-    collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
-    assert service.find_sellers_by_category_path("A")["success"] is False
-    assert service.get_seller_categories("s")["success"] is False
 
 
 @pytest.mark.asyncio

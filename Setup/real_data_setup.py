@@ -3,10 +3,10 @@
 Real Data Setup Script - Post Migration Setup
 
 This script handles setup tasks after migrating from mock data to real seller data.
-It focuses on vector store population, category mapping, and system validation.
+It focuses on category mapping and system validation.
 
 Usage:
-    python real_data_setup.py [--setup-vector-store] [--map-categories] [--validate-only]
+    python real_data_setup.py [--map-categories] [--validate-only]
 """
 
 import sys
@@ -38,12 +38,11 @@ class RealDataSetup:
     def __init__(self):
         self.adapter = SellerDataAdapter()
 
-    async def run_complete_setup(self, setup_vector_store: bool = True, map_categories: bool = True) -> Dict[str, Any]:
+    async def run_complete_setup(self, map_categories: bool = True) -> Dict[str, Any]:
         """
         Run complete setup for real data integration.
 
         Args:
-            setup_vector_store: Whether to setup vector store with real data
             map_categories: Whether to map sellers to learning categories
 
         Returns:
@@ -76,12 +75,6 @@ class RealDataSetup:
             analysis_result = await self._analyze_seller_data()
             results["tasks"]["data_analysis"] = analysis_result
             results["seller_count"] = analysis_result.get("seller_count", 0)
-
-            # Task 3: Setup Vector Store (optional)
-            if setup_vector_store:
-                print("\n3. Setting up vector store with real data...")
-                vector_result = await self._setup_vector_store()
-                results["tasks"]["vector_store_setup"] = vector_result
 
             # Task 4: Map Categories (optional)
             if map_categories:
@@ -198,26 +191,6 @@ class RealDataSetup:
                 "seller_count": 0
             }
 
-    async def _setup_vector_store(self) -> Dict[str, Any]:
-        """Setup vector store with real seller data."""
-        try:
-            # This would integrate with the existing vector store setup
-            # For now, we'll return a placeholder success
-
-            print("   INFO: Vector store setup with real data")
-            print("   (This would populate ChromaDB with real seller categories)")
-
-            return {
-                "success": True,
-                "message": "Vector store setup ready for real data integration"
-            }
-
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Vector store setup failed: {str(e)}"
-            }
-
     async def _setup_category_mapping(self) -> Dict[str, Any]:
         """Setup category mapping for real sellers."""
         try:
@@ -307,7 +280,6 @@ class RealDataSetup:
 async def main():
     """Main setup function."""
     parser = argparse.ArgumentParser(description="Real data setup for seller recommendation system")
-    parser.add_argument("--setup-vector-store", action="store_true", help="Setup vector store with real data")
     parser.add_argument("--map-categories", action="store_true", help="Map sellers to learning categories")
     parser.add_argument("--validate-only", action="store_true", help="Only run validation checks")
 
@@ -333,7 +305,6 @@ async def main():
     else:
         # Run complete setup
         results = await setup_manager.run_complete_setup(
-            setup_vector_store=args.setup_vector_store,
             map_categories=args.map_categories
         )
 

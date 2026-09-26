@@ -227,22 +227,6 @@ class ConfirmationHandler:
         
         # Generate completion response with RFQ IDs
         await self._send_completion_response(user, session, rfq_results, successful_count)
-        
-        # Run auto-categorization for each successful RFQ (offline process)
-        # auto_cat = await run_auto_categorization_for_rfqs(
-        #     rfq_results, 
-        #     self.auto_categorization_service, 
-        #     self.enhanced_auto_categorization_service
-        # )
-        # await self.whatsapp_service.send_message(user.phone_number, auto_cat)
-        
-        # # Run seller recommendation for each successful RFQ (offline process)
-        # seller_match = await run_seller_recommendation_for_rfqs(
-        #     rfq_results,
-        #     self.seller_recommendation_service,
-        #     self.enhanced_seller_matching_service
-        # )
-        # await self.whatsapp_service.send_message(user.phone_number, seller_match)
 
         # Note: We no longer auto-check BFS availability immediately after RFQ creation.
         # Instead, we offer a contextual "Search Ready Stocks" button post-submission.

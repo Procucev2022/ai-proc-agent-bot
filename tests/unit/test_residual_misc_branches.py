@@ -19,7 +19,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from app.tasks import bfs_notification_task as bfs
-from app.tasks import category_name_sync_task as category_sync
 from app.tasks import seller_matching_task as seller_task
 from app.tasks import taxonomy_build_task as taxonomy
 from app.tasks import vector_store_sync_task as vector_sync
@@ -155,13 +154,12 @@ def test_vector_sync_outer_timeout_and_cleanup_close(monkeypatch):
     monkeypatch.setattr(vector_sync, "get_settings", lambda: SimpleNamespace(enable_vector_store_sync=True))
     monkeypatch.setattr(vector_sync, "_cleanup_buyer_mappings", Mock(side_effect=RuntimeError("cleanup")))
     monkeypatch.setattr(vector_sync, "_run_seller_category_mapping", lambda: {"success": True})
-    monkeypatch.setattr(vector_sync, "_run_vector_embedding_creation", lambda **_: {"success": True})
     result = vector_sync.sync_vector_store.run(cleanup_buyer_mappings=True)
     assert result["status"] == "completed"
     assert result["steps_failed"][0]["step"] == "buyer_mapping_cleanup"
 
 
-def test_vector_cleanup_rollback_and_embedding_import_error(monkeypatch):
+def test_vector_cleanup_rollback(monkeypatch):
     database = __import__("app.database", fromlist=["get_db_session"])
     models = __import__("app.models", fromlist=["SellerLearningMapping"])
     db = DB(Query())
@@ -174,12 +172,6 @@ def test_vector_cleanup_rollback_and_embedding_import_error(monkeypatch):
     assert result["success"] is False
     db.rollback.assert_called_once()
     db.close.assert_called_once()
-
-    monkeypatch.setattr(vector_sync, "sys", SimpleNamespace(path=[]))
-    monkeypatch.setitem(__import__("sys").modules, "create_category_embeddings", None)
-    result = vector_sync._run_vector_embedding_creation()
-    assert result["success"] is False
-    assert "Import error" in result["error"]
 
 
 # BFS/category/seller residual branches -----------------------------------
@@ -203,21 +195,6 @@ async def test_bfs_service_exception_and_no_successful_records(monkeypatch):
         await bfs.process_bfs_notifications()
 
 
-def test_category_embedding_constructor_add_and_count_errors(monkeypatch):
-    settings = SimpleNamespace(chroma_host="host", chroma_port=8000)
-    monkeypatch.setattr(category_sync, "get_settings", lambda: settings)
-    monkeypatch.setattr(category_sync.chromadb, "HttpClient", Mock(side_effect=RuntimeError("offline")))
-    assert category_sync._create_category_embeddings({"A": 1})["success"] is False
-
-    collection = SimpleNamespace(add=Mock(side_effect=RuntimeError("add")), count=Mock(return_value=0))
-    client = SimpleNamespace(heartbeat=Mock(), get_or_create_collection=Mock(return_value=collection), delete_collection=Mock())
-    monkeypatch.setattr(category_sync.chromadb, "HttpClient", lambda **_: client)
-    monkeypatch.setattr(category_sync.embedding_functions, "SentenceTransformerEmbeddingFunction", lambda **_: "embed")
-    assert category_sync._create_category_embeddings({"A": 1}, clear_existing=True)["success"] is False
-
-    collection.add.side_effect = None
-    collection.count.side_effect = RuntimeError("count")
-    assert category_sync._create_category_embeddings({"A": 1})["success"] is False
 
 
 def test_seller_query_and_remote_logging_exceptions(monkeypatch):
@@ -237,23 +214,6 @@ def test_seller_query_and_remote_logging_exceptions(monkeypatch):
     db.close.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_seller_matching_fallback_after_enhanced_error(monkeypatch):
-    monkeypatch.setattr(seller_task, "get_sellers_already_notified_for_rfq", lambda _: set())
-    monkeypatch.setattr(seller_task, "get_rfq_item_categories", lambda _: ["Tools"])
-    monkeypatch.setattr(seller_task, "get_users_active_in_last_24hrs", lambda _: set())
-    monkeypatch.setattr(seller_task, "normalize_phone_for_comparison", lambda value: value.lstrip("+"))
-    enhanced = SimpleNamespace(find_sellers_for_item=AsyncMock(side_effect=RuntimeError("semantic")))
-    monkeypatch.setattr("app.services.enhanced_seller_matching_service.EnhancedSellerMatchingService", lambda: enhanced)
-    standard = SimpleNamespace(select_sellers_for_rfq=AsyncMock(return_value={"subscribed_sellers": [{"seller_id": "s", "phone_number": "+1", "seller_name": "S"}], "unsubscribed_sellers": []}))
-    monkeypatch.setattr(seller_task, "log_selected_sellers_to_remote", lambda *_: True)
-    notification = SimpleNamespace(send_rfq_notifications=AsyncMock(return_value={"sent": 1, "failed": 0, "results": [{"seller_id": "s", "success": True}]}))
-    monkeypatch.setattr(seller_task, "SellerNotificationService", lambda: notification)
-    monkeypatch.setattr(seller_task, "record_rfq_seller_notifications", Mock())
-
-    result = await seller_task.process_single_rfq_matching({"rfq_id": "r", "rfq_uuid": "u", "description": "x"}, standard, set())
-    assert result["success"] is True
-    assert standard.select_sellers_for_rfq.await_args.kwargs["candidate_seller_ids"] is None
 
 
 # Excel and support helpers ------------------------------------------------
@@ -544,3 +504,18 @@ def test_bfs_parsers_invalid_missing_and_stock_edges():
     assert "exceeds available" in bid_parser.parse_bid_format(too_many, [item])["error"]
     assert bid_parser.generate_bid_summary([]) == ""
     assert bid_parser.generate_bid_summary([{"key": "x", "price": 1, "quantity": 0}]) == ""
+
+
+@pytest.mark.asyncio
+async def test_seller_matching_standard_rules_path(monkeypatch):
+    monkeypatch.setattr(seller_task, "get_sellers_already_notified_for_rfq", lambda _: set())
+    monkeypatch.setattr(seller_task, "get_rfq_item_categories", lambda _: ["Tools"])
+    monkeypatch.setattr(seller_task, "get_users_active_in_last_24hrs", lambda _: set())
+    monkeypatch.setattr(seller_task, "normalize_phone_for_comparison", lambda value: value.lstrip("+"))
+    standard = SimpleNamespace(select_sellers_for_rfq=AsyncMock(return_value={"subscribed_sellers": [{"seller_id": "s", "phone_number": "+1", "seller_name": "S"}], "unsubscribed_sellers": []}))
+    monkeypatch.setattr(seller_task, "log_selected_sellers_to_remote", lambda *_: True)
+    notification = SimpleNamespace(send_rfq_notifications=AsyncMock(return_value={"sent": 1, "failed": 0, "results": [{"seller_id": "s", "success": True}]}))
+    monkeypatch.setattr(seller_task, "SellerNotificationService", lambda: notification)
+    monkeypatch.setattr(seller_task, "record_rfq_seller_notifications", Mock())
+    result = await seller_task.process_single_rfq_matching({"rfq_id": "r", "rfq_uuid": "u", "description": "x"}, standard, set())
+    assert result["success"] is True

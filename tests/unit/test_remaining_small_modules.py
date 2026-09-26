@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, call
 import pytest
 
 import app.services.service_monitor as monitor_module
-import app.utils.chroma_client as chroma_module
 from app.services.service_monitor import ServiceMonitor, get_service_monitor
 from app.services.verification_check_service import VerificationCheckService
 from app.tools.retry_service import RetryService, get_retry_service
@@ -36,70 +35,8 @@ async def test_technical_failure_handler_builds_context_and_swallows_handler_err
     await handle_technical_failure()
 
 
-@pytest.mark.parametrize("server_mode", [True, False])
-def test_chroma_client_server_and_persistent_success(monkeypatch, tmp_path, server_mode):
-    settings = SimpleNamespace(
-        chroma_use_server=server_mode,
-        chroma_host="chroma.test",
-        chroma_port=8123,
-        chroma_persist_directory=str(tmp_path / "default"),
-    )
-    monkeypatch.setattr(chroma_module, "get_settings", lambda: settings)
-
-    if server_mode:
-        client = MagicMock()
-        monkeypatch.setattr(chroma_module.chromadb, "HttpClient", MagicMock(return_value=client))
-        result = chroma_module.get_chroma_client()
-        assert result is client
-        chroma_module.chromadb.HttpClient.assert_called_once_with(host="chroma.test", port=8123)
-        client.heartbeat.assert_called_once_with()
-    else:
-        client = MagicMock()
-        settings_factory = MagicMock(return_value=SimpleNamespace())
-        monkeypatch.setattr(chroma_module, "Settings", settings_factory)
-        monkeypatch.setattr(chroma_module.chromadb, "PersistentClient", MagicMock(return_value=client))
-        mkdir = MagicMock()
-        monkeypatch.setattr(chroma_module.Path, "mkdir", mkdir)
-
-        custom_path = str(tmp_path / "custom")
-        result = chroma_module.get_chroma_client(custom_path)
-
-        assert result is client
-        mkdir.assert_called_once_with(parents=True, exist_ok=True)
-        settings_factory.assert_called_once_with(
-            chroma_segment_cache_policy="LRU",
-            chroma_memory_limit_bytes=8_000_000_000,
-        )
-        chroma_module.chromadb.PersistentClient.assert_called_once_with(
-            path=custom_path, settings=settings_factory.return_value
-        )
 
 
-def test_chroma_client_uses_default_path_and_wraps_server_failure(monkeypatch):
-    settings = SimpleNamespace(
-        chroma_use_server=True,
-        chroma_host="localhost",
-        chroma_port=8000,
-        chroma_persist_directory="default-path",
-    )
-    monkeypatch.setattr(chroma_module, "get_settings", lambda: settings)
-    failed_client = MagicMock()
-    failed_client.heartbeat.side_effect = ConnectionError("refused")
-    monkeypatch.setattr(chroma_module.chromadb, "HttpClient", MagicMock(return_value=failed_client))
-
-    with pytest.raises(RuntimeError, match="ChromaDB server not available") as error:
-        chroma_module.get_chroma_client()
-    assert "refused" in str(error.value)
-
-    settings.chroma_use_server = False
-    persistent = MagicMock()
-    persistent_factory = MagicMock(return_value=persistent)
-    settings_factory = MagicMock(return_value=SimpleNamespace())
-    monkeypatch.setattr(chroma_module.chromadb, "PersistentClient", persistent_factory)
-    monkeypatch.setattr(chroma_module, "Settings", settings_factory)
-    monkeypatch.setattr(chroma_module.Path, "mkdir", MagicMock())
-    assert chroma_module.get_chroma_client() is persistent
-    assert persistent_factory.call_args.kwargs["path"] == "default-path"
 
 
 @pytest.mark.asyncio

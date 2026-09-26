@@ -2,7 +2,7 @@
 
 Every external boundary in this module is replaced with a local fake or mock.
 The tests intentionally exercise low-frequency fallback, validation, and error
-branches without live databases, Redis, Chroma, OpenAI, HTTP, filesystems, or
+branches without live databases, Redis, OpenAI, HTTP, filesystems, or
 email services.
 """
 from __future__ import annotations
@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pandas as pd
 import pytest
 
-import app.services.auto_categorization_service as auto_mod
 import app.services.daily_aggregation_service as aggregation_mod
 import app.services.daily_summary_service as summary_mod
 import app.services.email_service as email_mod
@@ -122,8 +121,6 @@ class ClientFake:
 
 def settings(**overrides):
     values = {
-        "chroma_host": "localhost",
-        "chroma_port": 8000,
         "enable_remote_categorization": False,
         "enable_daily_summarization": True,
         "email_templates_path": "templates",
@@ -168,103 +165,6 @@ def session(**overrides):
     }
     values.update(overrides)
     return SimpleNamespace(**values)
-
-
-# Auto categorization -------------------------------------------------------
-def bare_auto(collection=None):
-    service = auto_mod.AutoCategorizationService.__new__(auto_mod.AutoCategorizationService)
-    service.collection = collection or CollectionFake()
-    service.chroma_client = MagicMock()
-    service.chroma_client.get_or_create_collection.return_value = service.collection
-    service.embedding_function = "embedding"
-    service.openai_service = SimpleNamespace()
-    service.learning_service = SimpleNamespace()
-    return service
-
-
-def test_auto_categorization_fallback_population_query_and_health_edges(monkeypatch, tmp_path):
-    module_file = tmp_path / "outside" / "auto.py"
-    module_file.parent.mkdir()
-    monkeypatch.setattr(auto_mod, "__file__", str(module_file))
-    assert auto_mod.get_project_root() == module_file.parent.parent.parent
-
-    client = ClientFake(CollectionFake())
-    monkeypatch.setattr(auto_mod.embedding_functions, "SentenceTransformerEmbeddingFunction", lambda **_: "embed")
-    monkeypatch.setattr(auto_mod.chromadb, "HttpClient", lambda **_: client)
-    monkeypatch.setattr(auto_mod, "get_settings", lambda: settings())
-    monkeypatch.setattr(auto_mod, "OpenAIService", lambda: object())
-    monkeypatch.setattr(auto_mod, "LearningCategorizationService", lambda: object())
-    client.heartbeat.side_effect = RuntimeError("chroma down")
-    with pytest.raises(RuntimeError, match="ChromaDB server not available"):
-        auto_mod.AutoCategorizationService()
-
-    collection = CollectionFake()
-    service = bare_auto(collection)
-    service._get_local_category_data = MagicMock(return_value=[
-        {"id": "1", "item": "pump", "category": "Tools", "division": None, "serial_no": None},
-        {"id": "2", "item": "", "category": "Tools"},
-        {"id": "3", "item": "bolt", "category": None},
-    ])
-    monkeypatch.setattr(auto_mod, "get_settings", lambda: settings())
-    assert service.populate_embeddings_from_db() == 3
-    payload = collection.add.call_args.kwargs
-    assert payload["documents"] == ["pump"]
-    assert "division" not in payload["metadatas"][0]
-    assert "serial_no" not in payload["metadatas"][0]
-
-    service._get_local_category_data.return_value = [{"id": "bad", "item": None, "category": None}]
-    assert service.populate_embeddings_from_db() == 0
-
-    failing_db = ContextDB(query_side_effect=RuntimeError("database"))
-    monkeypatch.setattr(auto_mod, "get_db_session", lambda: failing_db)
-    service._get_local_category_data = auto_mod.AutoCategorizationService._get_local_category_data.__get__(service)
-    with pytest.raises(RuntimeError, match="database"):
-        service._get_local_category_data()
-    failing_db.close.assert_called_once()
-
-    remote_settings = iter([settings(enable_remote_categorization=True), settings(enable_remote_categorization=False)])
-    monkeypatch.setattr(auto_mod, "get_settings", lambda: next(remote_settings))
-    service._get_remote_category_data = MagicMock(side_effect=RuntimeError("remote unavailable"))
-    service._get_local_category_data = MagicMock(return_value=[])
-    assert service.populate_embeddings_from_db() == 0
-
-    empty = bare_auto(CollectionFake({"documents": [[]], "metadatas": [[]], "distances": [[]]}))
-    assert empty._get_similar_items("none") == []
-    empty.collection.query_side_effect = RuntimeError("unexpected query")
-    with pytest.raises(Exception, match="Failed to get similar items"):
-        empty._get_similar_items("broken")
-
-    refreshed = CollectionFake({"documents": [[]], "metadatas": [[]], "distances": [[]]})
-    stale = CollectionFake()
-    stale.query_side_effect = [RuntimeError("404 collection does not exist")]
-    empty.collection = stale
-    empty._refresh_collection = MagicMock(side_effect=lambda: setattr(empty, "collection", refreshed))
-    assert empty._query_collection("pump")["documents"] == [[]]
-    empty.collection = CollectionFake()
-    empty.collection.query_side_effect = RuntimeError("other failure")
-    with pytest.raises(RuntimeError, match="other failure"):
-        empty._query_collection("pump")
-
-    empty.collection.count_value = 4
-    monkeypatch.setattr(auto_mod, "get_settings", lambda: settings())
-    assert empty.get_collection_stats()["total_items"] == 4
-    empty.collection.count_value = RuntimeError("count failed")
-    assert empty.get_collection_stats()["error"] == "count failed"
-
-    empty.get_collection_stats = MagicMock(return_value={"total_items": 2})
-    healthy_db = ContextDB(QueryFake(count_value=5))
-    monkeypatch.setattr(auto_mod, "get_db_session", lambda: healthy_db)
-    empty.openai_service = SimpleNamespace(client=object())
-    assert empty.health_check()["status"] == "healthy"
-    unhealthy_db = ContextDB(query_side_effect=RuntimeError("db down"))
-    monkeypatch.setattr(auto_mod, "get_db_session", lambda: unhealthy_db)
-    assert empty.health_check()["status"] == "unhealthy"
-    empty.get_collection_stats = MagicMock(side_effect=RuntimeError("stats down"))
-    assert empty.health_check()["status"] == "unhealthy"
-    empty.get_collection_stats = MagicMock(return_value={"total_items": 1})
-    empty.openai_service = SimpleNamespace()
-    monkeypatch.setattr(auto_mod, "get_db_session", lambda: healthy_db)
-    assert empty.health_check()["status"] == "unhealthy"
 
 
 # Daily aggregation and summary --------------------------------------------

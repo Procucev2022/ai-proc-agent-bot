@@ -13,13 +13,11 @@ import pandas as pd
 import pytest
 
 import app.services.conversation_analytics_service as analytics_mod
-import app.services.enhanced_auto_categorization_service as auto_mod
 import app.services.learning_categorization_service as learning_mod
 import app.services.seller_categorization_service as seller_cat_mod
 import app.services.seller_service as seller_mod
 import app.services.whatsapp_service as whatsapp_mod
 import app.services.enhanced_excel_report_service as report_mod
-import app.services.enhanced_seller_matching_service as matching_mod
 from app.services.whatsapp_service import MessageResponse
 
 
@@ -213,15 +211,6 @@ async def test_analytics_ai_output_empty_and_daily_empty(monkeypatch):
 # Enhanced auto categorization ---------------------------------------------
 
 
-def auto_service():
-    return bare(
-        auto_mod.EnhancedAutoCategorizationService,
-        collection=Collection(),
-        category_collection=Collection(),
-        fallback_service=MagicMock(),
-        openai_service=MagicMock(),
-        chroma_path="fake-chroma",
-    )
 
 
 def taxonomy_meta(category="Tools"):
@@ -236,66 +225,8 @@ def taxonomy_meta(category="Tools"):
     }
 
 
-@pytest.mark.asyncio
-async def test_enhanced_auto_hybrid_hierarchical_and_pipeline_alternates(monkeypatch):
-    service = auto_service()
-    assert service._build_enhanced_description("x", {"level_3_category": "X", "level_2_category": "Y"}) == "x Y"
-    service.category_collection.count.return_value = 0
-    assert service._search_by_category_name("x")["success"] is False
-    service.category_collection.count.return_value = 1
-    service.category_collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
-    assert service._search_by_category_name("x")["matches"] == []
-    service.category_collection.query.return_value = {"documents": [["Tools"]], "metadatas": [[{"item_count": 3}]], "distances": [[0.4]]}
-    assert service._search_by_category_name("bolt")["best_match"]["similarity"] == 0.8
-    assert service._hybrid_category_selection("Tools", .8, {"success": False})["method"] == "item_based_only"
-    assert service._hybrid_category_selection("Tools", .8, {"success": True, "matches": [{"category_name": "tools", "similarity": .4}]})["agreement"]
-    assert service._hybrid_category_selection("Wrong", .95, {"success": True, "matches": [{"category_name": "Right", "similarity": .9}]})["method"] == "hybrid_item_trusted"
-    override = service._hybrid_category_selection("Wrong", .4, {"success": True, "matches": [{"category_name": "Right", "similarity": .9}]})
-    assert override["method"] == "hybrid_category_override"
-    service.collection.query.side_effect = [
-        {"documents": [[]], "metadatas": [[]], "distances": [[]]},
-        {"documents": [["x"]], "metadatas": [[{**taxonomy_meta(), "level_3_category": "", "level_2_category": "Fasteners"}]], "distances": [[0.8]]},
-        {"documents": [["x"]], "metadatas": [[taxonomy_meta()]], "distances": [[0.8]]},
-    ]
-    found = service._search_hierarchical_levels("bolt", similarity_threshold=.75)
-    assert found["success"] and found["matched_level"] == "level_1"
-    service._keyword_lookup_source_of_truth = MagicMock(return_value={"success": False})
-    service._search_hierarchical_levels = MagicMock(return_value={"success": False})
-    service.fallback_service._get_similar_items.return_value = []
-    service._log_fallback_categorization = MagicMock()
-    result = await service.categorize_item("unknown", "u")
-    assert result["method"] == "enhanced_no_match"
-    service.fallback_service._get_similar_items.return_value = [{"category": "Tools", "similarity_score": .7}]
-    service.openai_service.categorize_with_similar_items = AsyncMock(return_value={"success": True, "category": "Tools", "confidence": .7})
-    service._update_learning_taxonomy = AsyncMock(return_value=True)
-    result = await service.categorize_item("bolt", "u")
-    assert result["method"] == "enhanced_fallback_openai" and result["learning_updated"]
-    service._search_hierarchical_levels = MagicMock(return_value={"success": True, "similarity_score": .95, "best_match": taxonomy_meta("Tools"), "all_level_matches": [{"metadata": taxonomy_meta("Tools"), "similarity_score": .95, "matched_level": "level_3"}]})
-    service._log_categorization = MagicMock()
-    result = await service.categorize_item("bolt", "u")
-    assert result["method"] == "enhanced_taxonomy_high_similarity"
 
 
-def test_enhanced_auto_keyword_logging_health_stats_and_errors(monkeypatch):
-    service = auto_service()
-    monkeypatch.setattr(auto_mod, "execute_remote_query", lambda *_: [])
-    assert service._keyword_lookup_source_of_truth("ab")["success"] is False
-    monkeypatch.setattr(auto_mod, "execute_remote_query", lambda *_: (_ for _ in ()).throw(RuntimeError("sql")))
-    assert service._keyword_lookup_source_of_truth("bolt")["success"] is False
-    db = DB()
-    monkeypatch.setattr(auto_mod, "get_db_session", lambda: db)
-    service._log_categorization("x", "u", None, None, "Tools", .8, .7, "test", 1, {"match_level": "level_2", "level_2_category": "Fasteners"})
-    db.commit.side_effect = RuntimeError("commit")
-    service._log_fallback_categorization("x", "u", None, None, "Other", .3, "fallback", 1, "none")
-    service.collection.count.return_value = 2
-    service.fallback_service.get_collection_stats.return_value = {"total_items": 1}
-    assert service.health_check()["overall_status"] == "healthy"
-    service.collection.count.side_effect = RuntimeError("chroma")
-    assert service.health_check()["overall_status"] == "unhealthy"
-    service.collection.count.side_effect = None
-    service.collection.query.side_effect = RuntimeError("query")
-    service.collection.count.return_value = 2
-    assert service.get_stats()["unified_vector_store"]["category_items"] == "unknown"
 
 
 # Learning and seller categorization ---------------------------------------
@@ -570,8 +501,6 @@ def test_excel_report_sheet_queries_and_email_boundary(monkeypatch, tmp_path):
 # Enhanced seller matching --------------------------------------------------
 
 
-def matching_service():
-    return bare(matching_mod.EnhancedSellerMatchingService, collection=Collection(), openai_service=MagicMock(), chroma_path="fake")
 
 
 def seller_meta(seller_id="s1", location=None, ranking="Gold"):
@@ -583,48 +512,5 @@ def seller_meta(seller_id="s1", location=None, ranking="Gold"):
     }
 
 
-@pytest.mark.asyncio
-async def test_enhanced_matching_filters_duplicates_malformed_locations_and_openai(monkeypatch):
-    service = matching_service()
-    service.collection.query.return_value = {
-        "documents": [["a", "b", "c"]],
-        "metadatas": [[seller_meta("s1", "bad-json", "Gold"), seller_meta("s1", {"lat": 1, "lng": 1}, "Diamond"), seller_meta("s2", {"lat": .01, "lng": .01}, "Titanium")]],
-        "distances": [[.1, .2, .1]],
-    }
-    service.openai_service.select_best_sellers = AsyncMock(return_value={"success": True, "selected_sellers": [{"seller_id": "s1"}], "confidence_score": .9})
-    result = await service.find_sellers_for_item("bolt", {"lat": 0, "lng": 0}, max_distance_km=10)
-    assert result["success"] and result["method"].endswith("openai_seller_search")
-    service.openai_service.select_best_sellers.return_value = {"success": False, "error": "AI"}
-    result = await service.find_sellers_for_item("bolt", ranking_priority=False)
-    assert result["success"] and result["method"].endswith("fallback")
-    service.collection.query.return_value = {"documents": [["a"]], "metadatas": [[seller_meta()]], "distances": [[.1]]}
-    assert service.find_sellers_by_category_path("Hardware > Fasteners > Bolts")["success"]
-    service.collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
-    assert not service.find_sellers_by_category_path("missing")["success"]
-    service.collection.query.side_effect = RuntimeError("chroma")
-    assert not (await service.find_sellers_for_item("bolt"))["success"]
 
 
-def test_enhanced_matching_categories_health_stats_and_helpers(monkeypatch):
-    service = matching_service()
-    service.collection.query.return_value = {"metadatas": [[seller_meta()]]}
-    assert service.get_seller_categories("s1")["total_categories"] == 1
-    service.collection.query.return_value = {"metadatas": [[]]}
-    assert not service.get_seller_categories("missing")["success"]
-    service.collection.query.side_effect = RuntimeError("query")
-    assert not service.get_seller_categories("bad")["success"]
-    assert service._calculate_distance(0, 0, 0, 0) == 0
-    assert service._ranking_priority("Diamond") == 4 and service._ranking_priority("other") == 0
-    service.collection.query.side_effect = None
-    service.collection.count.return_value = 2
-    service.collection.query.return_value = {"documents": [["x"]]}
-    assert service.health_check()["overall_status"] == "healthy"
-    service.collection.count.side_effect = RuntimeError("health")
-    assert service.health_check()["overall_status"].startswith("unhealthy")
-    db = DB(Query(count=3))
-    monkeypatch.setattr(matching_mod, "get_db_session", lambda: db)
-    service.collection.count.side_effect = None
-    service.collection.count.return_value = 2
-    assert service.get_stats()["database_sellers"]["total_sellers"] == 3
-    service.collection.count.side_effect = RuntimeError("stats")
-    assert "error" in service.get_stats()

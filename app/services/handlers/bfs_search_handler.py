@@ -31,14 +31,12 @@ class BFSSearchHandler:
         self.whatsapp_service = whatsapp_service
         self.session_manager = session_manager
         self.openai_service = OpenAIService()
-        # Resolved lazily via _get_categorization_service. Building it loads a Sentence
-        # Transformer model, and this handler is constructed inside a request, so doing
-        # that here blocked the event loop until gunicorn killed the worker.
+        # Resolved lazily via _get_categorization_service.
         self.auto_categorization_service = None
         self.bfs_api_service = get_bfs_api_service()
 
     async def _get_categorization_service(self):
-        """Resolve the auto-categorization singleton without blocking the event loop."""
+        """Resolve the shared auto-categorization service."""
         if self.auto_categorization_service is None:
             self.auto_categorization_service = await get_auto_categorization_service_async()
         return self.auto_categorization_service

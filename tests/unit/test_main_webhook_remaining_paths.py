@@ -74,8 +74,6 @@ def _settings(**overrides):
         environment="unit",
         database_mode="local",
         redis_url="redis://unit",
-        chroma_host="localhost",
-        chroma_port=8000,
         azure_openai_base_url="https://unit",
         webhook_health_monitoring_enabled=False,
         pending_reply_ttl_seconds=25,

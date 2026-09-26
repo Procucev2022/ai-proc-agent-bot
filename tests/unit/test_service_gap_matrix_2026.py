@@ -10,8 +10,6 @@ import pandas as pd
 import pytest
 
 import app.services.conversation_analytics_service as analytics_mod
-import app.services.enhanced_auto_categorization_service as enhanced_mod
-import app.services.learning_categorization_service as learning_mod
 
 
 class ChainQuery:
@@ -91,21 +89,6 @@ def analytics_service():
     return service
 
 
-def enhanced_service():
-    service = object.__new__(enhanced_mod.EnhancedAutoCategorizationService)
-    service.collection = MagicMock()
-    service.category_collection = MagicMock()
-    service.fallback_service = SimpleNamespace(
-        collection=MagicMock(),
-        get_collection_stats=MagicMock(return_value={"total_items": 2}),
-        _get_similar_items=MagicMock(return_value=[]),
-    )
-    service.openai_service = SimpleNamespace(
-        categorize_with_similar_items=AsyncMock(),
-        client=object(),
-    )
-    service.chroma_path = "mock-chroma"
-    return service
 
 
 def _buyer_metric():
@@ -468,150 +451,9 @@ def test_analytics_category_and_pandas_boundaries(monkeypatch):
     assert service._count_categories_from_df(pd.DataFrame(), "missing", {}) == {}
 
 
-def test_enhanced_constructor_and_vector_hierarchy_are_isolated(monkeypatch):
-    settings = SimpleNamespace(chroma_host="mock-host", chroma_port=8000)
-    client = MagicMock()
-    client.get_or_create_collection.side_effect = [MagicMock(), MagicMock()]
-    monkeypatch.setattr(enhanced_mod, "get_settings", lambda: settings)
-    monkeypatch.setattr(enhanced_mod.embedding_functions, "SentenceTransformerEmbeddingFunction", lambda **kwargs: "embedding")
-    monkeypatch.setattr(enhanced_mod.chromadb, "HttpClient", lambda **kwargs: client)
-    monkeypatch.setattr(enhanced_mod, "AutoCategorizationService", lambda: "fallback")
-    monkeypatch.setattr(enhanced_mod, "OpenAIService", lambda: "openai")
-    service = enhanced_mod.EnhancedAutoCategorizationService()
-    assert service.embedding_function == "embedding"
-    assert service.fallback_service == "fallback"
-    assert service.openai_service == "openai"
-    client.heartbeat.assert_called_once_with()
-
-    vector_service = enhanced_service()
-    metadata = {"level_1_category": "Industrial", "level_2_category": "Fasteners", "level_3_category": "Fasteners", "client_category_name": "Tools"}
-    vector_service.collection.query.return_value = {
-        "documents": [["bolt"]],
-        "metadatas": [[metadata]],
-        "distances": [[0.1]],
-    }
-    match = vector_service._search_hierarchical_levels("bolt", similarity_threshold=0.75)
-    assert match["success"] is True
-    assert match["matched_level"] == "level_2"
 
 
-def test_enhanced_keyword_sliding_window_and_cross_validation(monkeypatch):
-    service = enhanced_service()
-
-    def remote_query(query, params):
-        if "SELECT item, category" in query:
-            return []
-        phrase = params.get("q")
-        if phrase == "%red power cable%":
-            return []
-        if phrase == "%power cable%":
-            return [{"category": "Electrical", "freq": 2}]
-        return []
-
-    monkeypatch.setattr(enhanced_mod, "execute_remote_query", remote_query)
-    keyword = service._keyword_lookup_source_of_truth("red power cable")
-    assert keyword["success"] is True
-    assert keyword["category"] == "Electrical"
-    assert keyword["match_source"] == "category"
-
-    service._keyword_lookup_source_of_truth = MagicMock(return_value={"success": True, "category": "Keyword", "consensus": 0.2})
-    service.fallback_service.collection.query.return_value = {
-        "metadatas": [[{"category": ""}, {"category": "Fallback"}]],
-        "distances": [[0.8, 0.1]],
-    }
-    result = service._cross_validate_with_fallback("bolt", "Learning", 0.2)
-    assert result["recommended_category"] == "Fallback"
-
-    service.fallback_service.collection.query.return_value = {
-        "metadatas": [[{"category": ""}]],
-        "distances": [[0.1]],
-    }
-    no_categories = service._cross_validate_with_fallback("bolt", "Learning", 0.2)
-    assert no_categories["use_learning"] is True
 
 
-def test_enhanced_build_description_learning_update_and_health_error(monkeypatch):
-    service = enhanced_service()
-    assert service._build_enhanced_description(
-        "Battery", {"level_3_category": "Lithium Battery", "level_2_category": "Power"}
-    ) == "Battery Lithium Battery Power"
-
-    learning = SimpleNamespace(create_3_level_category=AsyncMock(return_value={"success": True}))
-    monkeypatch.setattr(learning_mod, "LearningCategorizationService", lambda: learning)
-    assert asyncio_run(service._update_learning_taxonomy("Battery", "Power", "u1")) is True
-    learning.create_3_level_category.return_value = {"success": False, "error": "rejected"}
-    assert asyncio_run(service._update_learning_taxonomy("Battery", "Power", "u1")) is False
-    learning.create_3_level_category.side_effect = RuntimeError("learning down")
-    assert asyncio_run(service._update_learning_taxonomy("Battery", "Power", "u1")) is False
-
-    class BrokenPathService(enhanced_mod.EnhancedAutoCategorizationService):
-        @property
-        def chroma_path(self):
-            raise RuntimeError("path unavailable")
-
-    broken = object.__new__(BrokenPathService)
-    broken.collection = MagicMock()
-    broken.collection.count.return_value = 1
-    broken.fallback_service = SimpleNamespace(get_collection_stats=MagicMock(return_value={}))
-    health = broken.health_check()
-    assert health == {"overall_status": "unhealthy", "error": "path unavailable"}
-
-    service.collection.count.side_effect = RuntimeError("chroma down")
-    assert service.get_stats() == {"error": "chroma down"}
 
 
-@pytest.mark.asyncio
-async def test_enhanced_taxonomy_empty_candidate_falls_back_and_logs_learning_levels(monkeypatch):
-    service = enhanced_service()
-    service._keyword_lookup_source_of_truth = MagicMock(return_value={"success": False})
-    service._search_hierarchical_levels = MagicMock(return_value={
-        "success": True,
-        "similarity_score": 0.8,
-        "best_match": {"client_category_name": "Other"},
-        "all_level_matches": [{
-            "metadata": {"item_description": "unknown", "client_category_name": "Other"},
-            "similarity_score": 0.8,
-            "matched_level": "level_3",
-        }],
-    })
-    service.fallback_service._get_similar_items.return_value = [{"item": "unknown", "category": "Tools", "similarity_score": 0.7}]
-    service.openai_service.categorize_with_similar_items.return_value = {
-        "success": True,
-        "category": "Tools",
-        "confidence": 0.81,
-        "reasoning": "fallback selection",
-    }
-    service._update_learning_taxonomy = AsyncMock(return_value=True)
-    service._log_fallback_categorization = MagicMock()
-    result = await service.categorize_item("unknown", "u1")
-    assert result["method"] == "enhanced_fallback_openai"
-    assert result["learning_updated"] is True
-    service._log_fallback_categorization.assert_called_once()
-
-    db = SimpleNamespace(add=MagicMock(), commit=MagicMock(), rollback=MagicMock(), close=MagicMock())
-    monkeypatch.setattr(enhanced_mod, "get_db_session", lambda: db)
-    service._log_fallback_categorization = enhanced_mod.EnhancedAutoCategorizationService._log_fallback_categorization.__get__(service)
-    base_match = {
-        "learning_item_id": "item-1",
-        "category_path": "A/B/C",
-        "learning_confidence": 0.8,
-        "level_1_category": "A",
-        "level_2_category": "B",
-        "level_3_category": "C",
-    }
-    for level in ("level_1", "level_2", "level_3", "unknown"):
-        match = dict(base_match, match_level=level)
-        service._log_categorization("unknown", "u1", "s1", "r1", "Tools", 0.8, 0.7, "method", 3, match)
-    assert db.add.call_count == 4
-    entries = [call.args[0] for call in db.add.call_args_list]
-    assert entries[0].learning_level_1 == "A" and entries[0].learning_level_2 is None
-    assert entries[1].learning_level_1 is None and entries[1].learning_level_2 == "B"
-    assert entries[2].learning_level_3 == "C"
-    assert entries[3].learning_level_1 is None and entries[3].learning_level_2 is None and entries[3].learning_level_3 is None
-
-    db.add.side_effect = RuntimeError("log add")
-    service._log_categorization("unknown", "u1", None, None, "Tools", 0.8, None, "method", 3, base_match)
-    db.add.side_effect = None
-    db.commit.side_effect = RuntimeError("fallback commit")
-    service._log_fallback_categorization("unknown", "u1", None, None, "Other", 0.3, "fallback", 1, "no match")
-    assert db.rollback.call_count == 2

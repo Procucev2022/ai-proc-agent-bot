@@ -396,42 +396,7 @@ async def process_single_rfq_matching(
             category_rfq_data = rfq_data.copy()
             category_rfq_data['categories'] = [category]
 
-            # HYBRID TWO-PHASE APPROACH per category
-            candidate_seller_ids = None
-
-            # Phase 1: Try enhanced semantic discovery (optional). Skipped with vector
-            # search off, leaving candidate_seller_ids None so Phase 2 matches as usual.
-            try:
-                item_description = (
-                    _build_item_description_for_rfq(category_rfq_data)
-                    if getattr(get_settings(), 'enable_vector_search', True) else ""
-                )
-
-                if item_description:
-                    from app.services.enhanced_seller_matching_service import EnhancedSellerMatchingService
-
-                    enhanced_service = EnhancedSellerMatchingService()
-                    enhanced_result = await enhanced_service.find_sellers_for_item(
-                        item_description=item_description,
-                        delivery_location=rfq_data.get('delivery_location'),
-                        max_sellers=100,
-                        similarity_threshold=0.3,
-                        ranking_priority=False
-                    )
-
-                    if enhanced_result.get('success') and enhanced_result.get('sellers'):
-                        candidate_seller_ids = [s['seller_id'] for s in enhanced_result['sellers']]
-                        logger.info(f"Phase 1: Found {len(candidate_seller_ids)} semantic candidates for {category}")
-
-            except Exception as e:
-                logger.warning(f"Phase 1 failed for category {category}: {e}")
-                candidate_seller_ids = None
-
-            # Phase 2: Apply business rules via standard service
-            seller_result = await seller_service.select_sellers_for_rfq(
-                rfq_data=category_rfq_data,
-                candidate_seller_ids=candidate_seller_ids
-            )
+            seller_result = await seller_service.select_sellers_for_rfq(rfq_data=category_rfq_data)
 
             # Collect sellers from this category, separated by subscription status
             # The seller service already separates them
@@ -736,39 +701,6 @@ def record_rfq_seller_notifications(rfq_id: str, notification_results: List[Dict
         logger.error(f"Failed to record rfq_seller_notifications for RFQ {rfq_id}: {e}")
     finally:
         db.close()
-
-
-def _build_item_description_for_rfq(rfq_data: Dict[str, Any]) -> str:
-    """
-    Build comprehensive item description for semantic search in hybrid approach.
-
-    Combines categories, description, and special instructions into a single
-    text for semantic matching via the enhanced service.
-
-    Args:
-        rfq_data: RFQ data dictionary
-
-    Returns:
-        Combined item description string for semantic search
-    """
-    parts = []
-
-    # Add categories
-    categories = rfq_data.get('categories', [])
-    if categories:
-        parts.append(f"Categories: {', '.join(categories)}")
-
-    # Add description (handle None values)
-    description = (rfq_data.get('description') or '').strip()
-    if description:
-        parts.append(f"Description: {description}")
-
-    # Add special instructions (may contain item details, handle None values)
-    special_instruction = (rfq_data.get('special_instruction') or '').strip()
-    if special_instruction:
-        parts.append(f"Requirements: {special_instruction}")
-
-    return " | ".join(parts) if parts else ""
 
 
 def _log_selected_sellers_details(rfq_id: str, sellers: List[Dict[str, Any]], categories: List[str]) -> None:

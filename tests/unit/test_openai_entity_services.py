@@ -362,15 +362,6 @@ async def test_openai_categorization_learning_and_seller_selection(monkeypatch, 
     service, client, _, _ = openai_service
     install_tool_io(monkeypatch, service)
     similar = [{"item": "bolt", "category": "Hardware", "similarity_score": 0.9}]
-    client.responses.create.return_value = function_response({"category": "Hardware", "confidence_score": 0.9, "reasoning": "close"})
-    assert (await service.categorize_with_similar_items("bolt", similar, ["Hardware"]))["category"] == "Hardware"
-    client.responses.create.return_value = empty_response()
-    assert (await service.categorize_with_similar_items("bolt", similar))["category"] == "Hardware"
-    client.responses.create.side_effect = RuntimeError("cat")
-    assert (await service.categorize_with_similar_items("bolt", similar))["category"] == "Hardware"
-    assert (await service.categorize_with_similar_items("bolt", []))["category"] is None
-
-    client.responses.create.side_effect = None
     client.responses.create.return_value = function_response({"level_1_category": "IT", "level_2_category": "Laptops", "level_3_category": "Business", "confidence_score": 0.8, "reasoning": "fit"})
     three = await service.generate_3_level_categorization("laptop", similar, "IT")
     assert three["categorization"]["level_2"] == "Laptops"

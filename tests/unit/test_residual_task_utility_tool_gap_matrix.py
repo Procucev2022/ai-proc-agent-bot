@@ -2,7 +2,7 @@
 
 Every external boundary in this module is replaced with a local fake or mock.
 The cases focus on residual empty, retry, failure, and fallback branches rather
-than live database, Redis, OpenAI, WhatsApp, Chroma, HTTP, or email calls.
+than live database, Redis, OpenAI, WhatsApp, HTTP, or email calls.
 """
 
 from __future__ import annotations
@@ -234,10 +234,6 @@ def test_residual_bfs_cleanup_and_seller_helpers(monkeypatch, tmp_path):
         "city": "Pune",
         "pincode": 411005,
     }
-    assert seller_task._build_item_description_for_rfq({}) == ""
-    assert seller_task._build_item_description_for_rfq({"categories": ["Tools"], "description": " pump ", "special_instruction": " urgent "}) == (
-        "Categories: Tools | Description: pump | Requirements: urgent"
-    )
 
     manager = Mock()
     manager.run.return_value = {"errors": 1, "logs_archived": 0}
@@ -316,7 +312,7 @@ async def test_residual_taxonomy_single_batch_and_disabled(monkeypatch):
     assert result["success"] is False and result["error"] == "rejected"
 
 
-def test_residual_vector_sync_disabled_false_embedding_and_trigger(monkeypatch):
+def test_residual_vector_sync_disabled_mapping_failure_and_trigger(monkeypatch):
     monkeypatch.setattr(vector_task, "get_settings", lambda: SimpleNamespace(enable_vector_store_sync=False))
     assert vector_task.sync_vector_store.run()["status"] == "skipped"
 
@@ -324,15 +320,9 @@ def test_residual_vector_sync_disabled_false_embedding_and_trigger(monkeypatch):
     monkeypatch.setattr(vector_task, "_run_seller_category_mapping", lambda: {"success": False, "error": "mapping"})
     assert vector_task.sync_vector_store.run()["status"] == "partial_failure"
 
-    monkeypatch.setattr(vector_task, "sys", SimpleNamespace(path=[]))
-    monkeypatch.setitem(__import__("sys").modules, "create_category_embeddings", SimpleNamespace(create_unified_vector_store=lambda **_: False))
-    assert vector_task._run_vector_embedding_creation(clear_existing=True) == {
-        "success": False, "error": "Vector store creation returned False"
-    }
-
     queued = SimpleNamespace(id="vector-1")
     monkeypatch.setattr(vector_task.sync_vector_store, "apply_async", Mock(return_value=queued))
-    result = vector_task.trigger_vector_store_sync(True, True)
+    result = vector_task.trigger_vector_store_sync(True)
     assert result["task_id"] == "vector-1" and result["cleanup_buyer_mappings"] is True
 
 

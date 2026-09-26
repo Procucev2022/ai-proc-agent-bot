@@ -1,18 +1,12 @@
 """
-Daily Category Vector Store Rebuild Task.
+Daily category mappings sync task.
 
 This Celery periodic task syncs remote item_category data to the local
-category_mappings table, then rebuilds the AutoCategorizationService vector
-store (chroma_db/category_items collection).
+category_mappings table. The table must stay up-to-date with the remote
+item_category data because it backs FK constraints when building the 3-level
+taxonomy (ClientCategoryMapping -> CategoryMapping).
 
-The category_mappings sync ensures the local table stays up-to-date with the
-remote item_category data, which is required for FK constraints when building
-the 3-level taxonomy (ClientCategoryMapping → CategoryMapping).
-
-The vector store is used by AutoCategorizationService to perform semantic
-similarity search for auto-categorizing RFQ items.
-
-Schedule: Daily at 2:00 AM (configurable in celery_config.py)
+Schedule: Daily at 2:00 AM IST (configurable in celery_config.py)
 """
 
 import logging
@@ -38,99 +32,45 @@ logger = logging.getLogger(__name__)
 )
 def rebuild_category_vector_store(self) -> Dict[str, Any]:
     """
-    Rebuild the AutoCategorizationService vector store (category_items collection).
-
-    This task:
-    1. Clears the existing category_items collection in ChromaDB
-    2. Fetches fresh data from remote item_category table (or local CategoryMapping)
-    3. Regenerates all embeddings for auto-categorization
+    Sync remote item_category rows into the local category_mappings table.
 
     Returns:
-        Dict with rebuild status and statistics
+        Dict with sync status and statistics
     """
     try:
         settings = get_settings()
 
         # Check if task is enabled
         if not getattr(settings, 'enable_daily_category_rebuild', True):
-            logger.info("Daily category vector rebuild is disabled in settings")
+            logger.info("Daily category mappings sync is disabled in settings")
             return {
                 "status": "skipped",
                 "reason": "daily_category_rebuild_disabled",
                 "timestamp": datetime.utcnow().isoformat()
             }
 
-        logger.info("=" * 60)
-        logger.info("Starting daily category vector store rebuild")
-        logger.info("=" * 60)
-
+        logger.info("Starting daily category mappings sync")
         start_time = datetime.utcnow()
 
-        # STEP 0: Sync remote item_category → local category_mappings
-        logger.info("Step 0: Syncing remote item_category to local category_mappings...")
         sync_result = _sync_category_mappings()
         if sync_result.get("success"):
             logger.info(f"SUCCESS: Synced {sync_result['inserted_count']} new category mappings "
                         f"({sync_result['total_remote_items']} remote items, "
                         f"{sync_result['unique_categories']} unique categories)")
         else:
-            logger.warning(f"Category mappings sync failed: {sync_result.get('error')} — continuing with rebuild")
+            logger.warning(f"Category mappings sync failed: {sync_result.get('error')}")
 
-        # The MySQL sync above still runs with vector search off: category_mappings
-        # backs FK constraints that have nothing to do with ChromaDB.
-        if not getattr(settings, 'enable_vector_search', True):
-            logger.info("Vector search is disabled, skipping category vector rebuild")
-            return {
-                "status": "skipped",
-                "reason": "vector_search_disabled",
-                "category_mappings_sync": sync_result,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-
-        # STEP 1: Rebuild vector store
-        # Import here to avoid circular imports and ensure fresh instance
-        from app.services.auto_categorization_service import AutoCategorizationService
-
-        # Create new instance (don't use singleton to ensure fresh connection)
-        service = AutoCategorizationService()
-
-        # Get stats before rebuild
-        stats_before = service.get_collection_stats()
-        logger.info(f"Collection stats before rebuild: {stats_before}")
-
-        # Rebuild the vector store (this clears and repopulates)
-        logger.info("Rebuilding category_items collection from database...")
-        items_count = service.populate_embeddings_from_db()
-
-        # Get stats after rebuild
-        stats_after = service.get_collection_stats()
-        logger.info(f"Collection stats after rebuild: {stats_after}")
-
-        # Calculate duration
         end_time = datetime.utcnow()
-        duration_seconds = (end_time - start_time).total_seconds()
-
-        result = {
-            "status": "completed",
-            "items_count": items_count,
-            "stats_before": stats_before,
-            "stats_after": stats_after,
-            "duration_seconds": duration_seconds,
-            "data_source": "remote" if settings.enable_remote_categorization else "local",
+        return {
+            "status": "completed" if sync_result.get("success") else "failed",
+            "category_mappings_sync": sync_result,
+            "duration_seconds": (end_time - start_time).total_seconds(),
             "timestamp": end_time.isoformat()
         }
 
-        logger.info("=" * 60)
-        logger.info(f"Category vector store rebuild completed successfully!")
-        logger.info(f"Items populated: {items_count}")
-        logger.info(f"Duration: {duration_seconds:.2f} seconds")
-        logger.info("=" * 60)
-
-        return result
-
     except SoftTimeLimitExceeded:
-        logger.error("Category vector rebuild task exceeded soft time limit (3 hours) - stopping gracefully")
-        # Don't retry on timeout - just return status to avoid 3x restarts = empty collection for hours
+        logger.error("Category mappings sync task exceeded soft time limit (3 hours) - stopping gracefully")
+        # Don't retry on timeout - just return status
         return {
             "status": "timeout",
             "error": "Task exceeded maximum execution time",
@@ -138,7 +78,7 @@ def rebuild_category_vector_store(self) -> Dict[str, Any]:
         }
 
     except Exception as e:
-        logger.error(f"Category vector store rebuild failed: {str(e)}")
+        logger.error(f"Category mappings sync failed: {str(e)}")
         import traceback
         traceback.print_exc()
 
@@ -234,18 +174,18 @@ def _sync_category_mappings() -> Dict[str, Any]:
 
 def trigger_category_vector_rebuild() -> Dict[str, Any]:
     """
-    Manually trigger category vector store rebuild (for testing).
+    Manually trigger the category mappings sync (for testing).
 
     Usage:
         from app.tasks.daily_category_vector_rebuild_task import trigger_category_vector_rebuild
         result = trigger_category_vector_rebuild()
     """
-    logger.info("Manually triggering category vector store rebuild...")
+    logger.info("Manually triggering category mappings sync...")
     result = rebuild_category_vector_store.apply_async()
     return {
         "task_id": result.id,
         "status": "triggered",
-        "message": "Category vector store rebuild task has been queued"
+        "message": "Category mappings sync task has been queued"
     }
 
 
@@ -256,6 +196,6 @@ if __name__ == "__main__":
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
 
-    print("Running category vector store rebuild task directly...")
+    print("Running category mappings sync task directly...")
     result = rebuild_category_vector_store()
     print(f"\nResult: {result}")

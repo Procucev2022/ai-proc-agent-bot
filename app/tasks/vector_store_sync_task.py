@@ -1,18 +1,14 @@
 """
-Vector Store Sync Task for Hybrid Seller Matching.
+Seller category mapping sync task.
 
-This Celery periodic task keeps the vector store fresh by syncing seller data
-from the remote database and updating ChromaDB embeddings.
-
-The vector store is used by EnhancedSellerMatchingService (Phase 1 of hybrid approach)
-to perform fast semantic discovery of seller candidates.
+This Celery periodic task keeps the seller -> learning taxonomy mappings fresh:
 
 Workflow:
-1. Fetch latest sellers from remote DB via SellerDataAdapter
-2. Map seller categories to learning taxonomy via OpenAI
-3. Generate embeddings and update ChromaDB vector store
+1. (Optional) Remove buyer mappings from SellerLearningMapping
+2. Fetch latest sellers from remote DB via SellerDataAdapter
+3. Map seller categories to learning taxonomy via OpenAI
 
-Schedule: Daily at 2:00 AM (configurable in celery_config.py)
+Schedule: hourly (configurable in celery_config.py)
 """
 
 import logging
@@ -37,22 +33,15 @@ logger = logging.getLogger(__name__)
     autoretry_for=(Exception,),
     retry_kwargs={'max_retries': 2, 'countdown': 300}
 )
-def sync_vector_store(self, clear_existing: bool = False, cleanup_buyer_mappings: bool = False):
+def sync_vector_store(self, cleanup_buyer_mappings: bool = False):
     """
-    Sync seller data to vector store for enhanced semantic matching.
+    Sync seller category mappings.
 
     This task:
     1. (Optional) Cleans up buyer mappings from SellerLearningMapping table
     2. Maps sellers to learning categories using OpenAI
-    3. Creates/updates vector embeddings in ChromaDB
-    4. Enables Phase 1 of hybrid seller matching
-
-    The vector store is used by EnhancedSellerMatchingService to quickly
-    find semantically relevant seller candidates, which are then filtered
-    by SellerRecommendationService business rules.
 
     Args:
-        clear_existing: If True, clears the ChromaDB collection before rebuilding
         cleanup_buyer_mappings: If True, removes buyer mappings from SellerLearningMapping
 
     Returns:
@@ -75,7 +64,7 @@ def sync_vector_store(self, clear_existing: bool = False, cleanup_buyer_mappings
 
         logger.info("=" * 60)
         logger.info("Starting vector store sync task")
-        logger.info(f"Options: clear_existing={clear_existing}, cleanup_buyer_mappings={cleanup_buyer_mappings}")
+        logger.info(f"Options: cleanup_buyer_mappings={cleanup_buyer_mappings}")
         logger.info("=" * 60)
 
         sync_results = {
@@ -108,7 +97,7 @@ def sync_vector_store(self, clear_existing: bool = False, cleanup_buyer_mappings
                 })
 
         # STEP 1: Map sellers to learning categories
-        logger.info("Step 1/2: Mapping sellers to learning categories...")
+        logger.info("Mapping sellers to learning categories...")
         try:
             mapping_result = _run_seller_category_mapping()
 
@@ -139,46 +128,6 @@ def sync_vector_store(self, clear_existing: bool = False, cleanup_buyer_mappings
                 "error": str(e)
             })
             sync_results["status"] = "failed"
-            return sync_results
-
-        # STEP 2: Create vector embeddings in ChromaDB. Step 1 above only touches
-        # MySQL and OpenAI, so it still runs with vector search off.
-        if not getattr(settings, 'enable_vector_search', True):
-            logger.info("Vector search is disabled, skipping Step 2 (ChromaDB embeddings)")
-            sync_results["steps_skipped"] = ["vector_embedding_creation"]
-            sync_results["status"] = "completed"
-            sync_results["completion_timestamp"] = datetime.utcnow().isoformat()
-            return sync_results
-
-        logger.info("Step 2/2: Creating vector embeddings in ChromaDB...")
-        try:
-            embedding_result = _run_vector_embedding_creation(clear_existing=clear_existing)
-
-            if embedding_result.get("success"):
-                sync_results["steps_completed"].append("vector_embedding_creation")
-                sync_results["embedding_stats"] = {
-                    "total_items": embedding_result.get("total_items", 0),
-                    "seller_mappings": embedding_result.get("seller_mappings", 0),
-                    "learning_items": embedding_result.get("learning_items", 0)
-                }
-                logger.info(f"SUCCESS: Step 2 complete: Created {embedding_result.get('total_items', 0)} embeddings")
-            else:
-                error_msg = embedding_result.get("error", "Unknown error")
-                logger.error(f"ERROR: Step 2 failed: {error_msg}")
-                sync_results["steps_failed"].append({
-                    "step": "vector_embedding_creation",
-                    "error": error_msg
-                })
-                sync_results["status"] = "partial_failure"
-                return sync_results
-
-        except Exception as e:
-            logger.error(f"ERROR: Step 2 exception: {str(e)}")
-            sync_results["steps_failed"].append({
-                "step": "vector_embedding_creation",
-                "error": str(e)
-            })
-            sync_results["status"] = "partial_failure"
             return sync_results
 
         # All steps completed successfully
@@ -515,80 +464,27 @@ async def _async_map_sellers_to_categories(batch_size: int = 10) -> Dict[str, An
         db.close()
 
 
-def _run_vector_embedding_creation(clear_existing: bool = False) -> Dict[str, Any]:
-    """
-    Run vector embedding creation (Step 3 of setup).
-
-    Creates/updates vector embeddings in ChromaDB for fast semantic search.
-
-    Args:
-        clear_existing: If True, clears the ChromaDB collection before rebuilding
-    """
-    try:
-        # Add Setup directory to path for imports
-        setup_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../Setup/3-level_vector_store'))
-        if setup_path not in sys.path:
-            sys.path.insert(0, setup_path)
-
-        from create_category_embeddings import create_unified_vector_store
-
-        logger.info(f"Creating vector embeddings in ChromaDB (clear_existing={clear_existing})...")
-        success = create_unified_vector_store(clear_existing=clear_existing)
-
-        if success:
-            return {
-                "success": True,
-                "total_items": "updated",  # Actual count from create_unified_vector_store
-                "seller_mappings": "updated",
-                "learning_items": "updated"
-            }
-        else:
-            return {
-                "success": False,
-                "error": "Vector store creation returned False"
-            }
-
-    except ImportError as e:
-        logger.error(f"Failed to import embedding script: {e}")
-        return {
-            "success": False,
-            "error": f"Import error: {str(e)}"
-        }
-    except Exception as e:
-        logger.error(f"Error creating vector embeddings: {str(e)}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
-
-
 # Manual trigger function for testing
-def trigger_vector_store_sync(clear_existing: bool = False, cleanup_buyer_mappings: bool = False):
+def trigger_vector_store_sync(cleanup_buyer_mappings: bool = False):
     """
-    Manually trigger vector store sync (for testing).
+    Manually trigger the seller category mapping sync (for testing).
 
     Args:
-        clear_existing: If True, clears ChromaDB collection before rebuilding
         cleanup_buyer_mappings: If True, removes buyer mappings from SellerLearningMapping
 
     Usage:
         from app.tasks.vector_store_sync_task import trigger_vector_store_sync
 
-        # Normal sync
         result = trigger_vector_store_sync()
-
-        # Full rebuild with cleanup
-        result = trigger_vector_store_sync(clear_existing=True, cleanup_buyer_mappings=True)
+        result = trigger_vector_store_sync(cleanup_buyer_mappings=True)
     """
-    logger.info(f"Manually triggering vector store sync (clear_existing={clear_existing}, cleanup_buyer_mappings={cleanup_buyer_mappings})...")
+    logger.info(f"Manually triggering vector store sync (cleanup_buyer_mappings={cleanup_buyer_mappings})...")
     result = sync_vector_store.apply_async(kwargs={
-        'clear_existing': clear_existing,
         'cleanup_buyer_mappings': cleanup_buyer_mappings
     })
     return {
         "task_id": result.id,
         "status": "triggered",
-        "clear_existing": clear_existing,
         "cleanup_buyer_mappings": cleanup_buyer_mappings,
         "message": "Vector store sync task has been queued"
     }
@@ -604,16 +500,11 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser(description='Run vector store sync task')
-    parser.add_argument('--clear-existing', action='store_true',
-                       help='Clear ChromaDB collection before rebuilding')
     parser.add_argument('--cleanup-buyer-mappings', action='store_true',
                        help='Remove buyer mappings from SellerLearningMapping table')
     args = parser.parse_args()
 
     print("Running vector store sync task directly...")
-    print(f"Options: clear_existing={args.clear_existing}, cleanup_buyer_mappings={args.cleanup_buyer_mappings}")
-    result = sync_vector_store(
-        clear_existing=args.clear_existing,
-        cleanup_buyer_mappings=args.cleanup_buyer_mappings
-    )
+    print(f"Options: cleanup_buyer_mappings={args.cleanup_buyer_mappings}")
+    result = sync_vector_store(cleanup_buyer_mappings=args.cleanup_buyer_mappings)
     print(f"\nResult: {result}")

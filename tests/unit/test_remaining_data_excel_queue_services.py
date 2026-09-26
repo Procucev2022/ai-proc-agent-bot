@@ -13,7 +13,6 @@ import pytest
 import app.services.conversation_analytics_service as analytics_module
 import app.services.daily_aggregation_service as aggregation_module
 import app.services.daily_summary_service as summary_module
-import app.services.enhanced_auto_categorization_service as categorization_module
 import app.services.enhanced_excel_report_service as report_module
 import app.services.excel_processing_service as processing_module
 import app.services.excel_validation_service as validation_module
@@ -587,51 +586,7 @@ def test_report_generation_uses_mocked_sheets(monkeypatch):
     assert all(getattr(service, name).called for name in methods)
 
 
-def categorization_service():
-    service = categorization_module.EnhancedAutoCategorizationService.__new__(categorization_module.EnhancedAutoCategorizationService)
-    service.collection = MagicMock(); service.category_collection = MagicMock()
-    service.fallback_service = MagicMock(); service.openai_service = MagicMock()
-    return service
 
 
-def test_categorization_helpers_search_and_health(monkeypatch):
-    service = categorization_service()
-    assert service._build_enhanced_description("Battery", {"level_3_category": "Battery", "level_2_category": "Power"}) == "Battery Power"
-    service.category_collection.count.return_value = 0
-    assert service._search_by_category_name("x")["success"] is False
-    service.category_collection.count.return_value = 1
-    service.category_collection.query.return_value = {"documents": [["Power"]], "metadatas": [[{"item_count": 2}]], "distances": [[0.2]]}
-    assert service._search_by_category_name("x")["best_match"]["category_name"] == "Power"
-    assert service._hybrid_category_selection("Power", .8, {"success": True, "matches": [{"category_name": "Power", "similarity": .8}]})["agreement"]
-    service.collection.count.return_value = 1
-    service.collection.query.return_value = {"documents": [["x"]], "metadatas": [[{"client_category_name": "Tools", "level_1_category": "L1", "level_2_category": "L2", "level_3_category": "L3", "category_path": "L1/L2/L3", "confidence_score": .9, "item_description": "x"}]], "distances": [[.2]]}
-    assert service.get_category_suggestions("x")[0]["client_category"] == "Tools"
-    service.fallback_service.get_collection_stats.return_value = {}
-    service.chroma_path = "mock"
-    assert service.health_check()["overall_status"] == "healthy"
-    service.collection.count.side_effect = RuntimeError("chroma")
-    assert service.health_check()["overall_status"] == "unhealthy"
 
 
-@pytest.mark.asyncio
-async def test_categorization_high_similarity_no_match_openai_and_exception(monkeypatch):
-    service = categorization_service()
-    service._keyword_lookup_source_of_truth = MagicMock(return_value={"success": False})
-    service._search_hierarchical_levels = MagicMock(return_value={"success": True, "similarity_score": .95,
-        "best_match": {"client_category_name": "Tools"}, "all_level_matches": [{"metadata": {"item_description": "bolt", "client_category_name": "Tools"}, "matched_level": "level_3", "similarity_score": .95}]})
-    service._log_categorization = MagicMock()
-    result = await service.categorize_item("bolt", "U")
-    assert result["method"] == "enhanced_taxonomy_high_similarity"
-    service._search_hierarchical_levels.return_value = {"success": False}
-    service.fallback_service._get_similar_items.return_value = []
-    service._log_fallback_categorization = MagicMock()
-    result = await service.categorize_item("unknown", "U")
-    assert result["client_category"] == "Other" and result["requires_review"]
-    service.fallback_service._get_similar_items.return_value = [{"category": "Tools", "similarity_score": .7}]
-    service.openai_service.categorize_with_similar_items = AsyncMock(return_value={"success": True, "category": "Tools", "confidence": .8})
-    service._update_learning_taxonomy = AsyncMock()
-    result = await service.categorize_item("bolt", "U")
-    assert result["method"] == "enhanced_fallback_openai" and service._update_learning_taxonomy.await_count == 1
-    service._keyword_lookup_source_of_truth.side_effect = RuntimeError("bad")
-    result = await service.categorize_item("bad", "U")
-    assert result["success"] is False and result["method"] == "enhanced_error"

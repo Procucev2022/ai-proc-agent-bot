@@ -1,5 +1,5 @@
 """
-Regression tests for the four QUA AI WhatsApp Dev defects reported on 2026-08-17,
+Regression tests for the QUA AI WhatsApp Dev defects reported on 2026-08-17,
 plus the additional errors found in the same log export (`query_data (3).csv`).
 
 Issue 1 - after confirming the pincode the bot asked for missing product details even
@@ -20,28 +20,17 @@ to the delivery parser:
     13:02:27 [SECTIONED_RFQ] Awaiting modification flag is set - processing modification
     13:02:27 sectioned_rfq_format_parser | WARNING | No delivery format fields detected
 
-Issue 3 - seller registration answered "taking longer than expected due to high traffic".
-Confirming registration loaded a SentenceTransformer model inline on the event loop, the
-worker stopped answering its heartbeat and was killed mid-request:
-
-    11:34:10 auto_categorization_service | INFO | Initializing AutoCategorizationService singleton
-    11:34:19 chromadb.config | DEBUG | Starting component FastAPI
-    11:35:23 app.main | INFO | [BOOT] Starting App          <- worker respawned
-    11:36:23 inactivity_timeout_service | WARNING | [WORKER_TIMEOUT] DETECTED ... flag=1
-
 Issue 2 - "RFQ Creation Failed". `createRFQByClient` answered HTTP 200 carrying
 `statusCode 500 / Failed to create RFQ` in 0.171s. The two payloads accepted that day held
 plain ASCII remarks; the rejected one carried `10KΩ`, `±5%` and `1000µF`.
 
 Every external collaborator is mocked. Nothing here touches WhatsApp, OpenAI, Redis,
-ChromaDB, a database or the network.
+a database or the network.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
-import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -50,7 +39,6 @@ import pytest
 
 import app.api.webhook as webhook_mod
 import app.procucev_apis.rfq_apis as rfq_apis_mod
-import app.services.auto_categorization_service as auto_cat_mod
 import app.services.entity_service as entity_mod
 import app.services.handlers.purchase_intent_handler as purchase_mod
 import app.services.handlers.sectioned_rfq_creation_handler as sectioned_mod
@@ -380,115 +368,6 @@ async def test_typed_purchase_message_keeps_an_in_progress_sectioned_workflow(mo
     assert WorkflowManager.is_awaiting_section_modification(state, "date_location") is True
     assert WorkflowManager.get_section_data(state, "items") == [{"description": "stale"}]
     assert sectioned.handle_sectioned_rfq.await_args.args[2] == "Delivery Date: 6 Sep 2026"
-
-
-# ---------------------------------------------------------------------------
-# Issue 3: the categorization model must never load on the event loop
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def clean_categorization_singleton(monkeypatch):
-    """Reset the module singleton around each test so ordering cannot leak state."""
-    # These tests cover the real (vector) service, which is off by default now.
-    from app.config import get_settings
-    monkeypatch.setattr(get_settings(), "enable_vector_search", True)
-    original = auto_cat_mod._auto_categorization_service_instance
-    auto_cat_mod._auto_categorization_service_instance = None
-    yield
-    auto_cat_mod._auto_categorization_service_instance = original
-
-
-class FakeCategorizationService:
-    """Stands in for the real service, recording the thread it was built on."""
-
-    def __init__(self):
-        self.built_on_thread = threading.get_ident()
-        self.collection = SimpleNamespace(count=lambda: 1)
-
-
-@pytest.mark.asyncio
-async def test_singleton_is_built_off_the_event_loop(monkeypatch, clean_categorization_singleton):
-    monkeypatch.setattr(auto_cat_mod, "AutoCategorizationService", FakeCategorizationService)
-    loop_thread = threading.get_ident()
-
-    instance = await auto_cat_mod.get_auto_categorization_service_async()
-
-    assert isinstance(instance, FakeCategorizationService)
-    assert instance.built_on_thread != loop_thread, "model load ran on the event loop"
-
-
-@pytest.mark.asyncio
-async def test_cached_singleton_is_returned_without_a_thread_hop(monkeypatch, clean_categorization_singleton):
-    cached = object()
-    auto_cat_mod._auto_categorization_service_instance = cached
-    to_thread = AsyncMock()
-    monkeypatch.setattr(auto_cat_mod.asyncio, "to_thread", to_thread)
-
-    assert await auto_cat_mod.get_auto_categorization_service_async(timeout=5) is cached
-    to_thread.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_slow_model_load_times_out_instead_of_stalling_the_worker(monkeypatch, clean_categorization_singleton):
-    class SlowService:
-        def __init__(self):
-            threading.Event().wait(0.5)
-            self.collection = SimpleNamespace(count=lambda: 1)
-
-    monkeypatch.setattr(auto_cat_mod, "AutoCategorizationService", SlowService)
-
-    with pytest.raises(asyncio.TimeoutError):
-        await auto_cat_mod.get_auto_categorization_service_async(timeout=0.01)
-
-
-def test_concurrent_callers_build_the_model_once(monkeypatch, clean_categorization_singleton):
-    """Now that the accessor runs on worker threads, it has to be thread-safe."""
-    builds = []
-    ready = threading.Barrier(4)
-
-    class CountingService:
-        def __init__(self):
-            builds.append(threading.get_ident())
-            threading.Event().wait(0.05)
-            self.collection = SimpleNamespace(count=lambda: 1)
-
-    monkeypatch.setattr(auto_cat_mod, "AutoCategorizationService", CountingService)
-    results = []
-
-    def resolve():
-        ready.wait()
-        results.append(auto_cat_mod.get_auto_categorization_service())
-
-    threads = [threading.Thread(target=resolve) for _ in range(4)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=10)
-
-    assert len(builds) == 1, f"model built {len(builds)} times"
-    assert len(results) == 4
-    assert all(item is results[0] for item in results)
-
-
-@pytest.mark.asyncio
-async def test_vector_search_runs_off_the_event_loop():
-    """The collection embeds query text in-process, so it is CPU work off the loop."""
-    service = bare(auto_cat_mod.AutoCategorizationService)
-    seen = {}
-
-    def fake_similar(description):
-        seen["thread"] = threading.get_ident()
-        seen["description"] = description
-        return []
-
-    service._get_similar_items = fake_similar
-    service._log_categorization = MagicMock()
-
-    result = await service.categorize_item("Chemicals", user_id="918296753344")
-
-    assert result["reason"] == "no_similar_items_found"
-    assert seen["description"] == "Chemicals"
-    assert seen["thread"] != threading.get_ident(), "vector search ran on the event loop"
 
 
 # ---------------------------------------------------------------------------

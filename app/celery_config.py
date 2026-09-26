@@ -18,13 +18,11 @@ def _env_bool(name: str, default: bool) -> bool:
 # ============================================================================
 # TASK ENABLE/DISABLE CONTROL - Configured via environment variables or defaults
 # ============================================================================
-ENABLE_AUTO_CATEGORIZATION = _env_bool('ENABLE_AUTO_CATEGORIZATION', True)
 ENABLE_VECTOR_STORE_SYNC = _env_bool('ENABLE_VECTOR_STORE_SYNC', True)
 ENABLE_SELLER_MATCHING = _env_bool('ENABLE_SELLER_MATCHING', True)
 ENABLE_DAILY_AGGREGATION = _env_bool('ENABLE_DAILY_AGGREGATION', False)
 ENABLE_WHATSAPP_REPORT_AUTOMATION = _env_bool('ENABLE_WHATSAPP_REPORT_AUTOMATION', True)
 ENABLE_DAILY_CATEGORY_REBUILD = _env_bool('ENABLE_DAILY_CATEGORY_REBUILD', True)
-ENABLE_CATEGORY_NAME_SYNC = _env_bool('ENABLE_CATEGORY_NAME_SYNC', True)
 ENABLE_LOG_CLEANUP = _env_bool('ENABLE_LOG_CLEANUP', True)
 ENABLE_BFS_NOTIFICATION = _env_bool('ENABLE_BFS_NOTIFICATION', True)
 ENABLE_TAXONOMY_BUILD = _env_bool('ENABLE_TAXONOMY_BUILD', True)
@@ -59,12 +57,11 @@ task_max_retries = 3
 # 
 # Strategy per task type:
 #   SHORT tasks (BFS, cleanup):     Strict limits (OK to kill if stuck)
-#   MEDIUM tasks (categorization):  Moderate limits + retry enabled
-#   LONG tasks (taxonomy, vector):  VERY HIGH limits + resumable + checkpointed
+#   MEDIUM tasks (seller matching): Moderate limits + retry enabled
+#   LONG tasks (taxonomy, syncs):   VERY HIGH limits + resumable + checkpointed
 #
 # Time limits per task type (set in each @shared_task decorator):
 #   bfs_notification       soft=300,  hard=600    (5-10 min - strict)
-#   auto_categorization    soft=900,  hard=1200   (15-20 min - moderate)
 #   seller_matching        soft=900,  hard=1200   (15-20 min - moderate)
 #   vector_store_sync      soft=7200, hard=9000   (2-2.5 hrs - relaxed)
 #   daily_category_rebuild soft=7200, hard=9000   (2-2.5 hrs - relaxed + resumable)
@@ -75,7 +72,6 @@ task_max_retries = 3
 # NOTE: For long AI/ML tasks, we prioritize COMPLETION over SPEED
 # - OpenAI API can spike from 5s to 60s per call
 # - Network issues may require retries
-# - ChromaDB operations vary with data size
 # ============================================================================
 
 # Worker configuration
@@ -105,22 +101,10 @@ broker_transport_options = {
 # BEAT SCHEDULE - All times in UTC (IST = UTC + 5:30)
 # ============================================================================
 # Periodic task schedule (Beat scheduler)
-# Pipeline order: auto-categorization -> vector_store_sync -> seller_matching
+# Pipeline order: vector_store_sync (seller category mappings) -> seller_matching
 beat_schedule = {}
 
-# Auto-categorization: Runs every 15 minutes to process uncategorized RFQs
-if ENABLE_AUTO_CATEGORIZATION:
-    beat_schedule['auto-categorization-task'] = {
-        'task': 'app.tasks.auto_categorization_task.process_uncategorized_rfqs',
-        'schedule': crontab(minute='*/15'),
-        'options': {
-            'expires': 600,
-            'queue': 'categorization',
-            'priority': 6,  # High priority - frequent daytime task
-        }
-    }
-
-# Vector Store Sync: Runs hourly at minute 0
+# Seller category mapping sync: Runs hourly at minute 0
 if ENABLE_VECTOR_STORE_SYNC:
     beat_schedule['vector-store-sync-task'] = {
         'task': 'app.tasks.vector_store_sync_task.sync_vector_store',
@@ -144,7 +128,7 @@ if ENABLE_SELLER_MATCHING:
         }
     }
 
-# Daily Category Vector Rebuild: Daily at 2:00 AM IST (20:30 UTC previous day)
+# Daily category mappings sync: Daily at 2:00 AM IST (20:30 UTC previous day)
 if ENABLE_DAILY_CATEGORY_REBUILD:
     beat_schedule['daily-category-vector-rebuild-task'] = {
         'task': 'app.tasks.daily_category_vector_rebuild_task.rebuild_category_vector_store',
@@ -153,18 +137,6 @@ if ENABLE_DAILY_CATEGORY_REBUILD:
             'expires': 7200,
             'queue': 'vector_store',
             'priority': 2,  # Low priority - night mode task
-        }
-    }
-
-# Category Name Sync: Daily at 3:00 AM IST (21:30 UTC previous day)
-if ENABLE_CATEGORY_NAME_SYNC:
-    beat_schedule['category-name-sync-task'] = {
-        'task': 'app.tasks.category_name_sync_task.sync_category_names',
-        'schedule': crontab(minute=0, hour=21),  # 3:00 AM IST (after rebuild)
-        'options': {
-            'expires': 7200,
-            'queue': 'vector_store',
-            'priority': 2,  # Low priority - runs after category rebuild
         }
     }
 
@@ -231,12 +203,10 @@ if ENABLE_TAXONOMY_BUILD:
 # ============================================================================
 task_routes = {
     'app.tasks.bfs_notification_task.*':            {'queue': 'bfs_notification', 'priority': 9},
-    'app.tasks.auto_categorization_task.*':         {'queue': 'categorization',   'priority': 6},
     'app.tasks.seller_matching_task.*':             {'queue': 'seller_matching',   'priority': 5},
     'app.tasks.whatsapp_report_automation_task.*':  {'queue': 'report_automation', 'priority': 5},
     'app.tasks.vector_store_sync_task.*':           {'queue': 'vector_store',      'priority': 3},
     'app.tasks.daily_category_vector_rebuild_task.*': {'queue': 'vector_store',    'priority': 2},
-    'app.tasks.category_name_sync_task.*':          {'queue': 'vector_store',      'priority': 2},
     'app.tasks.taxonomy_build_task.*':              {'queue': 'taxonomy_build',    'priority': 1},
     'app.tasks.log_cleanup_task.*':                 {'queue': 'maintenance',       'priority': 1},
 }

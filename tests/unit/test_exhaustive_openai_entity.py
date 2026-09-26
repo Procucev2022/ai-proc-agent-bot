@@ -417,14 +417,6 @@ async def test_excel_seller_learning_and_selection_methods(monkeypatch, service)
 
     similar = [{'item': 'bolt', 'category': 'Hardware', 'similarity_score': 0.9}]
     client.responses.create.side_effect = None
-    client.responses.create.return_value = response({'category': 'Hardware', 'confidence_score': .9})
-    assert (await obj.categorize_with_similar_items('bolt', similar, ['Hardware']))['success']
-    client.responses.create.return_value = no_output()
-    assert (await obj.categorize_with_similar_items('bolt', similar))['category'] == 'Hardware'
-    client.responses.create.side_effect = RuntimeError('category')
-    assert (await obj.categorize_with_similar_items('bolt', []))['category'] is None
-
-    client.responses.create.side_effect = None
     client.responses.create.return_value = response({'level_1_category': 'IT', 'level_2_category': 'Hardware', 'level_3_category': 'Laptop'})
     three = await obj.generate_3_level_categorization('laptop', similar, 'IT')
     assert three['categorization']['level_3'] == 'Laptop'

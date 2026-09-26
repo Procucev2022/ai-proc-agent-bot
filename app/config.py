@@ -113,20 +113,6 @@ class Settings:
         self.operations_pool_workers = int(os.getenv("OPERATIONS_POOL_WORKERS", "4"))
         self.bulk_pool_workers = int(os.getenv("BULK_POOL_WORKERS", "6"))
 
-        # ChromaDB configuration (server mode for multi-worker support)
-        self.chroma_host = os.getenv("CHROMA_HOST", "localhost")
-        self.chroma_port = int(os.getenv("CHROMA_PORT", "8000"))
-        self.chroma_use_server = os.getenv("CHROMA_USE_SERVER", "true").lower() == "true"
-        # Master switch for ChromaDB vector search (RAG). Off by default: the ChromaDB
-        # service was removed from docker-compose. When false, nothing loads the
-        # embedding model or contacts ChromaDB: categorization reports "disabled" and
-        # continues without a category, and seller matching uses its standard rules.
-        self.enable_vector_search = os.getenv("ENABLE_VECTOR_SEARCH", "false").lower() == "true"
-        # Fallback paths for PersistentClient (used when server is not available)
-        # Use absolute paths based on project root to avoid issues with current working directory
-        self.chroma_persist_directory = os.getenv("CHROMA_PERSIST_DIRECTORY", str(PROJECT_ROOT / "chroma_db"))
-        self.chroma_unified_persist_directory = os.getenv("CHROMA_UNIFIED_PERSIST_DIRECTORY", str(PROJECT_ROOT / "unified_chroma_db"))
-
         # Redis session storage configuration
         self.redis_session_storage_enabled = os.getenv("REDIS_SESSION_STORAGE_ENABLED", "true").lower() == "true"
         self.redis_session_ttl_seconds = int(os.getenv("REDIS_SESSION_TTL_SECONDS", "900"))  # 15 minutes default (timeout + buffer)

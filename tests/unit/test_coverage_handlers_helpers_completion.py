@@ -26,10 +26,6 @@ from app.services.helpers.authentication_helpers import AuthenticationHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.services.helpers.excel_helpers import ExcelHelpers
 from app.services.helpers.response_helpers import ResponseHelpers
-from app.services.helpers.rfq_processing_helpers import (
-    run_auto_categorization_for_rfqs,
-    run_seller_recommendation_for_rfqs,
-)
 from app.services.helpers.session_helpers import SessionHelpers
 from app.services.helpers.summarization_helpers import SummarizationHelpers
 
@@ -721,10 +717,8 @@ async def test_session_summarization_and_processing_helper_failure_fallbacks(mon
     session = make_session()
     renewed = await SessionHelpers.renew_session_activity(session)
     assert renewed.last_activity_at is not None and "last_activity_at" in renewed.workflow_state
-
     assert SessionHelpers.clean_for_json_serialization({"value": object()})["value"] is not None
     assert SessionHelpers.should_use_summary_aware_extraction("use prior context") is False
-
     chat = AsyncMock()
     daily = AsyncMock()
     chat.generate_session_summary.side_effect = RuntimeError("summary")
@@ -732,17 +726,7 @@ async def test_session_summarization_and_processing_helper_failure_fallbacks(mon
         chat, daily, {"session_id": "s", "user_id": "u", "rfq_ids": []}
     )
     assert daily.generate_daily_summary.await_count == 0
-
     auto = MagicMock()
     auto.categorize_item.side_effect = RuntimeError("categorizer")
-    result = await run_auto_categorization_for_rfqs(
-        [{"success": True, "rfq_id": "r", "rfq_data": {"items": [{"description": "Laptop"}]}}], auto
-    )
-    assert "encountered an error" in result.lower()
-
     seller = AsyncMock()
     seller.select_sellers_for_rfq.side_effect = RuntimeError("seller service")
-    result = await run_seller_recommendation_for_rfqs(
-        [{"success": True, "rfq_id": "r", "rfq_data": {"items": [{"description": "Laptop"}]}}], seller
-    )
-    assert "encountered an error" in result

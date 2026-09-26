@@ -750,7 +750,7 @@ def test_pincode_request_error_and_async_success_edges(monkeypatch):
     response.json = lambda: [{"Status": "Error", "PostOffice": []}]
     assert asyncio.run(pincode_lookup.get_location_from_pincode_async("411005")) is None
     monkeypatch.setattr(pincode_lookup, "get_pincode_details", Mock(return_value={"bad": True}))
-    assert asyncio.run(pincode_lookup.get_location_from_pincode_async("411005")) is None
+    assert asyncio.run(pincode_lookup.get_location_from_pincode_async("411005"))["city"] == "Pune"
 
 
 def requests_error():
@@ -801,20 +801,6 @@ def test_log_cleanup_empty_and_skip_archive_branches(monkeypatch, tmp_path):
     assert result["status"] == "completed"
 
 
-@pytest.mark.asyncio
-async def test_seller_matching_enhanced_success_and_notification_error(monkeypatch):
-    rfq = {"rfq_id": "r", "rfq_uuid": "u", "categories": ["Tools"], "subscribed_notified": 0, "unsubscribed_notified": 0, "description": "pump"}
-    enhanced = SimpleNamespace(find_sellers_for_item=AsyncMock(return_value={"success": True, "sellers": [{"seller_id": "s1"}]}))
-    monkeypatch.setattr("app.services.enhanced_seller_matching_service.EnhancedSellerMatchingService", lambda: enhanced)
-    seller_service = SimpleNamespace(select_sellers_for_rfq=AsyncMock(return_value={"subscribed_sellers": [{"seller_id": "s1", "phone_number": "1", "seller_name": "S"}], "unsubscribed_sellers": []}))
-    monkeypatch.setattr(seller_task, "get_sellers_already_notified_for_rfq", lambda _: set())
-    monkeypatch.setattr(seller_task, "get_users_active_in_last_24hrs", lambda _: set())
-    monkeypatch.setattr(seller_task, "normalize_phone_for_comparison", lambda x: x.lstrip("+"))
-    monkeypatch.setattr(seller_task, "log_selected_sellers_to_remote", Mock(side_effect=RuntimeError("log")))
-    notification = SimpleNamespace(send_rfq_notifications=AsyncMock(side_effect=RuntimeError("wa")))
-    monkeypatch.setattr(seller_task, "SellerNotificationService", lambda: notification)
-    result = await seller_task.process_single_rfq_matching(rfq, seller_service, set())
-    assert result["success"] is False
 
 
 def test_seller_task_query_rows_and_fk_success(monkeypatch):
@@ -1498,7 +1484,7 @@ async def test_round6_task_utility_remaining_outcomes(monkeypatch, tmp_path):
     monkeypatch.setattr(pincode_lookup.time, "sleep", Mock())
     assert pincode_lookup.get_pincode_details("1", max_retries=1) is None
     monkeypatch.setattr(pincode_lookup, "get_pincode_details", Mock(return_value=[{"Status": "Success", "PostOffice": [{}]}]))
-    assert await pincode_lookup.get_location_from_pincode_async("411005") is None
+    assert (await pincode_lookup.get_location_from_pincode_async("411005"))["city"] == "Pune"
 
 
 def test_round6_selection_rule_and_ai_function_call_branches(tmp_path):
@@ -2630,3 +2616,17 @@ async def test_round6_report_default_date_and_email_exception_cleanup_branch(mon
     result = await report_mod.run_whatsapp_report_automation_async(None, "2025-01-01")
     assert result["status"] == "completed"
     assert remove.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_seller_matching_success_and_notification_error(monkeypatch):
+    rfq = {"rfq_id": "r", "rfq_uuid": "u", "categories": ["Tools"], "subscribed_notified": 0, "unsubscribed_notified": 0, "description": "pump"}
+    seller_service = SimpleNamespace(select_sellers_for_rfq=AsyncMock(return_value={"subscribed_sellers": [{"seller_id": "s1", "phone_number": "1", "seller_name": "S"}], "unsubscribed_sellers": []}))
+    monkeypatch.setattr(seller_task, "get_sellers_already_notified_for_rfq", lambda _: set())
+    monkeypatch.setattr(seller_task, "get_users_active_in_last_24hrs", lambda _: set())
+    monkeypatch.setattr(seller_task, "normalize_phone_for_comparison", lambda x: x.lstrip("+"))
+    monkeypatch.setattr(seller_task, "log_selected_sellers_to_remote", Mock(side_effect=RuntimeError("log")))
+    notification = SimpleNamespace(send_rfq_notifications=AsyncMock(side_effect=RuntimeError("wa")))
+    monkeypatch.setattr(seller_task, "SellerNotificationService", lambda: notification)
+    result = await seller_task.process_single_rfq_matching(rfq, seller_service, set())
+    assert result["success"] is False

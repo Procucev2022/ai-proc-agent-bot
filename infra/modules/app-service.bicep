@@ -29,9 +29,6 @@ param maxReplicas int = 5
 @description('Redis Host')
 param redisHost string
 
-@description('Chroma Host')
-param chromaHost string
-
 @description('Database URL')
 @secure()
 param databaseUrl string
@@ -184,18 +181,6 @@ resource appContainer 'Microsoft.App/containerApps@2023-05-01' = {
             {
               name: 'CELERY_RESULT_BACKEND'
               value: 'redis://${redisHost}:6379/1'
-            }
-            {
-              name: 'CHROMA_HOST'
-              value: chromaHost
-            }
-            {
-              name: 'CHROMA_PORT'
-              value: '8000'
-            }
-            {
-              name: 'CHROMA_USE_SERVER'
-              value: 'true'
             }
             {
               name: 'CLIENT_DATABASE_URL'

@@ -46,9 +46,6 @@ os.environ.setdefault("LICENSE_ENABLED", "false")
 os.environ.setdefault("DASHBOARD_API_KEY", "unit-test-dashboard-key")
 os.environ.setdefault("WHATSAPP_MOCK_MODE", "true")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
-os.environ.setdefault("CHROMA_HOST", "localhost")
-os.environ.setdefault("CHROMA_PORT", "8000")
-os.environ.setdefault("CHROMA_USE_SERVER", "true")
 os.environ.setdefault("WEBHOOK_HEALTH_MONITORING_ENABLED", "false")
 
 # A test that pointed a service's prompts_dir or tools_dir at the real package and then

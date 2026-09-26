@@ -341,15 +341,6 @@ async def test_clarification_entities_and_empty_categorization_fallback(service)
     assert "[base64_data]" in clarification_request
     assert "secret-base64" not in clarification_request
 
-    client.responses.create.return_value = response(None, usage=False)
-    categorized = await obj.categorize_with_similar_items("unknown item", [])
-    assert categorized == {
-        "category": None,
-        "confidence_score": 0,
-        "reasoning": "No function call in response",
-        "success": False,
-    }
-
 
 @pytest.mark.asyncio
 async def test_rfq_confirmation_serialization_and_opt_out_error(service):

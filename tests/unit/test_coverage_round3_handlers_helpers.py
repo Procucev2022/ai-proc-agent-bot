@@ -21,7 +21,6 @@ import app.services.helpers.authentication_helpers as authentication_mod
 import app.services.helpers.chat_service_helpers as chat_mod
 import app.services.helpers.excel_confirmation_helpers as excel_confirmation_mod
 import app.services.helpers.excel_helpers as excel_mod
-import app.services.helpers.rfq_processing_helpers as rfq_mod
 import app.services.helpers.session_helpers as session_mod
 import app.services.helpers.summarization_helpers as summarization_mod
 import app.services.helpers.support_helpers as support_mod
@@ -35,10 +34,6 @@ from app.services.helpers.authentication_helpers import AuthenticationHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.services.helpers.excel_confirmation_helpers import ExcelConfirmationHelpers
 from app.services.helpers.excel_helpers import ExcelHelpers
-from app.services.helpers.rfq_processing_helpers import (
-    run_auto_categorization_for_rfqs,
-    run_seller_recommendation_for_rfqs,
-)
 from app.services.helpers.session_helpers import SessionHelpers
 from app.services.helpers.summarization_helpers import SummarizationHelpers
 from app.services.helpers.support_helpers import SupportHelpers
@@ -494,53 +489,6 @@ def test_excel_confirmation_and_excel_helper_remaining_fallbacks(monkeypatch):
     )[0]
 
 
-@pytest.mark.asyncio
-async def test_rfq_processing_all_categorization_shapes_and_seller_fallbacks():
-    auto = MagicMock()
-    auto.categorize_item.side_effect = [
-        {"success": True, "category": "IT", "confidence_score": 0.8},
-        {"success": True, "auto_categorization": {"category": "Office", "confidence_score": 0.7}},
-        {"success": True},
-        {"success": False, "error": "no category"},
-        {"success": False, "error": "failed"},
-    ]
-    enhanced = AsyncMock()
-    enhanced.categorize_item.side_effect = [
-        {"success": False},
-        {"success": True, "client_category": "Medical", "confidence_score": 0.9},
-        RuntimeError("enhanced down"),
-        {"success": False},
-        {"success": False},
-    ]
-    result = await run_auto_categorization_for_rfqs(
-        [{"success": True, "rfq_id": "r", "rfq_data": {"items": [{"description": "one"}, {"description": "two"}, {"description": "three"}, {"description": "four"}, {"description": "five"}, {"description": ""}]}}],
-        auto,
-        enhanced,
-    )
-    assert "4/5" in result
-
-    failed_auto = MagicMock(categorize_item=Mock(return_value={"success": False, "error": "failed"}))
-    result = await run_auto_categorization_for_rfqs(
-        [{"success": True, "rfq_id": "r", "rfq_data": {"items": [{"description": "one"}]}}],
-        failed_auto,
-    )
-    assert "categorization failed" in result
-    assert "no items" in (await run_auto_categorization_for_rfqs([{"success": True, "rfq_id": "r", "rfq_data": {}}], failed_auto)).lower()
-    assert "no items" in (await run_auto_categorization_for_rfqs([{"success": True, "rfq_data": {"items": []}}], failed_auto)).lower()
-
-    selector = SimpleNamespace(select_sellers_for_rfq=AsyncMock(return_value={"total_selected": 0}))
-    enhanced_match = SimpleNamespace(find_sellers_for_item=AsyncMock(return_value={"success": False}))
-    no_sellers = await run_seller_recommendation_for_rfqs(
-        [
-            {"success": True, "rfq_id": "r", "rfq_data": {"items": [{"description": ""}]}},
-            {"success": True, "rfq_id": "empty", "rfq_data": {}},
-            {"success": True, "rfq_data": {"items": []}},
-        ],
-        selector,
-        enhanced_match,
-    )
-    assert "no matching sellers" in no_sellers
-    assert selector.select_sellers_for_rfq.await_args.args[0]["categories"] == ["General Equipment"]
 
 
 @pytest.mark.asyncio

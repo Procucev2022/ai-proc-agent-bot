@@ -1002,10 +1002,8 @@ class RegistrationService:
             items = parsing_result.get("items", [])
             logger.info(f"Parsed {len(items)} items from seller details: {items}")
 
-            # Step 2: Get auto categorization service singleton.
-            # Resolved off the event loop and time-boxed: on a cold worker this loads a
-            # Sentence Transformer model, and doing that inline used to block the worker
-            # until gunicorn killed it, so the seller never got a confirmation.
+            # Step 2: Get the auto categorization service (time-boxed so a slow
+            # categorizer can never hold up the seller's confirmation).
             init_timeout = self.settings.categorization_init_timeout_seconds
             item_timeout = self.settings.categorization_item_timeout_seconds
             try:
@@ -1019,8 +1017,7 @@ class RegistrationService:
             except asyncio.TimeoutError:
                 logger.warning(
                     f"Auto-categorization service not ready within {init_timeout}s - "
-                    "continuing registration without categorization "
-                    "(the model keeps loading in the background)"
+                    "continuing registration without categorization"
                 )
                 return []
             except Exception as e:

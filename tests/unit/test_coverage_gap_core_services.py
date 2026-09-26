@@ -17,7 +17,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pandas as pd
 import pytest
 
-import app.services.auto_categorization_service as auto_mod
 import app.services.conversation_analytics_service as analytics_mod
 import app.services.daily_aggregation_service as aggregation_mod
 import app.services.daily_summary_service as summary_mod
@@ -891,13 +890,3 @@ async def test_webhook_health_constructor_and_standby_cleanup(monkeypatch):
 # Auto-categorization singleton --------------------------------------------
 
 
-def test_auto_categorization_factory_empty_collection_and_project_fallback(monkeypatch):
-    from app.config import get_settings
-    monkeypatch.setattr(get_settings(), "enable_vector_search", True)
-    fake =SimpleNamespace(collection=SimpleNamespace(count=MagicMock(return_value=0)), populate_embeddings_from_db=MagicMock())
-    monkeypatch.setattr(auto_mod, "_auto_categorization_service_instance", None)
-    monkeypatch.setattr(auto_mod, "AutoCategorizationService", lambda: fake)
-    assert auto_mod.get_auto_categorization_service() is fake
-    fake.populate_embeddings_from_db.assert_called_once()
-    assert auto_mod.get_auto_categorization_service() is fake
-    assert auto_mod.get_project_root().joinpath("app").exists()
