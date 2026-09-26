@@ -26,7 +26,6 @@ import app.procucev_apis.category_apis as category_api
 import app.procucev_apis.procucev_api_client as client_module
 import app.procucev_apis.seller_apis as seller_api
 import app.tasks.bfs_notification_task as bfs_task
-import app.tasks.category_name_sync_task as category_task
 import app.tasks.log_cleanup_task as cleanup_task
 import app.tasks.seller_matching_task as seller_task
 import app.tasks.taxonomy_build_task as taxonomy_task
@@ -488,18 +487,6 @@ async def test_bfs_notification_inactive_split_and_unsent_results(monkeypatch):
     assert service.send_bfs_bid_notifications_batch.await_args.kwargs["notifications"][1]["bid_data"]["buy_price"] == 7
 
 
-def test_category_sync_path_and_outer_failure(monkeypatch):
-    original_path = list(category_task.sys.path)
-    project_path = category_task.os.path.abspath(category_task.os.path.join(category_task.os.path.dirname(__file__), "../.."))
-    category_task.sys.path[:] = [p for p in original_path if p != project_path]
-    category_task._add_project_path()
-    assert project_path in category_task.sys.path
-    category_task._add_project_path()
-
-    monkeypatch.setattr(category_task, "_add_project_path", Mock(side_effect=RuntimeError("path")))
-    result = category_task.sync_category_names.run()
-    assert result["status"] == "failed" and result["error"] == "path"
-    category_task.sys.path[:] = original_path
 
 
 def test_cleanup_current_style_and_existing_archive(monkeypatch, tmp_path):
@@ -523,41 +510,6 @@ def test_cleanup_current_style_and_existing_archive(monkeypatch, tmp_path):
     assert manager._extract_date_from_filename("bad_2024-20-40.log") is None
 
 
-@pytest.mark.asyncio
-async def test_seller_matching_enhanced_candidates_and_notification_flow(monkeypatch):
-    from app.config import get_settings
-    monkeypatch.setattr(get_settings(), "enable_vector_search", True)
-    monkeypatch.setattr(seller_task, "get_sellers_already_notified_for_rfq", lambda _: set())
-    monkeypatch.setattr(seller_task, "get_rfq_item_categories", lambda _: ["Tools"])
-    monkeypatch.setattr(seller_task, "get_users_active_in_last_24hrs", lambda phones: {"111"})
-    monkeypatch.setattr(seller_task, "normalize_phone_for_comparison", lambda phone: phone.lstrip("+"))
-    enhanced = SimpleNamespace(
-        find_sellers_for_item=AsyncMock(return_value={"success": True, "sellers": [{"seller_id": "s1"}]})
-    )
-    monkeypatch.setattr(
-        "app.services.enhanced_seller_matching_service.EnhancedSellerMatchingService",
-        lambda: enhanced,
-    )
-    seller = {"seller_id": "s1", "phone_number": "+111", "seller_name": "S", "categories": ["Tools"]}
-    standard = SimpleNamespace(
-        select_sellers_for_rfq=AsyncMock(
-            return_value={"subscribed_sellers": [seller], "unsubscribed_sellers": []}
-        )
-    )
-    monkeypatch.setattr(seller_task, "log_selected_sellers_to_remote", Mock(return_value=True))
-    notification = SimpleNamespace(
-        send_rfq_notifications=AsyncMock(
-            return_value={"sent": 1, "failed": 0, "results": [{"seller_id": "s1", "success": True}]}
-        )
-    )
-    monkeypatch.setattr(seller_task, "SellerNotificationService", lambda: notification)
-    monkeypatch.setattr(seller_task, "record_rfq_seller_notifications", Mock())
-    result = await seller_task.process_single_rfq_matching(
-        {"rfq_id": "r", "rfq_uuid": "u", "description": "tools"}, standard, set()
-    )
-    assert result["sellers_matched"] == 1
-    assert result["interactive_messages"] == 1
-    assert standard.select_sellers_for_rfq.await_args.kwargs["candidate_seller_ids"] == ["s1"]
 
 
 async def _taxonomy_loader(monkeypatch, process):
@@ -598,14 +550,13 @@ async def test_taxonomy_parallel_failed_result_and_single_batch_failure(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_vector_sync_embedding_exception_and_empty_learning_taxonomy(monkeypatch):
+async def test_vector_sync_mapping_success_and_empty_learning_taxonomy(monkeypatch):
     settings = SimpleNamespace(enable_vector_store_sync=True)
     monkeypatch.setattr(vector_task, "get_settings", lambda: settings)
     monkeypatch.setattr(vector_task, "_run_seller_category_mapping", lambda: {"success": True})
-    monkeypatch.setattr(vector_task, "_run_vector_embedding_creation", Mock(side_effect=RuntimeError("chroma")))
     result = vector_task.sync_vector_store.run()
-    assert result["status"] == "partial_failure"
-    assert result["steps_failed"][0]["step"] == "vector_embedding_creation"
+    assert result["status"] == "completed"
+    assert result["steps_completed"] == ["seller_category_mapping"]
 
     database_module = importlib.import_module("app.database")
     models_module = importlib.import_module("app.models")
@@ -683,7 +634,8 @@ def test_datetime_logging_and_pincode_lookup_remaining_branches(monkeypatch):
         "get_pincode_details",
         lambda _pin: [{"Status": "Success", "PostOffice": [{}]}],
     )
-    assert asyncio.run(pincode_lookup.get_location_from_pincode_async("411005")) is None
+    # Incomplete API data falls back to the prefix map instead of rejecting the pincode
+    assert asyncio.run(pincode_lookup.get_location_from_pincode_async("411005"))["city"] == "Pune"
 
 
 def test_pincode_distance_and_parser_malformed_inputs(monkeypatch):
@@ -708,3 +660,30 @@ def test_pincode_distance_and_parser_malformed_inputs(monkeypatch):
     assert sectioned_parser._sanitize_text("a\x00b") == "ab"
     assert sectioned_parser._truncate_text("abcdef", 4) == "a..."
     assert sectioned_parser.generate_items_display_with_missing([{"description": "x", "quantity": 1}], [])[1] == []
+
+
+@pytest.mark.asyncio
+async def test_seller_matching_standard_rules_and_notification_flow(monkeypatch):
+    monkeypatch.setattr(seller_task, "get_sellers_already_notified_for_rfq", lambda _: set())
+    monkeypatch.setattr(seller_task, "get_rfq_item_categories", lambda _: ["Tools"])
+    monkeypatch.setattr(seller_task, "get_users_active_in_last_24hrs", lambda phones: {"111"})
+    monkeypatch.setattr(seller_task, "normalize_phone_for_comparison", lambda phone: phone.lstrip("+"))
+    seller = {"seller_id": "s1", "phone_number": "+111", "seller_name": "S", "categories": ["Tools"]}
+    standard = SimpleNamespace(
+        select_sellers_for_rfq=AsyncMock(
+            return_value={"subscribed_sellers": [seller], "unsubscribed_sellers": []}
+        )
+    )
+    monkeypatch.setattr(seller_task, "log_selected_sellers_to_remote", Mock(return_value=True))
+    notification = SimpleNamespace(
+        send_rfq_notifications=AsyncMock(
+            return_value={"sent": 1, "failed": 0, "results": [{"seller_id": "s1", "success": True}]}
+        )
+    )
+    monkeypatch.setattr(seller_task, "SellerNotificationService", lambda: notification)
+    monkeypatch.setattr(seller_task, "record_rfq_seller_notifications", Mock())
+    result = await seller_task.process_single_rfq_matching(
+        {"rfq_id": "r", "rfq_uuid": "u", "description": "tools"}, standard, set()
+    )
+    assert result["sellers_matched"] == 1
+    assert result["interactive_messages"] == 1

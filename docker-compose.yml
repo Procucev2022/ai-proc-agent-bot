@@ -71,10 +71,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - WORKERS=${APP_WORKERS:-10}  # 10 workers × ~1.6GB = ~16GB
       - WORKER_THREADS=${APP_WORKER_THREADS:-2}
-      - HF_HUB_OFFLINE=1
-      - TRANSFORMERS_OFFLINE=1
       - TQDM_DISABLE=1
-      - HF_HUB_DISABLE_PROGRESS_BARS=1
     volumes:
       - ./logs:/app/logs  # Log persistence for rotation and analysis
       - /data/procucev_project/procucev_proc_agent/ssl:/app/ssl:ro  # SSL certs (read-only)
@@ -148,10 +145,7 @@ services:
       - C_FORCE_ROOT=1
       - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-1}
       - CELERY_SINGLE_WORKER=true
-      - HF_HUB_OFFLINE=1
-      - TRANSFORMERS_OFFLINE=1
       - TQDM_DISABLE=1
-      - HF_HUB_DISABLE_PROGRESS_BARS=1
     volumes:
       - ./logs:/app/logs
       - /data/procucev_project/procucev_proc_agent/ssl:/app/ssl:ro

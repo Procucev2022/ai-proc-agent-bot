@@ -106,8 +106,12 @@ def get_location_from_pincode(pincode: str) -> Optional[Dict[str, str]]:
     return get_fallback_location(pincode)
 
 
-def get_pincode_details(pincode, max_retries=1, timeout=3):
-    """Fetch location details for a given Indian pincode."""
+def get_pincode_details(pincode, max_retries=2, timeout=5):
+    """Fetch location details for a given Indian pincode.
+
+    The public postal API regularly takes 2-4s and sometimes drops a request, so it
+    gets a 5s timeout and one retry before the caller falls back to the prefix map.
+    """
     url = f"https://api.postalpincode.in/pincode/{pincode}"
 
     headers = {
@@ -140,6 +144,23 @@ def get_pincode_details(pincode, max_retries=1, timeout=3):
     return None
 
 
+def _fallback_when_api_unavailable(pincode: str, reason: str) -> Optional[Dict[str, str]]:
+    """Resolve from the prefix map when the postal API gave no usable answer.
+
+    A slow or unreachable API must not reject a valid pincode, so only an explicit
+    "not found" from the API rejects one; every other failure lands here.
+    """
+    location = get_fallback_location(pincode)
+    if location:
+        logger.warning(
+            f"Postal API unavailable for pincode {pincode} ({reason}); using prefix "
+            f"fallback: {location['city']}, {location['state']}"
+        )
+    else:
+        logger.warning(f"Postal API unavailable for pincode {pincode} ({reason}) and no prefix fallback")
+    return location
+
+
 async def get_location_from_pincode_async(pincode: str) -> Optional[Dict[str, str]]:
     """Get location from pincode using non-blocking thread execution."""
     clean_pincode = str(pincode).strip()
@@ -151,15 +172,18 @@ async def get_location_from_pincode_async(pincode: str) -> Optional[Dict[str, st
         data = await asyncio.to_thread(get_pincode_details, clean_pincode)
 
         if not data or not isinstance(data, list) or len(data) == 0:
-            return None
+            return _fallback_when_api_unavailable(clean_pincode, "no response")
 
         result = data[0]
-        if not isinstance(result, dict) or result.get("Status") != "Success" or not result.get("PostOffice"):
+        if not isinstance(result, dict):
+            return _fallback_when_api_unavailable(clean_pincode, "malformed response")
+        if result.get("Status") != "Success" or not result.get("PostOffice"):
+            # The API answered and does not know this pincode: it is invalid.
             return None
 
         post_office = result["PostOffice"][0]
         if not isinstance(post_office, dict) or "District" not in post_office or "State" not in post_office:
-            return None
+            return _fallback_when_api_unavailable(clean_pincode, "incomplete post office data")
 
         location = {
             "pincode": clean_pincode,
@@ -173,7 +197,4 @@ async def get_location_from_pincode_async(pincode: str) -> Optional[Dict[str, st
         return location
 
     except Exception as e:
-        logger.warning(
-            f"Could not fetch location for pincode {clean_pincode} returning none: {e}"
-        )
-        return None
+        return _fallback_when_api_unavailable(clean_pincode, f"{type(e).__name__}: {e}")

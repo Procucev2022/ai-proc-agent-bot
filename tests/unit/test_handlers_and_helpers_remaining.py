@@ -17,10 +17,6 @@ from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.services.helpers.excel_confirmation_helpers import ExcelConfirmationHelpers
 from app.services.helpers.excel_helpers import ExcelHelpers
 from app.services.helpers.response_helpers import ResponseHelpers
-from app.services.helpers.rfq_processing_helpers import (
-    run_auto_categorization_for_rfqs,
-    run_seller_recommendation_for_rfqs,
-)
 from app.services.helpers.session_helpers import SessionHelpers
 from app.services.helpers.summarization_helpers import SummarizationHelpers
 from app.services.helpers.support_helpers import SupportHelpers
@@ -402,24 +398,6 @@ async def test_summarization_history_redis_rich_entities_and_completion(monkeypa
     chat.generate_session_summary.assert_awaited_once(); daily.generate_daily_summary.assert_awaited_once_with("u")
 
 
-@pytest.mark.asyncio
-async def test_rfq_processing_categorization_and_seller_matching():
-    auto = MagicMock(); auto.categorize_item.side_effect = [
-        {"success": True, "client_category": "IT", "confidence_score": .9},
-        {"success": False, "error": "no"},
-    ]
-    enhanced = AsyncMock(); enhanced.categorize_item.return_value = {"success": False}
-    results = [{"success": False}, {"success": True, "rfq_id": "r", "rfq_data": {"items": [{"description": "Laptop"}, {"description": ""}]}}]
-    result = await run_auto_categorization_for_rfqs(results, auto, enhanced)
-    assert "successfully" in result.lower() and auto.categorize_item.called
-    assert "no items" in (await run_auto_categorization_for_rfqs([{"success": True, "rfq_id": "r", "rfq_data": {}}], auto)).lower()
-
-    sellers = AsyncMock(); sellers.select_sellers_for_rfq.return_value = {"total_selected": 2, "subscribed_sellers": [{"seller_name": "A"}], "unsubscribed_sellers": [{"seller_name": "B"}]}
-    enhanced_match = AsyncMock(); enhanced_match.find_sellers_for_item.return_value = {"success": True, "sellers": [{"seller_name": "E", "subscription_credits": 1}]}
-    text = await run_seller_recommendation_for_rfqs([{"success": True, "rfq_id": "r", "rfq_data": {"items": [{"description": "medical laptop", "division": "IT"}]}}], sellers, enhanced_match)
-    second_matching = await run_seller_recommendation_for_rfqs([{"success": True, "rfq_id": "r", "rfq_data": {"items": [{"description": "medical"}]}}], sellers)
-    assert "Medical Equipment" in str(sellers.select_sellers_for_rfq.await_args) and "sellers have been notified" in second_matching
-    assert "no RFQs" in await run_seller_recommendation_for_rfqs([], sellers)
 
 
 def test_support_helpers_template_and_missing_implementation_paths(tmp_path):

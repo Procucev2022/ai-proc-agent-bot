@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-import sys
 import types
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
@@ -163,7 +162,7 @@ async def test_taxonomy_sequential_multiple_batches_empty_and_outer_errors(monke
 # Vector-store task ---------------------------------------------------------
 
 
-def test_vector_sync_outer_timeout_cleanup_and_embedding_error(monkeypatch):
+def test_vector_sync_outer_timeout_cleanup_and_mapping_error(monkeypatch):
     monkeypatch.setattr(vector_sync, "get_settings", Mock(side_effect=SoftTimeLimitExceeded()))
     timeout = vector_sync.sync_vector_store.run()
     assert timeout["status"] == "timeout"
@@ -189,26 +188,17 @@ def test_vector_sync_outer_timeout_cleanup_and_embedding_error(monkeypatch):
     mapping = vector_sync._run_seller_category_mapping()
     assert mapping["success"] is False and "mapping" in mapping["error"]
 
-    module = types.ModuleType("create_category_embeddings")
-    module.create_unified_vector_store = Mock(side_effect=RuntimeError("chroma"))
-    monkeypatch.setitem(sys.modules, "create_category_embeddings", module)
-    embedding = vector_sync._run_vector_embedding_creation()
-    assert embedding["success"] is False and "chroma" in embedding["error"]
 
-
-def test_vector_sync_cleanup_failure_and_embedding_exception_statuses(monkeypatch):
+def test_vector_sync_cleanup_failure_still_completes_mapping(monkeypatch):
     settings = SimpleNamespace(enable_vector_store_sync=True)
     monkeypatch.setattr(vector_sync, "get_settings", lambda: settings)
     monkeypatch.setattr(vector_sync, "_cleanup_buyer_mappings", Mock(side_effect=RuntimeError("cleanup")))
     monkeypatch.setattr(vector_sync, "_run_seller_category_mapping", lambda: {"success": True})
-    monkeypatch.setattr(vector_sync, "_run_vector_embedding_creation", Mock(side_effect=RuntimeError("embed")))
     result = vector_sync.sync_vector_store.run(cleanup_buyer_mappings=True)
-    assert result["status"] == "partial_failure"
+    assert result["status"] == "completed"
     assert result["steps_failed"][0]["step"] == "buyer_mapping_cleanup"
-    assert result["steps_failed"][1]["step"] == "vector_embedding_creation"
+    assert result["steps_completed"] == ["seller_category_mapping"]
 
-    monkeypatch.setattr(vector_sync, "_run_seller_category_mapping", lambda: {"success": True})
-    monkeypatch.setattr(vector_sync, "_run_vector_embedding_creation", lambda **_: {"success": True, "total_items": 4})
     completed = vector_sync.sync_vector_store.run()
     assert completed["status"] == "completed"
 

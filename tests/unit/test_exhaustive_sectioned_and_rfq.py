@@ -1,6 +1,6 @@
 """Deterministic direct-method coverage for sectioned RFQ and related services.
 
-Every network, database, Redis, Chroma, OpenAI, WhatsApp, email, and timer
+Every network, database, Redis, OpenAI, WhatsApp, email, and timer
 boundary in this module is replaced with an in-memory mock.  The tests are
 intentionally method-oriented so state-machine branches remain visible.
 """
@@ -24,7 +24,6 @@ import app.services.handlers.purchase_workflow_handler as workflow_mod
 import app.services.rfq_background_service as background_mod
 import app.services.rfq_intimation_service as intimation_mod
 import app.services.webhook_health_monitor_service as health_mod
-import app.services.enhanced_auto_categorization_service as categorization_mod
 import app.services.enhanced_excel_report_service as report_mod
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 
@@ -908,64 +907,10 @@ async def test_health_monitor_loops_sessions_and_email_branches(monkeypatch):
 # Enhanced categorization
 
 
-def categorization_service():
-    c = bare(categorization_mod.EnhancedAutoCategorizationService, collection=MagicMock(), category_collection=MagicMock(), fallback_service=MagicMock(), openai_service=MagicMock())
-    return c
 
 
-def test_categorization_keyword_cross_validation_hybrid_hierarchy(monkeypatch):
-    c = categorization_service()
-    assert c._build_enhanced_description("Battery", {"level_3_category": "Battery", "level_2_category": "Power"}) == "Battery Power"
-    monkeypatch.setattr(categorization_mod, "execute_remote_query", lambda *_: [{"category": "Power", "freq": 2}])
-    assert c._keyword_lookup_source_of_truth("power")["success"]
-    monkeypatch.setattr(categorization_mod, "execute_remote_query", lambda *_: [])
-    assert not c._keyword_lookup_source_of_truth("unknown")["success"]
-    c._keyword_lookup_source_of_truth = MagicMock(return_value={"success": True, "category": "Other", "consensus": .5})
-    assert c._cross_validate_with_fallback("x", "Tools", .5)["recommended_category"] == "Other"
-    c._keyword_lookup_source_of_truth.return_value = {"success": False}; c.fallback_service.collection.query.return_value = {"metadatas": [[]], "distances": [[]]}
-    assert c._cross_validate_with_fallback("x", "Tools", .5)["use_learning"]
-    c.fallback_service.collection.query.return_value = {"metadatas": [[{"category": "Tools"}, {"category": "Other"}]], "distances": [[.2, .8]]}
-    assert c._cross_validate_with_fallback("x", "Tools", .5)["validated"]
-    c.category_collection.count.return_value = 0; assert not c._search_by_category_name("x")["success"]
-    c.category_collection.count.return_value = 1; c.category_collection.query.return_value = {"documents": [["Tools"]], "metadatas": [[{"item_count": 2}]], "distances": [[.2]]}
-    assert c._search_by_category_name("x")["best_match"]["category_name"] == "Tools"
-    assert c._hybrid_category_selection("Tools", .8, {"success": True, "matches": [{"category_name": "Tools", "similarity": .8}]})["agreement"]
-    assert c._hybrid_category_selection("Tools", .9, {"success": True, "matches": [{"category_name": "Other", "similarity": .9}]})["method"] == "hybrid_item_trusted"
-    assert c._hybrid_category_selection("Tools", .3, {"success": True, "matches": [{"category_name": "Other", "similarity": .8}]})["method"] in {"hybrid_category_override", "hybrid_item_preferred"}
-    meta = {"level_3_category": "L3", "level_2_category": "L2", "level_1_category": "L1", "client_category_name": "Tools"}
-    c.collection.query.return_value = {"documents": [["x"]], "metadatas": [[meta]], "distances": [[.2]]}
-    assert c._search_hierarchical_levels("x")["success"]
-    c.collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
-    assert not c._search_hierarchical_levels("x")["success"]
 
 
-@pytest.mark.asyncio
-async def test_categorization_pipeline_learning_logging_health_stats(monkeypatch):
-    c = categorization_service(); c.chroma_path = "mock"
-    c._keyword_lookup_source_of_truth = MagicMock(return_value={"success": False})
-    c._search_hierarchical_levels = MagicMock(return_value={"success": True, "similarity_score": .95, "best_match": {"client_category_name": "Tools"}, "all_level_matches": [{"metadata": {"client_category_name": "Tools", "item_description": "bolt"}, "similarity_score": .95, "matched_level": "level_3"}]})
-    c._log_categorization = MagicMock()
-    assert (await c.categorize_item("bolt", "u"))["method"] == "enhanced_taxonomy_high_similarity"
-    c._search_hierarchical_levels.return_value = {"success": False}; c.fallback_service._get_similar_items.return_value = []
-    c._log_fallback_categorization = MagicMock(); assert (await c.categorize_item("x", "u"))["client_category"] == "Other"
-    c.fallback_service._get_similar_items.return_value = [{"category": "Tools", "similarity_score": .7}]
-    c.openai_service.categorize_with_similar_items = AsyncMock(return_value={"success": True, "category": "Tools", "confidence": .8})
-    c._update_learning_taxonomy = AsyncMock(return_value=True)
-    assert (await c.categorize_item("x", "u"))["method"] == "enhanced_fallback_openai"
-    c._keyword_lookup_source_of_truth.side_effect = RuntimeError("bad"); assert (await c.categorize_item("x", "u"))["method"] == "enhanced_error"
-    c.collection.count.return_value = 1; c.category_collection.count.return_value = 2; c.fallback_service.get_collection_stats.return_value = {"n": 1}; assert c.health_check()["overall_status"] == "healthy"
-    c.collection.count.side_effect = RuntimeError("chroma"); assert c.health_check()["overall_status"] == "unhealthy"
-    c.collection.count.side_effect = None; c.collection.count.return_value = 2; c.category_collection.count.return_value = 3; c.fallback_service.get_collection_stats.return_value = {"n": 1}; assert c.get_stats()["unified_vector_store"]["total_items"] == 2
-    c.collection.count.side_effect = RuntimeError("db"); assert "error" in c.get_stats()
-    c._update_learning_taxonomy = categorization_mod.EnhancedAutoCategorizationService._update_learning_taxonomy.__get__(c)
-    monkeypatch.setattr("app.services.learning_categorization_service.LearningCategorizationService", lambda: SimpleNamespace(create_3_level_category=AsyncMock(return_value={"success": True})))
-    assert await c._update_learning_taxonomy("x", "Tools", "u")
-    db = DB(); monkeypatch.setattr(categorization_mod, "get_db_session", lambda: db)
-    c._log_categorization = categorization_mod.EnhancedAutoCategorizationService._log_categorization.__get__(c)
-    c._log_categorization("x", "u", None, None, "Tools", .8, .5, "manual", 1)
-    assert db.added
-    c._log_fallback_categorization = categorization_mod.EnhancedAutoCategorizationService._log_fallback_categorization.__get__(c)
-    c._log_fallback_categorization("x", "u", None, None, "Tools", .5, "fallback", 1, "no_match")
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,6 @@ import app.services.handlers.sectioned_rfq_creation_handler as sectioned_mod
 import app.services.handlers.seller_rfq_interest_handler as interest_mod
 import app.services.helpers.authentication_helpers as authentication_helpers_mod
 import app.services.helpers.chat_service_helpers as chat_helpers_mod
-import app.services.helpers.rfq_processing_helpers as rfq_processing_mod
 import app.services.helpers.support_helpers as support_mod
 from app.models import ConversationOutcome, WorkflowType
 from app.services.handlers.auth_registration_intent_switch import AuthRegistrationIntentSwitch
@@ -143,55 +142,6 @@ def test_support_helper_current_checkout_paths(tmp_path, monkeypatch):
     assert result["success"] is False and "format" in result["error"]
 
 
-@pytest.mark.asyncio
-async def test_rfq_processing_all_result_formats_and_fallbacks():
-    auto = MagicMock()
-    auto.categorize_item.side_effect = [
-        {"success": True, "category": "IT", "confidence_score": .7},
-        {"success": True, "auto_categorization": {"category": "Office", "confidence_score": .8}},
-        {"success": False, "error": "failed"},
-    ]
-    enhanced = AsyncMock()
-    enhanced.categorize_item.side_effect = [
-        {"success": True, "client_category": "Medical", "confidence_score": .9},
-        RuntimeError("down"),
-        {"success": False, "error": "no"},
-    ]
-    result = await rfq_processing_mod.run_auto_categorization_for_rfqs([
-        {"success": True, "rfq_data": {"items": [{"description": "missing id"}]}},
-        {"success": True, "rfq_id": "r", "rfq_data": {"items": [
-            {"description": "medical equipment"}, {"description": "office chair"}, {"description": "laptop"}
-        ]}},
-    ], auto, enhanced)
-    assert "3/3" in result or "successfully" in result
-    assert "no items" in await rfq_processing_mod.run_auto_categorization_for_rfqs(
-        [{"success": True, "rfq_id": "r", "rfq_data": {}}], auto
-    )
-    bad_auto = MagicMock()
-    bad_auto.categorize_item.side_effect = RuntimeError("boom")
-    assert "encountered an error" in await rfq_processing_mod.run_auto_categorization_for_rfqs(
-        [{"success": True, "rfq_id": "r", "rfq_data": {"items": [{"description": "x"}]}}], bad_auto
-    )
-
-    sellers = AsyncMock()
-    sellers.select_sellers_for_rfq.side_effect = [
-        {"total_selected": 0},
-        {"total_selected": 1, "subscribed_sellers": [{"seller_name": "A"}], "unsubscribed_sellers": []},
-    ]
-    enhanced_match = AsyncMock()
-    enhanced_match.find_sellers_for_item.return_value = {"success": False}
-    result = await rfq_processing_mod.run_seller_recommendation_for_rfqs([
-        {"success": True, "rfq_id": "none", "rfq_data": {"items": [{"description": "unknown"}]}},
-        {"success": True, "rfq_id": "office", "rfq_data": {"items": [{"description": "office chair", "division": "Admin"}]}},
-    ], sellers, enhanced_match)
-    assert "sellers have been notified" in result
-    assert "no RFQs" in await rfq_processing_mod.run_seller_recommendation_for_rfqs([], sellers)
-    enhanced_match.find_sellers_for_item.side_effect = RuntimeError("match")
-    sellers.select_sellers_for_rfq.side_effect = None
-    sellers.select_sellers_for_rfq.return_value = {"total_selected": 0}
-    assert "no matching sellers" in await rfq_processing_mod.run_seller_recommendation_for_rfqs(
-        [{"success": True, "rfq_id": "r", "rfq_data": {"items": [{"description": "computer"}]}}], sellers, enhanced_match
-    )
 
 
 # Authentication and product orchestration --------------------------------

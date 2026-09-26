@@ -53,28 +53,55 @@ def test_pincode_http_retry_and_failure(monkeypatch):
     assert module.get_pincode_details("411005") is None
 
 
+PUNE_FALLBACK = {"pincode": "411005", "city": "Pune", "state": "Maharashtra"}
+
+
+def test_api_gets_a_5s_timeout_and_one_retry(monkeypatch):
+    calls = []
+
+    def get(*args, **kwargs):
+        calls.append(kwargs["timeout"])
+        raise requests.exceptions.Timeout("slow")
+
+    monkeypatch.setattr(module.requests, "get", get)
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: None)
+    assert module.get_pincode_details("560045") is None
+    assert calls == [5, 5]
+
+
 @pytest.mark.asyncio
 async def test_location_validation_and_mapping(monkeypatch):
     assert await module.get_location_from_pincode_async("123") is None
-    monkeypatch.setattr(module, "get_pincode_details", lambda pin, **kwargs: None)
-    assert await module.get_location_from_pincode_async("411005") is None
-    monkeypatch.setattr(module, "get_pincode_details", lambda pin, **kwargs: "not a list")
-    assert await module.get_location_from_pincode_async("411005") is None
-    monkeypatch.setattr(module, "get_pincode_details", lambda pin, **kwargs: [])
-    assert await module.get_location_from_pincode_async("411005") is None
+
+    # The API answered and does not know the pincode: rejected, no fallback
     monkeypatch.setattr(module, "get_pincode_details", lambda pin, **kwargs: [{"Status": "Error", "PostOffice": []}])
     assert await module.get_location_from_pincode_async("411005") is None
-    monkeypatch.setattr(module, "get_pincode_details", lambda pin, **kwargs: [{"Status": "Success", "PostOffice": [{"District": "Pune", "State": "MH"}]}])
-    assert await module.get_location_from_pincode_async("411005") == {"pincode": "411005", "city": "Pune", "state": "MH"}
-    monkeypatch.setattr(module, "get_pincode_details", lambda pin, **kwargs: [{"Status": "Success", "PostOffice": [{}]}])
+    monkeypatch.setattr(module, "get_pincode_details", lambda pin, **kwargs: [{"Status": "Success", "PostOffice": []}])
     assert await module.get_location_from_pincode_async("411005") is None
 
-    # Test exception handling inside get_location_from_pincode_async
+    monkeypatch.setattr(module, "get_pincode_details", lambda pin, **kwargs: [{"Status": "Success", "PostOffice": [{"District": "Pune", "State": "MH"}]}])
+    assert await module.get_location_from_pincode_async("411005") == {"pincode": "411005", "city": "Pune", "state": "MH"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("api_answer", [None, "not a list", [], ["not a dict"], [{"Status": "Success", "PostOffice": [{}]}]])
+async def test_unusable_api_answer_falls_back_to_prefix(monkeypatch, api_answer):
+    monkeypatch.setattr(module, "get_pincode_details", lambda pin, **kwargs: api_answer)
+    assert await module.get_location_from_pincode_async("411005") == PUNE_FALLBACK
+
+
+@pytest.mark.asyncio
+async def test_api_exception_falls_back_to_prefix(monkeypatch):
     def raise_exc(pin, **kwargs):
         raise ValueError("unexpected failure")
 
     monkeypatch.setattr(module, "get_pincode_details", raise_exc)
-    assert await module.get_location_from_pincode_async("411005") is None
+    assert await module.get_location_from_pincode_async("411005") == PUNE_FALLBACK
+    assert await module.get_location_from_pincode_async("560045") == {
+        "pincode": "560045", "city": "Bengaluru", "state": "Karnataka"
+    }
+    # Unknown prefix: nothing to fall back to, so the pincode is still rejected
+    assert await module.get_location_from_pincode_async("999999") is None
 
 
 

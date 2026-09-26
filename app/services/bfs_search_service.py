@@ -11,8 +11,7 @@ class BFSSearchService:
     """Service for BFS stock search operations."""
 
     def __init__(self):
-        # Resolved lazily. Building it loads a Sentence Transformer model, which must
-        # not happen in __init__ on the event loop.
+        # Resolved lazily on first use.
         self.auto_categorization_service = None
 
     async def get_product_category(

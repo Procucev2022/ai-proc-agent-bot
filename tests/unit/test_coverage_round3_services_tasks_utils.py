@@ -915,15 +915,11 @@ async def test_tasks_tools_logging_and_pincode_edges(monkeypatch, tmp_path):
     result = await matching_task.process_single_rfq_matching({"rfq_id": "r", "rfq_uuid": "u", "subscribed_notified": 0, "unsubscribed_notified": 0}, SimpleNamespace(), set())
     assert result["message"] == "No categories found in items"
     assert matching_task.extract_delivery_location({"delivery_city": "Pune"}) == {"city": "Pune"}
-    assert matching_task._build_item_description_for_rfq({"categories": ["Tools"], "description": "pump"}).startswith("Categories")
 
-    # Vector task success/failure/timeout branches with Chroma and DB mocked.
+    # Vector task (seller category mapping) success with the DB mocked.
     monkeypatch.setattr(vector_task, "get_settings", lambda: SimpleNamespace(enable_vector_store_sync=True))
     monkeypatch.setattr(vector_task, "_run_seller_category_mapping", lambda: {"success": True, "processed_count": 1})
-    monkeypatch.setattr(vector_task, "_run_vector_embedding_creation", lambda **_: {"success": True, "total_items": 1})
     assert vector_task.sync_vector_store.run()["status"] == "completed"
-    monkeypatch.setattr(vector_task, "_run_vector_embedding_creation", Mock(side_effect=RuntimeError("chroma")))
-    assert vector_task.sync_vector_store.run()["status"] == "partial_failure"
 
     # Log cleanup uses a temporary directory and no external service.
     logs = tmp_path / "logs"

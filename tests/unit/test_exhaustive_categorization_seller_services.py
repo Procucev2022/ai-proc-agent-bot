@@ -1,6 +1,6 @@
 """Exhaustive deterministic unit coverage for categorization and seller services.
 
-Every external boundary in this module is an in-memory double: Chroma, SQLAlchemy,
+Every external boundary in this module is an in-memory double: SQLAlchemy,
 Redis, OpenAI, WhatsApp, HTTP-facing adapters, timers, and background tasks.
 """
 
@@ -11,10 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import app.services.auto_categorization_service as auto_mod
-import app.services.enhanced_auto_categorization_service as enhanced_auto_mod
 import app.services.learning_categorization_service as learning_mod
-import app.services.enhanced_seller_matching_service as matching_mod
 import app.services.seller_categorization_service as seller_cat_mod
 import app.services.seller_recommendation_service as recommendation_mod
 import app.services.seller_notification_service as notification_mod
@@ -96,7 +93,7 @@ def bare(cls, **attrs):
 
 def settings(**overrides):
     data = dict(
-        chroma_host="localhost", chroma_port=8000, enable_remote_categorization=False,
+        enable_remote_categorization=False,
         redis_url="redis://localhost", workflow_timeout_enabled=True,
         workflow_timeout_seconds=300, timeout_poll_interval_seconds=1,
         activity_key_ttl_seconds=420, worker_timeout_threshold_seconds=135,
@@ -109,100 +106,8 @@ def settings(**overrides):
     return SimpleNamespace(**data)
 
 
-def chroma_service(monkeypatch, module, cls):
-    collection = Collection()
-    client = MagicMock()
-    client.get_or_create_collection.return_value = collection
-    client.heartbeat.return_value = True
-    monkeypatch.setattr(module, "get_settings", lambda: settings())
-    monkeypatch.setattr(module.embedding_functions, "SentenceTransformerEmbeddingFunction", lambda **_: "embedding")
-    monkeypatch.setattr(module.chromadb, "HttpClient", lambda **_: client)
-    monkeypatch.setattr(module, "OpenAIService", lambda: MagicMock())
-    return cls(), collection, client
-
-
 @pytest.mark.asyncio
-async def test_auto_and_learning_services_cover_entries_and_failures(monkeypatch):
-    monkeypatch.setattr(auto_mod, "LearningCategorizationService", lambda: MagicMock())
-    service, collection, client = chroma_service(monkeypatch, auto_mod, auto_mod.AutoCategorizationService)
-    assert auto_mod.get_project_root().is_dir()
-    auto_mod._auto_categorization_service_instance = service
-    assert auto_mod.get_auto_categorization_service() is service
-
-    collection.query.return_value = {"documents": [["bolt"]], "metadatas": [[{"category": "Tools", "item": "bolt"}]], "distances": [[-1]]}
-    assert service.find_similar_items("bolt")[0]["similarity_score"] == 1.0
-    collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
-    assert service.find_similar_items("none") == []
-    collection.query.side_effect = RuntimeError("query down")
-    with pytest.raises(RuntimeError): service.find_similar_items("bad")
-    collection.query.side_effect = [RuntimeError("404 does not exist"), {"distances": [[.2]], "metadatas": [[{"item": "x", "category": "C"}]]}]
-    client.get_or_create_collection.return_value = collection
-    assert service._get_similar_items("x")[0]["category"] == "C"
-    collection.query.side_effect = RuntimeError("other")
-    with pytest.raises(Exception): service._get_similar_items("x")
-
-    mapping = SimpleNamespace(id="m1", category="Hardware", item="nut")
-    local = DB(Query(values=[mapping]))
-    monkeypatch.setattr(auto_mod, "get_db_session", lambda: local)
-    assert service._get_local_category_data()[0]["item"] == "nut"
-    monkeypatch.setattr(auto_mod, "test_remote_connection", lambda: True)
-    monkeypatch.setattr(auto_mod, "get_remote_item_categories", lambda: [{"uuid": "r", "category": "C", "item": "i"}])
-    assert service._get_remote_category_data()[0]["id"] == "r"
-    monkeypatch.setattr(auto_mod, "test_remote_connection", lambda: False)
-    with pytest.raises(Exception): service._get_remote_category_data()
-    monkeypatch.setattr(auto_mod, "test_remote_connection", lambda: True)
-    monkeypatch.setattr(auto_mod, "get_remote_item_categories", lambda: (_ for _ in ()).throw(RuntimeError("remote")))
-    with pytest.raises(RuntimeError): service._get_remote_category_data()
-
-    collection.query.side_effect = None
-    collection.query.return_value = {"distances": [[.2, 1.8]], "metadatas": [[{"item": "a", "category": "A"}, {"item": "b", "category": "B"}]]}
-    assert len(service._get_similar_items("a")) == 2
-    service._log_categorization = MagicMock()
-    service._get_similar_items = MagicMock(return_value=[])
-    assert (await service.categorize_item("x", "u"))["reason"] == "no_similar_items_found"
-    service._get_similar_items.return_value = [{"item": "x", "category": "A", "similarity_score": .9}, {"item": "y", "category": "A", "similarity_score": .8}]
-    assert (await service.categorize_item("x", "u"))["category"] == "A"
-    service._get_similar_items.return_value = [{"item": "x", "category": "Other", "similarity_score": .4}]
-    service.openai_service.categorize_with_similar_items = AsyncMock(return_value={"success": True, "category": "Other"})
-    assert (await service.categorize_item("x", "u"))["success"]
-    service.openai_service.categorize_with_similar_items.return_value = {"success": False, "reasoning": "no"}
-    assert not (await service.categorize_item("x", "u"))["success"]
-    service._get_similar_items.side_effect = RuntimeError("vector")
-    assert not (await service.categorize_item("x", "u"))["success"]
-
-    db = DB()
-    monkeypatch.setattr(auto_mod, "get_db_session", lambda: db)
-    service._get_similar_items.side_effect = None
-    service.collection.upsert.reset_mock()
-    assert isinstance(service.add_category_mapping("A", "item"), str)
-    service.add_item_embedding("i", "A", "item")
-    client.delete_collection.return_value = None
-    service.clear_collection()
-    client.delete_collection.side_effect = RuntimeError("clear")
-    service.clear_collection()
-    db.add = MagicMock(side_effect=RuntimeError("db"))
-    with pytest.raises(Exception): service.add_category_mapping("A", "bad")
-    collection.count.return_value = 4
-    assert service.get_collection_stats()["total_items"] == 4
-    collection.count.side_effect = RuntimeError("stats")
-    assert "error" in service.get_collection_stats()
-
-    service.categorize_item = AsyncMock(return_value={"success": False})
-    assert (await service.categorize_with_learning("x", "u"))["learning_categorization"] is None
-    service.categorize_item.return_value = {"success": True, "category": "A", "similar_items_used": []}
-    service.learning_service.create_3_level_category = AsyncMock(return_value={"success": True})
-    assert (await service.categorize_with_learning("x", "u"))["success"]
-    service.categorize_item.side_effect = RuntimeError("bad")
-    assert not (await service.categorize_with_learning("x", "u"))["success"]
-    service.categorize_item.side_effect = None
-    service.openai_service.client = object()
-    collection.count.side_effect = None
-    collection.count.return_value = 2
-    monkeypatch.setattr(auto_mod, "get_db_session", lambda: DB(Query(scalar=2)))
-    assert service.health_check()["status"] == "healthy"
-    service.openai_service = SimpleNamespace()
-    assert service.health_check()["status"] == "unhealthy"
-
+async def test_learning_service_covers_entries_and_failures(monkeypatch):
     learning = learning_mod.LearningCategorizationService.__new__(learning_mod.LearningCategorizationService)
     learning.openai_service = MagicMock()
     assert learning._extract_keywords("The red pump")['keywords']
@@ -235,170 +140,8 @@ async def test_auto_and_learning_services_cover_entries_and_failures(monkeypatch
     learning._log_learning_categorization("x", "id", "C", .8)
 
 
-@pytest.mark.asyncio
-async def test_enhanced_auto_service_all_search_selection_and_logging_paths(monkeypatch):
-    service, collection, _ = chroma_service(monkeypatch, enhanced_auto_mod, enhanced_auto_mod.EnhancedAutoCategorizationService)
-    service.chroma_path = "mock-chroma"
-    service.fallback_service = MagicMock()
-    assert service._build_enhanced_description("Battery", {"level_3_category": "Battery", "level_2_category": "Power"}) == "Battery Power"
-    assert service._build_enhanced_description("x", {}) == "x"
-
-    calls = []
-    def remote_query(sql, params):
-        calls.append(params)
-        if "SELECT item" in sql: return [{"category": "Power", "freq": 2, "item": "Battery"}]
-        return [{"category": "Power", "freq": 1}]
-    monkeypatch.setattr(enhanced_auto_mod, "execute_remote_query", remote_query)
-    assert service._keyword_lookup_source_of_truth("Battery")['success']
-    monkeypatch.setattr(enhanced_auto_mod, "execute_remote_query", lambda *_: [])
-    assert not service._keyword_lookup_source_of_truth("xx")['success']
-    monkeypatch.setattr(enhanced_auto_mod, "execute_remote_query", lambda *_: (_ for _ in ()).throw(RuntimeError("sql")))
-    assert not service._keyword_lookup_source_of_truth("battery")['success']
-
-    service._keyword_lookup_source_of_truth = MagicMock(return_value={"success": True, "category": "Power", "consensus": .8})
-    assert service._cross_validate_with_fallback("x", "power", .5)["use_learning"]
-    service._keyword_lookup_source_of_truth.return_value = {"success": True, "category": "Tools", "consensus": .4}
-    assert not service._cross_validate_with_fallback("x", "Power", .5)["use_learning"]
-    service._keyword_lookup_source_of_truth.return_value = {"success": False}
-    service.fallback_service.collection.query.return_value = {"metadatas": [[]], "distances": [[]]}
-    assert service._cross_validate_with_fallback("x", "Power", .5)["use_learning"]
-    service.fallback_service.collection.query.return_value = {"metadatas": [[{"category": "Tools"}, {"category": "Power"}]], "distances": [[.2, .9]]}
-    assert "recommended_category" in service._cross_validate_with_fallback("x", "Power", .1)
-    service.fallback_service.collection.query.side_effect = RuntimeError("vector")
-    assert service._cross_validate_with_fallback("x", "Power", .5)["use_learning"]
-
-    collection.count.return_value = 0
-    assert not service._search_by_category_name("x")["success"]
-    collection.count.return_value = 1
-    collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
-    assert not service._search_by_category_name("x")["success"]
-    collection.query.return_value = {"documents": [["Power"]], "metadatas": [[{"item_count": 2}]], "distances": [[.2]]}
-    assert service._search_by_category_name("x")["success"]
-    collection.query.side_effect = RuntimeError("chroma")
-    assert not service._search_by_category_name("x")["success"]
-
-    for result, expected, similarity in [({}, "item_based_only", .5), ({"success": True, "matches": [{"category_name": "Power", "similarity": .8}]}, "hybrid_agreement", .5), ({"success": True, "matches": [{"category_name": "Tools", "similarity": .9}]}, "hybrid_item_trusted", .9), ({"success": True, "matches": [{"category_name": "Tools", "similarity": .8}, {"category_name": "Other", "similarity": .7}]}, "hybrid_category_override", .5)]:
-        outcome = service._hybrid_category_selection("Power", similarity, result)
-        assert outcome["method"] == expected
-    assert service._hybrid_category_selection("Power", .5, {"success": True, "matches": [{"category_name": "Tools", "similarity": .4}]})["method"] == "hybrid_item_preferred"
-
-    collection.query.side_effect = None
-    collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
-    assert not service._search_hierarchical_levels("x")["success"]
-    collection.query.return_value = {"documents": [["x"]], "metadatas": [[{"level_3_category": "Specific", "level_2_category": "General"}]], "distances": [[.1]]}
-    assert service._search_hierarchical_levels("x")["success"]
-    collection.query.return_value = {"documents": [["x"]], "metadatas": [[{"level_3_category": "Same", "level_2_category": "Same", "level_2_category": "Same", "level_1_category": "General"}]], "distances": [[1.9]]}
-    assert not service._search_hierarchical_levels("x", .9)["success"]
-
-    service._log_categorization = MagicMock(); service._log_fallback_categorization = MagicMock()
-    service._keyword_lookup_source_of_truth = MagicMock(return_value={"success": False})
-    service._search_hierarchical_levels = MagicMock(return_value={"success": False})
-    service.fallback_service._get_similar_items = MagicMock(return_value=[])
-    assert (await service.categorize_item("x", "u"))["method"] == "enhanced_no_match"
-    service._search_hierarchical_levels.return_value = {"success": True, "similarity_score": .95, "best_match": {"client_category_name": "Power"}, "all_level_matches": [{"metadata": {"client_category_name": "Power", "item_description": "x"}, "matched_level": "level_3", "similarity_score": .95}]}
-    assert (await service.categorize_item("x", "u"))["method"] == "enhanced_taxonomy_high_similarity"
-    service._search_hierarchical_levels.return_value = {"success": True, "similarity_score": .7, "best_match": {"client_category_name": "Power"}, "all_level_matches": [{"metadata": {"client_category_name": "Power", "item_description": "x"}, "matched_level": "level_2", "similarity_score": .7}]}
-    service.openai_service.categorize_with_similar_items = AsyncMock(return_value={"success": True, "category": "Tools", "confidence": .8, "reasoning": "r"})
-    service._update_learning_taxonomy = AsyncMock(return_value=False)
-    assert (await service.categorize_item("x", "u"))["method"] == "enhanced_taxonomy_openai"
-    service._search_hierarchical_levels.return_value = {"success": False}
-    service.fallback_service._get_similar_items.return_value = [{"category": "Tools", "similarity_score": .5}]
-    assert (await service.categorize_item("x", "u"))["method"] == "enhanced_fallback_openai"
-    service.openai_service.categorize_with_similar_items.return_value = {"success": False}
-    assert (await service.categorize_item("x", "u"))["method"] == "enhanced_no_match"
-    service._keyword_lookup_source_of_truth.side_effect = RuntimeError("pipeline")
-    assert (await service.categorize_item("x", "u"))["success"] is False
-
-    collection.query.side_effect = None
-    collection.query.return_value = {"documents": [["x"]], "metadatas": [[{"client_category_name": "Power", "level_1_category": "A", "level_2_category": "B", "level_3_category": "C", "category_path": "A>B>C", "confidence_score": .8, "item_description": "x"}]], "distances": [[.2]]}
-    assert service.get_category_suggestions("x")
-    collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
-    assert service.get_category_suggestions("x") == []
-    service._log_categorization("x", "u", None, None, "C", .8, .7, "m", 1, {"match_level": "level_1", "level_1_category": "A"})
-    service._log_fallback_categorization("x", "u", None, None, "Other", .3, "m", 1, "none")
-    monkeypatch.setattr(enhanced_auto_mod, "get_db_session", lambda: DB())
-    service.fallback_service.get_collection_stats.return_value = {"count": 1}
-    collection.count.return_value = 1
-    collection.query.return_value = {"documents": [["x"]]}
-    assert service.health_check()["overall_status"] == "healthy"
-    service.fallback_service.get_collection_stats.side_effect = RuntimeError("fallback")
-    assert service.health_check()["overall_status"] == "unhealthy"
-    collection.count.side_effect = RuntimeError("count")
-    assert "error" in service.get_stats()
 
 
-@pytest.mark.asyncio
-async def test_enhanced_matching_and_seller_notifications(monkeypatch):
-    service, collection, _ = chroma_service(monkeypatch, matching_mod, matching_mod.EnhancedSellerMatchingService)
-    service.chroma_path = "mock-chroma"
-    metadata = {"seller_id": "s1", "seller_name": "S", "phone_number": "1", "email": "e", "original_category": "A", "level_1_category": "A", "level_2_category": "B", "level_3_category": "C", "category_path": "A > B > C", "confidence_score": .9, "ranking": "Gold", "location": '{"lat": 0, "lng": 0}'}
-    collection.query.return_value = {"documents": [["x", "x"]], "metadatas": [[metadata, dict(metadata, seller_id="s2", location="bad")]], "distances": [[.1, .2]]}
-    service.openai_service.select_best_sellers = AsyncMock(return_value={"success": True, "selected_sellers": [{"seller_id": "s1"}], "confidence_score": .9})
-    assert (await service.find_sellers_for_item("x", {"lat": 0, "lng": 0}))["success"]
-    service.openai_service.select_best_sellers.return_value = {"success": False, "error": "ai"}
-    assert (await service.find_sellers_for_item("x", similarity_threshold=.95))["success"]
-    collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
-    assert not (await service.find_sellers_for_item("x"))["success"]
-    collection.query.side_effect = RuntimeError("chroma")
-    assert not (await service.find_sellers_for_item("x"))["success"]
-    collection.query.side_effect = None
-    collection.query.return_value = {"documents": [["x"]], "metadatas": [[metadata]], "distances": [[.1]]}
-    assert service.find_sellers_by_category_path("A")["success"]
-    collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
-    assert not service.find_sellers_by_category_path("none")["success"]
-    collection.query.return_value = {"metadatas": [[metadata]]}
-    assert service.get_seller_categories("s1")["success"]
-    collection.query.return_value = {"metadatas": [[]]}
-    assert not service.get_seller_categories("none")["success"]
-    collection.query.side_effect = RuntimeError("query")
-    assert not service.get_seller_categories("bad")["success"]
-    assert service._calculate_distance(0, 0, 0, 0) == 0
-    assert [service._ranking_priority(x) for x in ["Diamond", "Platinum", "Gold", "Titanium", "x"]] == [4, 3, 2, 1, 0]
-    collection.query.side_effect = None; collection.count.return_value = 2
-    collection.query.return_value = {"documents": [["x"]]}
-    assert service.health_check()["overall_status"] == "healthy"
-    collection.count.side_effect = RuntimeError("health")
-    assert service.health_check()["overall_status"].startswith("unhealthy")
-    service.collection.count.side_effect = RuntimeError("stats")
-    assert "error" in service.get_stats()
-
-    wa = MagicMock()
-    wa.send_configurable_buttons = AsyncMock(return_value=MessageResponse(success=True, message_id="m"))
-    wa.send_template_message = AsyncMock(return_value=MessageResponse(success=True, message_id="t"))
-    monkeypatch.setattr(notification_mod, "WhatsAppService", lambda: wa)
-    monkeypatch.setattr(notification_mod, "get_settings", lambda: settings())
-    service = notification_mod.SellerNotificationService()
-    assert service._format_date(datetime(2025, 1, 2)) == "02-Jan-2025"
-    assert service._format_date("bad") == "bad"
-    assert service._format_date(4) == "4"
-    assert service._build_rfq_template_parameters({"rfq_id": "R"}, {})[1] == "N/A"
-    assert service._build_bfs_template_parameters({"buy_price": 10, "ask_price": 8}, "s")[2] == "10"
-    assert len(service.get_intermediate_rfq_buttons("R", "S")) == 2
-    service.check_seller_workflow_status = MagicMock(return_value=(True, "seller", 2))
-    result = await service.send_rfq_notifications({"rfq_id": "R"}, [{"seller_id": "s", "phone_number": "1"}])
-    assert result["skipped"] == 1
-    result = await service.send_rfq_notifications({"rfq_id": "R"}, [{"seller_id": "s"}, {"seller_id": "t", "phone_number": "2", "use_template_message": True}], skip_workflow_check=True)
-    assert result["failed"] == 1 and result["sent"] == 1
-    wa.send_configurable_buttons.return_value = MessageResponse(success=False, error="down")
-    assert (await service.send_rfq_notifications({"rfq_id": "R"}, [{"seller_id": "s", "phone_number": "2"}], True))["failed"] == 1
-    wa.send_message = AsyncMock()
-    assert "Quantity" in service.format_bfs_bid_message({"item_description": "x", "ask_price": 2})
-    assert (await service.send_bfs_bid_notification("", {}, "b", "s"))["success"] is False
-    assert (await service.send_bfs_bid_notification("1", {}, "b", ""))["success"] is False
-    service.check_seller_workflow_status = MagicMock(return_value=(True, "wf", 1))
-    assert (await service.send_bfs_bid_notification("1", {}, "b", "s"))["skipped"]
-    service.check_seller_workflow_status = MagicMock(return_value=(False, None, None))
-    wa.send_configurable_buttons.return_value = MessageResponse(success=True, message_id="b")
-    assert (await service.send_bfs_bid_notification("1", {}, "b", "s", True))["success"]
-    assert (await service.send_bfs_bid_notification("1", {}, "b", "s", True, True))["success"]
-    wa.send_configurable_buttons.side_effect = RuntimeError("wa")
-    assert not (await service.send_bfs_bid_notification("1", {}, "b", "s", True))["success"]
-    assert (await service.send_bfs_bid_notifications_batch([]))["total"] == 0
-    batch = await service.send_bfs_bid_notifications_batch([{"seller_phone": "1", "bid_data": {}, "bfs_user_uuid": "b", "seller_id": "s"}], True)
-    assert batch["total"] == 1
-    notification_mod._seller_notification_service = None
-    monkeypatch.setattr(notification_mod, "WhatsAppService", lambda: wa)
-    assert notification_mod.get_seller_notification_service() is notification_mod.get_seller_notification_service()
 
 
 @pytest.mark.asyncio
@@ -673,3 +416,44 @@ async def test_rfq_intimation_and_inactivity_timeout_branches(monkeypatch):
     direct.get.return_value = str(0); sessions.get_session.return_value = session_data
     await timeout._handle_timeout("+1", "sid", "1:last_activity")
     direct.get.return_value = str(datetime.now().timestamp()); await timeout._handle_timeout("+1", "sid", "1:last_activity")
+
+
+@pytest.mark.asyncio
+async def test_seller_notifications(monkeypatch):
+    wa = MagicMock()
+    wa.send_configurable_buttons = AsyncMock(return_value=MessageResponse(success=True, message_id="m"))
+    wa.send_template_message = AsyncMock(return_value=MessageResponse(success=True, message_id="t"))
+    monkeypatch.setattr(notification_mod, "WhatsAppService", lambda: wa)
+    monkeypatch.setattr(notification_mod, "get_settings", lambda: settings())
+    service = notification_mod.SellerNotificationService()
+    assert service._format_date(datetime(2025, 1, 2)) == "02-Jan-2025"
+    assert service._format_date("bad") == "bad"
+    assert service._format_date(4) == "4"
+    assert service._build_rfq_template_parameters({"rfq_id": "R"}, {})[1] == "N/A"
+    assert service._build_bfs_template_parameters({"buy_price": 10, "ask_price": 8}, "s")[2] == "10"
+    assert len(service.get_intermediate_rfq_buttons("R", "S")) == 2
+    service.check_seller_workflow_status = MagicMock(return_value=(True, "seller", 2))
+    result = await service.send_rfq_notifications({"rfq_id": "R"}, [{"seller_id": "s", "phone_number": "1"}])
+    assert result["skipped"] == 1
+    result = await service.send_rfq_notifications({"rfq_id": "R"}, [{"seller_id": "s"}, {"seller_id": "t", "phone_number": "2", "use_template_message": True}], skip_workflow_check=True)
+    assert result["failed"] == 1 and result["sent"] == 1
+    wa.send_configurable_buttons.return_value = MessageResponse(success=False, error="down")
+    assert (await service.send_rfq_notifications({"rfq_id": "R"}, [{"seller_id": "s", "phone_number": "2"}], True))["failed"] == 1
+    wa.send_message = AsyncMock()
+    assert "Quantity" in service.format_bfs_bid_message({"item_description": "x", "ask_price": 2})
+    assert (await service.send_bfs_bid_notification("", {}, "b", "s"))["success"] is False
+    assert (await service.send_bfs_bid_notification("1", {}, "b", ""))["success"] is False
+    service.check_seller_workflow_status = MagicMock(return_value=(True, "wf", 1))
+    assert (await service.send_bfs_bid_notification("1", {}, "b", "s"))["skipped"]
+    service.check_seller_workflow_status = MagicMock(return_value=(False, None, None))
+    wa.send_configurable_buttons.return_value = MessageResponse(success=True, message_id="b")
+    assert (await service.send_bfs_bid_notification("1", {}, "b", "s", True))["success"]
+    assert (await service.send_bfs_bid_notification("1", {}, "b", "s", True, True))["success"]
+    wa.send_configurable_buttons.side_effect = RuntimeError("wa")
+    assert not (await service.send_bfs_bid_notification("1", {}, "b", "s", True))["success"]
+    assert (await service.send_bfs_bid_notifications_batch([]))["total"] == 0
+    batch = await service.send_bfs_bid_notifications_batch([{"seller_phone": "1", "bid_data": {}, "bfs_user_uuid": "b", "seller_id": "s"}], True)
+    assert batch["total"] == 1
+    notification_mod._seller_notification_service = None
+    monkeypatch.setattr(notification_mod, "WhatsAppService", lambda: wa)
+    assert notification_mod.get_seller_notification_service() is notification_mod.get_seller_notification_service()

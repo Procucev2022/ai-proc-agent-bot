@@ -191,7 +191,7 @@ logs() {
     else
         # Validate service name
         case "$service" in
-            app|celery_worker|celery_beat|redis|chromadb)
+            app|celery_worker|celery_beat|redis)
                 # Map service to log file
                 case "$service" in
                     app)
@@ -224,9 +224,6 @@ logs() {
                     redis)
                         log_file="./logs/redis.log"
                         ;;
-                    chromadb)
-                        log_file="./logs/chromadb.log"
-                        ;;
                 esac
                 
                 if [ -f "$log_file" ]; then
@@ -250,7 +247,7 @@ logs() {
                 ;;
             *)
                 print_error "Unknown service: $service"
-                print_info "Valid services: app, celery_worker, celery_beat, redis, chromadb"
+                print_info "Valid services: app, celery_worker, celery_beat, redis"
                 exit 1
                 ;;
         esac
@@ -273,9 +270,6 @@ trigger_task() {
     print_info "This will execute the task immediately (not scheduled)"
     
     case "$task_name" in
-        auto-categorization-task)
-            docker exec procucev_celery_worker python -c "from app.tasks.auto_categorization_task import process_uncategorized_rfqs; result = process_uncategorized_rfqs.delay(); print(f'Task ID: {result.id}'); print(f'Status: {result.status}')"
-            ;;
         vector-store-sync-task)
             docker exec procucev_celery_worker python -c "from app.tasks.vector_store_sync_task import sync_vector_store; result = sync_vector_store.delay(); print(f'Task ID: {result.id}'); print(f'Status: {result.status}')"
             ;;
@@ -284,9 +278,6 @@ trigger_task() {
             ;;
         daily-category-vector-rebuild-task)
             docker exec procucev_celery_worker python -c "from app.tasks.daily_category_vector_rebuild_task import rebuild_category_vector_store; result = rebuild_category_vector_store.delay(); print(f'Task ID: {result.id}'); print(f'Status: {result.status}')"
-            ;;
-        category-name-sync-task)
-            docker exec procucev_celery_worker python -c "from app.tasks.category_name_sync_task import sync_category_names; result = sync_category_names.delay(); print(f'Task ID: {result.id}'); print(f'Status: {result.status}')"
             ;;
         log-cleanup-task)
             docker exec procucev_celery_worker python -c "from app.tasks.log_cleanup_task import cleanup_logs; result = cleanup_logs.delay(); print(f'Task ID: {result.id}'); print(f'Status: {result.status}')"
@@ -320,11 +311,9 @@ show_tasks() {
     echo "┌────────────────────────────────────────────────────────────────────────────┐"
     echo "│ TASK NAME                              │ SCHEDULE        │ DESCRIPTION     │"
     echo "├────────────────────────────────────────┼─────────────────┼─────────────────┤"
-    echo "│ auto-categorization-task               │ Every 15 min    │ Auto-categorize │"
-    echo "│ vector-store-sync-task                 │ Daily 6:05 PM   │ Sync vectors    │"
+    echo "│ vector-store-sync-task                 │ Daily 6:05 PM   │ Seller mappings │"
     echo "│ seller-matching-task                   │ Every hour      │ Match sellers   │"
-    echo "│ daily-category-vector-rebuild-task     │ Daily 1:10 PM   │ Rebuild vectors │"
-    echo "│ category-name-sync-task                │ Daily 12:30 PM  │ Sync names      │"
+    echo "│ daily-category-vector-rebuild-task     │ Daily 1:10 PM   │ Category sync   │"
     echo "│ log-cleanup-task                       │ Daily 2:00 AM   │ Cleanup logs    │"
     echo "│ bfs-notification-task                  │ Every 5 min     │ BFS notifs      │"
     echo "│ whatsapp-report-automation-task        │ Daily 10:00 AM  │ WhatsApp reports│"
@@ -347,7 +336,7 @@ show_tasks() {
     
     echo ""
     print_info "Examples:"
-    echo "  ./procucev-agent.sh task auto-categorization-task"
+    echo "  ./procucev-agent.sh task vector-store-sync-task"
     echo "  ./procucev-agent.sh task bfs-notification-task"
     echo "  ./procucev-agent.sh task seller-matching-task"
 }
@@ -374,13 +363,6 @@ health() {
     
     echo -n "Redis: "
     if docker exec procucev_redis redis-cli ping > /dev/null 2>&1; then
-        print_status "Healthy"
-    else
-        print_error "Unhealthy"
-    fi
-    
-    echo -n "ChromaDB: "
-    if curl -sf http://localhost:8000/api/v1/heartbeat > /dev/null; then
         print_status "Healthy"
     else
         print_error "Unhealthy"
@@ -479,7 +461,6 @@ show_urls() {
     print_header "SERVICE URLS"
     echo "  Main App:    http://localhost:8005"
     echo "  Redis:       localhost:6379"
-    echo "  ChromaDB:    http://localhost:8000"
     echo ""
 }
 
@@ -555,7 +536,7 @@ case "$1" in
         echo ""
 
         echo "SERVICE TOPOLOGY"
-        echo "  Services: app | celery_worker | celery_beat | redis | chromadb"
+        echo "  Services: app | celery_worker | celery_beat | redis"
         echo ""
 
         echo "BUILD & DEPLOYMENT COMMANDS"
@@ -583,11 +564,9 @@ case "$1" in
         echo "                   ./procucev-agent.sh logs celery_worker manager    # Manager logs"
         echo "                   ./procucev-agent.sh logs celery_beat      # Celery beat scheduler"
         echo "                   ./procucev-agent.sh logs redis            # Redis database"
-        echo "                   ./procucev-agent.sh logs chromadb         # ChromaDB vector store"
         echo ""
         echo "  task [name]  - Manually trigger Celery tasks"
         echo "                 Examples:"
-        echo "                   ./procucev-agent.sh task category-name-sync-task"
         echo "                   ./procucev-agent.sh task taxonomy-build-task"
         echo "                   ./procucev-agent.sh task bfs-notification-task"
         echo ""

@@ -9,13 +9,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pandas as pd
 import pytest
 
-import app.services.auto_categorization_service as auto_module
 import app.services.conversation_analytics_service as analytics_module
 import app.services.daily_aggregation_service as aggregation_module
 import app.services.daily_summary_service as summary_module
-import app.services.enhanced_auto_categorization_service as enhanced_category_module
 import app.services.enhanced_excel_report_service as report_module
-import app.services.enhanced_seller_matching_service as matching_module
 import app.services.excel_processing_service as processing_module
 import app.services.excel_validation_service as validation_module
 import app.services.learning_categorization_service as learning_module
@@ -127,21 +124,6 @@ def test_enhanced_excel_report_metric_fallbacks_and_rolling_lookup(monkeypatch):
     assert service._get_metric_value("missing", {}) == 0
 
 
-@pytest.mark.asyncio
-async def test_enhanced_categorization_keyword_and_ai_error_fallback(monkeypatch):
-    service = enhanced_category_module.EnhancedAutoCategorizationService.__new__(enhanced_category_module.EnhancedAutoCategorizationService)
-    service.collection = MagicMock()
-    service.category_collection = MagicMock()
-    service.fallback_service = MagicMock()
-    service.openai_service = MagicMock()
-    monkeypatch.setattr(enhanced_category_module, "execute_remote_query", MagicMock(side_effect=RuntimeError("sql")))
-    assert service._keyword_lookup_source_of_truth("bolt")["success"] is False
-    service._keyword_lookup_source_of_truth = MagicMock(return_value={"success": False})
-    service._search_hierarchical_levels = MagicMock(return_value={"success": False})
-    service.fallback_service._get_similar_items.return_value = [{"category": "Tools", "similarity_score": .7}]
-    service.openai_service.categorize_with_similar_items = AsyncMock(side_effect=RuntimeError("ai"))
-    result = await service.categorize_item("bolt", "u")
-    assert result["success"] is False and result["method"] == "enhanced_error"
 
 
 @pytest.mark.asyncio
@@ -313,19 +295,6 @@ async def test_seller_notification_template_exception_and_bfs_batch_counts():
     assert (result["sent"], result["skipped"], result["failed"]) == (1, 1, 1)
 
 
-@pytest.mark.asyncio
-async def test_enhanced_seller_matching_malformed_metadata_and_query_exception():
-    service = matching_module.EnhancedSellerMatchingService.__new__(matching_module.EnhancedSellerMatchingService)
-    service.collection = MagicMock()
-    service.collection.query.return_value = {
-        "documents": [["x", "y"]], "metadatas": [[{"seller_id": "s"}, {"seller_id": "s2"}], ""],
-        "distances": [[.2, .2]]
-    }
-    result = await service.find_sellers_for_item("bolt")
-    assert result["success"] is False or result["sellers"] == []
-    service.collection.query.side_effect = RuntimeError("chroma")
-    result = await service.find_sellers_for_item("bolt")
-    assert result["success"] is False and "chroma" in result["error"]
 
 
 # Learning and classic categorization -------------------------------------
@@ -347,15 +316,3 @@ def test_learning_suggestions_populated_and_exception(monkeypatch):
     assert service.get_learning_category_suggestions("steel") == []
 
 
-def test_auto_categorization_query_and_population_failures(monkeypatch):
-    service = auto_module.AutoCategorizationService.__new__(auto_module.AutoCategorizationService)
-    service.collection = MagicMock()
-    service.collection.query.side_effect = RuntimeError("chroma")
-    with pytest.raises(RuntimeError, match="chroma"):
-        service.find_similar_items("bolt")
-    service.collection.count.side_effect = RuntimeError("count")
-    assert "error" in service.get_collection_stats()
-    service.settings = SimpleNamespace(enable_remote_categorization=False)
-    monkeypatch.setattr(auto_module, "get_settings", lambda: service.settings)
-    monkeypatch.setattr(service, "_get_local_category_data", MagicMock(return_value=[]))
-    assert service.populate_embeddings_from_db() == 0

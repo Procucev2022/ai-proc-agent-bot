@@ -1,7 +1,7 @@
 """Additional deterministic coverage for residual core application paths.
 
 The tests in this module use only in-memory fakes and mocks.  No database,
-Redis, HTTP, WhatsApp, OpenAI, Chroma, or Celery service is contacted.
+Redis, HTTP, WhatsApp, OpenAI, or Celery service is contacted.
 """
 
 from __future__ import annotations
@@ -70,8 +70,6 @@ def _lifespan_settings(**overrides):
         "environment": "test",
         "database_mode": "local",
         "redis_url": "redis://unit",
-        "chroma_host": "localhost",
-        "chroma_port": 8000,
         "azure_openai_base_url": "https://unit",
         "webhook_health_monitoring_enabled": False,
     }

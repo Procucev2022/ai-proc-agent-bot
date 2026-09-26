@@ -303,8 +303,8 @@ def test_celery_entrypoint_and_disabled_schedule_branches(monkeypatch):
     runpy.run_module("app.celery_app", run_name="__main__")
 
     flags = [
-        "ENABLE_AUTO_CATEGORIZATION", "ENABLE_VECTOR_STORE_SYNC", "ENABLE_SELLER_MATCHING",
-        "ENABLE_DAILY_CATEGORY_REBUILD", "ENABLE_CATEGORY_NAME_SYNC", "ENABLE_LOG_CLEANUP",
+        "ENABLE_VECTOR_STORE_SYNC", "ENABLE_SELLER_MATCHING",
+        "ENABLE_DAILY_CATEGORY_REBUILD", "ENABLE_LOG_CLEANUP",
         "ENABLE_BFS_NOTIFICATION", "ENABLE_WHATSAPP_REPORT_AUTOMATION", "ENABLE_TAXONOMY_BUILD",
         "ENABLE_DAILY_AGGREGATION",
     ]
@@ -313,11 +313,13 @@ def test_celery_entrypoint_and_disabled_schedule_branches(monkeypatch):
     import importlib
     importlib.reload(celery_config)
     assert celery_config.beat_schedule == {}
-    assert celery_config.ENABLE_AUTO_CATEGORIZATION is False
+    assert celery_config.ENABLE_VECTOR_STORE_SYNC is False
 
     # Restore default enabled configuration
     for flag in flags:
         monkeypatch.delenv(flag, raising=False)
     importlib.reload(celery_config)
-    assert "auto-categorization-task" in celery_config.beat_schedule
-    assert celery_config.ENABLE_AUTO_CATEGORIZATION is True
+    assert "vector-store-sync-task" in celery_config.beat_schedule
+    assert "auto-categorization-task" not in celery_config.beat_schedule
+    assert "category-name-sync-task" not in celery_config.beat_schedule
+    assert celery_config.ENABLE_VECTOR_STORE_SYNC is True

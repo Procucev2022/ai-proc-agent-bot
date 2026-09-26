@@ -1,7 +1,7 @@
 """Deterministic branch coverage for the remaining data-oriented services.
 
 External systems are represented by in-memory fakes or mocks.  No test in this
-module opens a network connection, talks to Redis/Chroma, or uses a live DB.
+module opens a network connection, talks to Redis, or uses a live DB.
 """
 
 from __future__ import annotations
@@ -16,13 +16,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pandas as pd
 import pytest
 
-import app.services.auto_categorization_service as auto_mod
 import app.services.conversation_analytics_service as analytics_mod
 import app.services.daily_aggregation_service as aggregation_mod
 import app.services.daily_summary_service as summary_mod
-import app.services.enhanced_auto_categorization_service as enhanced_cat_mod
 import app.services.enhanced_excel_report_service as report_mod
-import app.services.enhanced_seller_matching_service as matching_mod
 import app.services.excel_processing_service as processing_mod
 import app.services.excel_validation_service as validation_mod
 import app.services.rfq_background_service as background_mod
@@ -400,108 +397,6 @@ async def test_excel_validation_remaining_quality_and_retry_branches(monkeypatch
     service._validate_excel_content = MagicMock(return_value={"valid": False, "error_type": "bad"})
     result = await service.validate_excel_file_from_url("url", "x.xlsx")
     assert result["error_type"] == "bad"
-
-
-# Chroma categorization and matching ---------------------------------------
-
-
-def test_auto_categorization_population_sources_logging_and_health(monkeypatch):
-    service = auto_mod.AutoCategorizationService.__new__(auto_mod.AutoCategorizationService)
-    service.embedding_function = "embedding"
-    service.collection = MagicMock()
-    service.collection.name = "category_items"
-    service.chroma_client = MagicMock()
-    service.openai_service = MagicMock()
-    service.learning_service = MagicMock()
-    service.collection.count.return_value = 0
-    service.collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
-    monkeypatch.setattr(auto_mod, "get_settings", lambda: SimpleNamespace(
-        enable_remote_categorization=False, chroma_host="localhost", chroma_port=8000))
-    service._get_local_category_data = MagicMock(return_value=[{"id": "1", "item": "bolt", "category": "Tools"}, {"id": "2"}])
-    assert service.populate_embeddings_from_db() == 2
-    service._get_local_category_data.return_value = []
-    assert service.populate_embeddings_from_db() == 0
-    monkeypatch.setattr(auto_mod, "get_settings", lambda: SimpleNamespace(
-        enable_remote_categorization=True, chroma_host="localhost", chroma_port=8000))
-    service._get_remote_category_data = MagicMock(side_effect=RuntimeError("remote"))
-    service._get_local_category_data = MagicMock(return_value=[])
-    with pytest.raises(RuntimeError):
-        service.populate_embeddings_from_db()
-    db = DB()
-    monkeypatch.setattr(auto_mod, "get_db_session", lambda: db)
-    service._log_categorization("x", "u", None, None, "Tools", .8, .7, "test", 1)
-    service._log_categorization("x", "u", None, None, "Tools", .8, .7, "test", 1)
-    db.commit.side_effect = RuntimeError("commit")
-    service._log_categorization("x", "u", None, None, "Tools", .8, .7, "test", 1)
-    service.collection.count.return_value = 3
-    service.openai_service.client = object()
-    assert service.get_collection_stats()["total_items"] == 3
-    service.collection.count.side_effect = RuntimeError("chroma")
-    assert "error" in service.get_collection_stats()
-    service.collection.count.side_effect = None
-    service.collection.count.return_value = 1
-    service.learning_service = MagicMock()
-    service.learning_service.create_3_level_category = AsyncMock(return_value={"success": False})
-    assert service.health_check()["status"] in {"healthy", "unhealthy"}
-
-
-@pytest.mark.asyncio
-async def test_enhanced_categorization_all_fallback_and_logging_paths(monkeypatch):
-    service = enhanced_cat_mod.EnhancedAutoCategorizationService.__new__(enhanced_cat_mod.EnhancedAutoCategorizationService)
-    service.collection = MagicMock(); service.category_collection = MagicMock(); service.fallback_service = MagicMock(); service.openai_service = MagicMock()
-    service.chroma_path = "mock"
-    monkeypatch.setattr(enhanced_cat_mod, "execute_remote_query", MagicMock(return_value=[]), raising=False)
-    assert service._keyword_lookup_source_of_truth("x") ["success"] is False
-    service._keyword_lookup_source_of_truth = MagicMock(return_value={"success": False})
-    service.fallback_service.collection.query.return_value = {"metadatas": [[{"category": "Other"}]], "distances": [[1.0]]}
-    result = service._cross_validate_with_fallback("x", "Tools", .9)
-    assert result["validated"] is False
-    service.fallback_service.collection.query.return_value = {"metadatas": [[]], "distances": [[]]}
-    assert service._cross_validate_with_fallback("x", "Tools", .5)["use_learning"]
-    service.collection.query.return_value = {"documents": [["x"]], "metadatas": [[{"client_category_name": "Tools", "level_1_category": "A", "level_2_category": "B", "level_3_category": "C", "category_path": "A/B/C", "confidence_score": .8, "item_description": "x"}]], "distances": [[1.2]]}
-    assert service.get_category_suggestions("x") == []
-    service.collection.query.side_effect = RuntimeError("query")
-    assert service.get_category_suggestions("x") == []
-    service.collection.query.side_effect = None
-    service._keyword_lookup_source_of_truth = MagicMock(return_value={"success": False})
-    service._search_hierarchical_levels = MagicMock(return_value={"success": False})
-    service.fallback_service._get_similar_items.return_value = []
-    service._log_fallback_categorization = MagicMock()
-    assert (await service.categorize_item("unknown", "u"))["method"] == "enhanced_no_match"
-    service.fallback_service._get_similar_items.return_value = [{"category": "Tools", "similarity_score": .8}]
-    service.openai_service.categorize_with_similar_items = AsyncMock(return_value={"success": False})
-    assert (await service.categorize_item("x", "u"))["method"] == "enhanced_no_match"
-    service.collection.count.return_value = 1
-    service.fallback_service.get_collection_stats.return_value = {"error": "bad"}
-    assert service.health_check()["overall_status"] == "unhealthy"
-    service.collection.count.side_effect = RuntimeError("chroma")
-    service.fallback_service.get_collection_stats.side_effect = RuntimeError("fallback")
-    assert service.health_check()["overall_status"] == "unhealthy"
-    assert "error" in service.get_stats()
-
-
-@pytest.mark.asyncio
-async def test_enhanced_matching_distance_filters_and_stats(monkeypatch):
-    collection = MagicMock()
-    service = matching_mod.EnhancedSellerMatchingService.__new__(matching_mod.EnhancedSellerMatchingService)
-    service.collection = collection; service.chroma_path = "mock"; service.openai_service = MagicMock()
-    metadata = {"seller_id": "s", "seller_name": "S", "phone_number": "1", "email": "", "original_category": "A",
-                "level_1_category": "A", "level_2_category": "B", "level_3_category": "C", "category_path": "A/B/C",
-                "confidence_score": .8, "ranking": "Gold", "location": "bad-json"}
-    collection.query.return_value = {"documents": [["x", "y"]], "metadatas": [[metadata, metadata]], "distances": [[.1, .2]]}
-    service.openai_service.select_best_sellers = AsyncMock(return_value={"success": False})
-    result = await service.find_sellers_for_item("x", similarity_threshold=.95, ranking_priority=False)
-    assert result["success"] and not result["sellers"]
-    collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
-    assert service.find_sellers_by_category_path("A")["success"] is False
-    collection.count.return_value = 2
-    collection.query.return_value = {"documents": [["x"]]}
-    assert service.health_check()["overall_status"] == "healthy"
-    service.collection.query.side_effect = RuntimeError("down")
-    assert service.health_check()["overall_status"].startswith("unhealthy")
-    db = DB(Query(count=4)); monkeypatch.setattr(matching_mod, "get_db_session", lambda: db)
-    service.collection.query.side_effect = None; service.collection.count.return_value = 2
-    assert service.get_stats()["database_sellers"]["total_sellers"] == 4
 
 
 # RFQ, seller notification/recommendation/categorization -------------------

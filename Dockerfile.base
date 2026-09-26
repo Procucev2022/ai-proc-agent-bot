@@ -1,15 +1,14 @@
 # ====================================================================
 # SHARED DEPENDENCY IMAGE - BUILD ONCE, USE EVERYWHERE
 # ====================================================================
-# Everything in this file is expensive and changes rarely: the apt packages,
-# the CPU PyTorch wheel, requirements.txt and the pre-downloaded
-# sentence-transformers model. Dockerfile.app starts FROM the image this file
+# Everything in this file is expensive and changes rarely: the apt packages
+# and requirements.txt. Dockerfile.app starts FROM the image this file
 # produces, so these layers are built once and reused by the web app, the
 # Celery worker and Celery beat.
 #
 # CI keys the published tag on the hash of this file plus requirements.txt
 # (see .github/workflows/deploy-*.yml), so a deploy that touches neither one
-# reuses the image instead of reinstalling ~2GB of wheels. ACR quick tasks run
+# reuses the image instead of reinstalling every wheel. ACR quick tasks run
 # on a fresh agent with no layer cache, which is why the reuse has to be
 # explicit rather than left to Docker.
 #
@@ -34,13 +33,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Copy requirements
 COPY requirements.txt .
 
-# Install CPU-only PyTorch first to avoid downloading 5GB+ of unneeded CUDA/NVIDIA wheels
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
-
-# Pre-download sentence transformer model so it's cached in the image
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 # Verify critical packages
 RUN pip list | grep -E "(gunicorn|celery)"

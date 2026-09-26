@@ -137,7 +137,6 @@ async def lifespan(app: FastAPI):
     logger.info(f"[BOOT] Starting App: {settings.app_name} ({settings.environment})")
     logger.info(f"[BOOT] Database Mode: {settings.database_mode}")
     logger.info("[BOOT] Redis configured")
-    logger.info(f"[BOOT] Chroma Host: {settings.chroma_host}:{settings.chroma_port}")
     logger.info(f"[BOOT] Azure OpenAI Endpoint: {settings.azure_openai_base_url}")
     logger.info("=" * 60)
 
@@ -211,11 +210,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to start timeout monitoring: {e}")
             # Continue without timeout monitoring rather than failing startup
-
-    # NOTE: AutoCategorizationService preload removed to reduce memory usage
-    # Service now lazy-loads on first use per worker (registration or Celery tasks)
-    # This saves ~100-120MB RAM per worker during startup
-    logger.info("AutoCategorizationService will lazy-load on first use")
 
     # Watch for anything blocking the event loop. Every user's turn, the batch
     # poller and the webhook all share one thread, so a single synchronous call

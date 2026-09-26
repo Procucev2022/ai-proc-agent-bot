@@ -15,7 +15,6 @@ import pytest
 import requests
 
 from app.tasks import bfs_notification_task as bfs
-from app.tasks import category_name_sync_task as category_sync
 from app.tasks import daily_category_vector_rebuild_task as daily_rebuild
 from app.tasks import log_cleanup_task as cleanup
 from app.tasks import seller_matching_task as seller
@@ -120,29 +119,6 @@ async def test_bfs_no_successful_results_and_wrapper_success(monkeypatch):
 # Category and daily vector rebuild tasks ----------------------------------
 
 
-def test_category_sync_exception_orchestration_and_project_path(monkeypatch):
-    from app.config import get_settings
-    monkeypatch.setattr(get_settings(), "enable_vector_search", True)
-    original_path = list(category_sync.sys.path)
-    project_path = category_sync.os.path.abspath(category_sync.os.path.join(category_sync.os.path.dirname(category_sync.__file__), "../.."))
-    category_sync.sys.path[:] = [p for p in category_sync.sys.path if p != project_path]
-    category_sync._add_project_path()
-    assert project_path in category_sync.sys.path
-    category_sync.sys.path[:] = original_path
-
-    monkeypatch.setattr(category_sync, "_load_categories_from_remote", Mock(side_effect=RuntimeError("remote")))
-    monkeypatch.setattr(category_sync, "_load_categories_from_local_db", lambda: {"Local": 1})
-    monkeypatch.setattr(category_sync, "_create_category_embeddings", lambda categories, clear_existing=False: {"success": True, "total_categories": 1, "collection_count": 1})
-    result = category_sync.sync_category_names.run()
-    assert result["status"] == "completed"
-    assert result["steps_failed"][0]["step"] == "remote_database_load"
-
-    monkeypatch.setattr(category_sync, "_load_categories_from_remote", lambda: {"Remote": 1})
-    monkeypatch.setattr(category_sync, "_load_categories_from_local_db", Mock(side_effect=RuntimeError("local")))
-    monkeypatch.setattr(category_sync, "_create_category_embeddings", Mock(side_effect=RuntimeError("chroma")))
-    result = category_sync.sync_category_names.run()
-    assert result["status"] == "failed"
-    assert result["steps_failed"][-1]["step"] == "embedding_creation"
 
 
 def test_daily_mapping_batch_commit_and_rollback(monkeypatch):
@@ -211,39 +187,6 @@ def test_log_cleanup_subdirectories_existing_archive_and_unlink_error(monkeypatc
     assert manager.stats["errors"] == 1
 
 
-@pytest.mark.asyncio
-async def test_seller_enhanced_candidate_success_exception_and_recording(monkeypatch):
-    from app.config import get_settings
-    monkeypatch.setattr(get_settings(), "enable_vector_search", True)
-    monkeypatch.setattr(seller, "get_sellers_already_notified_for_rfq", lambda _: set())
-    monkeypatch.setattr(seller, "get_rfq_item_categories", lambda _: ["Tools"])
-    monkeypatch.setattr(seller, "get_users_active_in_last_24hrs", lambda phones: {"111"})
-    monkeypatch.setattr(seller, "normalize_phone_for_comparison", lambda value: value.lstrip("+"))
-    enhanced = SimpleNamespace(find_sellers_for_item=AsyncMock(return_value={"success": True, "sellers": [{"seller_id": "candidate"}]}))
-    monkeypatch.setattr("app.services.enhanced_seller_matching_service.EnhancedSellerMatchingService", lambda: enhanced)
-    standard = SimpleNamespace(select_sellers_for_rfq=AsyncMock(return_value={"subscribed_sellers": [{"seller_id": "s1", "phone_number": "+111"}], "unsubscribed_sellers": []}))
-    monkeypatch.setattr(seller, "log_selected_sellers_to_remote", Mock(return_value=True))
-    notification = SimpleNamespace(send_rfq_notifications=AsyncMock(return_value={"sent": 1, "failed": 0, "results": [{"seller_id": "s1", "success": True}]}))
-    monkeypatch.setattr(seller, "SellerNotificationService", lambda: notification)
-    recorded = Mock()
-    record_notifications = seller.record_rfq_seller_notifications
-    monkeypatch.setattr(seller, "record_rfq_seller_notifications", recorded)
-    result = await seller.process_single_rfq_matching({"rfq_id": "r", "rfq_uuid": "u", "description": "pump"}, standard, set())
-    assert result["success"] and result["notifications_sent"] == 1
-    assert standard.select_sellers_for_rfq.await_args.kwargs["candidate_seller_ids"] == ["candidate"]
-
-    enhanced.find_sellers_for_item.side_effect = RuntimeError("semantic")
-    standard.select_sellers_for_rfq.side_effect = RuntimeError("standard")
-    result = await seller.process_single_rfq_matching({"rfq_id": "r", "rfq_uuid": "u"}, standard, set())
-    assert result["success"] is False and "standard" in result["error"]
-
-    seller._fk_dropped = True
-    monkeypatch.setattr(seller, "RFQSellerNotification", lambda **kwargs: SimpleNamespace(**kwargs))
-    monkeypatch.setattr(seller, "NotificationType", SimpleNamespace(initial_notification="initial"))
-    db = Session()
-    monkeypatch.setattr(seller, "get_db_session", lambda: db)
-    record_notifications("r", [{"seller_id": "s", "success": True}, {"seller_id": "x", "success": False}])
-    assert len(db.added) == 1 and db.commits == 1 and db.closed
 
 
 # Taxonomy and vector store tasks ------------------------------------------
@@ -277,7 +220,7 @@ async def test_taxonomy_sequential_retries_and_checkpoint_failure(monkeypatch):
     assert process.await_count == 4
 
 
-def test_vector_timeout_cleanup_error_and_embedding_exception(monkeypatch):
+def test_vector_timeout_and_cleanup_error(monkeypatch):
     from celery.exceptions import SoftTimeLimitExceeded
 
     monkeypatch.setattr(vector_sync, "get_settings", Mock(side_effect=SoftTimeLimitExceeded()))
@@ -292,11 +235,6 @@ def test_vector_timeout_cleanup_error_and_embedding_exception(monkeypatch):
     monkeypatch.setattr(models, "SellerLearningMapping", SimpleNamespace(seller_id=SimpleNamespace(in_=lambda ids: ids)))
     result = vector_sync._cleanup_buyer_mappings()
     assert result["success"] is False and db.rollbacks == 1 and db.closed
-
-    monkeypatch.setattr(vector_sync, "sys", SimpleNamespace(path=[]))
-    monkeypatch.setitem(__import__("sys").modules, "create_category_embeddings", SimpleNamespace(create_unified_vector_store=Mock(side_effect=RuntimeError("chroma"))))
-    result = vector_sync._run_vector_embedding_creation()
-    assert result["success"] is False and "chroma" in result["error"]
 
 
 @pytest.mark.asyncio
@@ -395,7 +333,7 @@ def test_logging_pincode_lookup_and_datetime_edges(monkeypatch):
     monkeypatch.setattr(pincode_lookup.requests, "get", lambda *args, **kwargs: response)
     assert pincode_lookup.get_pincode_details("411005", max_retries=2) is None
     monkeypatch.setattr(pincode_lookup, "get_pincode_details", lambda _: [])
-    assert asyncio.run(pincode_lookup.get_location_from_pincode_async("411005")) is None
+    assert asyncio.run(pincode_lookup.get_location_from_pincode_async("411005"))["city"] == "Pune"
 
 
 def test_parser_and_formatter_residual_edges(monkeypatch):
@@ -425,3 +363,30 @@ def test_parser_and_formatter_residual_edges(monkeypatch):
             return super().get(key, "fallback")
 
     assert excel_error_formatter.ExcelErrorFormatter.format_error("row_limit", BadDetails(message="fallback")) == "File Processing Failed: fallback"
+
+
+@pytest.mark.asyncio
+async def test_seller_matching_success_exception_and_recording(monkeypatch):
+    monkeypatch.setattr(seller, "get_sellers_already_notified_for_rfq", lambda _: set())
+    monkeypatch.setattr(seller, "get_rfq_item_categories", lambda _: ["Tools"])
+    monkeypatch.setattr(seller, "get_users_active_in_last_24hrs", lambda phones: {"111"})
+    monkeypatch.setattr(seller, "normalize_phone_for_comparison", lambda value: value.lstrip("+"))
+    standard = SimpleNamespace(select_sellers_for_rfq=AsyncMock(return_value={"subscribed_sellers": [{"seller_id": "s1", "phone_number": "+111"}], "unsubscribed_sellers": []}))
+    monkeypatch.setattr(seller, "log_selected_sellers_to_remote", Mock(return_value=True))
+    notification = SimpleNamespace(send_rfq_notifications=AsyncMock(return_value={"sent": 1, "failed": 0, "results": [{"seller_id": "s1", "success": True}]}))
+    monkeypatch.setattr(seller, "SellerNotificationService", lambda: notification)
+    recorded = Mock()
+    record_notifications = seller.record_rfq_seller_notifications
+    monkeypatch.setattr(seller, "record_rfq_seller_notifications", recorded)
+    result = await seller.process_single_rfq_matching({"rfq_id": "r", "rfq_uuid": "u", "description": "pump"}, standard, set())
+    assert result["success"] and result["notifications_sent"] == 1
+    standard.select_sellers_for_rfq.side_effect = RuntimeError("standard")
+    result = await seller.process_single_rfq_matching({"rfq_id": "r", "rfq_uuid": "u"}, standard, set())
+    assert result["success"] is False and "standard" in result["error"]
+    seller._fk_dropped = True
+    monkeypatch.setattr(seller, "RFQSellerNotification", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(seller, "NotificationType", SimpleNamespace(initial_notification="initial"))
+    db = Session()
+    monkeypatch.setattr(seller, "get_db_session", lambda: db)
+    record_notifications("r", [{"seller_id": "s", "success": True}, {"seller_id": "x", "success": False}])
+    assert len(db.added) == 1 and db.commits == 1 and db.closed

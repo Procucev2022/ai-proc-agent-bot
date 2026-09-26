@@ -30,7 +30,7 @@ markers = [
 [tool.mypy]
 python_version = "3.13"
 files = ["app"]
-# Third-party packages here (chromadb, celery, pgeocode, ...) ship no stubs and
+# Third-party packages here (celery, pgeocode, ...) ship no stubs and
 # the codebase is only partially annotated. The PR gate therefore blocks
 # *regressions* against quality-baseline.json instead of demanding a full
 # annotation pass. Tighten these settings as the baseline ratchets down.
