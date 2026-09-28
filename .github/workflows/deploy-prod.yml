@@ -51,12 +51,25 @@ jobs:
           GMT_PHONE: ${{ secrets.GMT_PHONE }}
           GMT_CLIENT_ID: ${{ secrets.GMT_CLIENT_ID }}
           GMT_CLIENT_SECRET: ${{ secrets.GMT_CLIENT_SECRET }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.PROD_DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL || secrets.DATABASE_URL }}
+          WHATSAPP_FROM_NUMBER: ${{ secrets.WHATSAPP_FROM_NUMBER }}
+          WHATSAPP_MOCK_MODE: ${{ secrets.WHATSAPP_MOCK_MODE }}
         run: |
-          required=(AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_KEY WHATSAPP_API_KEY WHATSAPP_USERNAME WHATSAPP_PASSWORD GMT_BASE_URL GMT_USERNAME GMT_PASSWORD GMT_PHONE GMT_CLIENT_ID GMT_CLIENT_SECRET DATABASE_URL)
+          # WHATSAPP_FROM_NUMBER is required rather than defaulted: a silent
+          # fallback would send production traffic from whatever number was
+          # hardcoded, with nothing in the run to show it.
+          required=(AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_KEY WHATSAPP_API_KEY WHATSAPP_USERNAME WHATSAPP_PASSWORD WHATSAPP_FROM_NUMBER GMT_BASE_URL GMT_USERNAME GMT_PASSWORD GMT_PHONE GMT_CLIENT_ID GMT_CLIENT_SECRET DATABASE_URL)
           for name in "${required[@]}"; do
             if [ -z "${!name:-}" ]; then echo "::error::Missing required secret $name"; exit 1; fi
           done
+          if ! [[ "$WHATSAPP_FROM_NUMBER" =~ ^[0-9]{10,15}$ ]]; then
+            echo "::error::WHATSAPP_FROM_NUMBER must be digits only with country code and no '+' (e.g. 91XXXXXXXXXX)"
+            exit 1
+          fi
+          if [ "$(echo "${WHATSAPP_MOCK_MODE:-false}" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
+            echo "::error::WHATSAPP_MOCK_MODE is 'true' in the production environment; real messages would not be sent"
+            exit 1
+          fi
           if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ] && [ -z "${{ secrets.AZURE_CLIENT_ID }}" ]; then
             echo "::error title=Missing Azure Secrets::No Azure authentication secrets found!"
             echo "--------------------------------------------------------------------------------"
@@ -209,11 +222,11 @@ jobs:
             acrPassword="${{ env.ACR_PASS }}"
             appImageTag=${{ env.TAG_APP }}
             celeryImageTag=${{ env.TAG_CELERY }}
-            databaseUrl="${{ secrets.DATABASE_URL || secrets.PROD_DATABASE_URL }}"
+            databaseUrl="${{ secrets.PROD_DATABASE_URL || secrets.DATABASE_URL }}"
             azureOpenAiEndpoint="${{ secrets.AZURE_OPENAI_ENDPOINT }}"
             azureOpenAiKey="${{ secrets.AZURE_OPENAI_API_KEY }}"
             whatsappApiKey="${{ secrets.WHATSAPP_API_KEY }}"
-            whatsappFromNumber="${{ secrets.WHATSAPP_FROM_NUMBER || '917996170801' }}"
+            whatsappFromNumber="${{ secrets.WHATSAPP_FROM_NUMBER }}"
             whatsappMockMode="${{ secrets.WHATSAPP_MOCK_MODE || 'false' }}"
             whatsappUsername="${{ secrets.WHATSAPP_USERNAME }}"
             whatsappPassword="${{ secrets.WHATSAPP_PASSWORD }}"
