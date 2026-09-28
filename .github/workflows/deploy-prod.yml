@@ -147,7 +147,6 @@ jobs:
       # image. The tag is keyed on the hash of the files that produce them, so a
       # deploy that changes neither requirements.txt nor Dockerfile.base reuses
       # it. ACR authenticates to its own registry automatically, so the app
-      # build can pull it as a base image with no extra credentials.
       - name: Resolve Shared Dependency Image
         id: base
         env:
