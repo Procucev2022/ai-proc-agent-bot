@@ -107,7 +107,7 @@ async def test_sectioned_rfq_staged_details_retention():
     Test scenario:
     1. User provides product first ('laptop 30').
     2. System asks for date/pincode.
-    3. User provides date/pincode ('560037 31-08-2026').
+    3. User provides date/pincode ('560037 31-08-2099').
     4. Delivery details confirmed.
     5. Next section (items) automatically displays existing items for confirmation.
     """
@@ -135,7 +135,7 @@ async def test_sectioned_rfq_staged_details_retention():
                 existing_items = context["workflow_state"].get("incomplete_products", [])
             return {
                 "products": [{"description": "NO_PRODUCTS_MENTIONED"}],
-                "deliveryDate": "31-08-2026",
+                "deliveryDate": "31-08-2099",
                 "pincode": "560037",
                 "city": "Bengaluru",
                 "state": "Karnataka"
@@ -145,7 +145,7 @@ async def test_sectioned_rfq_staged_details_retention():
     entity_service.openai_service = MagicMock()
     entity_service.openai_service.validate_delivery_date = AsyncMock(return_value={
         "is_valid": True,
-        "normalized_date": "31-08-2026"
+        "normalized_date": "31-08-2099"
     })
 
     handler = SectionedRFQCreationHandler(
@@ -177,7 +177,7 @@ async def test_sectioned_rfq_staged_details_retention():
     assert items1[0]["description"] == "laptop"
 
     # Step 2: User provides pincode and date
-    res2 = await handler.handle_sectioned_rfq(user, session, "560037 31-08-2026")
+    res2 = await handler.handle_sectioned_rfq(user, session, "560037 31-08-2099")
     assert res2["status"] == "awaiting_delivery_confirmation"
 
     # Step 3: User confirms delivery details
