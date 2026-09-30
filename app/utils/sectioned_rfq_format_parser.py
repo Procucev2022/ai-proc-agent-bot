@@ -466,6 +466,60 @@ def parse_items_format(text: str) -> Dict[str, Any]:
         return {"error": "Invalid format. Please follow the exact format shown."}
 
 
+_LINE_ITEM_QTY_PATTERN = re.compile(r'^qty\s*[:.]?\s*(\d+(?:\.\d+)?)?$', re.IGNORECASE)
+_LINE_ITEM_UOM_PATTERN = re.compile(r'^uom\s*[:.]?\s*(.*)$', re.IGNORECASE)
+
+
+def parse_items_line_format(text: str) -> Dict[str, Any]:
+    """
+    Parse items written in the one-line format the items prompt asks for.
+    NO entity extraction - just splitting on " - ".
+
+    Expected format (one item per line, bullets allowed):
+        Qty 25 - Cable - UoM meters - 10 mm thickness
+        Qty 15 - Laptop - UoM pieces - HP, 10" display
+
+    A missing quantity ("Qty - Cable - ...") is kept as None so the caller can
+    ask for just that field instead of rejecting the whole message.
+
+    Returns:
+        Success: {"items": [{"description", "quantity", "brand", "remarks", "unitofMeasures"}, ...]}
+        Failure: {"error": "..."} when any non-empty line is not in this format
+    """
+    items = []
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip().lstrip("•*·-").strip().strip("*").strip()
+        if not line:
+            continue
+
+        # Split on standalone hyphens only, so "T-shirt" stays one value and an
+        # empty field ("Qty 25 -  - UoM m") stays visible as an empty part.
+        parts = [part.strip() for part in re.split(r'(?:^|\s)-(?=\s|$)', line)]
+        qty_match = _LINE_ITEM_QTY_PATTERN.match(parts[0])
+        if not qty_match or len(parts) < 2 or not parts[1]:
+            return {"error": f"Line not in 'Qty [Number] - [Item Name] - UoM [Unit] - [Details]' format: {line}"}
+
+        item = {
+            "description": parts[1],
+            "quantity": float(qty_match.group(1)) if qty_match.group(1) else None,
+            "brand": "",
+            "remarks": "",
+            "unitofMeasures": "",
+        }
+        details = parts[2:]
+        uom_match = _LINE_ITEM_UOM_PATTERN.match(details[0]) if details else None
+        if uom_match:
+            item["unitofMeasures"] = uom_match.group(1).strip()
+            details = details[1:]
+        item["remarks"] = " - ".join(detail for detail in details if detail)
+        items.append(item)
+
+    if not items:
+        return {"error": "No items found. Please provide at least one item."}
+    logger.info(f"Items line format parsed successfully: {len(items)} items")
+    return {"items": items}
+
+
 def generate_delivery_display(data: Dict[str, str]) -> str:
     """
     Generate display format for delivery details.

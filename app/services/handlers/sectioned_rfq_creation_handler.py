@@ -82,7 +82,7 @@ _PLAIN_DELIVERY_FILLER_PATTERN = re.compile(
 # Shown when the extractor itself failed, so the user is not sent the same
 # prompt again with no hint that their reply was never read.
 DELIVERY_EXTRACTION_FAILED_MESSAGE = (
-    "Sorry, I couldn't read your delivery details. Please send them as "
+    "Please send them as "
     "Delivery Date (DD/MM/YYYY) and Delivery Pincode, for example: 01/10/2026, 560045"
 )
 
@@ -886,6 +886,14 @@ class SectionedRFQCreationHandler:
 
             items_data = self._usable_items(entity_result.get("products"))
 
+            # The extractor found nothing (or failed): a reply in the prompt's own
+            # "Qty N - Item - UoM unit - details" format can still be read directly.
+            if not items_data:
+                line_result = sectioned_rfq_format_parser.parse_items_line_format(message)
+                if not line_result.get("error"):
+                    logger.warning(f"[SECTIONED_RFQ] Extractor returned no items; using line-format parse ({len(line_result['items'])} items)")
+                    items_data = line_result["items"]
+
             # Enforce item limit for text input (not Excel)
             if not is_from_excel and len(items_data) > MAX_TEXT_INPUT_ITEMS:
                 return await self._display_item_limit_exceeded(user, session, len(items_data))
@@ -985,6 +993,14 @@ class SectionedRFQCreationHandler:
             logger.info(f"[SECTIONED_RFQ] Additional text found after format: {additional_text[:100]}...")
             # TODO: Handle the additional text (could be a question) after processing the format
 
+        # A reply in the one-line format the items prompt advertises
+        # ("Qty 25 - Cable - UoM meters - ...") is valid too. It usually fills in a
+        # missing field, so it is merged into the stored items rather than replacing them.
+        if parsed_result.get("error"):
+            line_result = sectioned_rfq_format_parser.parse_items_line_format(message)
+            if not line_result.get("error"):
+                return await self._apply_line_format_items(user, session, line_result["items"])
+
         # Step 2: Check if format valid
         if parsed_result.get("error"):
             # Format invalid - increment retry
@@ -1032,6 +1048,49 @@ class SectionedRFQCreationHandler:
         await self.session_manager.save_session(session, persist_to_db=False)
 
         # Step 4: Re-display for confirmation
+        return await self._display_items_confirmation(user, session, items_data)
+
+    @staticmethod
+    def _merge_items_by_name(existing_items: List[Dict], new_items: List[Dict]) -> List[Dict]:
+        """
+        Merge line-format items into the stored ones, matching on item name.
+
+        A matched item takes every non-empty value from the new line; unmatched new
+        items are appended; stored items the user did not mention are kept.
+        """
+        merged = [dict(item) for item in existing_items]
+        for new_item in new_items:
+            name = str(new_item.get("description", "")).strip().lower()
+            target = next(
+                (item for item in merged if str(item.get("description", "")).strip().lower() == name),
+                None,
+            )
+            if target is None:
+                merged.append(dict(new_item))
+                continue
+            for key, value in new_item.items():
+                if value is not None and str(value).strip():
+                    target[key] = value
+        return merged
+
+    async def _apply_line_format_items(self, user: User, session: ConversationSession,
+                                       new_items: List[Dict]) -> Dict[str, Any]:
+        """Store items parsed from the one-line format, then confirm or ask for what is still missing."""
+        existing_items = self._usable_items(WorkflowManager.get_section_data(session, "items"))
+        items_data = self._merge_items_by_name(existing_items, new_items)
+
+        is_from_excel = WorkflowManager.is_sectioned_rfq_from_excel(session)
+        if not is_from_excel and len(items_data) > MAX_TEXT_INPUT_ITEMS:
+            return await self._display_item_limit_exceeded(user, session, len(items_data))
+
+        WorkflowManager.update_section_data(session, "items", items_data)
+        WorkflowManager.reset_section_retry(session, "items")
+        WorkflowManager.set_awaiting_section_modification(session, "items", False)
+        await self.session_manager.save_session(session, persist_to_db=False)
+
+        incomplete_items = self._get_incomplete_items(items_data)
+        if incomplete_items:
+            return await self._display_items_missing_fields(user, session, items_data, incomplete_items)
         return await self._display_items_confirmation(user, session, items_data)
 
     async def _display_items_confirmation(self, user: User, session: ConversationSession,
