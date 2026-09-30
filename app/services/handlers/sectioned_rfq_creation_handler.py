@@ -15,7 +15,8 @@ Key features:
 """
 
 import logging
-from datetime import datetime
+import re
+from datetime import date, datetime
 from typing import Dict, Any, List, Optional
 from app.models import User, ConversationSession, WorkflowType
 from app.services.workflow_manager import WorkflowManager
@@ -68,6 +69,73 @@ def _format_date_for_display(date_str: str) -> str:
 
     # If all parsing fails, return original
     return date_str
+
+_PLAIN_DATE_PATTERN = re.compile(r"(?<!\d)(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})(?!\d)")
+_PLAIN_PINCODE_PATTERN = re.compile(r"(?<!\d)([1-9]\d{5})(?!\d)")
+# What may surround the date and pincode for a reply to count as delivery details
+# only. Anything else (e.g. "laptop 30") must still go to the extractor.
+_PLAIN_DELIVERY_FILLER_PATTERN = re.compile(
+    r"^(?:[\s,;:.\-/&]|\b(?:delivery|deliver|date|location|pincode|pin|code|and|by|on|to|at)\b)*$",
+    re.IGNORECASE,
+)
+
+# Shown when the extractor itself failed, so the user is not sent the same
+# prompt again with no hint that their reply was never read.
+DELIVERY_EXTRACTION_FAILED_MESSAGE = (
+    "Sorry, I couldn't read your delivery details. Please send them as "
+    "Delivery Date (DD/MM/YYYY) and Delivery Pincode, for example: 01/10/2026, 560045"
+)
+
+
+def _parse_plain_delivery_reply(message: str) -> Dict[str, Any]:
+    """
+    Read a DD/MM/YYYY date and a 6-digit pincode straight from the text.
+
+    A reply like "01/10/2026,560045" needs no model to understand, and parsing it
+    here keeps the delivery step working when the OpenAI extractor is failing.
+
+    Returns:
+        Dict with "date" (a date, or None when absent or not a real calendar date),
+        "pincode" (a string, or "" when absent) and "delivery_only" (True when the
+        text holds nothing but the date and pincode, so no extraction is needed).
+    """
+    text = message or ""
+    parsed_date = None
+    date_match = _PLAIN_DATE_PATTERN.search(text)
+    if date_match:
+        day, month, year = (int(part) for part in date_match.groups())
+        try:
+            parsed_date = date(year, month, day)
+        except ValueError:
+            parsed_date = None
+        # Blank the date out so its digits cannot be read as part of a pincode.
+        text = text[:date_match.start()] + " " + text[date_match.end():]
+
+    pincode_match = _PLAIN_PINCODE_PATTERN.search(text)
+    remainder = text
+    if pincode_match:
+        remainder = text[:pincode_match.start()] + " " + text[pincode_match.end():]
+    return {
+        "date": parsed_date,
+        "pincode": pincode_match.group(1) if pincode_match else "",
+        "delivery_only": bool(
+            parsed_date and pincode_match and _PLAIN_DELIVERY_FILLER_PATTERN.match(remainder)
+        ),
+    }
+
+
+def _validate_plain_delivery_date(delivery_date: date) -> Dict[str, Any]:
+    """Validate a date that was parsed locally, in the shape _validate_delivery_date returns."""
+    if delivery_date < date.today():
+        return {
+            "is_valid": False,
+            "error": "The delivery date is in the past. Please provide a future delivery date.",
+        }
+    return {
+        "is_valid": True,
+        "normalized_date": _format_date_for_display(delivery_date.isoformat()),
+    }
+
 
 # Maximum retry attempts per section
 MAX_RETRY_ATTEMPTS = 3
@@ -284,26 +352,56 @@ class SectionedRFQCreationHandler:
         # arrives from a menu button rather than typing, and calling the extractor on
         # it would spend an OpenAI round trip to learn nothing.
         has_message_text = bool(message and message.strip())
+        extraction_failed = False
 
         if has_message_text and (not delivery_data or not self._has_delivery_basics(delivery_data)):
-            # Need to extract delivery details - ONE TIME entity extraction
-            entity_context = self._build_entity_context(session)
-            entity_result = await self.entity_service.extract_entities(
-                message, context=entity_context, workflow_type="buy_something"
-            )
+            plain_reply = _parse_plain_delivery_reply(message)
+            plain_date_iso = plain_reply["date"].isoformat() if plain_reply["date"] else ""
 
-            # Extract delivery fields
-            delivery_data = {
-                "deliveryDate": entity_result.get("deliveryDate", ""),
-                "pincode": entity_result.get("pincode", ""),
-                "city": entity_result.get("city", ""),
-                "state": entity_result.get("state", "")
-            }
+            if plain_reply["delivery_only"]:
+                # A plain "DD/MM/YYYY, pincode" reply is read directly, so this step
+                # does not depend on the OpenAI extractor being up.
+                logger.info(f"[SECTIONED_RFQ] Delivery details parsed without extraction: {plain_date_iso}, {plain_reply['pincode']}")
+                entity_result = {}
+                delivery_data = {
+                    "deliveryDate": plain_date_iso,
+                    "pincode": plain_reply["pincode"],
+                    "city": "",
+                    "state": ""
+                }
+            else:
+                # Need to extract delivery details - ONE TIME entity extraction
+                entity_context = self._build_entity_context(session)
+                entity_result = await self.entity_service.extract_entities(
+                    message, context=entity_context, workflow_type="buy_something"
+                )
+
+                # Extract delivery fields
+                delivery_data = {
+                    "deliveryDate": entity_result.get("deliveryDate", ""),
+                    "pincode": entity_result.get("pincode", ""),
+                    "city": entity_result.get("city", ""),
+                    "state": entity_result.get("state", "")
+                }
+                # Fill whatever the extractor missed from the local parse.
+                if not delivery_data["deliveryDate"] and plain_date_iso:
+                    delivery_data["deliveryDate"] = plain_date_iso
+                if not delivery_data["pincode"] and plain_reply["pincode"]:
+                    delivery_data["pincode"] = plain_reply["pincode"]
+
+                # success=False with an error_type is a deliberate rejection (e.g. a
+                # non-procurable item); without one, the extractor itself failed.
+                extraction_failed = entity_result.get("success") is False and not entity_result.get("error_type")
+                if extraction_failed:
+                    logger.error(f"[SECTIONED_RFQ] Delivery details extraction failed for {user.phone_number}: {entity_result}")
 
             # Validate and normalize delivery date if provided
             date_error = None
             if delivery_data.get("deliveryDate"):
-                date_validation = await self._validate_delivery_date(delivery_data["deliveryDate"])
+                if plain_date_iso and delivery_data["deliveryDate"] == plain_date_iso:
+                    date_validation = _validate_plain_delivery_date(plain_reply["date"])
+                else:
+                    date_validation = await self._validate_delivery_date(delivery_data["deliveryDate"])
                 if date_validation.get("is_valid"):
                     # Use normalized date format
                     delivery_data["deliveryDate"] = date_validation.get("normalized_date", delivery_data["deliveryDate"])
@@ -356,6 +454,8 @@ class SectionedRFQCreationHandler:
                 # No data extracted - check if there was a date validation error
                 if date_validation_error:
                     msg = f"{date_validation_error}\n\nPlease provide a valid delivery date and delivery pincode."
+                elif extraction_failed:
+                    msg = DELIVERY_EXTRACTION_FAILED_MESSAGE
                 else:
                     msg = "Please provide your RFQ items Delivery Date and Delivery Location Pincode."
                 buttons_config = [
