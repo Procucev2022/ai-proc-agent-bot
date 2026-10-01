@@ -38,22 +38,22 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Verify Azure Secrets Present
+      - name: Verify Azure vars Present
         env:
-          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
-          WHATSAPP_API_KEY: ${{ secrets.WHATSAPP_API_KEY }}
-          WHATSAPP_USERNAME: ${{ secrets.WHATSAPP_USERNAME }}
-          WHATSAPP_PASSWORD: ${{ secrets.WHATSAPP_PASSWORD }}
-          GMT_BASE_URL: ${{ secrets.GMT_BASE_URL }}
-          GMT_USERNAME: ${{ secrets.GMT_USERNAME }}
-          GMT_PASSWORD: ${{ secrets.GMT_PASSWORD }}
-          GMT_PHONE: ${{ secrets.GMT_PHONE }}
-          GMT_CLIENT_ID: ${{ secrets.GMT_CLIENT_ID }}
-          GMT_CLIENT_SECRET: ${{ secrets.GMT_CLIENT_SECRET }}
-          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL || secrets.DATABASE_URL }}
-          WHATSAPP_FROM_NUMBER: ${{ secrets.WHATSAPP_FROM_NUMBER }}
-          WHATSAPP_MOCK_MODE: ${{ secrets.WHATSAPP_MOCK_MODE }}
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY: ${{ vars.AZURE_OPENAI_API_KEY }}
+          WHATSAPP_API_KEY: ${{ vars.WHATSAPP_API_KEY }}
+          WHATSAPP_USERNAME: ${{ vars.WHATSAPP_USERNAME }}
+          WHATSAPP_PASSWORD: ${{ vars.WHATSAPP_PASSWORD }}
+          GMT_BASE_URL: ${{ vars.GMT_BASE_URL }}
+          GMT_USERNAME: ${{ vars.GMT_USERNAME }}
+          GMT_PASSWORD: ${{ vars.GMT_PASSWORD }}
+          GMT_PHONE: ${{ vars.GMT_PHONE }}
+          GMT_CLIENT_ID: ${{ vars.GMT_CLIENT_ID }}
+          GMT_CLIENT_SECRET: ${{ vars.GMT_CLIENT_SECRET }}
+          DATABASE_URL: ${{ vars.PROD_DATABASE_URL || vars.DATABASE_URL }}
+          WHATSAPP_FROM_NUMBER: ${{ vars.WHATSAPP_FROM_NUMBER }}
+          WHATSAPP_MOCK_MODE: ${{ vars.WHATSAPP_MOCK_MODE }}
         run: |
           # WHATSAPP_FROM_NUMBER is required rather than defaulted: a silent
           # fallback would send production traffic from whatever number was
@@ -70,8 +70,8 @@ jobs:
             echo "::error::WHATSAPP_MOCK_MODE is 'true' in the production environment; real messages would not be sent"
             exit 1
           fi
-          if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ] && [ -z "${{ secrets.AZURE_CLIENT_ID }}" ]; then
-            echo "::error title=Missing Azure Secrets::No Azure authentication secrets found!"
+          if [ -z "${{ vars.AZURE_CREDENTIALS }}" ] && [ -z "${{ vars.AZURE_CLIENT_ID }}" ]; then
+            echo "::error title=Missing Azure vars::No Azure authentication vars found!"
             echo "--------------------------------------------------------------------------------"
             echo "To fix this issue, please add one of the following secret configurations in GitHub:"
             echo "Option 1 (OIDC - Recommended):"
@@ -87,10 +87,10 @@ jobs:
       - name: Azure Login (Supports OIDC or Service Principal JSON)
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          creds: ${{ vars.AZURE_CREDENTIALS }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Register Required Azure Resource Providers
         run: |
@@ -221,20 +221,20 @@ jobs:
             acrPassword="${{ env.ACR_PASS }}"
             appImageTag=${{ env.TAG_APP }}
             celeryImageTag=${{ env.TAG_CELERY }}
-            databaseUrl="${{ secrets.PROD_DATABASE_URL || secrets.DATABASE_URL }}"
-            azureOpenAiEndpoint="${{ secrets.AZURE_OPENAI_ENDPOINT }}"
-            azureOpenAiKey="${{ secrets.AZURE_OPENAI_API_KEY }}"
-            whatsappApiKey="${{ secrets.WHATSAPP_API_KEY }}"
-            whatsappFromNumber="${{ secrets.WHATSAPP_FROM_NUMBER }}"
-            whatsappMockMode="${{ secrets.WHATSAPP_MOCK_MODE || 'false' }}"
-            whatsappUsername="${{ secrets.WHATSAPP_USERNAME }}"
-            whatsappPassword="${{ secrets.WHATSAPP_PASSWORD }}"
-            gmtBaseUrl="${{ secrets.GMT_BASE_URL }}"
-            gmtUsername="${{ secrets.GMT_USERNAME }}"
-            gmtPassword="${{ secrets.GMT_PASSWORD }}"
-            gmtPhone="${{ secrets.GMT_PHONE }}"
-            gmtClientId="${{ secrets.GMT_CLIENT_ID }}"
-            gmtClientSecret="${{ secrets.GMT_CLIENT_SECRET }}"
+            databaseUrl="${{ vars.PROD_DATABASE_URL || vars.DATABASE_URL }}"
+            azureOpenAiEndpoint="${{ vars.AZURE_OPENAI_ENDPOINT }}"
+            azureOpenAiKey="${{ vars.AZURE_OPENAI_API_KEY }}"
+            whatsappApiKey="${{ vars.WHATSAPP_API_KEY }}"
+            whatsappFromNumber="${{ vars.WHATSAPP_FROM_NUMBER }}"
+            whatsappMockMode="${{ vars.WHATSAPP_MOCK_MODE || 'false' }}"
+            whatsappUsername="${{ vars.WHATSAPP_USERNAME }}"
+            whatsappPassword="${{ vars.WHATSAPP_PASSWORD }}"
+            gmtBaseUrl="${{ vars.GMT_BASE_URL }}"
+            gmtUsername="${{ vars.GMT_USERNAME }}"
+            gmtPassword="${{ vars.GMT_PASSWORD }}"
+            gmtPhone="${{ vars.GMT_PHONE }}"
+            gmtClientId="${{ vars.GMT_CLIENT_ID }}"
+            gmtClientSecret="${{ vars.GMT_CLIENT_SECRET }}"
 
       - name: Get Production URL & Verify Health Endpoint
         run: |
