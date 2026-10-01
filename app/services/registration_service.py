@@ -131,6 +131,20 @@ class RegistrationService:
                 workflow_type=workflow_type
             )
 
+            # If the AI call failed or found nothing, fall back to a local parse so the
+            # user is not asked again for details they have already sent.
+            ai_entities = entity_result.get("entities") or {}
+            if not any(v and str(v).strip() for v in ai_entities.values()):
+                local_entities = AuthenticationHelpers.parse_registration_details_locally(
+                    message_content, existing_entities
+                )
+                if local_entities:
+                    logger.warning(
+                        f"AI registration extraction returned no entities (success={entity_result.get('success')}); "
+                        f"using local parse for fields {sorted(local_entities)}"
+                    )
+                    entity_result = {**entity_result, "entities": local_entities}
+
             # Merge extracted entities with existing ones
             if entity_result.get("entities"):
                 # Smart merge - prioritize new data but preserve existing

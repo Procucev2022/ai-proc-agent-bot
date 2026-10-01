@@ -592,6 +592,36 @@ class TestRegistrationPublicMethods:
         assert (await registration_service.handle_registration_data_collection(PHONE, "bad", make_session()))["status"] == "redirected"
 
     @pytest.mark.asyncio
+    async def test_registration_data_collection_falls_back_to_local_parse_when_ai_fails(self, registration_service):
+        # A failed OpenAI call comes back as the product-shaped error dict with no entities.
+        registration_service._test_entity.extract_entities.return_value = {"products": [], "success": False}
+        registration_service._check_exit_command = AsyncMock(return_value=False)
+        registration_service.authentication_helpers.validate_entities = AsyncMock(side_effect=lambda e, _s: (e, None))
+        registration_service._send_confirmation_with_buttons = AsyncMock()
+        message = "Rohit Hukkeri , Image Pvt Ltd , rohithukkeri1999@gmail.com , 560045"
+        location = AsyncMock(return_value={"city": "Bengaluru", "state": "Karnataka"})
+        with patch.object(registration_module, "get_location_from_pincode_async", new=location):
+            result = await registration_service.handle_registration_data_collection(
+                PHONE, message, make_session({"user_type": "buyer"})
+            )
+        assert result["status"] == "awaiting_confirmation"
+        assert result["collected_entities"] == {
+            "name": "Rohit Hukkeri",
+            "companyName": "Image Pvt Ltd",
+            "email": "rohithukkeri1999@gmail.com",
+            "zipCode": "560045",
+            "address1": "Bengaluru, Karnataka",
+        }
+
+        # Nothing recognisable in the message: still ask for the missing details.
+        with patch.object(registration_module, "get_location_from_pincode_async", new=AsyncMock(return_value=None)):
+            result = await registration_service.handle_registration_data_collection(
+                PHONE, "hello", make_session({"user_type": "buyer"})
+            )
+        assert result["status"] == "data_collection_in_progress"
+        assert result["collected_entities"] == {}
+
+    @pytest.mark.asyncio
     async def test_registration_confirmation_yes_no_unknown_exit(self, registration_service, auth_dependencies):
         session = make_session({"user_type": "buyer", "registration_entities": valid_buyer_entities()})
         registration_service._submit_registration = AsyncMock(return_value={"status": "registration_completed"})
@@ -961,3 +991,33 @@ class TestAuthenticationCoverageEdges:
         auth_dependencies.whatsapp.send_message.side_effect = None
         auth_dependencies.whatsapp.send_message.side_effect = RuntimeError("wa")
         assert (await auth_service._handle_domain_mismatch(PHONE, buyer_user_dict(), session))["status"] == "error"
+
+
+@pytest.mark.parametrize(
+    ("message", "existing", "expected"),
+    [
+        (
+            "Rohit Hukkeri , Image Pvt Ltd ,rohithukkeri1999@gmail.com , 560045",
+            None,
+            {"name": "Rohit Hukkeri", "companyName": "Image Pvt Ltd", "email": "rohithukkeri1999@gmail.com", "zipCode": "560045"},
+        ),
+        # Seller details: the GSTIN digits must not be read as a pincode.
+        (
+            "Asha Rao\nRao Traders LLP\nasha@rao.in\n27ABCDE1234F1Z5\n411001",
+            None,
+            {"name": "Asha Rao", "companyName": "Rao Traders LLP", "email": "asha@rao.in", "gstin": "27ABCDE1234F1Z5", "zipCode": "411001"},
+        ),
+        # Already-collected name/company are not overwritten by a guess.
+        ("New Name, Other Ltd, 560001", {"name": "Kept", "companyName": "Kept Ltd"}, {"zipCode": "560001"}),
+        # A single short reply is never taken as a name; patterns still match.
+        ("yes", None, {}),
+        ("560045", None, {"zipCode": "560045"}),
+        ("", None, {}),
+        (None, None, {}),
+        ({"type": "button"}, None, {}),
+    ],
+)
+def test_parse_registration_details_locally(message, existing, expected):
+    from app.services.helpers.authentication_helpers import AuthenticationHelpers
+
+    assert AuthenticationHelpers.parse_registration_details_locally(message, existing) == expected
