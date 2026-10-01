@@ -12,10 +12,61 @@ from ...utils.pincode_lookup import get_location_from_pincode_async
 
 logger = logging.getLogger(__name__)
 
+_LOCAL_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_LOCAL_PINCODE_RE = re.compile(r"(?<!\d)[1-9]\d{5}(?!\d)")
+_LOCAL_GSTIN_RE = re.compile(r"\b\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]\b", re.IGNORECASE)
+_LOCAL_COMPANY_RE = re.compile(
+    r"\b(pvt|private|ltd|limited|llp|llc|inc|corp|corporation|company|co\.|enterprises?|"
+    r"industries|solutions|technologies|traders|trading|associates|agency|group)\b",
+    re.IGNORECASE,
+)
+_LOCAL_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z\s.]{1,}$")
+
 
 class AuthenticationHelpers:
     """Helper functions for authentication workflow."""
-    
+
+    @staticmethod
+    def parse_registration_details_locally(message: str, existing_entities: Optional[Dict] = None) -> Dict[str, str]:
+        """Pull registration fields out of a message without the LLM.
+
+        Used only when AI extraction returns nothing, so an OpenAI outage does not
+        leave the user stuck re-sending the same details. Email, pincode and GSTIN
+        are matched by pattern; name and company are inferred from the remaining
+        comma/line separated parts, and only when the message has several parts so
+        a one-word reply such as "yes" is never taken as a name.
+        """
+        if not message or not isinstance(message, str):
+            return {}
+        existing_entities = existing_entities or {}
+        found: Dict[str, str] = {}
+
+        email = _LOCAL_EMAIL_RE.search(message)
+        if email:
+            found["email"] = email.group(0)
+        gstin = _LOCAL_GSTIN_RE.search(message)
+        if gstin:
+            found["gstin"] = gstin.group(0).upper()
+        # Search for the pincode outside the GSTIN, whose digits could otherwise match.
+        pincode = _LOCAL_PINCODE_RE.search(_LOCAL_GSTIN_RE.sub(" ", message))
+        if pincode:
+            found["zipCode"] = pincode.group(0)
+
+        segments = [s.strip() for s in re.split(r"[,;\n|]+", message) if s.strip()]
+        if len(segments) >= 2:
+            free = [
+                s for s in segments
+                if not _LOCAL_EMAIL_RE.search(s) and not _LOCAL_PINCODE_RE.fullmatch(s) and not _LOCAL_GSTIN_RE.fullmatch(s)
+            ]
+            company = next((s for s in free if _LOCAL_COMPANY_RE.search(s)), None)
+            if company and not existing_entities.get("companyName"):
+                found["companyName"] = company
+            name = next((s for s in free if s != company and _LOCAL_NAME_RE.match(s)), None)
+            if name and not existing_entities.get("name"):
+                found["name"] = name
+
+        return found
+
     @staticmethod
     def extract_user_details(api_response: List) -> Optional[Dict]:
         """Extract user details from API response."""
