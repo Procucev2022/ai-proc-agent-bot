@@ -66,15 +66,15 @@ class Settings:
         self.openai_model_advanced = os.getenv("OPENAI_MODEL_ADVANCED", "gpt-5.4-mini")
         self.azure_openai_base_url = os.getenv("AZURE_OPENAI_ENDPOINT")
         # WhatsApp configuration
-        self.WHATSAPP_USERNAME = os.getenv("WHATSAPP_USERNAME", "test_user")
-        self.WHATSAPP_PASSWORD = os.getenv("WHATSAPP_PASSWORD", "test_password")
+        self.WHATSAPP_USERNAME = os.getenv("WHATSAPP_USERNAME")
+        self.WHATSAPP_PASSWORD = os.getenv("WHATSAPP_PASSWORD")
         self.WHATSAPP_FROM_NUMBER = os.getenv("WHATSAPP_FROM_NUMBER", "917996170801")
         self.WHATSAPP_BASE_URL = os.getenv("WHATSAPP_BASE_URL", "https://media.sendmsg.in")
         self.WHATSAPP_MEDIA_DOWNLOAD_URL = os.getenv("WHATSAPP_MEDIA_DOWNLOAD_URL", "https://download.sendmsg.in/whatsapp-mediadownloader")
         self.WHATSAPP_TEMPLATE_BASE_URL = os.getenv("WHATSAPP_TEMPLATE_BASE_URL", "https://wsapi.sendmsg.in")
         self.WHATSAPP_WEBHOOK_URL = os.getenv("WHATSAPP_WEBHOOK_URL")
-        self.WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "test_verify_token")
-        self.WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY", "test_api_key")
+        self.WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN")
+        self.WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY")
         self.WHATSAPP_MOCK_MODE = os.getenv("WHATSAPP_MOCK_MODE", "true").lower() == "true"
 
         # WhatsApp Template Names for re-engagement (24hr+ inactive users)

@@ -11,7 +11,7 @@ echo "================================================================="
 # Configuration
 DB_NAME="procurement_db"
 DB_USER="procurement_user"
-DB_PASSWORD="procubot2025"
+DB_PASSWORD="${DB_PASSWORD:?Set DB_PASSWORD in the environment before running this script}"
 DB_HOST="localhost"
 DB_PORT="3306"
 
@@ -335,7 +335,7 @@ cat > backup_database.sh << 'EOF'
 DATE=$(date +%Y%m%d_%H%M%S)
 DB_NAME="procurement_db"
 DB_USER="procurement_user"
-DB_PASSWORD="procubot2025"
+DB_PASSWORD="${DB_PASSWORD:?Set DB_PASSWORD in the environment}"
 
 echo "Creating backup..."
 mysqldump -h localhost -u $DB_USER -p$DB_PASSWORD $DB_NAME > "backup_${DATE}.sql"
@@ -351,7 +351,7 @@ cat > test_database.sh << 'EOF'
 # Database test script
 DB_NAME="procurement_db"
 DB_USER="procurement_user"
-DB_PASSWORD="procubot2025"
+DB_PASSWORD="${DB_PASSWORD:?Set DB_PASSWORD in the environment}"
 
 echo "Testing database connection and data..."
 mysql -h localhost -u $DB_USER -p$DB_PASSWORD $DB_NAME -e "
@@ -383,7 +383,7 @@ echo ""
 echo "What was created:"
 echo "  - Database: $DB_NAME"
 echo "  - User: $DB_USER"
-echo "  - Password: $DB_PASSWORD"
+echo "  - Password: (taken from DB_PASSWORD, not printed)"
 echo "  - 10 tables with sample data and enhanced analytics"
 echo "  - backup_database.sh script"
 echo "  - test_database.sh script"

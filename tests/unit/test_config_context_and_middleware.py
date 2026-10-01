@@ -21,12 +21,13 @@ def test_settings_accessors_and_singleton_contract(monkeypatch):
     monkeypatch.setenv("LOCAL_DATABASE_URL", "sqlite:///:memory:")
     monkeypatch.setenv("REMOTE_DATABASE_URL", "sqlite:///:memory:")
     monkeypatch.setenv("DATABASE_MODE", "local")
+    monkeypatch.setenv("WHATSAPP_VERIFY_TOKEN", "configured-verify-token")
     settings = Settings()
     assert settings.get_database_url() == "sqlite:///:memory:"
     assert settings.get_remote_database_url() == "sqlite:///:memory:"
     assert settings.is_ssl_enabled() is False
     assert settings.get_openai_config()["api_key"] == "configured-openai-key"
-    assert settings.get_whatsapp_config()["verify_token"]
+    assert settings.get_whatsapp_config()["verify_token"] == "configured-verify-token"
     assert settings.get_logging_config()["handlers"] == ["console"]
     assert settings.get_rfq_status_config()["max_allowed"] == 5
     assert settings.get_api_timeout_config()["read_timeout"] == 30
