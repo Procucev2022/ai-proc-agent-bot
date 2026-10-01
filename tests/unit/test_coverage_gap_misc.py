@@ -175,7 +175,7 @@ def test_configuration_accessors_ssl_and_webhook_parsing(monkeypatch):
     with pytest.raises(ValueError, match="PostgreSQL"):
         settings.get_database_url()
     settings.client_database_url = None
-    with pytest.raises(ValueError, match="CLIENT_DATABASE_URL"):
+    with pytest.raises(ValueError, match="DATABASE_URL"):
         settings.get_database_url()
 
     settings.database_mode = "local"

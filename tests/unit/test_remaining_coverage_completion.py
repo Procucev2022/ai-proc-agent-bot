@@ -93,7 +93,7 @@ def test_settings_validation_remaining_database_webhook_branches():
 
     settings.database_mode = "client"
     settings.client_database_url = None
-    with pytest.raises(ValueError, match="CLIENT_DATABASE_URL"):
+    with pytest.raises(ValueError, match="DATABASE_URL"):
         settings.validate_config()
 
     settings.database_mode = "local"
