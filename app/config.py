@@ -47,7 +47,8 @@ class Settings:
         
         # Database configuration
         self.local_database_url = os.getenv("LOCAL_DATABASE_URL")
-        self.client_database_url = os.getenv("CLIENT_DATABASE_URL")
+        # DATABASE_URL is the primary name; CLIENT_DATABASE_URL is kept as a legacy fallback
+        self.client_database_url = os.getenv("DATABASE_URL") or os.getenv("CLIENT_DATABASE_URL")
         self.remote_database_url = os.getenv("REMOTE_DATABASE_URL")
         self.database_mode = os.getenv("DATABASE_MODE", "local")
         self.procucev_db_name = os.getenv("PROCUCEV_DB_NAME", "development_gmtbfs")
@@ -372,7 +373,7 @@ class Settings:
         """Get database connection URL based on selected mode."""
         if self.database_mode == "client":
             if not self.client_database_url:
-                raise ValueError("CLIENT_DATABASE_URL environment variable is required for client mode")
+                raise ValueError("DATABASE_URL environment variable is required for client mode")
             database_url = self.client_database_url
         else:
             if not self.local_database_url:
@@ -445,7 +446,7 @@ class Settings:
         
         # Check database URL based on mode
         if self.database_mode == "client" and not self.client_database_url:
-            required_vars.append(("CLIENT_DATABASE_URL", self.client_database_url))
+            required_vars.append(("DATABASE_URL", self.client_database_url))
         elif self.database_mode == "local" and not self.local_database_url:
             required_vars.append(("LOCAL_DATABASE_URL", self.local_database_url))
         

@@ -203,7 +203,7 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
               value: 'redis://${redisHost}:6379/1'
             }
             {
-              name: 'CLIENT_DATABASE_URL'
+              name: 'DATABASE_URL'
               secretRef: 'database-url'
             }
             {
@@ -326,7 +326,7 @@ resource celeryBeatApp 'Microsoft.App/containerApps@2023-05-01' = {
               value: 'client'
             }
             {
-              name: 'CLIENT_DATABASE_URL'
+              name: 'DATABASE_URL'
               secretRef: 'database-url'
             }
           ]

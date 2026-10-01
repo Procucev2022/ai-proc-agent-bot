@@ -37,11 +37,28 @@ def test_settings_accessors_and_singleton_contract(monkeypatch):
     assert settings._parse_webhook_recipients("") == []
 
 
+def test_settings_database_url_prefers_new_name_and_falls_back_to_legacy(monkeypatch):
+    # Stub load_dotenv so the developer's real .env cannot repopulate deleted vars.
+    monkeypatch.setattr("app.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setenv("DATABASE_MODE", "client")
+
+    monkeypatch.setenv("DATABASE_URL", "mysql+pymysql://new")
+    monkeypatch.setenv("CLIENT_DATABASE_URL", "mysql+pymysql://legacy")
+    assert Settings().get_database_url() == "mysql+pymysql://new"
+
+    monkeypatch.delenv("DATABASE_URL")
+    assert Settings().get_database_url() == "mysql+pymysql://legacy"
+
+    monkeypatch.delenv("CLIENT_DATABASE_URL")
+    with pytest.raises(ValueError, match="DATABASE_URL"):
+        Settings().get_database_url()
+
+
 def test_settings_database_and_remote_error_branches(monkeypatch):
     settings = Settings()
     settings.database_mode = "client"
     settings.client_database_url = None
-    with pytest.raises(ValueError, match="CLIENT_DATABASE_URL"):
+    with pytest.raises(ValueError, match="DATABASE_URL"):
         settings.get_database_url()
     settings.client_database_url = "postgresql://bad"
     with pytest.raises(ValueError, match="PostgreSQL"):
