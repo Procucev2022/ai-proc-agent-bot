@@ -75,6 +75,10 @@ def _settings(**overrides):
         database_mode="local",
         redis_url="redis://unit",
         azure_openai_base_url="https://unit",
+        gmt_base_url="https://gmt.unit",
+        client_database_url=None,
+        local_database_url="mysql+pymysql://u:p@localhost:3306/unit",
+        procucev_db_name="unit_procucev",
         webhook_health_monitoring_enabled=False,
         pending_reply_ttl_seconds=25,
     )
@@ -632,3 +636,13 @@ async def test_main_lifespan_skips_redis_dependent_tasks_when_storage_disabled(m
     queue.run_batch_poller.assert_not_called()
     queue.run_monitoring_loop.assert_not_called()
     queue.shutdown.assert_awaited_once()
+
+
+def test_describe_database_url_never_exposes_credentials():
+    described = main._describe_database_url(
+        "mysql+pymysql://user:secret@db.example.com:3306/aiprocprod"
+    )
+    assert described == "db.example.com/aiprocprod"
+    assert "secret" not in described
+    assert main._describe_database_url(None) == "not configured"
+    assert main._describe_database_url("not a url") == "unparseable URL"
