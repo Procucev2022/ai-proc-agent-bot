@@ -26,6 +26,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 from typing import Dict, Any, Optional, Union
 from app.config import get_settings
 from app.api.webhook import router as webhook_router
@@ -130,6 +132,17 @@ async def _warmup_request_path() -> None:
     await _warm("WhatsApp gateway HTTP pool", warm_whatsapp_http)
 
 
+def _describe_database_url(url: Optional[str]) -> str:
+    """Return ``host/database`` for a database URL without its credentials."""
+    if not url:
+        return "not configured"
+    try:
+        parsed = make_url(url)
+    except ArgumentError:
+        return "unparseable URL"
+    return f"{parsed.host}/{parsed.database}"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
@@ -138,6 +151,11 @@ async def lifespan(app: FastAPI):
     logger.info(f"[BOOT] Database Mode: {settings.database_mode}")
     logger.info("[BOOT] Redis configured")
     logger.info(f"[BOOT] Azure OpenAI Endpoint: {settings.azure_openai_base_url}")
+    # Hosts and schema names only, never credentials: these show which backend a
+    # deployment really talks to when its environment variables are in doubt.
+    logger.info(f"[BOOT] GMT API: {settings.gmt_base_url}")
+    logger.info(f"[BOOT] Database: {_describe_database_url(settings.client_database_url if settings.database_mode == 'client' else settings.local_database_url)}")
+    logger.info(f"[BOOT] Procucev schema: {settings.procucev_db_name}")
     logger.info("=" * 60)
 
     # Initialize database on startup
