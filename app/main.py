@@ -143,6 +143,23 @@ def _describe_database_url(url: Optional[str]) -> str:
     return f"{parsed.host}/{parsed.database}"
 
 
+def _data_source() -> Dict[str, str]:
+    """Backends this process uses, shown in the chat page's debug info.
+
+    Lets a tester confirm from the browser which GMT API and database answered,
+    without access to the container's environment variables.
+    """
+    current = get_settings()
+    database_url = (
+        current.client_database_url if current.database_mode == "client" else current.local_database_url
+    )
+    return {
+        "gmt_api": current.gmt_base_url or "not configured",
+        "database": _describe_database_url(database_url),
+        "procucev_schema": current.procucev_db_name,
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
@@ -650,7 +667,7 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
                 "responses": whatsapp_messages,
                 "interactive_buttons": interactive_buttons,
                 "status": chat_result.get("status", "processed"),
-                "debug_info": chat_result
+                "debug_info": {**chat_result, "data_source": _data_source()}
             }
 
         except Exception as e:
@@ -783,7 +800,7 @@ async def upload_excel_file(
             "status": chat_result.get("status", "processed"),
             "filename": file.filename,
             "size": len(file_content),
-            "debug_info": chat_result
+            "debug_info": {**chat_result, "data_source": _data_source()}
         }
 
     except Exception as e:
