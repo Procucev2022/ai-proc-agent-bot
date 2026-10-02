@@ -9,10 +9,16 @@ Cache expires with the auth token to maintain data consistency.
 import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+from app.config import api_source_tag, get_settings
 from app.redis_db import get_redis_service
 from app.schemas.user import APIUserSchema
 
 logger = logging.getLogger(__name__)
+
+
+def _current_api_source() -> str:
+    """Tag for the GMT API this process is configured to use."""
+    return api_source_tag(get_settings().gmt_base_url)
 
 
 class UserCacheService:
@@ -42,7 +48,8 @@ class UserCacheService:
                 "user_data": user_data,
                 "cached_at": datetime.now().isoformat(),
                 "phone_number": phone_number,
-                "count": len(user_data)
+                "count": len(user_data),
+                "source_api": _current_api_source(),
             }
 
             # Preserve meaningful message from existing cache if present
@@ -88,6 +95,15 @@ class UserCacheService:
 
             if cache_data and isinstance(cache_data, dict):
                 user_data = cache_data.get("user_data")
+                source_api = cache_data.get("source_api")
+                if user_data and source_api != _current_api_source():
+                    # Fetched from another backend (or before entries were tagged):
+                    # treat as a miss so the caller re-fetches from the configured API.
+                    logger.warning(
+                        f"Ignoring cached user data for {phone_number} from "
+                        f"'{source_api or 'untagged'}'; current API is '{_current_api_source()}'"
+                    )
+                    return None
                 if user_data:
                     logger.info(f"Retrieved cached user data for {phone_number} with {len(user_data)} records")
                     return user_data

@@ -7,7 +7,7 @@ import json
 import logging
 from typing import Optional, Dict, Any
 from app.schemas.user import User
-from app.config import get_settings
+from app.config import api_source_tag, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +203,8 @@ class AuthRedisService(BaseRedisService):
                 "until it is true and Redis is running."
             )
             return False
+        # Tag the login with the API it came from; see _current_login().
+        user_data = {**user_data, "source_api": self._api_source()}
         stored = await self.set(key, user_data, expiry_seconds)
         if not stored:
             logger.error(
@@ -212,9 +214,33 @@ class AuthRedisService(BaseRedisService):
             )
         return stored
 
-    async def retrieve(self, phone_number: str) -> Optional[User]:
+    def _api_source(self) -> str:
+        return api_source_tag(getattr(self.settings, "gmt_base_url", None))
+
+    async def _current_login(self, phone_number: str) -> Optional[Dict[str, Any]]:
+        """Return the stored login, discarding one made against another GMT API.
+
+        Logins hold the user's details from the GMT API and Redis outlives
+        deployments, so a login made while the app pointed at another backend
+        (e.g. dev) would keep serving that backend's user. Untagged logins predate
+        this check and are discarded once, which makes the user log in again.
+        """
         key = f"auth:{phone_number}"
         data = await self.get(key, as_json=True)
+        if not data:
+            return None
+        source_api = data.get("source_api") if isinstance(data, dict) else None
+        if source_api != self._api_source():
+            logger.warning(
+                f"[AUTH] Discarding login for {phone_number} from "
+                f"'{source_api or 'untagged'}'; current API is '{self._api_source()}'"
+            )
+            await self.delete(key)
+            return None
+        return data
+
+    async def retrieve(self, phone_number: str) -> Optional[User]:
+        data = await self._current_login(phone_number)
         if data:
             # Refresh token on successful retrieval (user activity)
             await self.refresh_user_token(phone_number)
@@ -230,8 +256,7 @@ class AuthRedisService(BaseRedisService):
         return await self.delete(key)
 
     async def is_authenticated(self, phone_number: str) -> bool:
-        key = f"auth:{phone_number}"
-        return await self.exists(key)
+        return await self._current_login(phone_number) is not None
     
     async def refresh_user_token(self, phone_number: str) -> bool:
         """Refresh user token to extend session for active users."""

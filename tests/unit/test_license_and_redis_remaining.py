@@ -406,7 +406,7 @@ async def test_auth_service_store_retrieve_refresh_and_errors(monkeypatch):
     assert not await auth.is_authenticated("+1")
     assert await auth.retrieve("missing") is None
 
-    auth.client.values["auth:+1"] = json.dumps({"id": "u"})
+    auth.client.values["auth:+1"] = json.dumps({"id": "u", "source_api": "unconfigured"})
     user = SimpleNamespace(id="u")
     monkeypatch.setattr(redis_db.User, "from_mixed_data", Mock(return_value=user))
     refresh = AsyncMock(return_value=True)

@@ -788,7 +788,7 @@ async def test_session_cache_vendor_welcome_and_whatsapp_boundaries(monkeypatch)
     assert (await service.get_or_create_user("+1")).phone_number == "+1"
     assert service._validate_license() == (True, "License validation disabled")
 
-    redis = SimpleNamespace(get=AsyncMock(return_value={"user_data": [{"id": "u1", "username": "a@x.com", "selfClient": False}]}), set=AsyncMock(return_value=True))
+    redis = SimpleNamespace(get=AsyncMock(return_value={"user_data": [{"id": "u1", "username": "a@x.com", "selfClient": False}], "source_api": cache_mod._current_api_source()}), set=AsyncMock(return_value=True))
     cache = bare(cache_mod.UserCacheService, redis_service=redis)
     assert await cache.get_user_data("+1")
     assert await cache.store_user_data("+1", [{"username": "a@x.com"}])

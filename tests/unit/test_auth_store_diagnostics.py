@@ -39,7 +39,9 @@ async def test_store_logs_when_redis_rejects_the_write(monkeypatch, caplog):
     with caplog.at_level(logging.ERROR, logger=redis_db.logger.name):
         assert await auth.store("919511876403", {"id": "u"}) is False
 
-    auth.set.assert_awaited_once_with("auth:919511876403", {"id": "u"}, 60)
+    auth.set.assert_awaited_once_with(
+        "auth:919511876403", {"id": "u", "source_api": "unconfigured"}, 60
+    )
     assert "Redis did not store login for 919511876403" in caplog.text
     assert "client initialized: False" in caplog.text
 
