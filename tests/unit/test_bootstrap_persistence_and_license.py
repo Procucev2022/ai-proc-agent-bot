@@ -273,7 +273,7 @@ async def test_redis_base_auth_session_and_singletons(monkeypatch):
     assert await auth.store("1", {"name": "A"})
     monkeypatch.setattr(redis_db.User, "from_mixed_data", lambda data: SimpleNamespace(data=data))
     retrieved = await auth.retrieve("1")
-    assert retrieved.data == {"name": "A"}
+    assert retrieved.data == {"name": "A", "source_api": "unconfigured"}
     assert await auth.is_authenticated("1")
     assert await auth.refresh_user_token("1")
     assert await auth.delete_auth("1")

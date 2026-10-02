@@ -19,11 +19,23 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Optional, Dict, Any
+from urllib.parse import urlparse
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
 # Project root directory (parent of 'app' folder)
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
+
+def api_source_tag(base_url: Optional[str]) -> str:
+    """Return the host of a GMT API base URL, used to tag data cached from it.
+
+    Redis outlives deployments, so anything cached from one backend (e.g. dev)
+    would otherwise keep being served after the app is pointed at another.
+    """
+    if not base_url:
+        return "unconfigured"
+    return (urlparse(base_url).netloc or base_url).lower()
 
 
 def _database_name(url: Optional[str]) -> Optional[str]:

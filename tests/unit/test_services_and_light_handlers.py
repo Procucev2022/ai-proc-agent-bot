@@ -100,7 +100,7 @@ async def test_user_cache_storage_filtering_and_meaningful_data(monkeypatch):
     assert not await service.store_user_data("1", [])
     redis.get.side_effect = None
 
-    redis.get.return_value = {"user_data": [{"username": "a"}]}
+    redis.get.return_value = {"user_data": [{"username": "a"}], "source_api": ucs._current_api_source()}
     assert await service.get_user_data("1") == [{"username": "a"}]
     redis.get.return_value = {"user_data": []}
     assert await service.get_user_data("1") is None
