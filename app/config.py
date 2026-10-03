@@ -183,6 +183,11 @@ class Settings:
         self.allowed_hosts = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
         self.allowed_ips = os.getenv("ALLOWED_IPS", "").split(",") if os.getenv("ALLOWED_IPS") else []
         
+        # Cloudflare and reverse proxy configuration
+        self.cloudflare_enabled = os.getenv("CLOUDFLARE_ENABLED", "false").lower() == "true"
+        self.cloudflare_tunnel_token = os.getenv("CLOUDFLARE_TUNNEL_TOKEN", "")
+        self.forwarded_allow_ips = os.getenv("FORWARDED_ALLOW_IPS", "*")
+        
         # Additional fields needed by services
         self.DEBUG = self.debug
         self.ALLOWED_ORIGINS = self.allowed_hosts
@@ -608,6 +613,14 @@ class Settings:
             "worker_concurrency": self.celery_worker_concurrency,
             "task_time_limit": self.celery_task_time_limit,
             "beat_schedule_enabled": self.celery_beat_schedule_enabled
+        }
+
+    def get_cloudflare_config(self) -> Dict[str, Any]:
+        """Get Cloudflare and reverse proxy configuration."""
+        return {
+            "enabled": self.cloudflare_enabled,
+            "tunnel_token_configured": bool(self.cloudflare_tunnel_token),
+            "forwarded_allow_ips": self.forwarded_allow_ips,
         }
 
 # Global settings instance

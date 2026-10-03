@@ -26,6 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from app.utils.cloudflare import get_client_ip, get_cloudflare_ray, is_https_request
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 from typing import Dict, Any, Optional, Union
@@ -54,10 +55,10 @@ settings = get_settings()
 setup_basic_logging(level=settings.log_level)
 logger = logging.getLogger(__name__)
 
-# Initialize rate limiter
+# Initialize rate limiter with Cloudflare-aware client IP extraction
 limiter_storage = settings.redis_url if (settings.redis_url and getattr(settings, "redis_session_storage_enabled", True)) else "memory://"
 limiter = Limiter(
-    key_func=get_remote_address,
+    key_func=get_client_ip,
     storage_uri=limiter_storage,
     default_limits=[settings.rate_limit_default]
 )
@@ -71,14 +72,7 @@ class IPRestrictionMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         if self.allowed_ips:
-            # request.client is None for connections with no peer address (ASGI
-            # test transports, some proxies). Reading .host unguarded would raise
-            # here and reject the request with a 500 instead of an IP decision.
-            client_ip = request.client.host if request.client else ""
-            x_forwarded_for = request.headers.get("x-forwarded-for")
-            x_real_ip = request.headers.get("x-real-ip")
-
-            real_ip = x_real_ip or (x_forwarded_for.split(",")[0] if x_forwarded_for else client_ip)
+            real_ip = get_client_ip(request)
 
             if real_ip not in self.allowed_ips:
                 return JSONResponse(
@@ -389,9 +383,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         start_time = time.time()
         path = request.url.path
         method = request.method
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = get_client_ip(request)
+        cf_ray = get_cloudflare_ray(request)
+        ray_tag = f" [CF-Ray: {cf_ray}]" if cf_ray else ""
 
-        logger.info(f"[HTTP-IN] {method} {path} from {client_ip}")
+        logger.info(f"[HTTP-IN] {method} {path} from {client_ip}{ray_tag}")
         try:
             response = await call_next(request)
             duration_ms = round((time.time() - start_time) * 1000, 2)
@@ -498,7 +494,7 @@ def _set_dashboard_cookie(response, api_key: Optional[str], request: Request):
         max_age=DASHBOARD_SESSION_MAX_AGE,
         httponly=True,
         samesite="lax",
-        secure=request.url.scheme == "https",
+        secure=is_https_request(request),
     )
     return response
 
