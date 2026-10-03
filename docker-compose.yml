@@ -196,6 +196,28 @@ services:
       timeout: 10s
       retries: 3
 
+  # ============================================================================
+  # CLOUDFLARE TUNNEL - ZERO TRUST SECURE INGRESS (OPTIONAL)
+  # ============================================================================
+  # Connects the app directly to Cloudflare edge without opening inbound ports.
+  # Usage:
+  #   docker compose --profile cloudflare up -d
+  # Requires CLOUDFLARE_TUNNEL_TOKEN to be set in .env
+  cloudflared:
+    container_name: procucev_cloudflared
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    networks:
+      - procucev_network
+    depends_on:
+      app:
+        condition: service_healthy
+    profiles:
+      - cloudflare
+
 # Persistent Storage
 volumes:
   redis_data:

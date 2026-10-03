@@ -60,6 +60,16 @@ bind = os.getenv("BIND_ADDRESS", "0.0.0.0:8005")
 # bind = "unix:/tmp/gunicorn.sock"
 
 # ============================================================================
+# PROXY & CLOUDFLARE FORWARDED HEADERS
+# ============================================================================
+
+# Trust X-Forwarded-* and CF-* headers from reverse proxies (Cloudflare, Nginx, Docker)
+# Default "*" allows forwarded headers from all fronting proxies; can be restricted
+# to specific CIDRs or IPs via FORWARDED_ALLOW_IPS in .env
+forwarded_allow_ips = os.getenv("FORWARDED_ALLOW_IPS", "*")
+proxy_allow_ips = os.getenv("PROXY_ALLOW_IPS", "*")
+
+# ============================================================================
 # PERFORMANCE TUNING
 # ============================================================================
 
