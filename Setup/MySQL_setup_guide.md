@@ -93,7 +93,7 @@ The application uses **10 tables** with **MySQL enum types**:
 ### Database Configuration:
 - **Database Name:** `procurement_db`
 - **User:** `procurement_user`
-- **Password:** `procubot2025`
+- **Password:** the value you exported as `DB_PASSWORD`
 - **Host:** `localhost`
 - **Port:** `3306`
 
@@ -106,6 +106,7 @@ Use the provided setup script for complete automation:
 chmod +x setup_mysql_fixed.sh
 
 # Run setup script
+export DB_PASSWORD='<choose-a-strong-password>'
 ./setup_mysql_fixed.sh
 ```
 
@@ -126,7 +127,7 @@ Ensure your `.env` file contains:
 
 ```env
 # Database Configuration
-DATABASE_URL=mysql+pymysql://procurement_user:procubot2025@localhost:3306/procurement_db
+DATABASE_URL=mysql+pymysql://procurement_user:<db_password>@localhost:3306/procurement_db
 
 # API Keys (update with actual values)
 AZURE_OPENAI_API_KEY=your_azure_openai_key
@@ -338,7 +339,7 @@ The application middleware will automatically restrict access to only these IPs.
 
 ```bash
 # Check table counts
-mysql -h localhost -u procurement_user -pprocubot2025 procurement_db -e "
+mysql -h localhost -u procurement_user -p procurement_db -e "
 SELECT 
     'vendors' as table_name, COUNT(*) as count FROM vendors
 UNION ALL
@@ -391,13 +392,13 @@ mysql -u root -p -e "GRANT ALL PRIVILEGES ON procurement_db.* TO 'procurement_us
 
 ```bash
 # Test database connection
-mysql -h localhost -u procurement_user -pprocubot2025 procurement_db -e "SELECT VERSION();"
+mysql -h localhost -u procurement_user -p procurement_db -e "SELECT VERSION();"
 
 # Check tables exist
-mysql -h localhost -u procurement_user -pprocubot2025 procurement_db -e "SHOW TABLES;"
+mysql -h localhost -u procurement_user -p procurement_db -e "SHOW TABLES;"
 
 # Check sample data
-mysql -h localhost -u procurement_user -pprocubot2025 procurement_db -e "SELECT COUNT(*) FROM vendors;"
+mysql -h localhost -u procurement_user -p procurement_db -e "SELECT COUNT(*) FROM vendors;"
 
 # Test application startup
 python -c "from app.database import get_db_session; session = get_db_session(); print('Database connection successful')"
@@ -419,7 +420,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 ### For Production Deployment
 
-1. **Change default password** from `procubot2025`
+1. **Use a strong `DB_PASSWORD`** and never commit it
 2. **Configure firewall** to allow only necessary connections
 3. **Enable SSL/TLS** for database connections
 4. **Set up regular backups** with retention policy

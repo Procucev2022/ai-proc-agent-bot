@@ -166,7 +166,6 @@ jobs:
       # Celery image did, and both Celery container apps override the command in
       # infra/modules/celery-worker.bicep, so a second build produced a second
       # copy of the same bytes. Pushing both repository names keeps each
-      # container app's tag history intact and leaves infra/main.bicep unchanged.
       - name: Build & Push Container Image to ACR (Single Build, Both Tags)
         env:
           BASE_IMAGE_REF: ${{ steps.acr.outputs.server }}/${{ steps.base.outputs.image }}
