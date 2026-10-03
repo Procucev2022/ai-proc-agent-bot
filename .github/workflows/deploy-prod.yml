@@ -70,10 +70,13 @@ jobs:
             echo "::error::WHATSAPP_MOCK_MODE is 'true' in the production environment; real messages would not be sent"
             exit 1
           fi
-          if [ -z "${{ vars.AZURE_CREDENTIALS }}" ] && [ -z "${{ vars.AZURE_CLIENT_ID }}" ]; then
-            echo "::error title=Missing Azure vars::No Azure authentication vars found!"
+          # Azure login credentials may be stored as variables or as secrets (deploy-dev
+          # reads secrets). Requiring variables only broke every prod deploy after the
+          # app settings moved to vars while these credentials stayed secrets.
+          if [ -z "${{ vars.AZURE_CREDENTIALS || secrets.AZURE_CREDENTIALS }}" ] && [ -z "${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}" ]; then
+            echo "::error title=Missing Azure vars::No Azure authentication vars or secrets found!"
             echo "--------------------------------------------------------------------------------"
-            echo "To fix this issue, please add one of the following secret configurations in GitHub:"
+            echo "To fix this issue, add one of the following as a variable or secret in GitHub:"
             echo "Option 1 (OIDC - Recommended):"
             echo "  - AZURE_CLIENT_ID"
             echo "  - AZURE_TENANT_ID"
@@ -87,10 +90,10 @@ jobs:
       - name: Azure Login (Supports OIDC or Service Principal JSON)
         uses: azure/login@v2
         with:
-          creds: ${{ vars.AZURE_CREDENTIALS }}
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          creds: ${{ vars.AZURE_CREDENTIALS || secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Register Required Azure Resource Providers
         run: |
