@@ -102,7 +102,7 @@ class EntityService:
                 return await self._handle_standard_extraction(message, context, workflow_type)
 
         except Exception as e:
-            print(f"Entity extraction error: {e}")
+            logger.error(f"Entity extraction error: {type(e).__name__}: {e}", exc_info=True)
             return {"products": [], "confidence": 0, "success": False}
     
     async def _handle_registration_extraction(self, message: str, context: dict = None, workflow_type: str = "buyer_registration") -> dict:

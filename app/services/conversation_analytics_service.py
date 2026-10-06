@@ -1011,10 +1011,10 @@ Session IDs to process: {', '.join(session_ids)}
     COUNT(DISTINCT CONCAT(rfh.rfq_id, '_', ri.category)) AS total_distinct_rfq_category,
     COUNT(DISTINCT grv.rfq_uuid) AS rfqs_with_seller_responses,
     u.org_uuid AS org_id
-FROM quaproduction.user u
-JOIN quaproduction.rfq_header rfh 
+FROM {procucev_db}.user u
+JOIN {procucev_db}.rfq_header rfh 
     ON u.uuid = rfh.user
-LEFT JOIN quaproduction.rfq_items ri 
+LEFT JOIN {procucev_db}.rfq_items ri 
     ON ri.rfq_uuid = rfh.uuid
 LEFT JOIN {procucev_db}.gmt_rfq_vendors grv
     ON grv.rfq_uuid = rfh.uuid
@@ -1098,7 +1098,7 @@ ORDER BY
 FROM {procucev_db}.bfs_users bu
 JOIN {procucev_db}.bfs_items bi
     ON bi.uuid = bu.items_uuid
-LEFT join quaproduction.user u on u.org_uuid= bi.org_uuid and u.self_client=0 and u.is_active=1
+LEFT join {procucev_db}.user u on u.org_uuid= bi.org_uuid and u.self_client=0 and u.is_active=1
 WHERE DATE(bu.created_ts)= :target_date
   AND bu.status_uuid = 118
   GROUP BY bi.org_uuid, DATE(bu.created_ts), bu.status_uuid, u.username, u.phone;
@@ -1119,16 +1119,17 @@ WHERE DATE(bu.created_ts)= :target_date
         """Query remote database for RFQ categories data."""
         try:
             remote_db = get_remote_db_session()
-            
+            procucev_db = self.settings.procucev_db_name
+
             # Base query
-            query = """
+            query = f"""
             SELECT
                 DATE(rh.created_ts) AS date,
                 rh.rfq_id,
                 rh.uuid AS rfq_uuid,
                 ri.category as category
-            FROM quaproduction.rfq_header rh
-            JOIN quaproduction.rfq_items ri
+            FROM {procucev_db}.rfq_header rh
+            JOIN {procucev_db}.rfq_items ri
                 ON rh.uuid = ri.rfq_uuid
             WHERE rh.source_type="W"
             """
@@ -1344,7 +1345,7 @@ FROM
         :target_date AS rfq_date,
         category
     FROM (
-        SELECT DISTINCT COALESCE(category, :null_replacement) AS category FROM quaproduction.rfq_items
+        SELECT DISTINCT COALESCE(category, :null_replacement) AS category FROM {procucev_db}.rfq_items
         UNION
         SELECT DISTINCT COALESCE(category, :null_replacement) AS category FROM {procucev_db}.bfs_items
     ) all_categories
@@ -1354,8 +1355,8 @@ LEFT JOIN (
         DATE(ri.created_ts) AS rfq_date,
         COALESCE(ri.category, :null_replacement) AS category,
         COUNT(DISTINCT ri.rfq_uuid) AS total_rfq_raised
-    FROM quaproduction.rfq_items ri
-    JOIN quaproduction.rfq_header rh ON ri.rfq_uuid = rh.uuid
+    FROM {procucev_db}.rfq_items ri
+    JOIN {procucev_db}.rfq_header rh ON ri.rfq_uuid = rh.uuid
     WHERE DATE(ri.created_ts) = :target_date
       AND rh.source_type = 'W'
     GROUP BY DATE(ri.created_ts), COALESCE(ri.category, :null_replacement)

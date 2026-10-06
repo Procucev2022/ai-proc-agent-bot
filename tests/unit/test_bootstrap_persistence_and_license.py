@@ -54,6 +54,12 @@ async def test_webhook_verification_and_parsers(monkeypatch):
         await webhook.verify_webhook("subscribe", "challenge", "wrong")
     assert exc.value.status_code == 403
 
+    # An unset verify token must never match, not even a request that omits the token.
+    monkeypatch.setattr(webhook, "get_settings", lambda: SimpleNamespace(WHATSAPP_VERIFY_TOKEN=None))
+    with pytest.raises(HTTPException) as exc:
+        await webhook.verify_webhook("subscribe", "challenge", None)
+    assert exc.value.status_code == 403
+
     form = {"replytype": "TEXT", "customernumber": "9199", "replymessage": "hello+world", "wabanumber": "1"}
     parsed = await webhook.parse_webhook_data(RequestStub(content_type="application/x-www-form-urlencoded", form=form))
     assert parsed["type"] == "text" and parsed["content"] == "hello world"
@@ -267,7 +273,7 @@ async def test_redis_base_auth_session_and_singletons(monkeypatch):
     assert await auth.store("1", {"name": "A"})
     monkeypatch.setattr(redis_db.User, "from_mixed_data", lambda data: SimpleNamespace(data=data))
     retrieved = await auth.retrieve("1")
-    assert retrieved.data == {"name": "A"}
+    assert retrieved.data == {"name": "A", "source_api": "unconfigured"}
     assert await auth.is_authenticated("1")
     assert await auth.refresh_user_token("1")
     assert await auth.delete_auth("1")

@@ -19,9 +19,43 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Optional, Dict, Any
+from urllib.parse import urlparse
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 # Project root directory (parent of 'app' folder)
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
+
+def api_source_tag(base_url: Optional[str]) -> str:
+    """Return the host of a GMT API base URL, used to tag data cached from it.
+
+    Redis outlives deployments, so anything cached from one backend (e.g. dev)
+    would otherwise keep being served after the app is pointed at another.
+    """
+    if not base_url:
+        return "unconfigured"
+    return (urlparse(base_url).netloc or base_url).lower()
+
+
+def _database_name(url: Optional[str]) -> Optional[str]:
+    """Return the database (schema) name from a SQLAlchemy URL, or None."""
+    if not url:
+        return None
+    try:
+        return make_url(url).database or None
+    except ArgumentError:
+        return None
+
+
+def _with_database(url: Optional[str], database: str) -> Optional[str]:
+    """Return ``url`` pointed at another database on the same server, or None."""
+    if not url:
+        return None
+    try:
+        return make_url(url).set(database=database).render_as_string(hide_password=False)
+    except ArgumentError:
+        return None
 
 class Settings:
     """
@@ -47,12 +81,34 @@ class Settings:
         
         # Database configuration
         self.local_database_url = os.getenv("LOCAL_DATABASE_URL")
-        self.client_database_url = os.getenv("CLIENT_DATABASE_URL")
-        self.remote_database_url = os.getenv("REMOTE_DATABASE_URL")
-        self.database_mode = os.getenv("DATABASE_MODE", "local")
-        self.procucev_db_name = os.getenv("PROCUCEV_DB_NAME", "development_gmtbfs")
-        self.whatsapp_db = os.getenv("WHATSAPP_DB", "procurement_db")
-        self.enable_remote_categorization = True
+        # DATABASE_URL is the primary name; CLIENT_DATABASE_URL is kept as a legacy fallback
+        self.client_database_url = os.getenv("DATABASE_URL") or os.getenv("CLIENT_DATABASE_URL")
+        # Without DATABASE_MODE, use whichever URL is configured: a deployment that
+        # only sets DATABASE_URL must not boot in local mode and demand LOCAL_DATABASE_URL.
+        self.database_mode = os.getenv("DATABASE_MODE") or (
+            "client" if self.client_database_url else "local"
+        )
+        primary_database_url = (
+            self.client_database_url if self.database_mode == "client" else self.local_database_url
+        )
+        explicit_remote_url = os.getenv("REMOTE_DATABASE_URL")
+        # Procucev schema (RFQs, items, categories). It lives on the same MySQL server
+        # as the bot database, so REMOTE_DATABASE_URL defaults to the primary URL
+        # pointed at this schema.
+        self.procucev_db_name = (
+            os.getenv("PROCUCEV_DB_NAME")
+            or _database_name(explicit_remote_url)
+            or "quaproduction"
+        )
+        self.remote_database_url = explicit_remote_url or _with_database(
+            primary_database_url, self.procucev_db_name
+        )
+        self.whatsapp_db = (
+            os.getenv("WHATSAPP_DB") or _database_name(primary_database_url) or "procurement_db"
+        )
+        self.enable_remote_categorization = (
+            os.getenv("ENABLE_REMOTE_CATEGORIZATION", "true").lower() == "true"
+        )
         # MySQL socket timeouts (seconds). Without a read timeout, a connection that
         # drops mid-query leaves the request waiting forever with no reply or error.
         self.db_connect_timeout_seconds = int(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "10"))
@@ -66,28 +122,32 @@ class Settings:
         self.openai_model_advanced = os.getenv("OPENAI_MODEL_ADVANCED", "gpt-5.4-mini")
         self.azure_openai_base_url = os.getenv("AZURE_OPENAI_ENDPOINT")
         # WhatsApp configuration
-        self.WHATSAPP_USERNAME = os.getenv("WHATSAPP_USERNAME", "test_user")
-        self.WHATSAPP_PASSWORD = os.getenv("WHATSAPP_PASSWORD", "test_password")
+        self.WHATSAPP_USERNAME = os.getenv("WHATSAPP_USERNAME")
+        self.WHATSAPP_PASSWORD = os.getenv("WHATSAPP_PASSWORD")
         self.WHATSAPP_FROM_NUMBER = os.getenv("WHATSAPP_FROM_NUMBER", "917996170801")
         self.WHATSAPP_BASE_URL = os.getenv("WHATSAPP_BASE_URL", "https://media.sendmsg.in")
         self.WHATSAPP_MEDIA_DOWNLOAD_URL = os.getenv("WHATSAPP_MEDIA_DOWNLOAD_URL", "https://download.sendmsg.in/whatsapp-mediadownloader")
         self.WHATSAPP_TEMPLATE_BASE_URL = os.getenv("WHATSAPP_TEMPLATE_BASE_URL", "https://wsapi.sendmsg.in")
         self.WHATSAPP_WEBHOOK_URL = os.getenv("WHATSAPP_WEBHOOK_URL")
-        self.WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "test_verify_token")
-        self.WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY", "test_api_key")
+        self.WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN")
+        self.WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY")
         self.WHATSAPP_MOCK_MODE = os.getenv("WHATSAPP_MOCK_MODE", "true").lower() == "true"
 
         # WhatsApp Template Names for re-engagement (24hr+ inactive users)
         # These templates must be pre-approved in WhatsApp Business Manager
         self.WHATSAPP_TEMPLATE_RFQ_NOTIFICATION = os.getenv(
-            "WHATSAPP_TEMPLATE_RFQ_NOTIFICATION"
+            "WHATSAPP_TEMPLATE_RFQ_NOTIFICATION", "rfq_notification_for_sellers_for_rfq_feb_5"
         )
         self.WHATSAPP_TEMPLATE_BFS_BID_NOTIFICATION = os.getenv(
-            "WHATSAPP_TEMPLATE_BFS_BID_NOTIFICATION"
+            "WHATSAPP_TEMPLATE_BFS_BID_NOTIFICATION", "bfs_bid_notification_for_sellers_updated"
         )
 
-        # Procucev Portal URL (used in template messages)
-        self.PROCUCEV_PORTAL_URL = os.getenv("PROCUCEV_PORTAL_URL")
+        # Procucev Portal URL (used in template messages, RFQ follow-ups and the
+        # "Check Details" button). The two older RFQ link settings default to it,
+        # so one variable changes every link.
+        self.PROCUCEV_PORTAL_URL = os.getenv(
+            "PROCUCEV_PORTAL_URL", "https://p2pdevuiindia.azurewebsites.net/login"
+        )
 
         # Legacy fields for backward compatibility
         self.whatsapp_access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
@@ -215,13 +275,11 @@ class Settings:
         
         # RFQ Status settings
         self.rfq_max_allowed = int(os.getenv("RFQ_MAX_ALLOWED", "5"))
-        self.rfq_followup_note = os.getenv("RFQ_FOLLOWUP_NOTE",
-                                           "https://p2pdevuiindia.azurewebsites.net/login")
+        self.rfq_followup_note = os.getenv("RFQ_FOLLOWUP_NOTE", self.PROCUCEV_PORTAL_URL)
 
         # Procucev website URL for RFQ details (used in "Check Details" button)
         self.procucev_rfq_details_url = os.getenv(
-            "PROCUCEV_RFQ_DETAILS_URL",
-            "https://p2pdevuiindia.azurewebsites.net/login"
+            "PROCUCEV_RFQ_DETAILS_URL", self.PROCUCEV_PORTAL_URL
         )
 
         # Fetch RFQ limit
@@ -372,7 +430,7 @@ class Settings:
         """Get database connection URL based on selected mode."""
         if self.database_mode == "client":
             if not self.client_database_url:
-                raise ValueError("CLIENT_DATABASE_URL environment variable is required for client mode")
+                raise ValueError("DATABASE_URL environment variable is required for client mode")
             database_url = self.client_database_url
         else:
             if not self.local_database_url:
@@ -445,7 +503,7 @@ class Settings:
         
         # Check database URL based on mode
         if self.database_mode == "client" and not self.client_database_url:
-            required_vars.append(("CLIENT_DATABASE_URL", self.client_database_url))
+            required_vars.append(("DATABASE_URL", self.client_database_url))
         elif self.database_mode == "local" and not self.local_database_url:
             required_vars.append(("LOCAL_DATABASE_URL", self.local_database_url))
         

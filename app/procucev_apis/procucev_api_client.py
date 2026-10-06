@@ -11,7 +11,7 @@ import time
 import aiohttp
 from datetime import datetime, timedelta , UTC
 from typing import Dict, Any, Optional, Literal
-from app.config import get_settings
+from app.config import api_source_tag, get_settings
 from app.schemas.user import normalize_phone_number
 from app.redis_db import get_redis_service
 from app.utils.procucev_api_logger import manual_log_api_call
@@ -97,7 +97,9 @@ class ProcucevAPIClient:
         self.session: Optional[aiohttp.ClientSession] = None
         self._lock = asyncio.Lock()
         self.redis_service = get_redis_service()
-        self.token_cache_key = "procucev_api:auth_token"
+        # Scoped to the API host so a token cached while pointing at another
+        # backend (e.g. dev) is never sent to this one.
+        self.token_cache_key = f"procucev_api:auth_token:{api_source_tag(self.base_url)}"
 
     # Note: __del__ removed - cannot reliably close async sessions in __del__
     # Use context managers (async with) or explicit close_session() calls instead

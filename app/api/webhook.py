@@ -97,7 +97,8 @@ async def verify_webhook(
     logger.info(f"Webhook verification attempt: mode={hub_mode}, token={hub_verify_token}")
     
     settings = get_settings()
-    if hub_mode == "subscribe" and hub_verify_token == settings.WHATSAPP_VERIFY_TOKEN:
+    expected_token = settings.WHATSAPP_VERIFY_TOKEN
+    if hub_mode == "subscribe" and expected_token and hub_verify_token == expected_token:
         logger.info("Webhook verification successful")
         return PlainTextResponse(content=hub_challenge)
     

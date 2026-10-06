@@ -1191,7 +1191,7 @@ async def test_user_cache_remaining_redis_and_filter_branches(monkeypatch):
     )
     service = bare(cache_mod.UserCacheService, redis_service=redis)
     assert await service.store_user_data("+91 99-1", [{"username": "a", "selfClient": True}])
-    redis.get.return_value = {"user_data": [{"username": "a", "selfClient": True}]}
+    redis.get.return_value = {"user_data": [{"username": "a", "selfClient": True}], "source_api": cache_mod._current_api_source()}
     assert await service.get_user_data("1")
     service.get_user_data = AsyncMock(return_value=[{"username": "a", "selfClient": True}])
     service._filter_users_by_intent = Mock(return_value={"success": False, "message": "none"})

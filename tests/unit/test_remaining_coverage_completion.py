@@ -71,6 +71,10 @@ def _lifespan_settings(**overrides):
         "database_mode": "local",
         "redis_url": "redis://unit",
         "azure_openai_base_url": "https://unit",
+        "gmt_base_url": "https://gmt.unit",
+        "client_database_url": "mysql+pymysql://u:p@db.unit:3306/unit",
+        "local_database_url": None,
+        "procucev_db_name": "unit_procucev",
         "webhook_health_monitoring_enabled": False,
     }
     values.update(overrides)
@@ -93,7 +97,7 @@ def test_settings_validation_remaining_database_webhook_branches():
 
     settings.database_mode = "client"
     settings.client_database_url = None
-    with pytest.raises(ValueError, match="CLIENT_DATABASE_URL"):
+    with pytest.raises(ValueError, match="DATABASE_URL"):
         settings.validate_config()
 
     settings.database_mode = "local"
