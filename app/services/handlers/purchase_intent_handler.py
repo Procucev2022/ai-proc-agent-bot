@@ -22,7 +22,7 @@ class PurchaseIntentHandler:
 
     def __init__(self, whatsapp_service: WhatsAppService, response_helpers: ResponseHelpers,
                  entity_service, chat_summary_service, products_array_handler, session_manager,
-                 confirmation_handler=None, attachment_decision_handler=None):
+                 confirmation_handler=None, attachment_decision_handler=None, settings=None):
         self.whatsapp_service = whatsapp_service
         self.response_helpers = response_helpers
         self.entity_service = entity_service
@@ -31,6 +31,7 @@ class PurchaseIntentHandler:
         self.session_manager = session_manager
         self.confirmation_handler = confirmation_handler
         self.attachment_decision_handler = attachment_decision_handler
+        self.settings = settings
     
     @staticmethod
     def _is_rfq_entry_point_click(intent_result: Optional[Dict[str, Any]] = None) -> bool:
@@ -77,10 +78,39 @@ class PurchaseIntentHandler:
                 logger.warning(f"[CLEANUP] Removing lingering session_archive from workflow_state")
                 del session.workflow_state['session_archive']
 
+            # Guard: WhatsApp RFQ creation can be hidden/disabled via configuration
+            rfq_creation_enabled = True
+            if hasattr(self, 'settings') and self.settings is not None and hasattr(self.settings, 'enable_whatsapp_rfq_creation'):
+                rfq_creation_enabled = bool(self.settings.enable_whatsapp_rfq_creation)
+
+            if not rfq_creation_enabled:
+                portal_url = getattr(getattr(self, 'settings', None), 'PROCUCEV_PORTAL_URL', "https://p2pdevuiindia.azurewebsites.net/login")
+                redirect_msg = (
+                    "📌 *Important RFQ Policy:*\n\n"
+                    "Buyers can create RFQs only through the *Procucev Enterprise website* or by emailing *rfq@procucev.com*.\n\n"
+                    f"🔗 *Portal:* {portal_url}\n"
+                    "✉️ *Email:* rfq@procucev.com\n\n"
+                    "WhatsApp no longer accepts RFQ creation requests directly through messages, buttons, or Excel uploads."
+                )
+                buttons = [
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Ready Stocks"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    redirect_msg,
+                    buttons,
+                    session_id=session
+                )
+                return {
+                    "status": "rfq_creation_disabled",
+                    "message": redirect_msg
+                }
+
             # CHECK FOR SECTIONED RFQ WORKFLOW (Track 3)
             # Check global configuration flag
             from app.config import get_settings
-            settings = get_settings()
+            settings = getattr(self, 'settings', None) or get_settings()
 
             # If sectioned RFQ is already active OR global flag is enabled
             if WorkflowManager.is_sectioned_rfq_active(session) or settings.use_sectioned_rfq:

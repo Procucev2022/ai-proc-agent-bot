@@ -68,3 +68,4 @@ Remote DB.session.sql
 !.kiro/agents/*.md
 !.agent/agents/*.md
 .vscode
+.worktrees/

@@ -285,6 +285,7 @@ class Settings:
         # Fetch RFQ limit
         self.rfq_fetch_limit = int(os.getenv("RFQ_FETCH_LIMIT", "3"))
         self.procucev_link = os.getenv("PROCUCEV_LINK", "www.procucev.com")
+        self.enable_whatsapp_rfq_creation = os.getenv("ENABLE_WHATSAPP_RFQ_CREATION", "false").lower() == "true"
         
         # Email configuration
         self.support_email = os.getenv("SUPPORT_EMAIL", "support@procucev.com")
