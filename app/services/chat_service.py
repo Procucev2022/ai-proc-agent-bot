@@ -58,8 +58,10 @@ from app.services.chat_summary_service import ChatSummaryService
 from app.services.daily_summary_service import DailySummaryService
 from app.services.rfq_background_service import RFQBackgroundService
 from app.services.rfq_status_service import RFQStatusService
-from app.config import get_settings
 from app.services.seller_service import SellerService
+def get_settings():
+    import app.config as app_config
+    return app_config.get_settings()
 from app.services.authentication_service import AuthenticationService
 from app.services.registration_service import RegistrationService
 from app.services.exit_service import ExitService
@@ -1143,13 +1145,32 @@ class ChatService:
             elif message_type == "interactive":
                 result = await self._process_interactive_message(user, session, message_content)
             elif message_type == "excel_upload":
+                if not self._is_rfq_creation_enabled():
+                    portal_url = self._get_portal_url()
+                    redirect_msg = (
+                        "📌 *Important RFQ Policy:*\n\n"
+                        "Creating RFQs via Excel upload is no longer supported on WhatsApp.\n\n"
+                        f"Please upload your Excel RFQ directly through the *Procucev Enterprise website*:\n"
+                        f"🔗 {portal_url}\n\n"
+                        "Or email your Excel sheet directly to:\n"
+                        "✉️ *rfq@procucev.com*"
+                    )
+                    await self.whatsapp_service.send_configurable_buttons(
+                        user.phone_number,
+                        redirect_msg,
+                        [
+                            {"id": "rfq_status", "title": "Check RFQ Status"},
+                            {"id": "search_bfs", "title": "Search Ready Stocks"}
+                        ],
+                        session_id=session
+                    )
+                    return {"status": "rfq_creation_disabled", "response": "excel_upload_disabled"}
                 result = await self._process_excel_upload(user, session, message_content)
                 # Save session immediately after Excel processing to persist the excel_file_processed flag
                 await self.session_manager.save_session(session, WorkflowType.rfq_creation)
             elif message_type == "image" or message_type == "document":
                 # Acquire upload lock to prevent simultaneous attachment uploads
                 from redis.asyncio import Redis
-                from app.config import get_settings
                 settings = get_settings()
                 redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
                 normalized_phone = user.phone_number.lstrip('+')
@@ -1831,7 +1852,6 @@ class ChatService:
 
                     # Clear Redis (session complete)
                     from app.redis_db import get_session_redis_service
-                    from app.config import get_settings
                     settings = get_settings()
                     if settings.redis_session_storage_enabled:
                         redis_session = get_session_redis_service()
@@ -2263,7 +2283,6 @@ class ChatService:
             # Acquire upload lock to prevent simultaneous uploads
             from redis.asyncio import Redis
             from app.utils.datetime_utils import utc_now
-            from app.config import get_settings
             settings = get_settings()
             redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
             normalized_phone = user.phone_number.lstrip('+')
@@ -2500,7 +2519,6 @@ class ChatService:
                     return {"status": "excel_data_missing"}
 
                 # Check for sectioned RFQ configuration
-                from app.config import get_settings
                 settings = get_settings()
                 
                 if settings.use_sectioned_rfq:
@@ -2547,19 +2565,33 @@ class ChatService:
                 first_name = user.name.split()[0].capitalize() if user.name else "there"
                 
                 # Send the specified greeting message with buttons
-                greeting_message = (
-                    f"Hi {first_name}! Let's continue with your buyer profile ({user.email})\n"
-                    "What can I assist you with today?\n\n"
-                    "If you’d like to create an RFQ using Excel, please attach your file here.\n\n"
-                )
-
-                # Role-based button configuration
-                if user_role == "buyer":
-                    buttons_config = [
+                portal_url = self._get_portal_url()
+                if self._is_rfq_creation_enabled():
+                    greeting_message = (
+                        f"Hi {first_name}! Let's continue with your buyer profile ({user.email})\n"
+                        "What can I assist you with today?\n\n"
+                        "If you’d like to create an RFQ using Excel, please attach your file here.\n\n"
+                    )
+                    buyer_buttons = [
                         {"id": "create_rfq", "title": "Create new RFQ"},
                         {"id": "rfq_status", "title": "Check RFQ Status"},
                         {"id": "search_bfs", "title": "Search Ready Stocks"}
                     ]
+                else:
+                    greeting_message = (
+                        f"Hi {first_name}! Let's continue with your buyer profile ({user.email})\n\n"
+                        f"📌 *Important RFQ Policy:*\n"
+                        f"Buyers can create RFQs only through the *Procucev Enterprise website* ({portal_url}) or by emailing *rfq@procucev.com*.\n\n"
+                        "What can I assist you with today?\n\n"
+                    )
+                    buyer_buttons = [
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Ready Stocks"}
+                    ]
+
+                # Role-based button configuration
+                if user_role == "buyer":
+                    buttons_config = buyer_buttons
                 else:
                     buttons_config = [
                         {"id": "rfq_status", "title": "My quoTe Status"},
@@ -2942,7 +2974,16 @@ class ChatService:
                     db_user.is_registered = True
                     db.commit()
 
-                welcome_message = f"Welcome {name}!\n\nI'm your AI Procurement Assistant. I can help you:\n\n-- Create RFQs (Request for Quotations)\n- Check product availability\n\nWhat would you like to procure today?"
+                if self._is_rfq_creation_enabled():
+                    welcome_message = f"Welcome {name}!\n\nI'm your AI Procurement Assistant. I can help you:\n\n- Create RFQs (Request for Quotations)\n- Check product availability\n\nWhat would you like to procure today?"
+                else:
+                    portal_url = self._get_portal_url()
+                    welcome_message = (
+                        f"Welcome {name}!\n\nI'm your AI Procurement Assistant. I can help you check RFQ status and explore ready stocks.\n\n"
+                        f"📌 *Important RFQ Policy:*\n"
+                        f"Buyers can create RFQs only through the *Procucev Enterprise website* ({portal_url}) or by emailing *rfq@procucev.com*.\n\n"
+                        "What can I assist you with today?"
+                    )
                 
                 # Note: This is registration workflow - session may not be available
                 # Need to get session for proper tracking
@@ -2963,6 +3004,57 @@ class ChatService:
             return await self._handle_error_response(e, user.phone_number, "registration_workflow",
                                                      "Please tell me your name to get started")
 
+    def _is_rfq_creation_enabled(self) -> bool:
+        """Check whether RFQ creation via WhatsApp is enabled."""
+        if hasattr(self, 'settings') and self.settings is not None:
+            if hasattr(self.settings, 'enable_whatsapp_rfq_creation'):
+                return bool(self.settings.enable_whatsapp_rfq_creation)
+            return True
+        try:
+            settings = get_settings()
+            if hasattr(settings, 'enable_whatsapp_rfq_creation'):
+                return bool(settings.enable_whatsapp_rfq_creation)
+            return True
+        except Exception:
+            return True
+
+    def _get_portal_url(self) -> str:
+        """Get the web portal URL for RFQ creation."""
+        if hasattr(self, 'settings') and hasattr(self.settings, 'PROCUCEV_PORTAL_URL'):
+            return self.settings.PROCUCEV_PORTAL_URL
+        try:
+            settings = get_settings()
+            return getattr(settings, 'PROCUCEV_PORTAL_URL', "https://p2pdevuiindia.azurewebsites.net/login")
+        except Exception:
+            return "https://p2pdevuiindia.azurewebsites.net/login"
+
+    def _get_buyer_menu_buttons(self) -> List[Dict[str, str]]:
+        """Get menu buttons for buyer according to RFQ creation feature flag."""
+        if self._is_rfq_creation_enabled():
+            return [
+                {"id": "create_rfq", "title": "Create new RFQ"},
+                {"id": "rfq_status", "title": "Check RFQ Status"},
+                {"id": "search_bfs", "title": "Search Ready Stocks"}
+            ]
+        return [
+            {"id": "rfq_status", "title": "Check RFQ Status"},
+            {"id": "search_bfs", "title": "Search Ready Stocks"}
+        ]
+
+    def _get_buyer_profile_message(self, email: str) -> str:
+        """Get profile message for buyer according to RFQ creation feature flag."""
+        if self._is_rfq_creation_enabled():
+            return (
+                f"Perfect! We’ll continue with your Buyer profile (*{email}*).\n\n"
+                "If you’d like to create an RFQ using Excel, please attach your file here.\n\n"
+            )
+        portal_url = self._get_portal_url()
+        return (
+            f"Perfect! We’ll continue with your Buyer profile (*{email}*).\n\n"
+            f"📌 *Important RFQ Policy:*\n"
+            f"Buyers can create RFQs only through the *Procucev Enterprise website* ({portal_url}) or by emailing *rfq@procucev.com*.\n\n"
+        )
+
     async def _handle_greeting_inquiry(
             self, user: User, message: str, session: ConversationSession,intent_result: Dict[str, Any] = None
     ) -> Dict[str, Any]:
@@ -2978,15 +3070,8 @@ class ChatService:
 
             # Role-based button configuration
             if user_role == "buyer":
-                buttons_config = [
-                    {"id": "create_rfq", "title": "Create new RFQ"},
-                    {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Ready Stocks"}
-                ]
-                profile_message = (
-                    f"Perfect! We’ll continue with your Buyer profile (*{user.email}*).\n\n"
-                    "If you’d like to create an RFQ using Excel, please attach your file here.\n\n"
-                )
+                buttons_config = self._get_buyer_menu_buttons()
+                profile_message = self._get_buyer_profile_message(user.email)
                 # Extract first name and capitalize first letter
                 first_name = user.name.split()[0].capitalize() if user.name else "there"
                 header = f"Hi {first_name}! What can I assist you with today?"
@@ -3006,15 +3091,8 @@ class ChatService:
                 if hasattr(user, 'role') and user.role:
                     actual_role = user.role.value if hasattr(user.role, 'value') else user.role
                     if actual_role == "buyer":
-                        buttons_config = [
-                            {"id": "create_rfq", "title": "Create new RFQ"},
-                            {"id": "rfq_status", "title": "Check RFQ Status"},
-                            {"id": "search_bfs", "title": "Search Ready Stocks"}
-                        ]
-                        profile_message = (
-                            f"We’ll continue with your Buyer profile (*{user.email}*).\n\n"
-                            "If you’d like to create an RFQ using Excel, please attach your file here.\n\n"
-                        )
+                        buttons_config = self._get_buyer_menu_buttons()
+                        profile_message = self._get_buyer_profile_message(user.email)
                         # Extract first name and capitalize first letter
                         first_name = user.name.split()[0].capitalize() if user.name else "there"
                         header = f"Hi {first_name}! What can I assist you with today?"
@@ -3028,19 +3106,11 @@ class ChatService:
                         first_name = user.name.split()[0].capitalize() if user.name else "there"
                         header = f"Hi {first_name}! What would you like to do today?"
                     else:
-                        buttons_config = [
-                            {"id": "create_rfq", "title": "Create new RFQ"},
-                            {"id": "rfq_status", "title": "Check RFQ Status"},
-                            {"id": "search_bfs", "title": "Search Ready Stocks"}
-                        ]
+                        buttons_config = self._get_buyer_menu_buttons()
                         profile_message = "How can I help you with your procurement needs today?"
                         header = "Please choose an option:"
                 else:
-                    buttons_config = [
-                        {"id": "create_rfq", "title": "Create new RFQ"},
-                        {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "search_bfs", "title": "Search Ready Stocks"}
-                    ]
+                    buttons_config = self._get_buyer_menu_buttons()
                     profile_message = "How can I help you with your procurement needs today?"
                     header = "Please choose an option:"
             # ✅ Send interactive buttons
@@ -3128,11 +3198,7 @@ class ChatService:
             
             # Role-based button configuration
             if user_role == "buyer":
-                buttons_config = [
-                    {"id": "create_rfq", "title": "Create new RFQ"},
-                    {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Ready Stocks"}
-                ]
+                buttons_config = self._get_buyer_menu_buttons()
                 header = "What else can I help you with?"
             elif user_role == "seller":
                 buttons_config = [
@@ -3171,11 +3237,7 @@ class ChatService:
             
             if user_role == "buyer":
                 # Buyer fallback with buttons
-                buttons_config = [
-                    {"id": "create_rfq", "title": "Create new RFQ"},
-                    {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Ready Stocks"}
-                ]
+                buttons_config = self._get_buyer_menu_buttons()
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
                     "What can I assist you with today?",
@@ -3200,22 +3262,14 @@ class ChatService:
                 # Fallback based on user role
                 user_role = user.role.value if hasattr(user.role, 'value') else user.role
                 if user_role == "buyer":
-                    buttons_config = [
-                        {"id": "create_rfq", "title": "Create new RFQ"},
-                        {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "search_bfs", "title": "Search Ready Stocks"}
-                    ]
+                    buttons_config = self._get_buyer_menu_buttons()
                 elif user_role == "seller":
                     buttons_config = [
                         {"id": "rfq_status", "title": "My quoTe Status"},
                         {"id": "contact_support", "title": "Contact Support"}
                     ]
                 else:
-                    buttons_config = [
-                        {"id": "create_rfq", "title": "Create new RFQ"},
-                        {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "search_bfs", "title": "Search Ready Stocks"}
-                    ]
+                    buttons_config = self._get_buyer_menu_buttons()
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
                     "How can I help you with your procurement needs today?",
@@ -3238,11 +3292,7 @@ class ChatService:
             
             if user_role == "buyer":
                 # Buyer fallback with buttons
-                buttons_config = [
-                    {"id": "create_rfq", "title": "Create new RFQ"},
-                    {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Ready Stocks"}
-                ]
+                buttons_config = self._get_buyer_menu_buttons()
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
                     "What can I assist you with today?",
@@ -3267,22 +3317,14 @@ class ChatService:
                 # Fallback based on user role
                 user_role = user.role.value if hasattr(user.role, 'value') else user.role
                 if user_role == "buyer":
-                    buttons_config = [
-                        {"id": "create_rfq", "title": "Create new RFQ"},
-                        {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "search_bfs", "title": "Search Ready Stocks"}
-                    ]
+                    buttons_config = self._get_buyer_menu_buttons()
                 elif user_role == "seller":
                     buttons_config = [
                         {"id": "rfq_status", "title": "My quoTe Status"},
                         {"id": "contact_support", "title": "Contact Support"}
                     ]
                 else:
-                    buttons_config = [
-                        {"id": "create_rfq", "title": "Create new RFQ"},
-                        {"id": "rfq_status", "title": "Check RFQ Status"},
-                        {"id": "search_bfs", "title": "Search Ready Stocks"}
-                    ]
+                    buttons_config = self._get_buyer_menu_buttons()
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
                     "How can I help you with your procurement needs today?",
@@ -3424,6 +3466,30 @@ class ChatService:
 
         # Handle new menu buttons
         if button_id == "new_rfq" or button_id == "raise_rfq" or button_id == "create_rfq":
+            if not self._is_rfq_creation_enabled():
+                portal_url = self._get_portal_url()
+                redirect_msg = (
+                    "📌 *Important RFQ Policy:*\n\n"
+                    "Buyers can create RFQs only through the *Procucev Enterprise website* or by emailing *rfq@procucev.com*.\n\n"
+                    f"🔗 *Portal:* {portal_url}\n"
+                    "✉️ *Email:* rfq@procucev.com\n\n"
+                    "WhatsApp no longer accepts RFQ creation requests directly through messages, buttons, or Excel uploads."
+                )
+                buttons = [
+                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                    {"id": "search_bfs", "title": "Search Ready Stocks"}
+                ]
+                await self.whatsapp_service.send_configurable_buttons(
+                    user.phone_number,
+                    redirect_msg,
+                    buttons,
+                    session_id=session
+                )
+                return {
+                    "status": "rfq_creation_disabled",
+                    "message": redirect_msg
+                }
+
             # Check if we have a tracked meaningful message from auth/registration flow
             workflow_state = session.workflow_state or {}
             tracked_message = workflow_state.get("last_meaningful_message")
@@ -3598,7 +3664,6 @@ class ChatService:
 
                 # Clear Redis (session complete) - CRITICAL: Delete old session to prevent stale data leak
                 from app.redis_db import get_session_redis_service
-                from app.config import get_settings
                 settings = get_settings()
                 if settings.redis_session_storage_enabled:
                     redis_session = get_session_redis_service()
