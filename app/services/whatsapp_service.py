@@ -29,6 +29,7 @@ from app.config import get_settings
 from app.tools.retry_service import get_retry_service
 from app.redis_db import get_redis_service
 from app.utils.turn_trace import current_turn_id
+from app.utils import platform_policy
 
 logger = logging.getLogger(__name__)
 
@@ -593,9 +594,12 @@ class WhatsAppService:
 
         """
         try:
+            # Hide Buy From Stock buttons everywhere while BFS is disabled (EQUA has no BFS)
+            buttons_config = platform_policy.filter_bfs_buttons(buttons_config)
+
             if not buttons_config:
                 raise ValueError("At least one button configuration is required")
-                
+
             if len(buttons_config) > 3:
                 logger.warning(f"WhatsApp supports maximum 3 buttons, trimming to first 3 from {len(buttons_config)} provided")
                 buttons_config = buttons_config[:3]

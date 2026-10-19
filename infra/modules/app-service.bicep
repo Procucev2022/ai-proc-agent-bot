@@ -77,6 +77,13 @@ param gmtPassword string
 @description('GMT Phone')
 param gmtPhone string
 
+@description('Procurement backend the bot talks to: qua (QUA Java) or equa (Enterprise QUA bot bridge)')
+param backendPlatform string = 'qua'
+
+@description('Shared key for the Enterprise QUA bot bridge (X-Bot-Api-Key); empty on QUA')
+@secure()
+param botApiKey string = ''
+
 var appName = 'aiproc-app-${environment}'
 
 var baseSecrets = [
@@ -105,6 +112,21 @@ var baseSecrets = [
     value: gmtClientSecret
   }
 ]
+
+// BOT_API_KEY is only wired in when one is supplied: a Container Apps secret cannot be empty.
+var botApiKeySecret = !empty(botApiKey) ? [
+  {
+    name: 'bot-api-key'
+    value: botApiKey
+  }
+] : []
+
+var botApiKeyEnv = !empty(botApiKey) ? [
+  {
+    name: 'BOT_API_KEY'
+    secretRef: 'bot-api-key'
+  }
+] : []
 
 var acrSecret = !empty(acrPassword) ? [
   {
@@ -138,14 +160,14 @@ resource appContainer 'Microsoft.App/containerApps@2023-05-01' = {
           identity: 'system'
         }
       ]
-      secrets: concat(baseSecrets, acrSecret)
+      secrets: concat(baseSecrets, acrSecret, botApiKeySecret)
     }
     template: {
       containers: [
         {
           name: 'app'
           image: '${acrServer}/${imageTag}'
-          env: [
+          env: concat([
             {
               name: 'APP_NAME'
               value: 'AI Procurement Agent (${environment})'
@@ -238,7 +260,11 @@ resource appContainer 'Microsoft.App/containerApps@2023-05-01' = {
               name: 'GMT_PHONE'
               value: gmtPhone
             }
-          ]
+            {
+              name: 'BACKEND_PLATFORM'
+              value: backendPlatform
+            }
+          ], botApiKeyEnv)
           resources: {
             cpu: json('1.0')
             memory: '2.0Gi'

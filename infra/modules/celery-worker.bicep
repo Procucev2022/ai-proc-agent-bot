@@ -77,6 +77,13 @@ param gmtPassword string
 @description('GMT Phone')
 param gmtPhone string
 
+@description('Procurement backend the bot talks to: qua (QUA Java) or equa (Enterprise QUA bot bridge)')
+param backendPlatform string = 'qua'
+
+@description('Shared key for the Enterprise QUA bot bridge (X-Bot-Api-Key); empty on QUA')
+@secure()
+param botApiKey string = ''
+
 var appName = 'aiproc-celery-${environment}'
 
 // Celery queue names. These must match task_routes plus task_default_queue in
@@ -146,6 +153,21 @@ var baseSecrets = [
   }
 ]
 
+// BOT_API_KEY is only wired in when one is supplied: a Container Apps secret cannot be empty.
+var botApiKeySecret = !empty(botApiKey) ? [
+  {
+    name: 'bot-api-key'
+    value: botApiKey
+  }
+] : []
+
+var botApiKeyEnv = !empty(botApiKey) ? [
+  {
+    name: 'BOT_API_KEY'
+    secretRef: 'bot-api-key'
+  }
+] : []
+
 var acrSecret = !empty(acrPassword) ? [
   {
     name: 'acr-password'
@@ -173,7 +195,7 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
           identity: 'system'
         }
       ]
-      secrets: concat(baseSecrets, acrSecret)
+      secrets: concat(baseSecrets, acrSecret, botApiKeySecret)
     }
     template: {
       containers: [
@@ -181,7 +203,7 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
           name: 'celery-worker'
           command: ['celery', '-A', 'app.celery_app', 'worker', '--loglevel=info', '--concurrency=1']
           image: '${acrServer}/${imageTag}'
-          env: [
+          env: concat([
             {
               name: 'PYTHONUNBUFFERED'
               value: '1'
@@ -258,7 +280,11 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
               name: 'GMT_PHONE'
               value: gmtPhone
             }
-          ]
+            {
+              name: 'BACKEND_PLATFORM'
+              value: backendPlatform
+            }
+          ], botApiKeyEnv)
           resources: {
             cpu: json('1.0')
             memory: '2.0Gi'
@@ -297,7 +323,7 @@ resource celeryBeatApp 'Microsoft.App/containerApps@2023-05-01' = {
           identity: 'system'
         }
       ]
-      secrets: concat(baseSecrets, acrSecret)
+      secrets: concat(baseSecrets, acrSecret, botApiKeySecret)
     }
     template: {
       containers: [
@@ -328,6 +354,10 @@ resource celeryBeatApp 'Microsoft.App/containerApps@2023-05-01' = {
             {
               name: 'DATABASE_URL'
               secretRef: 'database-url'
+            }
+            {
+              name: 'BACKEND_PLATFORM'
+              value: backendPlatform
             }
           ]
           volumeMounts: [

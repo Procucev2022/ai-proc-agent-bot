@@ -14,6 +14,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from app.procucev_apis.procucev_api_client import get_procucev_api_client
+from app.utils import platform_policy
 
 logger = logging.getLogger(__name__)
 
@@ -103,11 +104,19 @@ class RFQAPIService:
             logger.info(f"Payload for creating RFQ: {gmt_rfq_data}")
             
             endpoint = "/rest/gmt/createRFQByClient"
+            # Creating an RFQ is not idempotent: on EQUA it gets a longer budget and a
+            # single attempt, so a slow success is never re-sent as a second RFQ.
+            settings = getattr(self.api_client, "settings", None)
+            single_slow_call = (
+                {"total_timeout": getattr(settings, "equa_rfq_create_timeout_seconds", 90.0), "max_retries": 1}
+                if platform_policy.is_equa(settings) else {}
+            )
             response = await self.api_client.post(
                 endpoint=endpoint,
                 json_data=gmt_rfq_data,
                 require_auth=True,
-                api_title="Create RFQ API"
+                api_title="Create RFQ API",
+                **single_slow_call
             )
             
             if (response.get('statusCode') == '200' and response.get('status') == 'Success'):

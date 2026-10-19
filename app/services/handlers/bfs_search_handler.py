@@ -14,6 +14,7 @@ from app.services.openai_service import OpenAIService
 from app.services.whatsapp_service import WhatsAppService
 from app.services.auto_categorization_service import get_auto_categorization_service_async
 from app.procucev_apis.bfs_apis import get_bfs_api_service
+from app.utils import platform_policy
 from app.utils.bfs_bid_format_parser import (
     generate_bid_format,
     parse_bid_format,
@@ -41,6 +42,19 @@ class BFSSearchHandler:
             self.auto_categorization_service = await get_auto_categorization_service_async()
         return self.auto_categorization_service
 
+    async def _reply_bfs_unavailable(self, user: User, session: ConversationSession) -> Dict[str, Any]:
+        """Tell the user BFS is off (no BFS on Enterprise QUA) and drop any half-finished BFS state."""
+        logger.info(f"[BFS] BFS is disabled; declining request from {user.phone_number}")
+        if session.workflow_state:
+            for key in ("bfs_search_pending", "bfs_bid_stage"):
+                session.workflow_state.pop(key, None)
+        await self.whatsapp_service.send_message(
+            user.phone_number,
+            platform_policy.BFS_UNAVAILABLE_MESSAGE,
+            session_id=session
+        )
+        return {"status": platform_policy.BFS_UNAVAILABLE_STATUS}
+
     # ==================== Button Handler ====================
 
     async def handle_button(
@@ -56,6 +70,8 @@ class BFSSearchHandler:
         - "bfs_activate_rfq": chat_service should call _activate_sectioned_rfq
         - "bfs_send_cancel_message": chat_service should call cancel_service
         """
+        if not platform_policy.is_bfs_enabled():
+            return await self._reply_bfs_unavailable(user, session)
         if button_id == "search_bfs":
             # Prompt user to describe what they want to search
             await self.whatsapp_service.send_message(
@@ -130,6 +146,8 @@ class BFSSearchHandler:
         Main entry point for BFS search.
         Extracts products, categorizes them, and calls the API directly.
         """
+        if not platform_policy.is_bfs_enabled():
+            return await self._reply_bfs_unavailable(user, session)
         logger.info(f"[BFS] Handling BFS search for user {user.phone_number}")
 
         # Extract product descriptions from message
@@ -413,6 +431,8 @@ class BFSSearchHandler:
         Handle user's bid format input.
         Parses the format and proceeds to OTP if valid.
         """
+        if not platform_policy.is_bfs_enabled():
+            return await self._reply_bfs_unavailable(user, session)
         logger.info(f"[BFS Bid] Processing bid format input: {message[:50]}...")
 
         # Get original BFS results for validation
@@ -565,6 +585,8 @@ class BFSSearchHandler:
         """
         Handle OTP input for bid confirmation.
         """
+        if not platform_policy.is_bfs_enabled():
+            return await self._reply_bfs_unavailable(user, session)
         from app.services.otp_service import OTPService
         from app.procucev_apis.register_apis import RegisterAPIService
         from app.services.support_notification_service import SupportNotificationService

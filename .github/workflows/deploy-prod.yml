@@ -54,6 +54,8 @@ jobs:
           DATABASE_URL: ${{ vars.PROD_DATABASE_URL || vars.DATABASE_URL }}
           WHATSAPP_FROM_NUMBER: ${{ vars.WHATSAPP_FROM_NUMBER }}
           WHATSAPP_MOCK_MODE: ${{ vars.WHATSAPP_MOCK_MODE }}
+          BACKEND_PLATFORM: ${{ vars.BACKEND_PLATFORM }}
+          BOT_API_KEY: ${{ secrets.BOT_API_KEY }}
         run: |
           # WHATSAPP_FROM_NUMBER is required rather than defaulted: a silent
           # fallback would send production traffic from whatever number was
@@ -62,6 +64,11 @@ jobs:
           for name in "${required[@]}"; do
             if [ -z "${!name:-}" ]; then echo "::error::Missing required secret $name"; exit 1; fi
           done
+          # Enterprise QUA (BACKEND_PLATFORM=equa) refuses every bridge request without its key.
+          if [ "$(echo "${BACKEND_PLATFORM:-qua}" | tr '[:upper:]' '[:lower:]')" = "equa" ] && [ -z "${BOT_API_KEY:-}" ]; then
+            echo "::error::BACKEND_PLATFORM is 'equa' but BOT_API_KEY is not set"
+            exit 1
+          fi
           if ! [[ "$WHATSAPP_FROM_NUMBER" =~ ^[0-9]{10,15}$ ]]; then
             echo "::error::WHATSAPP_FROM_NUMBER must be digits only with country code and no '+' (e.g. 91XXXXXXXXXX)"
             exit 1
@@ -238,6 +245,8 @@ jobs:
             gmtPhone="${{ vars.GMT_PHONE }}"
             gmtClientId="${{ vars.GMT_CLIENT_ID }}"
             gmtClientSecret="${{ vars.GMT_CLIENT_SECRET }}"
+            backendPlatform="${{ vars.BACKEND_PLATFORM || 'qua' }}"
+            botApiKey="${{ secrets.BOT_API_KEY }}"
 
       - name: Get Production URL & Verify Health Endpoint
         run: |

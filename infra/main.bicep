@@ -71,6 +71,13 @@ param gmtPassword string = ''
 @description('GMT Phone')
 param gmtPhone string
 
+@description('Procurement backend the bot talks to: qua (QUA Java) or equa (Enterprise QUA bot bridge)')
+param backendPlatform string = 'qua'
+
+@description('Shared key for the Enterprise QUA bot bridge (X-Bot-Api-Key); empty on QUA')
+@secure()
+param botApiKey string = ''
+
 // Container Apps Environment
 module environmentModule 'modules/container-apps-env.bicep' = {
   name: 'env-deployment'
@@ -123,6 +130,8 @@ module appModule 'modules/app-service.bicep' = {
     gmtUsername: gmtUsername
     gmtPassword: gmtPassword
     gmtPhone: gmtPhone
+    backendPlatform: backendPlatform
+    botApiKey: botApiKey
   }
 }
 
@@ -154,6 +163,8 @@ module celeryModule 'modules/celery-worker.bicep' = {
     gmtUsername: gmtUsername
     gmtPassword: gmtPassword
     gmtPhone: gmtPhone
+    backendPlatform: backendPlatform
+    botApiKey: botApiKey
   }
 }
 

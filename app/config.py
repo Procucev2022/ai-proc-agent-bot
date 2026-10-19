@@ -75,6 +75,23 @@ class Settings:
         self.debug = os.getenv("DEBUG", "false").lower() == "true"
         self.log_level = os.getenv("LOG_LEVEL", "INFO").upper()
         self.environment = os.getenv("ENVIRONMENT", "Dev")
+
+        # Procurement backend: "qua" (QUA Java + its MySQL schema, the default) or
+        # "equa" (Enterprise QUA through its /api/bot bridge). See
+        # app/utils/platform_policy.py for what changes between them.
+        from app.utils.platform_policy import EQUA, normalize_platform, platform_default
+        self.backend_platform = normalize_platform(os.getenv("BACKEND_PLATFORM"))
+        self.is_equa = self.backend_platform == EQUA
+        # Shared key the EQUA bridge requires on every request (X-Bot-Api-Key).
+        self.bot_api_key = os.getenv("BOT_API_KEY")
+        # EQUA writes an AI summary while creating an RFQ, which can outlast the
+        # client's 15s default; the create call gets this budget and one attempt so
+        # a slow response is never retried into a duplicate RFQ.
+        self.equa_rfq_create_timeout_seconds = float(os.getenv("EQUA_RFQ_CREATE_TIMEOUT_SECONDS", "90"))
+        # Buy From Stock exists only in QUA.
+        self.enable_bfs = os.getenv(
+            "ENABLE_BFS", platform_default("true", "false", self.backend_platform)
+        ).lower() == "true"
         
         # Project root directory (used for relative paths)
         self.PROJECT_ROOT = PROJECT_ROOT
@@ -106,8 +123,12 @@ class Settings:
         self.whatsapp_db = (
             os.getenv("WHATSAPP_DB") or _database_name(primary_database_url) or "procurement_db"
         )
+        # Direct reads of the QUA MySQL schema. EQUA's data is in Cloudflare D1, which
+        # is not reachable this way, so the default follows the platform.
         self.enable_remote_categorization = (
-            os.getenv("ENABLE_REMOTE_CATEGORIZATION", "true").lower() == "true"
+            os.getenv(
+                "ENABLE_REMOTE_CATEGORIZATION", platform_default("true", "false", self.backend_platform)
+            ).lower() == "true"
         )
         # MySQL socket timeouts (seconds). Without a read timeout, a connection that
         # drops mid-query leaves the request waiting forever with no reply or error.
@@ -500,7 +521,10 @@ class Settings:
             ("GMT_CLIENT_ID", self.gmt_client_id),
             ("GMT_CLIENT_SECRET", self.gmt_client_secret),
         ]
-        
+        # The EQUA bridge refuses every request without its key.
+        if self.is_equa:
+            required_vars.append(("BOT_API_KEY", self.bot_api_key))
+
         # Check database URL based on mode
         if self.database_mode == "client" and not self.client_database_url:
             required_vars.append(("DATABASE_URL", self.client_database_url))
