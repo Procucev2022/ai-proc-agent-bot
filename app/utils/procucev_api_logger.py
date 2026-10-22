@@ -13,6 +13,16 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
+
+def _api_base_url() -> str:
+    """Base URL of the backend in use (QUA or EQUA), as resolved by the settings."""
+    try:
+        from app.config import get_settings
+        configured = get_settings().gmt_base_url
+    except Exception:
+        configured = None
+    return configured or os.getenv('GMT_BASE_URL', 'https://api.procucev.com')
+
 class ProcucevAPILogger:
     def __init__(self, log_dir: str = "logs/procucev_api_interactions"):
         self.log_dir = log_dir
@@ -29,7 +39,7 @@ class ProcucevAPILogger:
         if timestamp is None:
             timestamp = datetime.now(timezone.utc).isoformat()
 
-        base_url = os.getenv('GMT_BASE_URL', 'https://api.procucev.com')
+        base_url = _api_base_url()
         api_url = f"{base_url}{api_url}"
 
         log_entry = {
@@ -64,7 +74,7 @@ def log_procucev_api_call(api_title: Optional[str] = None, endpoint: Optional[st
             start_time = time.time()
             timestamp = datetime.now(timezone.utc).isoformat()
             title = api_title or func.__name__
-            base_url = os.getenv('GMT_BASE_URL', 'https://api.procucev.com')
+            base_url = _api_base_url()
             url = f"{base_url}{endpoint}" if endpoint else f"{base_url}/{func.__name__}"
 
             # Extract phone_number from kwargs if available
@@ -87,7 +97,7 @@ def log_procucev_api_call(api_title: Optional[str] = None, endpoint: Optional[st
             start_time = time.time()
             timestamp = datetime.now(timezone.utc).isoformat()
             title = api_title or func.__name__
-            base_url = os.getenv('GMT_BASE_URL', 'https://api.procucev.com')
+            base_url = _api_base_url()
             url = f"{base_url}{endpoint}" if endpoint else f"{base_url}/{func.__name__}"
 
             # Extract phone_number from kwargs if available

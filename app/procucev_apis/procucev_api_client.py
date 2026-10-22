@@ -16,6 +16,8 @@ from app.schemas.user import normalize_phone_number
 from app.redis_db import get_redis_service
 from app.utils.procucev_api_logger import manual_log_api_call
 from app.utils.turn_trace import current_turn_id
+from app.utils import platform_policy
+from app.utils.platform_policy import BOT_API_KEY_HEADER, bot_api_headers
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -100,6 +102,8 @@ class ProcucevAPIClient:
         # Scoped to the API host so a token cached while pointing at another
         # backend (e.g. dev) is never sent to this one.
         self.token_cache_key = f"procucev_api:auth_token:{api_source_tag(self.base_url)}"
+        # Answers QUA endpoints through Enterprise QUA's APIs (created on first use).
+        self._equa = None
 
     # Note: __del__ removed - cannot reliably close async sessions in __del__
     # Use context managers (async with) or explicit close_session() calls instead
@@ -229,7 +233,7 @@ class ProcucevAPIClient:
             if self.session is None or self.session.closed:
                 await self.create_session()
                 
-            async with self.session.post(auth_url, json=payload, headers={}) as resp:
+            async with self.session.post(auth_url, json=payload, headers=bot_api_headers(self.settings)) as resp:
                 text = await resp.text()
                 if 200 <= resp.status < 300:
                     data = await self.normalize_response(resp, text)
@@ -254,9 +258,23 @@ class ProcucevAPIClient:
         headers: Optional[Dict[str, str]] = None,
         require_auth: bool = False,
         api_title: Optional[str] = None,
-        dynamic_token: Optional[Any] = None # Can be str (token) or dict (credentials)
+        dynamic_token: Optional[Any] = None, # Can be str (token) or dict (credentials)
+        total_timeout: Optional[float] = None,
+        max_retries: Optional[int] = None,
+        raw: bool = False,
     ) -> Dict[str, Any]:
-        """ Base HTTP request handler with retry/backoff. """
+        """ Base HTTP request handler with retry/backoff.
+
+        On Enterprise QUA (BACKEND_PLATFORM=equa) a QUA endpoint is answered by
+        EquaAdapter through EQUA's own APIs, in QUA's response shape; ``raw`` is the
+        adapter's own call straight to EQUA. ``total_timeout`` and ``max_retries``
+        override the client defaults for one call, for a slow request that must not
+        be repeated (creating an RFQ).
+        """
+        if not raw and platform_policy.is_equa(self.settings):
+            return await self._equa_adapter().handle(method, url_or_endpoint, json_data=json_data, params=params)
+        attempts = max_retries or self.max_retries
+        request_timeout = aiohttp.ClientTimeout(total=total_timeout) if total_timeout else None
         # Start timing for logging
         start_time = time.time()
         
@@ -266,7 +284,8 @@ class ProcucevAPIClient:
 
         # Build full URL
         url = url_or_endpoint if url_or_endpoint.startswith("http") else f"{self.base_url}{url_or_endpoint}"
-        headers = headers.copy() if headers else {}
+        # The EQUA bridge's key, when one is configured; QUA never sees it otherwise.
+        headers = {**bot_api_headers(self.settings), **(headers or {})}
         
         # Prepare input data for logging
         input_data = {
@@ -275,7 +294,7 @@ class ProcucevAPIClient:
             "params": params,
             "payload": json_data,
             "data": str(data) if data else None,
-            "headers": {k: v for k, v in headers.items() if k.lower() != "authorization"},  # Exclude auth header
+            "headers": {k: v for k, v in headers.items() if k.lower() not in ("authorization", BOT_API_KEY_HEADER.lower())},  # Exclude credentials
             "require_auth": require_auth
         }
 
@@ -300,11 +319,12 @@ class ProcucevAPIClient:
             await self._ensure_authenticated()
             headers["Authorization"] = f"Bearer {self.auth_token}"
 
-        for attempt in range(self.max_retries):
+        for attempt in range(attempts):
             try:
                 request_start_time = time.time()
                 async with self.session.request(
-                    method, url, params=params, json=json_data, data=data, headers=headers
+                    method, url, params=params, json=json_data, data=data, headers=headers,
+                    **({"timeout": request_timeout} if request_timeout else {})
                 ) as resp:
                     response_time = time.time() - request_start_time
                     status = resp.status
@@ -315,7 +335,7 @@ class ProcucevAPIClient:
                     # into the INFO stream.
                     detail = (
                         f"[PROCUCEV_API] [TURN:{current_turn_id()}] {method} {url} -> {status} "
-                        f"in {response_time:.3f}s (attempt {attempt + 1}/{self.max_retries}, "
+                        f"in {response_time:.3f}s (attempt {attempt + 1}/{attempts}, "
                         f"{len(text)} bytes)"
                     )
                     if response_time >= 2.0:
@@ -371,9 +391,9 @@ class ProcucevAPIClient:
                 elif isinstance(e, aiohttp.ClientResponseError):
                     error_type = "HTTP error"
 
-                logger.warning(f"Attempt {attempt+1}/{self.max_retries} for {method} {url} failed in {request_time:.3f}s: {error_type} - {e}")
+                logger.warning(f"Attempt {attempt+1}/{attempts} for {method} {url} failed in {request_time:.3f}s: {error_type} - {e}")
                 
-                if attempt == self.max_retries - 1:
+                if attempt == attempts - 1:
                     logger.error(f"Max retries exceeded for {method} {url}")
                     
                     # Log API failure and send WhatsApp notification
@@ -415,6 +435,12 @@ class ProcucevAPIClient:
         title = api_title or f"{method} {url_or_endpoint}"
         manual_log_api_call(title, url, input_data, final_error_result, processing_time)
         return final_error_result
+
+    def _equa_adapter(self):
+        if self._equa is None:
+            from app.procucev_apis.equa_adapter import EquaAdapter
+            self._equa = EquaAdapter(self)
+        return self._equa
 
     async def normalize_response(self, resp: aiohttp.ClientResponse, raw_text: str) -> Dict[str, Any]:
         """

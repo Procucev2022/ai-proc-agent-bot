@@ -91,3 +91,49 @@ def pytest_sessionfinish(session, exitstatus):
             + ", ".join(changed)
             + ". Point prompts_dir/tools_dir at tmp_path instead of the real package."
         )
+
+
+
+# Production keeps WhatsApp RFQ creation and buyer services off
+# (ENABLE_WHATSAPP_RFQ_CREATION / ENABLE_WHATSAPP_BUYER_SERVICES default to
+# false), but that code stays in place behind the flags and the legacy flow
+# tests exercise it, so the suite runs with both on. Tests of the disabled
+# policy turn them off with the `whatsapp_rfq_creation_disabled` /
+# `whatsapp_buyer_services_disabled` fixtures or pass their own settings object.
+_LEGACY_FLAGS = {
+    "ENABLE_WHATSAPP_RFQ_CREATION": "enable_whatsapp_rfq_creation",
+    "ENABLE_WHATSAPP_BUYER_SERVICES": "enable_whatsapp_buyer_services",
+}
+
+
+def _set_flag(monkeypatch, env_name, value):
+    monkeypatch.setenv(env_name, "true" if value else "false")
+    import app.config as app_config
+
+    # Other tests may leave a stub in place of Settings; those fall back to the env var.
+    if isinstance(app_config._settings, app_config.Settings):
+        monkeypatch.setattr(app_config._settings, _LEGACY_FLAGS[env_name], value)
+
+
+@pytest.fixture(autouse=True)
+def _whatsapp_rfq_creation_enabled_for_legacy_flow(monkeypatch):
+    for env_name in _LEGACY_FLAGS:
+        _set_flag(monkeypatch, env_name, True)
+
+
+@pytest.fixture
+def whatsapp_rfq_creation_disabled(monkeypatch):
+    """Restore the production default: RFQ creation on WhatsApp is disabled."""
+    import app.config as app_config
+
+    app_config.get_settings()
+    _set_flag(monkeypatch, "ENABLE_WHATSAPP_RFQ_CREATION", False)
+
+
+@pytest.fixture
+def whatsapp_buyer_services_disabled(monkeypatch):
+    """Restore the production default: buyers only get the portal template on WhatsApp."""
+    import app.config as app_config
+
+    app_config.get_settings()
+    _set_flag(monkeypatch, "ENABLE_WHATSAPP_BUYER_SERVICES", False)

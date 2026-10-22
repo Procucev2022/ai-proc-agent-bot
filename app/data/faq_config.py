@@ -1,5 +1,6 @@
 # Full FAQ context for LLM fallback
 from app.config import get_settings
+from app.utils import rfq_policy
 settings = get_settings()
 FULL_FAQ_CONTEXT =\
     f"""
@@ -11,7 +12,7 @@ FULL_FAQ_CONTEXT =\
     To register as a buyer, the following details are required: Name, Company Name, Pincode, and Email ID. All these fields are mandatory to complete buyer registration.
     To register as a seller, the following details are required: Name, Company Name, Pincode, GST Number, Email ID, and the services you offer. All these fields are mandatory to complete seller registration.
 - RFQ Process:
-    Raise, track, and customize RFQs (quotes) through the WhatsApp AI Agent or the web portal. To create an RFQ, you will need to provide Delivery Date, Pincode, Procurable Items, Quantity, and (optional) Item Specifications.
+    {rfq_policy.faq_rfq_channels_text(settings)} To create an RFQ, you will need to provide Delivery Date, Pincode, Procurable Items, Quantity, and (optional) Item Specifications.
     You can also attach files and define criteria. Sellers receive curated RFQs that match their offerings via email and the portal, and can respond or track quotations from their dashboard.
 - Features & Benefits:
     Free for buyers; sellers get a free trial RFQ and can subscribe for more.

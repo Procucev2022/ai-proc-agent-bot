@@ -30,6 +30,7 @@ from app.services.otp_service import OTPService
 from app.utils.pincode_lookup import get_location_from_pincode_async
 from datetime import datetime
 from app.config import get_settings
+from app.utils import rfq_policy
 
 logger = logging.getLogger(__name__)
 
@@ -693,23 +694,56 @@ class RegistrationService:
                             
                             # if intent == "buy_something":
                             logger.info(f"entitiies:{entities}")
-                            # Show buying options with buttons
-                            buying_message = (
-                                f"Your OTP has been verified successfully, and your account is now active and ready to use."
-                                f"To serve you better, please update your profile and categories at {self.settings.procucev_rfq_details_url} "
-                                f"You will receive your login details through E-mail.\n\n"
-                                f"Let's continue with your *Buyer profile ({entities.get('email', 'your profile')})*.\n"
-                                "What would you like to do today?\n"
-                                "You can choose from the options below or type your request."
-                            )
-
+                            email = entities.get('email', 'your profile')
+                            settings_obj = getattr(self, 'settings', None) or get_settings()
+                            portal_url = getattr(settings_obj, 'PROCUCEV_PORTAL_URL', "https://p2pdevuiindia.azurewebsites.net/login") or "https://p2pdevuiindia.azurewebsites.net/login"
+                            rfq_details_url = getattr(settings_obj, 'procucev_rfq_details_url', portal_url)
                             name = entities.get('name', 'there').split()[0].title()
-                            header = f"Hello {name},"
-                            buttons_config = [
-                                {"id": "create_rfq", "title": "Create new RFQ"},
-                                {"id": "rfq_status", "title": "Check RFQ Status"},
-                                {"id": "search_bfs", "title": "Search Ready Stocks"}
-                            ]
+                            header = f"Hello {name}!"
+
+                            if getattr(settings_obj, 'enable_whatsapp_rfq_creation', True):
+                                # Show buying options with buttons (legacy RFQ creation on WhatsApp)
+                                buying_message = (
+                                    f"Your OTP has been verified successfully, and your account is now active and ready to use."
+                                    f"To serve you better, please update your profile and categories at {rfq_details_url} "
+                                    f"You will receive your login details through E-mail.\n\n"
+                                    f"Let's continue with your *Buyer profile ({email})*.\n"
+                                    "What would you like to do today?\n"
+                                    "You can choose from the options below or type your request."
+                                )
+                                buttons_config = [
+                                    {"id": "create_rfq", "title": "Create new RFQ"},
+                                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                                    {"id": "search_bfs", "title": "Search Ready Stocks"}
+                                ]
+                            elif not rfq_policy.is_buyer_whatsapp_enabled(settings_obj):
+                                # Buyer services off on WhatsApp: registration details + how to raise RFQs, then end the session
+                                from app.services.exit_service import ExitService
+                                exit_service = ExitService(self.whatsapp_service, getattr(self, 'authentication_service', None),
+                                                           self.session_manager, None)
+                                result = await rfq_policy.redirect_buyer_to_portal(
+                                    self.whatsapp_service, exit_service, user_phone, session,
+                                    settings=settings_obj,
+                                    message=rfq_policy.buyer_registration_message(entities.get('email'), user_phone, settings_obj)
+                                )
+                                return {**result, "user_type": "buyer", "email": entities.get('email')}
+                            else:
+                                # New WhatsApp Buyer Flow: Show login details & portal link, hide RFQ creation
+                                buying_message = (
+                                    f"🎉 *Your account has been verified and registered successfully!*\n\n"
+                                    f"Here are your login details:\n"
+                                    f"• *Username / Email:* {email}\n"
+                                    f"• *Registered Mobile:* {user_phone}\n"
+                                    f"• *Website Portal:* {portal_url}\n\n"
+                                    f"📌 *Important RFQ Policy:*\n"
+                                    f"Buyers can create RFQs only through the *Procucev Enterprise website* ({portal_url}) or by emailing *rfq@procucev.com*.\n"
+                                    f"WhatsApp will no longer allow creating RFQs through messages, buttons, or Excel uploads.\n\n"
+                                    f"How can we assist you today?"
+                                )
+                                buttons_config = [
+                                    {"id": "rfq_status", "title": "Check RFQ Status"},
+                                    {"id": "search_bfs", "title": "Search Ready Stocks"}
+                                ]
 
                             await self.whatsapp_service.send_configurable_buttons(
                                 user_phone,
@@ -734,15 +768,9 @@ class RegistrationService:
                                 user_phone
                             )
                             
-                            # Domain not approved - send pending message
-                            pending_message = (
-                                "*Registration received—thank you!*\n\n"
-                                "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
-                                "Our team will get in touch shortly to complete the process, and once verified, "
-                                "you’ll be able to access your account and start raising RFQs.\n\n"
-                                "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
-
-                            )
+                            settings_obj = getattr(self, 'settings', None) or get_settings()
+                            # Domain not approved - registration details and how to raise RFQs
+                            pending_message = rfq_policy.buyer_registration_message(entities.get('email'), user_phone, settings_obj)
 
                             if self.session_manager:
                                 await self.session_manager.send_and_track_message(user_phone, pending_message, session)
@@ -762,7 +790,6 @@ class RegistrationService:
                     else:
                         logger.warning(f"Buyer registration completed for {user_phone} - missing user_id")
                         # No user_id found - redirect to support
-
                         
                         # Send email notification to support team
                         await self.support_notification_service.notify_buyer_registration_not_approved(
@@ -771,15 +798,9 @@ class RegistrationService:
                             user_phone
                         )
                         
-                        # No user_id found - redirect to support
-                        pending_message = (
-                            "*Registration received—thank you!*\n\n"
-                            "We’re reviewing your details to ensure everything is set up perfectly for your onboarding. "
-                            "Our team will get in touch shortly to complete the process, and once verified, "
-                            "you’ll be able to access your account and start raising RFQs.\n\n"
-                            "Feel free to return to this chat anytime to continue your journey with *Procucev* — simply type *“Hi”* to start the conversation again."
-
-                        )
+                        settings_obj = getattr(self, 'settings', None) or get_settings()
+                        # No user_id found - registration details and how to raise RFQs
+                        pending_message = rfq_policy.buyer_registration_message(entities.get('email'), user_phone, settings_obj)
 
                         if self.session_manager:
                             await self.session_manager.send_and_track_message(user_phone, pending_message, session)
