@@ -289,26 +289,7 @@ async def test_opt_out_goes_to_the_equa_bridge(monkeypatch, opt_out):
     remote.assert_not_called()
 
 
-# ── RFQ creation is sent once, with a longer budget, on EQUA ────────────────
-
-@pytest.mark.asyncio
-async def test_create_rfq_is_a_single_slow_call_only_on_equa(monkeypatch):
-    import app.procucev_apis.rfq_apis as rfq_mod
-
-    post = AsyncMock(return_value={"statusCode": "200", "status": "Success", "data": {"rfqId": "RFQ1"}})
-    service = rfq_mod.RFQAPIService.__new__(rfq_mod.RFQAPIService)
-    rfq = {"items": [{"description": "Plate", "quantity": 1}], "delivery_pincode": "411001"}
-
-    service.api_client = SimpleNamespace(post=post, settings=SimpleNamespace(backend_platform="equa", equa_rfq_create_timeout_seconds=75.0))
-    assert (await service.create_rfq(rfq, "u1", "o1"))["rfq_id"] == "RFQ1"
-    assert post.await_args.kwargs["total_timeout"] == 75.0
-    assert post.await_args.kwargs["max_retries"] == 1
-
-    service.api_client = SimpleNamespace(post=post, settings=SimpleNamespace(backend_platform="qua"))
-    await service.create_rfq(rfq, "u1", "o1")
-    assert "total_timeout" not in post.await_args.kwargs
-    assert "max_retries" not in post.await_args.kwargs
-
+# ── Per-call timeout (used by the EQUA adapter for RFQ creation) ──────────
 
 @pytest.mark.asyncio
 async def test_send_request_honours_per_call_timeout_and_attempts(monkeypatch):
@@ -340,3 +321,100 @@ async def test_send_request_honours_per_call_timeout_and_attempts(monkeypatch):
     client.session = _FakeSession()
     await client.send_request("GET", "/x")
     assert "timeout" not in client.session.calls[0]
+
+
+# ── EQUA runs with QUA gone ─────────────────────────────────────────────────
+
+QUA_VARIABLES = (
+    "GMT_BASE_URL", "GMT_USERNAME", "GMT_PHONE", "GMT_PASSWORD", "GMT_CLIENT_ID", "GMT_CLIENT_SECRET",
+    "REMOTE_DATABASE_URL", "PROCUCEV_DB_NAME", "PROCUCEV_PORTAL_URL", "EQUA_PORTAL_URL",
+    "ENABLE_REMOTE_CATEGORIZATION", "ENABLE_BFS",
+)
+
+
+def _equa_without_qua(monkeypatch, **extra):
+    for name in QUA_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("BACKEND_PLATFORM", "equa")
+    monkeypatch.setenv("BOT_API_KEY", "bridge-key")
+    monkeypatch.setenv("EQUA_API_BASE_URL", "https://equa.example/api/bot")
+    monkeypatch.setenv("EQUA_SERVICE_USERNAME", "bot@equa.example")
+    monkeypatch.setenv("EQUA_SERVICE_PHONE", "919876543210")
+    monkeypatch.setenv("DATABASE_MODE", "client")
+    monkeypatch.setenv("DATABASE_URL", "mysql+pymysql://bot:pw@bot-db.example:3306/aiprocprod")
+    for name, value in extra.items():
+        monkeypatch.setenv(name, value)
+
+
+def test_equa_settings_need_no_qua_variable_database_or_portal(monkeypatch):
+    _equa_without_qua(monkeypatch)
+    settings = Settings()  # validates on construction
+    assert settings.gmt_base_url == "https://equa.example/api/bot"
+    assert settings.gmt_username == "bot@equa.example"
+    assert settings.equa_rfq_sourcing_mode == "mode_0"
+    assert settings.gmt_phone == "919876543210"
+    assert settings.gmt_password is None and settings.gmt_client_id is None
+    # Never derived onto QUA's schema on the bot's MySQL server.
+    assert settings.remote_database_url is None
+    assert settings.enable_remote_categorization is False
+    assert settings.PROCUCEV_PORTAL_URL == platform_policy.EQUA_PORTAL_URL
+    assert settings.procucev_rfq_details_url == platform_policy.EQUA_PORTAL_URL
+    assert "azurewebsites" not in settings.rfq_followup_note
+
+
+def test_equa_settings_report_missing_equa_values_by_their_equa_names(monkeypatch):
+    _equa_without_qua(monkeypatch)
+    monkeypatch.delenv("EQUA_API_BASE_URL")
+    monkeypatch.delenv("BOT_API_KEY")
+    monkeypatch.delenv("EQUA_SERVICE_USERNAME")
+    monkeypatch.delenv("EQUA_SERVICE_PHONE")
+    with pytest.raises(ValueError) as error:
+        Settings()
+    assert str(error.value) == "Missing required environment variables: EQUA_API_BASE_URL, BOT_API_KEY"
+
+
+def test_equa_names_win_and_gmt_names_remain_a_fallback(monkeypatch):
+    _equa_without_qua(monkeypatch, GMT_BASE_URL="https://old/api/bot", GMT_USERNAME="old@x.com", EQUA_PORTAL_URL="https://portal.example/login")
+    settings = Settings()
+    assert settings.gmt_base_url == "https://equa.example/api/bot"
+    assert settings.PROCUCEV_PORTAL_URL == "https://portal.example/login"
+
+    monkeypatch.delenv("EQUA_API_BASE_URL")
+    monkeypatch.delenv("EQUA_SERVICE_USERNAME")
+    settings = Settings()
+    assert settings.gmt_base_url == "https://old/api/bot"
+    assert settings.gmt_username == "old@x.com"
+
+    monkeypatch.setenv("PROCUCEV_PORTAL_URL", "https://explicit/login")
+    assert Settings().PROCUCEV_PORTAL_URL == "https://explicit/login"
+
+
+def test_equa_honours_an_explicit_remote_database_only(monkeypatch):
+    _equa_without_qua(monkeypatch, REMOTE_DATABASE_URL="mysql+pymysql://u:p@other:3306/catalog")
+    assert Settings().remote_database_url == "mysql+pymysql://u:p@other:3306/catalog"
+
+
+def test_qua_settings_ignore_equa_names(monkeypatch):
+    monkeypatch.delenv("BACKEND_PLATFORM", raising=False)
+    monkeypatch.delenv("PROCUCEV_PORTAL_URL", raising=False)
+    monkeypatch.setenv("EQUA_API_BASE_URL", "https://equa.example/api/bot")
+    settings = Settings()
+    assert settings.gmt_base_url == "https://gmt.invalid"
+    assert settings.PROCUCEV_PORTAL_URL == platform_policy.QUA_PORTAL_URL
+
+
+def test_api_logger_uses_the_resolved_backend_url(monkeypatch):
+    import app.config as config_module
+    from app.utils import procucev_api_logger as logger_mod
+
+    monkeypatch.setattr(config_module, "get_settings", lambda: SimpleNamespace(gmt_base_url="https://equa.example/api/bot"))
+    assert logger_mod._api_base_url() == "https://equa.example/api/bot"
+
+    def broken():
+        raise RuntimeError("no settings")
+
+    monkeypatch.setattr(config_module, "get_settings", broken)
+    monkeypatch.setenv("GMT_BASE_URL", "https://gmt.example")
+    assert logger_mod._api_base_url() == "https://gmt.example"
+    monkeypatch.delenv("GMT_BASE_URL")
+    assert logger_mod._api_base_url() == "https://api.procucev.com"

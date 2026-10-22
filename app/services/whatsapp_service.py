@@ -30,6 +30,7 @@ from app.tools.retry_service import get_retry_service
 from app.redis_db import get_redis_service
 from app.utils.turn_trace import current_turn_id
 from app.utils import platform_policy
+from app.utils import rfq_policy
 
 logger = logging.getLogger(__name__)
 
@@ -594,7 +595,9 @@ class WhatsAppService:
 
         """
         try:
-            # Hide Buy From Stock buttons everywhere while BFS is disabled (EQUA has no BFS)
+            # Hide RFQ-creation buttons everywhere while WhatsApp RFQ creation is disabled,
+            # and Buy From Stock buttons while BFS is disabled (EQUA has no BFS)
+            buttons_config = rfq_policy.filter_rfq_creation_buttons(buttons_config)
             buttons_config = platform_policy.filter_bfs_buttons(buttons_config)
 
             if not buttons_config:

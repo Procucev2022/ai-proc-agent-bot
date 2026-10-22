@@ -5,11 +5,16 @@ The bot talks to one of two procurement backends, chosen by BACKEND_PLATFORM:
 
 - "qua" (default): the QUA Java backend at GMT_BASE_URL, plus direct reads of
   its MySQL schema. This is the original setup and nothing changes under it.
-- "equa": Enterprise QUA. GMT_BASE_URL points at its QUA-compatible bridge
-  (https://<backend>/api/bot), which answers the same endpoints with the same
-  response shapes, and every request carries BOT_API_KEY. EQUA keeps its data in
-  Cloudflare D1, which the bot cannot query, so the features that read QUA's
-  MySQL schema directly are switched off by default:
+- "equa": Enterprise QUA. EQUA_API_BASE_URL points at its API root
+  (https://<backend>/api). The API client hands every QUA-style call to
+  EquaAdapter (app/procucev_apis/equa_adapter.py), which does the work through
+  EQUA's existing APIs (/auth, /rfqs, /vendors, ...) and returns QUA's response
+  shape, so the services and conversation flow above it are unchanged. What EQUA
+  has no API for goes through its bot bridge (/bot/...), and every request
+  carries BOT_API_KEY. Nothing on this platform needs QUA: no GMT_* variable, no
+  QUA database, no QUA portal link (GMT_BASE_URL is still read as a fallback).
+  EQUA keeps its data in Cloudflare D1, which the bot cannot query, so the
+  features that read QUA's MySQL schema directly are switched off by default:
     * Buy From Stock (BFS) — EQUA has no stock catalogue.
     * Seller matching / vector sync / category rebuild Celery tasks — EQUA
       matches and notifies vendors itself when an RFQ is created.
@@ -28,6 +33,10 @@ logger = logging.getLogger(__name__)
 QUA = "qua"
 EQUA = "equa"
 SUPPORTED_PLATFORMS = (QUA, EQUA)
+
+# Portal each platform's links point to by default (PROCUCEV_PORTAL_URL overrides both).
+QUA_PORTAL_URL = "https://p2pdevuiindia.azurewebsites.net/login"
+EQUA_PORTAL_URL = "https://equa.procucev.com/login"
 
 # Header the EQUA bridge authenticates the bot with.
 BOT_API_KEY_HEADER = "X-Bot-Api-Key"

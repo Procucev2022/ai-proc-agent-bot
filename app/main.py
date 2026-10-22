@@ -45,6 +45,8 @@ from app.context.middleware import ContextMiddleware
 from app.utils.logging_utils import setup_basic_logging, CustomFormatter
 from app.utils.loop_monitor import get_loop_monitor
 from app.utils.turn_trace import start_turn
+from app.utils import rfq_policy
+from app.utils import platform_policy
 from unittest.mock import patch
 import gc
 import time
@@ -595,6 +597,7 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
 
             async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None,
                                                      session=None, session_id=None):
+                buttons_config = platform_policy.filter_bfs_buttons(rfq_policy.filter_rfq_creation_buttons(buttons_config)) or []
                 whatsapp_messages.append(body)
                 # Extract button info for UI
                 button_data = [{'id': btn.get('id'), 'title': btn.get('title')} for btn in buttons_config]
@@ -753,6 +756,7 @@ async def upload_excel_file(
 
         async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None,
                                                  session=None, session_id=None):
+            buttons_config = platform_policy.filter_bfs_buttons(rfq_policy.filter_rfq_creation_buttons(buttons_config)) or []
             whatsapp_messages.append(body)
             # Extract button info for UI
             button_data = [{'id': btn.get('id'), 'title': btn.get('title')} for btn in buttons_config]

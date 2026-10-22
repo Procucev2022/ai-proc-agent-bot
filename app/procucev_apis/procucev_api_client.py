@@ -16,6 +16,7 @@ from app.schemas.user import normalize_phone_number
 from app.redis_db import get_redis_service
 from app.utils.procucev_api_logger import manual_log_api_call
 from app.utils.turn_trace import current_turn_id
+from app.utils import platform_policy
 from app.utils.platform_policy import BOT_API_KEY_HEADER, bot_api_headers
 
 # Configure logging
@@ -101,6 +102,8 @@ class ProcucevAPIClient:
         # Scoped to the API host so a token cached while pointing at another
         # backend (e.g. dev) is never sent to this one.
         self.token_cache_key = f"procucev_api:auth_token:{api_source_tag(self.base_url)}"
+        # Answers QUA endpoints through Enterprise QUA's APIs (created on first use).
+        self._equa = None
 
     # Note: __del__ removed - cannot reliably close async sessions in __del__
     # Use context managers (async with) or explicit close_session() calls instead
@@ -258,12 +261,18 @@ class ProcucevAPIClient:
         dynamic_token: Optional[Any] = None, # Can be str (token) or dict (credentials)
         total_timeout: Optional[float] = None,
         max_retries: Optional[int] = None,
+        raw: bool = False,
     ) -> Dict[str, Any]:
         """ Base HTTP request handler with retry/backoff.
 
-        ``total_timeout`` and ``max_retries`` override the client defaults for one
-        call, for a slow request that must not be repeated (creating an RFQ).
+        On Enterprise QUA (BACKEND_PLATFORM=equa) a QUA endpoint is answered by
+        EquaAdapter through EQUA's own APIs, in QUA's response shape; ``raw`` is the
+        adapter's own call straight to EQUA. ``total_timeout`` and ``max_retries``
+        override the client defaults for one call, for a slow request that must not
+        be repeated (creating an RFQ).
         """
+        if not raw and platform_policy.is_equa(self.settings):
+            return await self._equa_adapter().handle(method, url_or_endpoint, json_data=json_data, params=params)
         attempts = max_retries or self.max_retries
         request_timeout = aiohttp.ClientTimeout(total=total_timeout) if total_timeout else None
         # Start timing for logging
@@ -426,6 +435,12 @@ class ProcucevAPIClient:
         title = api_title or f"{method} {url_or_endpoint}"
         manual_log_api_call(title, url, input_data, final_error_result, processing_time)
         return final_error_result
+
+    def _equa_adapter(self):
+        if self._equa is None:
+            from app.procucev_apis.equa_adapter import EquaAdapter
+            self._equa = EquaAdapter(self)
+        return self._equa
 
     async def normalize_response(self, resp: aiohttp.ClientResponse, raw_text: str) -> Dict[str, Any]:
         """

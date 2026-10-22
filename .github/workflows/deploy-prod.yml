@@ -56,19 +56,23 @@ jobs:
           WHATSAPP_MOCK_MODE: ${{ vars.WHATSAPP_MOCK_MODE }}
           BACKEND_PLATFORM: ${{ vars.BACKEND_PLATFORM }}
           BOT_API_KEY: ${{ secrets.BOT_API_KEY }}
+          EQUA_API_BASE_URL: ${{ vars.EQUA_API_BASE_URL }}
+          EQUA_SERVICE_USERNAME: ${{ vars.EQUA_SERVICE_USERNAME }}
+          EQUA_SERVICE_PHONE: ${{ vars.EQUA_SERVICE_PHONE }}
         run: |
           # WHATSAPP_FROM_NUMBER is required rather than defaulted: a silent
           # fallback would send production traffic from whatever number was
           # hardcoded, with nothing in the run to show it.
-          required=(AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_KEY WHATSAPP_API_KEY WHATSAPP_USERNAME WHATSAPP_PASSWORD WHATSAPP_FROM_NUMBER GMT_BASE_URL GMT_USERNAME GMT_PASSWORD GMT_PHONE GMT_CLIENT_ID GMT_CLIENT_SECRET DATABASE_URL)
+          # Enterprise QUA needs nothing from QUA: no GMT_* value at all, only its
+          # API URL and the bridge key.
+          if [ "$(echo "${BACKEND_PLATFORM:-qua}" | tr '[:upper:]' '[:lower:]')" = "equa" ]; then
+            required=(AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_KEY WHATSAPP_API_KEY WHATSAPP_USERNAME WHATSAPP_PASSWORD WHATSAPP_FROM_NUMBER DATABASE_URL BOT_API_KEY EQUA_API_BASE_URL)
+          else
+            required=(AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_KEY WHATSAPP_API_KEY WHATSAPP_USERNAME WHATSAPP_PASSWORD WHATSAPP_FROM_NUMBER GMT_BASE_URL GMT_USERNAME GMT_PASSWORD GMT_PHONE GMT_CLIENT_ID GMT_CLIENT_SECRET DATABASE_URL)
+          fi
           for name in "${required[@]}"; do
             if [ -z "${!name:-}" ]; then echo "::error::Missing required secret $name"; exit 1; fi
           done
-          # Enterprise QUA (BACKEND_PLATFORM=equa) refuses every bridge request without its key.
-          if [ "$(echo "${BACKEND_PLATFORM:-qua}" | tr '[:upper:]' '[:lower:]')" = "equa" ] && [ -z "${BOT_API_KEY:-}" ]; then
-            echo "::error::BACKEND_PLATFORM is 'equa' but BOT_API_KEY is not set"
-            exit 1
-          fi
           if ! [[ "$WHATSAPP_FROM_NUMBER" =~ ^[0-9]{10,15}$ ]]; then
             echo "::error::WHATSAPP_FROM_NUMBER must be digits only with country code and no '+' (e.g. 91XXXXXXXXXX)"
             exit 1
@@ -247,6 +251,10 @@ jobs:
             gmtClientSecret="${{ vars.GMT_CLIENT_SECRET }}"
             backendPlatform="${{ vars.BACKEND_PLATFORM || 'qua' }}"
             botApiKey="${{ secrets.BOT_API_KEY }}"
+            equaApiBaseUrl="${{ vars.EQUA_API_BASE_URL }}"
+            equaServiceUsername="${{ vars.EQUA_SERVICE_USERNAME }}"
+            equaServicePhone="${{ vars.EQUA_SERVICE_PHONE }}"
+            equaPortalUrl="${{ vars.EQUA_PORTAL_URL }}"
 
       - name: Get Production URL & Verify Health Endpoint
         run: |

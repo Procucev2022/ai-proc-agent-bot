@@ -12,6 +12,7 @@ from typing import Dict, Any, List
 from app.models import User, ConversationSession
 from app.services.openai_service import OpenAIService
 from app.services.whatsapp_service import WhatsAppService
+from app.utils import rfq_policy
 from app.services.auto_categorization_service import get_auto_categorization_service_async
 from app.procucev_apis.bfs_apis import get_bfs_api_service
 from app.utils import platform_policy
@@ -289,8 +290,13 @@ class BFSSearchHandler:
                 no_results_message = (
                     "We could not find any in-stock items matching your search criteria. "
                     "You may refine your search by using different keywords on our Buy From Stock (BFS) portal: https://procucev.com/buy-from-stock/ "
-                    "Alternatively, you may proceed to create a Request for Quotation (RFQ) using the button below, and our team will review and assist accordingly. "
                 )
+                if rfq_policy.is_rfq_creation_enabled():
+                    no_results_message += (
+                        "Alternatively, you may proceed to create a Request for Quotation (RFQ) using the button below, and our team will review and assist accordingly. "
+                    )
+                else:
+                    no_results_message += "\n\n" + rfq_policy.rfq_policy_notice()
 
                 buttons = [
                     {"id": "bfs_raise_rfq", "title": "Create new RFQ"},
