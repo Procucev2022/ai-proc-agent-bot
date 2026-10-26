@@ -417,6 +417,13 @@ class EquaAdapter:
             return _ok(_message("204", f"{MSG['NO_USER_FOR_PHONE']}{phone}", "Failure"))
         return _ok(_message("200", MSG["USERS_FOUND"], "Success", data={"users": users}))
 
+    async def _registered_account(self, phone: Any, email: str, seller: bool) -> Optional[Dict[str, Any]]:
+        """The EQUA account with this phone, email and role, if one exists."""
+        listed = await self._call("GET", "/bot/users", params={"phone": phone})
+        role = "vendor" if seller else "buyer"
+        return next((u for u in listed.get("data") or [] if isinstance(u, dict)
+                     and str(u.get("email") or "").strip().lower() == email and u.get("role") == role), None)
+
     def _registration_failure(self, status: int, message: str) -> Dict[str, Any]:
         return _error(status, _message(str(status), message, "Failure", data={"confirmationFlag": False, "error": message}))
 
@@ -448,6 +455,8 @@ class EquaAdapter:
         if not phone:
             return self._registration_failure(409, "Mobile number is required.")
 
+        # Registering creates the account, so it is not idempotent: one attempt,
+        # with room for EQUA to finish.
         response = await self._call("POST", "/auth/register", json_data={
             "name": payload.get("name"),
             "email": email,
@@ -460,17 +469,26 @@ class EquaAdapter:
             "address": payload.get("address1") or "",
             "pincode": payload.get("zipCode") or "",
             "gstin": payload.get("gstin") or "",
-        })
-        if not response.get("success"):
-            message = str(response.get("message") or "")
-            if "already exists" in message.lower():
-                return self._registration_failure(409, MSG["ALREADY_EXISTS"])
-            if response.get("status_code") == 400 and message:
-                return self._registration_failure(409, message)
-            return self._registration_failure(500, MSG["SOMETHING_WRONG"])
-
-        user = response.get("user") or {}
-        token = response.get("token")
+        }, total_timeout=getattr(self.settings, "equa_register_timeout_seconds", 60.0), max_retries=1)
+        if response.get("success"):
+            user = response.get("user") or {}
+            token = response.get("token")
+        else:
+            # A timeout or server error says nothing about whether EQUA saved the
+            # account, so look for it before reporting a failure the user cannot fix.
+            created = None
+            if (response.get("status_code") or 500) >= 500:
+                created = await self._registered_account(phone, email, seller)
+            if created is None:
+                message = str(response.get("message") or "")
+                if "already exists" in message.lower():
+                    return self._registration_failure(409, MSG["ALREADY_EXISTS"])
+                if response.get("status_code") == 400 and message:
+                    return self._registration_failure(409, message)
+                return self._registration_failure(500, MSG["SOMETHING_WRONG"])
+            logger.warning(f"[EQUA] Register for {email} got no answer but created account {created.get('id')}; continuing")
+            user = created
+            token, _ = await self._session(account_id=created.get("id"))
         # QUA created WhatsApp accounts unverified and the bot then runs its OTP step.
         await self._call("PUT", f"/bot/users/{user.get('id')}/whatsapp",
                          json_data={"registeredViaWhatsApp": True, "verificationStatus": PENDING_VERIFICATION})
