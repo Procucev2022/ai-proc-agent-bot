@@ -75,6 +75,28 @@ class Settings:
         self.debug = os.getenv("DEBUG", "false").lower() == "true"
         self.log_level = os.getenv("LOG_LEVEL", "INFO").upper()
         self.environment = os.getenv("ENVIRONMENT", "Dev")
+
+        # Procurement backend: "qua" (QUA Java + its MySQL schema, the default) or
+        # "equa" (Enterprise QUA through its /api/bot bridge). See
+        # app/utils/platform_policy.py for what changes between them.
+        from app.utils.platform_policy import (
+            EQUA, EQUA_PORTAL_URL, QUA_PORTAL_URL, normalize_platform, platform_default,
+        )
+        self.backend_platform = normalize_platform(os.getenv("BACKEND_PLATFORM"))
+        self.is_equa = self.backend_platform == EQUA
+        # Shared key the EQUA bridge requires on every request (X-Bot-Api-Key).
+        self.bot_api_key = os.getenv("BOT_API_KEY")
+        # EQUA writes an AI summary while creating an RFQ, which can outlast the
+        # client's 15s default; the create call gets this budget and one attempt so
+        # a slow response is never retried into a duplicate RFQ.
+        self.equa_rfq_create_timeout_seconds = float(os.getenv("EQUA_RFQ_CREATE_TIMEOUT_SECONDS", "90"))
+        # Sourcing mode for WhatsApp RFQs on EQUA. mode_0 (V0) sends them to the
+        # Procucev seller network without using a buyer credit, as QUA did.
+        self.equa_rfq_sourcing_mode = os.getenv("EQUA_RFQ_SOURCING_MODE", "mode_0")
+        # Buy From Stock exists only in QUA.
+        self.enable_bfs = os.getenv(
+            "ENABLE_BFS", platform_default("true", "false", self.backend_platform)
+        ).lower() == "true"
         
         # Project root directory (used for relative paths)
         self.PROJECT_ROOT = PROJECT_ROOT
@@ -100,14 +122,20 @@ class Settings:
             or _database_name(explicit_remote_url)
             or "quaproduction"
         )
-        self.remote_database_url = explicit_remote_url or _with_database(
-            primary_database_url, self.procucev_db_name
+        # On EQUA nothing may reach QUA's schema implicitly: only an explicit
+        # REMOTE_DATABASE_URL is used, never one derived from DATABASE_URL.
+        self.remote_database_url = explicit_remote_url or (
+            None if self.is_equa else _with_database(primary_database_url, self.procucev_db_name)
         )
         self.whatsapp_db = (
             os.getenv("WHATSAPP_DB") or _database_name(primary_database_url) or "procurement_db"
         )
+        # Direct reads of the QUA MySQL schema. EQUA's data is in Cloudflare D1, which
+        # is not reachable this way, so the default follows the platform.
         self.enable_remote_categorization = (
-            os.getenv("ENABLE_REMOTE_CATEGORIZATION", "true").lower() == "true"
+            os.getenv(
+                "ENABLE_REMOTE_CATEGORIZATION", platform_default("true", "false", self.backend_platform)
+            ).lower() == "true"
         )
         # MySQL socket timeouts (seconds). Without a read timeout, a connection that
         # drops mid-query leaves the request waiting forever with no reply or error.
@@ -145,8 +173,10 @@ class Settings:
         # Procucev Portal URL (used in template messages, RFQ follow-ups and the
         # "Check Details" button). The two older RFQ link settings default to it,
         # so one variable changes every link.
-        self.PROCUCEV_PORTAL_URL = os.getenv(
-            "PROCUCEV_PORTAL_URL", "https://p2pdevuiindia.azurewebsites.net/login"
+        # PROCUCEV_PORTAL_URL wins on either platform; otherwise links go to the
+        # portal of the backend in use (EQUA_PORTAL_URL on EQUA).
+        self.PROCUCEV_PORTAL_URL = os.getenv("PROCUCEV_PORTAL_URL") or (
+            (os.getenv("EQUA_PORTAL_URL") or EQUA_PORTAL_URL) if self.is_equa else QUA_PORTAL_URL
         )
 
         # Legacy fields for backward compatibility
@@ -197,10 +227,15 @@ class Settings:
         self.procurement_api_url = os.getenv("PROCUREMENT_API_URL")
         self.procurement_api_key = os.getenv("PROCUREMENT_API_KEY")
         
-        # GMT API configuration - Updated for new API
-        self.gmt_base_url = os.getenv("GMT_BASE_URL")
-        self.gmt_username = os.getenv("GMT_USERNAME")
-        self.gmt_phone = os.getenv("GMT_PHONE")
+        # Backend API and the bot's service login. On EQUA the EQUA_* names win and
+        # the QUA-era GMT_* names are only a fallback, so a deployment can drop every
+        # GMT_* variable once QUA is retired.
+        def _backend_env(equa_name: str, qua_name: str) -> Optional[str]:
+            return (os.getenv(equa_name) if self.is_equa else None) or os.getenv(qua_name)
+
+        self.gmt_base_url = _backend_env("EQUA_API_BASE_URL", "GMT_BASE_URL")
+        self.gmt_username = _backend_env("EQUA_SERVICE_USERNAME", "GMT_USERNAME")
+        self.gmt_phone = _backend_env("EQUA_SERVICE_PHONE", "GMT_PHONE")
         # Legacy OAuth fields (kept for backward compatibility)
         self.gmt_client_id = os.getenv("GMT_CLIENT_ID")
         self.gmt_client_secret = os.getenv("GMT_CLIENT_SECRET")
@@ -285,9 +320,15 @@ class Settings:
         # Fetch RFQ limit
         self.rfq_fetch_limit = int(os.getenv("RFQ_FETCH_LIMIT", "3"))
         self.procucev_link = os.getenv("PROCUCEV_LINK", "www.procucev.com")
+        self.enable_whatsapp_rfq_creation = os.getenv("ENABLE_WHATSAPP_RFQ_CREATION", "false").lower() == "true"
+        # Buyer menus, RFQ status and ready-stock search on WhatsApp. Off: buyers only
+        # register/verify here and are pointed to the Procucev Enterprise website.
+        self.enable_whatsapp_buyer_services = os.getenv("ENABLE_WHATSAPP_BUYER_SERVICES", "false").lower() == "true"
         
         # Email configuration
         self.support_email = os.getenv("SUPPORT_EMAIL", "support@procucev.com")
+        # "Registration attempt ... to be reviewed" email to support for buyers; off by default.
+        self.notify_support_on_buyer_review = os.getenv("NOTIFY_SUPPORT_ON_BUYER_REVIEW", "false").lower() == "true"
         self.email_report_sender = os.getenv("EMAIL_REPORT_SENDER", "shubham@mohap.ai")
         self.email_signature = os.getenv("EMAIL_SIGNATURE", "Regards\nQUA")
         self.email_templates_path = os.getenv("EMAIL_TEMPLATES_PATH", os.path.join("app", "email_templates"))
@@ -491,16 +532,25 @@ class Settings:
         
     def validate_config(self) -> None:
         """Validate that all required configuration is present."""
-        required_vars = [
-            ("AZURE_OPENAI_API_KEY", self.openai_api_key),
-            ("GMT_USERNAME", self.gmt_username),
-            ("GMT_PHONE", self.gmt_phone),
-            ("GMT_BASE_URL", self.gmt_base_url),
-            ("GMT_PASSWORD", self.gmt_password),
-            ("GMT_CLIENT_ID", self.gmt_client_id),
-            ("GMT_CLIENT_SECRET", self.gmt_client_secret),
-        ]
-        
+        if self.is_equa:
+            # Nothing QUA-specific, and no service login: the bot acts as each user
+            # through EQUA's bridge, which refuses every request without its key.
+            required_vars = [
+                ("AZURE_OPENAI_API_KEY", self.openai_api_key),
+                ("EQUA_API_BASE_URL", self.gmt_base_url),
+                ("BOT_API_KEY", self.bot_api_key),
+            ]
+        else:
+            required_vars = [
+                ("AZURE_OPENAI_API_KEY", self.openai_api_key),
+                ("GMT_USERNAME", self.gmt_username),
+                ("GMT_PHONE", self.gmt_phone),
+                ("GMT_BASE_URL", self.gmt_base_url),
+                ("GMT_PASSWORD", self.gmt_password),
+                ("GMT_CLIENT_ID", self.gmt_client_id),
+                ("GMT_CLIENT_SECRET", self.gmt_client_secret),
+            ]
+
         # Check database URL based on mode
         if self.database_mode == "client" and not self.client_database_url:
             required_vars.append(("DATABASE_URL", self.client_database_url))

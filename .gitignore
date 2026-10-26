@@ -42,9 +42,8 @@ database_explorer.py
 /documentation
 
 # Celery files
-celerybeat-schedule
+celerybeat-schedule*
 celerybeat.pid
-celerybeat-schedule
 ./__pycache__
 ai-proc-agent_key.pem
 Server Details.txt
@@ -69,3 +68,4 @@ Remote DB.session.sql
 !.kiro/agents/*.md
 !.agent/agents/*.md
 .vscode
+.worktrees/

@@ -136,10 +136,12 @@ def test_chat_debug_info_reports_the_backends_in_use(monkeypatch):
         client_database_url="mysql+pymysql://user:secret@db.example.com:3306/aiprocprod",
         local_database_url=None,
         procucev_db_name="quaproduction",
+        backend_platform="qua",
     )
     monkeypatch.setattr(main, "get_settings", lambda: settings)
 
     assert main._data_source() == {
+        "backend_platform": "qua",
         "gmt_api": PROD,
         "database": "db.example.com/aiprocprod",
         "procucev_schema": "quaproduction",

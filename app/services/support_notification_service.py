@@ -9,6 +9,7 @@ Now deprecated in favor of GlobalErrorHandler for technical errors.
 import logging
 from typing import Dict, Any
 
+from app.config import get_settings
 from app.services.email_service import EmailService
 from app.services.global_error_handler import get_global_error_handler, ErrorContext
 
@@ -43,7 +44,16 @@ class SupportNotificationService:
         return await self.email_service.send_support_email("otp_validation_failed", variables, user_role)
     
     async def notify_buyer_registration_not_approved(self, full_name: str, email: str, contact_number: str) -> Dict[str, Any]:
-        """Notify support when buyer registration is not approved."""
+        """Notify support when buyer registration is not approved.
+
+        Off unless NOTIFY_SUPPORT_ON_BUYER_REVIEW=true: buyers are no longer
+        reviewed by hand, so the "registration attempt ... to be reviewed" email
+        would only ask support to act on nothing. Skipping reports success so the
+        registration and sign-in flows carry on exactly as before.
+        """
+        if not getattr(get_settings(), "notify_support_on_buyer_review", False):
+            logger.info(f"Skipped buyer-review support email for {email}: NOTIFY_SUPPORT_ON_BUYER_REVIEW is off")
+            return {"success": True, "skipped": True, "reason": "buyer_review_support_email_disabled"}
         variables = {
             "user_email": email,
             "full_name": full_name,

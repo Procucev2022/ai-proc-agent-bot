@@ -18,14 +18,23 @@ def _env_bool(name: str, default: bool) -> bool:
 # ============================================================================
 # TASK ENABLE/DISABLE CONTROL - Configured via environment variables or defaults
 # ============================================================================
-ENABLE_VECTOR_STORE_SYNC = _env_bool('ENABLE_VECTOR_STORE_SYNC', True)
-ENABLE_SELLER_MATCHING = _env_bool('ENABLE_SELLER_MATCHING', True)
+# On Enterprise QUA (BACKEND_PLATFORM=equa) the tasks that read or write QUA's
+# MySQL schema default to off: EQUA's data is not in that schema, and EQUA
+# matches and notifies vendors itself. Setting the variable still wins.
+_QUA_ONLY_DEFAULT = os.getenv('BACKEND_PLATFORM', 'qua').strip().lower() != 'equa'
+
+ENABLE_VECTOR_STORE_SYNC = _env_bool('ENABLE_VECTOR_STORE_SYNC', _QUA_ONLY_DEFAULT)
+ENABLE_SELLER_MATCHING = _env_bool('ENABLE_SELLER_MATCHING', _QUA_ONLY_DEFAULT)
 ENABLE_DAILY_AGGREGATION = _env_bool('ENABLE_DAILY_AGGREGATION', False)
 ENABLE_WHATSAPP_REPORT_AUTOMATION = _env_bool('ENABLE_WHATSAPP_REPORT_AUTOMATION', True)
-ENABLE_DAILY_CATEGORY_REBUILD = _env_bool('ENABLE_DAILY_CATEGORY_REBUILD', True)
+ENABLE_DAILY_CATEGORY_REBUILD = _env_bool('ENABLE_DAILY_CATEGORY_REBUILD', _QUA_ONLY_DEFAULT)
 ENABLE_LOG_CLEANUP = _env_bool('ENABLE_LOG_CLEANUP', True)
-ENABLE_BFS_NOTIFICATION = _env_bool('ENABLE_BFS_NOTIFICATION', True)
+ENABLE_BFS_NOTIFICATION = _env_bool('ENABLE_BFS_NOTIFICATION', _QUA_ONLY_DEFAULT)
 ENABLE_TAXONOMY_BUILD = _env_bool('ENABLE_TAXONOMY_BUILD', True)
+
+# WhatsApp report send time in UTC (default 04:30 UTC = 10:00 AM IST)
+WHATSAPP_REPORT_HOUR_UTC = os.getenv('WHATSAPP_REPORT_HOUR_UTC', '4')
+WHATSAPP_REPORT_MINUTE_UTC = os.getenv('WHATSAPP_REPORT_MINUTE_UTC', '30')
 # ============================================================================
 
 # Basic Celery configuration
@@ -164,11 +173,11 @@ if ENABLE_BFS_NOTIFICATION:
         }
     }
 
-# WhatsApp Report Automation: Daily at 10:00 AM IST (04:30 UTC)
+# WhatsApp Report Automation: Daily at WHATSAPP_REPORT_HOUR_UTC:WHATSAPP_REPORT_MINUTE_UTC (default 10:00 AM IST)
 if ENABLE_WHATSAPP_REPORT_AUTOMATION:
     beat_schedule['whatsapp-report-automation-task'] = {
         'task': 'app.tasks.whatsapp_report_automation_task.run_whatsapp_report_automation',
-        'schedule': crontab(minute=30, hour=4),  # 10:00 AM IST
+        'schedule': crontab(minute=WHATSAPP_REPORT_MINUTE_UTC, hour=WHATSAPP_REPORT_HOUR_UTC),
         'options': {
             'expires': 7200,
             'queue': 'report_automation',

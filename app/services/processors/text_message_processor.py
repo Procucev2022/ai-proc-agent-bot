@@ -11,6 +11,7 @@ from app.models import User, ConversationSession
 from app.services.intent_service import IntentService
 from app.services.entity_service import EntityService
 from app.services.whatsapp_service import WhatsAppService
+from app.utils import rfq_policy
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.services.handlers.confirmation_handler import ConfirmationHandler
@@ -179,6 +180,8 @@ class TextMessageProcessor:
                 clarification_questions = [
                     "Could you be more specific about what you're looking for?",
                     "Are you looking to create an RFQ or check product availability?"
+                    if rfq_policy.is_rfq_creation_enabled()
+                    else "Are you looking to check your RFQ status or ready stock availability?"
                 ]
                 response = await self.response_helpers.generate_clarification_response(clarification_questions, 0, context)
                 await self.whatsapp_service.send_message(user.phone_number, response)

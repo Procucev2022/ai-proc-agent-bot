@@ -51,25 +51,44 @@ param whatsappUsername string = ''
 @secure()
 param whatsappPassword string = ''
 
-@description('GMT Base URL')
-param gmtBaseUrl string
+@description('GMT Base URL (QUA only)')
+param gmtBaseUrl string = ''
 
-@description('GMT Client ID')
-param gmtClientId string
+@description('GMT Client ID (QUA only)')
+param gmtClientId string = ''
 
-@description('GMT Client Secret')
+@description('GMT Client Secret (QUA only)')
 @secure()
 param gmtClientSecret string = ''
 
-@description('GMT Username')
-param gmtUsername string
+@description('GMT Username (QUA only)')
+param gmtUsername string = ''
 
-@description('GMT Password')
+@description('GMT Password (QUA only)')
 @secure()
 param gmtPassword string = ''
 
-@description('GMT Phone')
-param gmtPhone string
+@description('GMT Phone (QUA only)')
+param gmtPhone string = ''
+
+@description('Procurement backend the bot talks to: qua (QUA Java) or equa (Enterprise QUA bot bridge)')
+param backendPlatform string = 'qua'
+
+@description('Shared key for the Enterprise QUA bot bridge (X-Bot-Api-Key); empty on QUA')
+@secure()
+param botApiKey string = ''
+
+@description('Enterprise QUA bot bridge URL, e.g. https://<backend>/api/bot (EQUA only)')
+param equaApiBaseUrl string = ''
+
+@description('EQUA account the bot signs in as (EQUA only)')
+param equaServiceUsername string = ''
+
+@description('Mobile of that EQUA account (EQUA only)')
+param equaServicePhone string = ''
+
+@description('Portal linked from bot messages on EQUA (optional)')
+param equaPortalUrl string = ''
 
 // Container Apps Environment
 module environmentModule 'modules/container-apps-env.bicep' = {
@@ -123,6 +142,12 @@ module appModule 'modules/app-service.bicep' = {
     gmtUsername: gmtUsername
     gmtPassword: gmtPassword
     gmtPhone: gmtPhone
+    backendPlatform: backendPlatform
+    botApiKey: botApiKey
+    equaApiBaseUrl: equaApiBaseUrl
+    equaServiceUsername: equaServiceUsername
+    equaServicePhone: equaServicePhone
+    equaPortalUrl: equaPortalUrl
   }
 }
 
@@ -154,6 +179,12 @@ module celeryModule 'modules/celery-worker.bicep' = {
     gmtUsername: gmtUsername
     gmtPassword: gmtPassword
     gmtPhone: gmtPhone
+    backendPlatform: backendPlatform
+    botApiKey: botApiKey
+    equaApiBaseUrl: equaApiBaseUrl
+    equaServiceUsername: equaServiceUsername
+    equaServicePhone: equaServicePhone
+    equaPortalUrl: equaPortalUrl
   }
 }
 
