@@ -90,6 +90,9 @@ class Settings:
         # client's 15s default; the create call gets this budget and one attempt so
         # a slow response is never retried into a duplicate RFQ.
         self.equa_rfq_create_timeout_seconds = float(os.getenv("EQUA_RFQ_CREATE_TIMEOUT_SECONDS", "90"))
+        # Registering creates the account, so a retry after a slow response answers
+        # "already exists" for the account the first attempt made. Same treatment.
+        self.equa_register_timeout_seconds = float(os.getenv("EQUA_REGISTER_TIMEOUT_SECONDS", "60"))
         # Sourcing mode for WhatsApp RFQs on EQUA. mode_0 (V0) sends them to the
         # Procucev seller network without using a buyer credit, as QUA did.
         self.equa_rfq_sourcing_mode = os.getenv("EQUA_RFQ_SOURCING_MODE", "mode_0")

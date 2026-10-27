@@ -237,6 +237,79 @@ async def test_buyer_registration_uses_auth_register_and_marks_whatsapp_pending(
 
 
 @pytest.mark.asyncio
+async def test_registration_is_sent_once_with_its_own_timeout():
+    registered = {"success": True, "token": "t", "user": {"id": "u-new", "orgId": "org-1"}}
+    bridge, client = adapter({("POST", "/auth/register"): registered}, equa_register_timeout_seconds=45.0)
+    await bridge.handle("POST", "/partialvendor/buyerRegistration", {"email": "a@b.com", "organizationPhonenumber": "919876543210"})
+    sent = client.sent("POST", "/auth/register")[0]
+    assert sent["total_timeout"] == 45.0 and sent["max_retries"] == 1
+
+
+TIMED_OUT = {"success": False, "status_code": 500, "message": "Request timeout. Please check your connection and try again.", "data": None}
+
+
+@pytest.mark.asyncio
+async def test_registration_without_an_answer_continues_with_the_account_it_created():
+    # The response never arrived, but EQUA saved the account: carry on as a success.
+    created = {"id": "u-new", "email": "Bea@Acme.com", "role": "buyer", "orgId": "org-1", "orgName": "Acme", "name": "Bea"}
+    routes = {
+        ("POST", "/auth/register"): TIMED_OUT,
+        ("GET", "/bot/users"): {"success": True, "data": ["junk", {"id": "u-old", "email": "bea@acme.com", "role": "vendor"}, created]},
+        **session_route(created),
+    }
+    bridge, client = adapter(routes)
+    result = await bridge.handle("POST", "/partialvendor/buyerRegistration",
+                                 {"name": "Bea", "email": "bea@acme.com", "organizationPhonenumber": "919876543210"})
+    assert result["message"] == ea.MSG["BUYER_CREATED"] and result["data"]["id"] == "u-new" and result["data"]["orgId"] == "org-1"
+    assert result["data"]["companyName"] == "Acme" and result["data"]["fullName"] == "Bea"
+    assert client.sent("GET", "/bot/users")[0]["params"] == {"phone": "919876543210"}
+    assert client.sent("POST", "/bot/session")[0]["json_data"] == {"id": "u-new"}
+    assert client.sent("PUT", "/bot/users/u-new/whatsapp")[0]["json_data"] == {"registeredViaWhatsApp": True, "verificationStatus": "PENDING_EMAIL_VERIFICATION"}
+
+
+@pytest.mark.asyncio
+async def test_seller_registration_without_an_answer_still_classifies_products():
+    created = {"id": "u-seller", "email": "seller@steel.com", "role": "vendor", "vendorId": "v-1", "orgId": "org-s", "name": "Sam"}
+    routes = {
+        ("POST", "/auth/register"): TIMED_OUT,
+        ("GET", "/bot/users"): {"success": True, "data": [created]},
+        ("POST", "/rfqs/ingest"): {"success": True, "data": {"extractedEntities": [{"majorCategory": "Steel", "minorCategory": "Plates"}]}},
+        **session_route(created),
+    }
+    bridge, client = adapter(routes)
+    result = await bridge.handle("POST", "/partialvendor/sellerRegistration", SELLER_PAYLOAD)
+    assert result["message"] == ea.MSG["SELLER_CREATED"] and result["data"]["orgId"] == "v-1"
+    assert client.sent("PUT", "/vendors/v-1")[0]["headers"] == {"Authorization": "Bearer tok-u-seller"}
+
+
+@pytest.mark.asyncio
+async def test_registration_failure_stands_when_no_matching_account_exists():
+    payload = {"email": "bea@acme.com", "organizationPhonenumber": "919876543210"}
+    # Server error, and the phone only has an account with another email or role.
+    bridge, client = adapter({
+        ("POST", "/auth/register"): TIMED_OUT,
+        ("GET", "/bot/users"): {"success": True, "data": [
+            {"id": "u-1", "email": "other@acme.com", "role": "buyer"}, {"id": "u-2", "email": "bea@acme.com", "role": "vendor"}]},
+    })
+    result = await bridge.handle("POST", "/partialvendor/buyerRegistration", payload)
+    assert result["status_code"] == 500 and result["data"]["message"] == ea.MSG["SOMETHING_WRONG"]
+    assert client.sent("PUT", "/bot/users/u-1/whatsapp") == [] and client.sent("PUT", "/bot/users/u-2/whatsapp") == []
+
+    # A clear rejection is final: no lookup, and the message is passed on as before.
+    client.calls.clear()
+    client.routes[("POST", "/auth/register")] = {"success": False, "status_code": 400, "message": "An account already exists.", "data": {}}
+    result = await bridge.handle("POST", "/partialvendor/buyerRegistration", payload)
+    assert result["status_code"] == 409 and result["data"]["message"] == ea.MSG["ALREADY_EXISTS"]
+    assert client.sent("GET", "/bot/users") == []
+
+    # No status at all is treated like a server error.
+    client.routes[("POST", "/auth/register")] = {"success": False, "message": ""}
+    client.routes[("GET", "/bot/users")] = {"success": False}
+    result = await bridge.handle("POST", "/partialvendor/buyerRegistration", payload)
+    assert result["status_code"] == 500 and len(client.sent("GET", "/bot/users")) == 1
+
+
+@pytest.mark.asyncio
 async def test_seller_registration_classifies_products_onto_the_vendor_record():
     registered = {"success": True, "token": "t-seller", "user": {"id": "u-seller", "orgId": "org-s", "name": "Sam"}}
     ingest = {"success": True, "data": {"extractedEntities": [
