@@ -17,6 +17,7 @@ from app.models import Seller
 from app.services.whatsapp_service import WhatsAppService
 from app.services.openai_service import OpenAIService
 from app.utils.logging_utils import log_service_method
+from app.utils import platform_policy
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +188,10 @@ class OptOutService:
         Returns:
             True if update successful, False otherwise
         """
+        # Enterprise QUA keeps sellers in D1, reached through its bot bridge.
+        if platform_policy.is_equa():
+            return await self._update_bridge_opt_out_status(seller_id, opted_out)
+
         db = None
         try:
             db = get_remote_db_session()
@@ -222,3 +227,23 @@ class OptOutService:
         finally:
             if db:
                 db.close()
+
+    async def _update_bridge_opt_out_status(self, seller_id: str, opted_out: bool) -> bool:
+        """Record a seller's opt-out on Enterprise QUA through its bot bridge."""
+        try:
+            from app.procucev_apis.procucev_api_client import get_procucev_api_client
+
+            response = await get_procucev_api_client().post(
+                "/whatsapp/seller-opt-out",
+                json_data={"sellerId": seller_id, "optedOut": opted_out},
+                require_auth=True,
+                api_title="seller_opt_out",
+            )
+            if response.get("success"):
+                logger.info(f"Updated EQUA opt-out status for seller {seller_id}: opted_out={opted_out}")
+                return True
+            logger.warning(f"EQUA did not record opt-out for seller {seller_id}: {response.get('message') or response}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to update EQUA opt-out status for seller {seller_id}: {e}")
+            return False

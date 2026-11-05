@@ -81,6 +81,8 @@ async def test_support_notification_methods_forward_templates_and_deprecated_han
     email = MagicMock()
     email.send_support_email = AsyncMock(return_value={"status": "ok"})
     monkeypatch.setattr(support_module, "EmailService", lambda: email)
+    # The buyer-review email is opt-in; turned on here to check what it sends.
+    monkeypatch.setattr(support_module, "get_settings", lambda: SimpleNamespace(notify_support_on_buyer_review=True))
     service = support_module.SupportNotificationService()
     assert service.email_service is email
 
@@ -714,3 +716,25 @@ def test_seller_adapter_lookup_categories_and_connection_branches(monkeypatch, s
         assert seller_adapter.test_connection() is expected
     remote.side_effect = RuntimeError("connection")
     assert seller_adapter.test_connection() is False
+
+
+@pytest.mark.asyncio
+async def test_buyer_review_support_email_is_off_by_default(monkeypatch):
+    email = MagicMock()
+    email.send_support_email = AsyncMock(return_value={"status": "ok"})
+    monkeypatch.setattr(support_module, "EmailService", lambda: email)
+    monkeypatch.setattr(support_module, "get_settings", lambda: SimpleNamespace())
+    service = support_module.SupportNotificationService()
+
+    result = await service.notify_buyer_registration_not_approved("Full", "u@example.com", "999")
+    assert result == {"success": True, "skipped": True, "reason": "buyer_review_support_email_disabled"}
+    email.send_support_email.assert_not_awaited()
+
+
+def test_buyer_review_support_email_setting(monkeypatch):
+    from app.config import Settings
+
+    monkeypatch.delenv("NOTIFY_SUPPORT_ON_BUYER_REVIEW", raising=False)
+    assert Settings().notify_support_on_buyer_review is False
+    monkeypatch.setenv("NOTIFY_SUPPORT_ON_BUYER_REVIEW", "true")
+    assert Settings().notify_support_on_buyer_review is True

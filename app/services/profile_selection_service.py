@@ -28,6 +28,7 @@ from app.services.user_cache_service import get_user_cache_service
 from app.services.workflow_manager import WorkflowManager
 from app.services.openai_service import OpenAIService
 from app.tools.user_selection_tool import UserSelectionTool
+from app.utils import rfq_policy
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ class ProfileSelectionService:
         self.user_cache_service = get_user_cache_service()
         # Only initialize user selection tool if OpenAI service is available
         self.user_selection_tool = UserSelectionTool(openai_service) if openai_service else None
+        from app.config import get_settings
+        self.settings = get_settings()
 
     async def handle_profile_selection(self, user_phone: str, message: str, session: ConversationSession,
                                        intent_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -256,9 +259,19 @@ class ProfileSelectionService:
                                        session: ConversationSession) -> Dict[str, Any]:
         """Handle Case 1: Neutral/Greeting Start."""
         try:
+            settings_obj = getattr(self, 'settings', None)
+            if settings_obj is None:
+                from app.config import get_settings
+                settings_obj = get_settings()
+
+            if getattr(settings_obj, 'enable_whatsapp_rfq_creation', True):
+                buyer_label = "Buy — Create or check my RFQs"
+            else:
+                buyer_label = "Buyer – Check Your Account Status"
+
             message = (
                 "Reply with the number or word:\n"
-                "1. Buy — Create or check my RFQs\n"
+                f"1. {buyer_label}\n"
                 "2. Sell — View or respond to RFQs\n\n"
                 "(Just type 1 or 2, or type 'Buy' or 'Sell' to continue.)"
             )
@@ -305,9 +318,17 @@ class ProfileSelectionService:
             buyer_profiles = [p for p in profiles if p['role'] == 'buyer']
 
             if not buyer_profiles:
+                settings_obj = getattr(self, 'settings', None)
+                if settings_obj is None:
+                    from app.config import get_settings
+                    settings_obj = get_settings()
+
+                rfq_enabled = getattr(settings_obj, 'enable_whatsapp_rfq_creation', True)
+                intent_intro = "Got it! You'd like to buy or raise an RFQ." if rfq_enabled else "Got it! Let's check your Buyer account."
+
                 # No buyer accounts - show registration message
                 message_text = (
-                    "Got it! You'd like to buy or raise an RFQ.\n"
+                    f"{intent_intro}\n"
                     "Let's check your registered Buyer profiles...\n\n"
                     "I don't see any Buyer profiles linked to this mobile number\n"
                     "Would you like to create one now?\n\n"
@@ -332,8 +353,16 @@ class ProfileSelectionService:
                 }
 
             # Buyer accounts exist - show them
+            settings_obj = getattr(self, 'settings', None)
+            if settings_obj is None:
+                from app.config import get_settings
+                settings_obj = get_settings()
+
+            rfq_enabled = getattr(settings_obj, 'enable_whatsapp_rfq_creation', True)
+            intent_intro = "Got it! You'd like to buy or raise an RFQ." if rfq_enabled else "Got it! Let's check your Buyer account."
+
             message_parts = [
-                "Got it! You'd like to buy or raise an RFQ.",
+                intent_intro,
                 "Let's check your registered Buyer profiles...",
                 "",
                 "Here are your Buyer profiles:"
@@ -869,18 +898,34 @@ class ProfileSelectionService:
                     # Check if authentication was successful or if we should show buying options anyway
                     if result.get('status') == 'profile_selected_and_authenticated' or result.get(
                             'redirect_to_main_flow'):
-                        # Show buying options with the exact buttons requested
-                        buying_message = (
-                            f"Perfect! We’ll continue with your Buyer profile (*{profile['email']}*).\n"
-                            "What would you like to do next?\n\n"
-                            "If you’d like to create an RFQ using Excel, please attach your file here.\n\n"
-                        )
+                        from app.config import get_settings
+                        settings_obj = getattr(self, 'settings', None) or get_settings()
+                        portal_url = getattr(settings_obj, 'PROCUCEV_PORTAL_URL', "https://p2pdevuiindia.azurewebsites.net/login")
+                        if getattr(settings_obj, 'enable_whatsapp_rfq_creation', True):
+                            # Show buying options with the exact buttons requested
+                            buying_message = (
+                                f"Perfect! We’ll continue with your Buyer profile (*{profile['email']}*).\n"
+                                "What would you like to do next?\n\n"
+                                "If you’d like to create an RFQ using Excel, please attach your file here.\n\n"
+                            )
 
-                        buttons_config = [
-                            {"id": "create_rfq", "title": "Create new RFQ"},
-                            {"id": "rfq_status", "title": "Check RFQ Status"},
-                            {"id": "search_bfs", "title": "Search Ready Stocks"}
-                        ]
+                            buttons_config = [
+                                {"id": "create_rfq", "title": "Create new RFQ"},
+                                {"id": "rfq_status", "title": "Check RFQ Status"},
+                                {"id": "search_bfs", "title": "Search Ready Stocks"}
+                            ]
+                        else:
+                            buying_message = (
+                                f"Perfect! We’ll continue with your Buyer profile (*{profile['email']}*).\n\n"
+                                f"📌 *Important RFQ Policy:*\n"
+                                f"Buyers can create RFQs only through the *Procucev Enterprise website* ({portal_url}) or by emailing *rfq@procucev.com*.\n\n"
+                                "What would you like to do today?"
+                            )
+
+                            buttons_config = [
+                                {"id": "rfq_status", "title": "Check RFQ Status"},
+                                {"id": "search_bfs", "title": "Search Ready Stocks"}
+                            ]
 
                         await self.whatsapp_service.send_configurable_buttons(
                             user_phone,
@@ -947,6 +992,16 @@ class ProfileSelectionService:
                                               intent: str) -> Dict[str, Any]:
         """Set the active profile and proceed with the intended action."""
         try:
+            if str(profile.get('role') or '').lower() == 'buyer' and \
+                    not rfq_policy.is_buyer_whatsapp_enabled(getattr(self, 'settings', None)):
+                from app.services.exit_service import ExitService
+                exit_service = ExitService(self.whatsapp_service, self.authentication_service, None, None)
+                logger.info(f"[RFQ_POLICY] Buyer profile selected by {user_phone} - sending portal template")
+                return await rfq_policy.redirect_buyer_to_portal(
+                    self.whatsapp_service, exit_service, user_phone, session,
+                    settings=getattr(self, 'settings', None), email=profile.get('email')
+                )
+
             # Get user data and perform verification check
             user_data = profile['user_data']
 
@@ -1075,19 +1130,35 @@ class ProfileSelectionService:
                     name = name.title()
                 else:
                     name = 'there'
-                menu_message = (
-                    f"Perfect! We’ll continue with your Buyer profile (*{profile['email']}*).\n"
-                    "What would you like to do next?\n\n"
-                    "If you’d like to create an RFQ using Excel, please attach your file here.\n\n"
-                    "(*You can type 'Exit' at any time to end the chat.*)"
-                )
-
                 header = f"Hi {name}!"
-                buttons_config = [
-                    {"id": "create_rfq", "title": "Create new RFQ"},
-                    {"id": "rfq_status", "title": "Check RFQ Status"},
-                    {"id": "search_bfs", "title": "Search Ready Stocks"}
-                ]
+                from app.config import get_settings
+                settings_obj = getattr(self, 'settings', None) or get_settings()
+                portal_url = getattr(settings_obj, 'PROCUCEV_PORTAL_URL', "https://p2pdevuiindia.azurewebsites.net/login")
+
+                if getattr(settings_obj, 'enable_whatsapp_rfq_creation', True):
+                    menu_message = (
+                        f"Perfect! We’ll continue with your Buyer profile (*{profile['email']}*).\n"
+                        "What would you like to do next?\n\n"
+                        "If you’d like to create an RFQ using Excel, please attach your file here.\n\n"
+                        "(*You can type 'Exit' at any time to end the chat.*)"
+                    )
+                    buttons_config = [
+                        {"id": "create_rfq", "title": "Create new RFQ"},
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Ready Stocks"}
+                    ]
+                else:
+                    menu_message = (
+                        f"Perfect! We’ll continue with your Buyer profile (*{profile['email']}*).\n\n"
+                        f"📌 *Important RFQ Policy:*\n"
+                        f"Buyers can create RFQs only through the *Procucev Enterprise website* ({portal_url}) or by emailing *rfq@procucev.com*.\n\n"
+                        "What would you like to do today?\n\n"
+                        "(*You can type 'Exit' at any time to end the chat.*)"
+                    )
+                    buttons_config = [
+                        {"id": "rfq_status", "title": "Check RFQ Status"},
+                        {"id": "search_bfs", "title": "Search Ready Stocks"}
+                    ]
             else:  # seller
                 # Get name from user_data fullName field
                 user_data = profile.get('user_data', {})

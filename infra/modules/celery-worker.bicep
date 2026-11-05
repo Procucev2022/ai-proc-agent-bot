@@ -57,25 +57,44 @@ param whatsappUsername string = ''
 @secure()
 param whatsappPassword string
 
-@description('GMT Base URL')
-param gmtBaseUrl string
+@description('GMT Base URL (QUA only)')
+param gmtBaseUrl string = ''
 
-@description('GMT Client ID')
-param gmtClientId string
+@description('GMT Client ID (QUA only)')
+param gmtClientId string = ''
 
-@description('GMT Client Secret')
+@description('GMT Client Secret (QUA only)')
 @secure()
-param gmtClientSecret string
+param gmtClientSecret string = ''
 
-@description('GMT Username')
-param gmtUsername string
+@description('GMT Username (QUA only)')
+param gmtUsername string = ''
 
-@description('GMT Password')
+@description('GMT Password (QUA only)')
 @secure()
-param gmtPassword string
+param gmtPassword string = ''
 
-@description('GMT Phone')
-param gmtPhone string
+@description('GMT Phone (QUA only)')
+param gmtPhone string = ''
+
+@description('Procurement backend the bot talks to: qua (QUA Java) or equa (Enterprise QUA bot bridge)')
+param backendPlatform string = 'qua'
+
+@description('Shared key for the Enterprise QUA bot bridge (X-Bot-Api-Key); empty on QUA')
+@secure()
+param botApiKey string = ''
+
+@description('Enterprise QUA bot bridge URL, e.g. https://<backend>/api/bot (EQUA only)')
+param equaApiBaseUrl string = ''
+
+@description('EQUA account the bot signs in as (EQUA only)')
+param equaServiceUsername string = ''
+
+@description('Mobile of that EQUA account (EQUA only)')
+param equaServicePhone string = ''
+
+@description('Portal linked from bot messages on EQUA (optional)')
+param equaPortalUrl string = ''
 
 var appName = 'aiproc-celery-${environment}'
 
@@ -136,15 +155,103 @@ var baseSecrets = [
     name: 'whatsapp-password'
     value: whatsappPassword
   }
-  {
-    name: 'gmt-password'
-    value: gmtPassword
-  }
-  {
-    name: 'gmt-client-secret'
-    value: gmtClientSecret
-  }
 ]
+
+// BOT_API_KEY is only wired in when one is supplied: a Container Apps secret cannot be empty.
+var botApiKeySecret = !empty(botApiKey) ? [
+  {
+    name: 'bot-api-key'
+    value: botApiKey
+  }
+] : []
+
+var botApiKeyEnv = !empty(botApiKey) ? [
+  {
+    name: 'BOT_API_KEY'
+    secretRef: 'bot-api-key'
+  }
+] : []
+
+// QUA (GMT_*) and EQUA (EQUA_*) settings are each wired in only when supplied, so
+// a deployment for one platform carries nothing for the other — an EQUA
+// deployment needs no QUA value at all. A Container Apps secret cannot be empty.
+var gmtSecrets = concat(
+  empty(gmtPassword) ? [] : [
+    {
+      name: 'gmt-password'
+      value: gmtPassword
+    }
+  ],
+  empty(gmtClientSecret) ? [] : [
+    {
+      name: 'gmt-client-secret'
+      value: gmtClientSecret
+    }
+  ]
+)
+
+var backendEnv = concat(
+  empty(gmtBaseUrl) ? [] : [
+    {
+      name: 'GMT_BASE_URL'
+      value: gmtBaseUrl
+    }
+  ],
+  empty(gmtClientId) ? [] : [
+    {
+      name: 'GMT_CLIENT_ID'
+      value: gmtClientId
+    }
+  ],
+  empty(gmtClientSecret) ? [] : [
+    {
+      name: 'GMT_CLIENT_SECRET'
+      secretRef: 'gmt-client-secret'
+    }
+  ],
+  empty(gmtUsername) ? [] : [
+    {
+      name: 'GMT_USERNAME'
+      value: gmtUsername
+    }
+  ],
+  empty(gmtPassword) ? [] : [
+    {
+      name: 'GMT_PASSWORD'
+      secretRef: 'gmt-password'
+    }
+  ],
+  empty(gmtPhone) ? [] : [
+    {
+      name: 'GMT_PHONE'
+      value: gmtPhone
+    }
+  ],
+  empty(equaApiBaseUrl) ? [] : [
+    {
+      name: 'EQUA_API_BASE_URL'
+      value: equaApiBaseUrl
+    }
+  ],
+  empty(equaServiceUsername) ? [] : [
+    {
+      name: 'EQUA_SERVICE_USERNAME'
+      value: equaServiceUsername
+    }
+  ],
+  empty(equaServicePhone) ? [] : [
+    {
+      name: 'EQUA_SERVICE_PHONE'
+      value: equaServicePhone
+    }
+  ],
+  empty(equaPortalUrl) ? [] : [
+    {
+      name: 'EQUA_PORTAL_URL'
+      value: equaPortalUrl
+    }
+  ]
+)
 
 var acrSecret = !empty(acrPassword) ? [
   {
@@ -173,7 +280,7 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
           identity: 'system'
         }
       ]
-      secrets: concat(baseSecrets, acrSecret)
+      secrets: concat(baseSecrets, gmtSecrets, acrSecret, botApiKeySecret)
     }
     template: {
       containers: [
@@ -181,7 +288,7 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
           name: 'celery-worker'
           command: ['celery', '-A', 'app.celery_app', 'worker', '--loglevel=info', '--concurrency=1']
           image: '${acrServer}/${imageTag}'
-          env: [
+          env: concat([
             {
               name: 'PYTHONUNBUFFERED'
               value: '1'
@@ -235,30 +342,10 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2023-05-01' = {
               secretRef: 'whatsapp-password'
             }
             {
-              name: 'GMT_BASE_URL'
-              value: gmtBaseUrl
+              name: 'BACKEND_PLATFORM'
+              value: backendPlatform
             }
-            {
-              name: 'GMT_CLIENT_ID'
-              value: gmtClientId
-            }
-            {
-              name: 'GMT_CLIENT_SECRET'
-              secretRef: 'gmt-client-secret'
-            }
-            {
-              name: 'GMT_USERNAME'
-              value: gmtUsername
-            }
-            {
-              name: 'GMT_PASSWORD'
-              secretRef: 'gmt-password'
-            }
-            {
-              name: 'GMT_PHONE'
-              value: gmtPhone
-            }
-          ]
+          ], botApiKeyEnv, backendEnv)
           resources: {
             cpu: json('1.0')
             memory: '2.0Gi'
@@ -297,7 +384,7 @@ resource celeryBeatApp 'Microsoft.App/containerApps@2023-05-01' = {
           identity: 'system'
         }
       ]
-      secrets: concat(baseSecrets, acrSecret)
+      secrets: concat(baseSecrets, gmtSecrets, acrSecret, botApiKeySecret)
     }
     template: {
       containers: [
@@ -328,6 +415,10 @@ resource celeryBeatApp 'Microsoft.App/containerApps@2023-05-01' = {
             {
               name: 'DATABASE_URL'
               secretRef: 'database-url'
+            }
+            {
+              name: 'BACKEND_PLATFORM'
+              value: backendPlatform
             }
           ]
           volumeMounts: [

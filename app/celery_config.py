@@ -18,13 +18,18 @@ def _env_bool(name: str, default: bool) -> bool:
 # ============================================================================
 # TASK ENABLE/DISABLE CONTROL - Configured via environment variables or defaults
 # ============================================================================
-ENABLE_VECTOR_STORE_SYNC = _env_bool('ENABLE_VECTOR_STORE_SYNC', True)
-ENABLE_SELLER_MATCHING = _env_bool('ENABLE_SELLER_MATCHING', True)
+# On Enterprise QUA (BACKEND_PLATFORM=equa) the tasks that read or write QUA's
+# MySQL schema default to off: EQUA's data is not in that schema, and EQUA
+# matches and notifies vendors itself. Setting the variable still wins.
+_QUA_ONLY_DEFAULT = os.getenv('BACKEND_PLATFORM', 'qua').strip().lower() != 'equa'
+
+ENABLE_VECTOR_STORE_SYNC = _env_bool('ENABLE_VECTOR_STORE_SYNC', _QUA_ONLY_DEFAULT)
+ENABLE_SELLER_MATCHING = _env_bool('ENABLE_SELLER_MATCHING', _QUA_ONLY_DEFAULT)
 ENABLE_DAILY_AGGREGATION = _env_bool('ENABLE_DAILY_AGGREGATION', False)
 ENABLE_WHATSAPP_REPORT_AUTOMATION = _env_bool('ENABLE_WHATSAPP_REPORT_AUTOMATION', True)
-ENABLE_DAILY_CATEGORY_REBUILD = _env_bool('ENABLE_DAILY_CATEGORY_REBUILD', True)
+ENABLE_DAILY_CATEGORY_REBUILD = _env_bool('ENABLE_DAILY_CATEGORY_REBUILD', _QUA_ONLY_DEFAULT)
 ENABLE_LOG_CLEANUP = _env_bool('ENABLE_LOG_CLEANUP', True)
-ENABLE_BFS_NOTIFICATION = _env_bool('ENABLE_BFS_NOTIFICATION', True)
+ENABLE_BFS_NOTIFICATION = _env_bool('ENABLE_BFS_NOTIFICATION', _QUA_ONLY_DEFAULT)
 ENABLE_TAXONOMY_BUILD = _env_bool('ENABLE_TAXONOMY_BUILD', True)
 
 # WhatsApp report send time in UTC (default 04:30 UTC = 10:00 AM IST)

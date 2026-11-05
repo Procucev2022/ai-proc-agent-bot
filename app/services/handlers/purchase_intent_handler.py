@@ -13,6 +13,7 @@ from app.services.whatsapp_service import WhatsAppService
 from app.services.workflow_manager import WorkflowManager
 from app.services.helpers.response_helpers import ResponseHelpers
 from app.utils.datetime_utils import utc_now
+from app.utils import rfq_policy
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ class PurchaseIntentHandler:
 
     def __init__(self, whatsapp_service: WhatsAppService, response_helpers: ResponseHelpers,
                  entity_service, chat_summary_service, products_array_handler, session_manager,
-                 confirmation_handler=None, attachment_decision_handler=None):
+                 confirmation_handler=None, attachment_decision_handler=None, settings=None):
         self.whatsapp_service = whatsapp_service
         self.response_helpers = response_helpers
         self.entity_service = entity_service
@@ -31,6 +32,7 @@ class PurchaseIntentHandler:
         self.session_manager = session_manager
         self.confirmation_handler = confirmation_handler
         self.attachment_decision_handler = attachment_decision_handler
+        self.settings = settings
     
     @staticmethod
     def _is_rfq_entry_point_click(intent_result: Optional[Dict[str, Any]] = None) -> bool:
@@ -77,10 +79,21 @@ class PurchaseIntentHandler:
                 logger.warning(f"[CLEANUP] Removing lingering session_archive from workflow_state")
                 del session.workflow_state['session_archive']
 
+            # Guard: WhatsApp RFQ creation is disabled unless explicitly enabled
+            settings_obj = getattr(self, 'settings', None)
+            if not rfq_policy.is_rfq_creation_enabled(settings_obj):
+                logger.info(f"[RFQ_POLICY] Blocked WhatsApp RFQ creation for {user.phone_number}")
+                result = await rfq_policy.send_rfq_creation_disabled(
+                    self.whatsapp_service, user.phone_number, session, settings=settings_obj
+                )
+                if getattr(self, 'session_manager', None):
+                    await self.session_manager.save_session(session)
+                return result
+
             # CHECK FOR SECTIONED RFQ WORKFLOW (Track 3)
             # Check global configuration flag
             from app.config import get_settings
-            settings = get_settings()
+            settings = getattr(self, 'settings', None) or get_settings()
 
             # If sectioned RFQ is already active OR global flag is enabled
             if WorkflowManager.is_sectioned_rfq_active(session) or settings.use_sectioned_rfq:

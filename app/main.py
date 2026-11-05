@@ -45,6 +45,8 @@ from app.context.middleware import ContextMiddleware
 from app.utils.logging_utils import setup_basic_logging, CustomFormatter
 from app.utils.loop_monitor import get_loop_monitor
 from app.utils.turn_trace import start_turn
+from app.utils import rfq_policy
+from app.utils import platform_policy
 from unittest.mock import patch
 import gc
 import time
@@ -154,6 +156,7 @@ def _data_source() -> Dict[str, str]:
         current.client_database_url if current.database_mode == "client" else current.local_database_url
     )
     return {
+        "backend_platform": current.backend_platform,
         "gmt_api": current.gmt_base_url or "not configured",
         "database": _describe_database_url(database_url),
         "procucev_schema": current.procucev_db_name,
@@ -170,6 +173,10 @@ async def lifespan(app: FastAPI):
     logger.info(f"[BOOT] Azure OpenAI Endpoint: {settings.azure_openai_base_url}")
     # Hosts and schema names only, never credentials: these show which backend a
     # deployment really talks to when its environment variables are in doubt.
+    logger.info(
+        f"[BOOT] Backend platform: {getattr(settings, 'backend_platform', 'qua')} "
+        f"(BFS {'on' if getattr(settings, 'enable_bfs', True) else 'off'})"
+    )
     logger.info(f"[BOOT] GMT API: {settings.gmt_base_url}")
     logger.info(f"[BOOT] Database: {_describe_database_url(settings.client_database_url if settings.database_mode == 'client' else settings.local_database_url)}")
     logger.info(f"[BOOT] Procucev schema: {settings.procucev_db_name}")
@@ -590,6 +597,7 @@ async def process_chat_message(request: Request, chat_message: ChatMessage):
 
             async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None,
                                                      session=None, session_id=None):
+                buttons_config = platform_policy.filter_bfs_buttons(rfq_policy.filter_rfq_creation_buttons(buttons_config)) or []
                 whatsapp_messages.append(body)
                 # Extract button info for UI
                 button_data = [{'id': btn.get('id'), 'title': btn.get('title')} for btn in buttons_config]
@@ -748,6 +756,7 @@ async def upload_excel_file(
 
         async def mock_send_configurable_buttons(recipient_id, body, buttons_config, header=None, footer=None,
                                                  session=None, session_id=None):
+            buttons_config = platform_policy.filter_bfs_buttons(rfq_policy.filter_rfq_creation_buttons(buttons_config)) or []
             whatsapp_messages.append(body)
             # Extract button info for UI
             button_data = [{'id': btn.get('id'), 'title': btn.get('title')} for btn in buttons_config]

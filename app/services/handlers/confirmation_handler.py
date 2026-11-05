@@ -16,6 +16,7 @@ from app.services.helpers.response_helpers import ResponseHelpers
 from app.services.helpers.chat_service_helpers import ChatServiceHelpers
 from app.schemas.rfq import RFQValidationSchema
 from app.utils.datetime_utils import utc_now
+from app.utils import rfq_policy
 from app.tools.confirmation_tool import ConfirmationTool
 from app.services.confirmation_service import ConfirmationService
 from app.services.openai_service import OpenAIService
@@ -54,11 +55,23 @@ class ConfirmationHandler:
             )
         return self._bfs_search_handler
     
-    async def handle_confirmation_button(self, user: User, session: ConversationSession, 
+    async def _block_rfq_creation(self, user: User, session: ConversationSession) -> Dict[str, Any]:
+        """Redirect the buyer to the portal/email and drop the pending RFQ."""
+        result = await rfq_policy.send_rfq_creation_disabled(
+            self.whatsapp_service, user.phone_number, session, settings=getattr(self, "settings", None)
+        )
+        if self.session_manager:
+            await self.session_manager.save_session(session)
+        return result
+
+    async def handle_confirmation_button(self, user: User, session: ConversationSession,
                                        button_id: str) -> Dict[str, Any]:
         """Handle Confirm/Modify confirmation button responses using confirmation service."""
         logger.info(f"Confirmation button response from {user.phone_number}: {button_id}")
-        
+
+        if button_id != "restart_rfq" and not rfq_policy.is_rfq_creation_enabled(getattr(self, "settings", None)):
+            return await self._block_rfq_creation(user, session)
+
         if button_id == "confirm_rfq":
             # User clicked "Confirm" - proceed with RFQ acceptance
             logger.info(f"Confirmation service: Button 'confirm_rfq' treated as 'yes' from {user.phone_number}")
@@ -89,6 +102,8 @@ class ConfirmationHandler:
     async def handle_pending_confirmations(self, user: User, session: ConversationSession, 
                                          message: str, intent_result: Dict[str, Any]) -> Dict[str, Any]:
         """Handle pending confirmation responses using confirmation service."""
+        if not rfq_policy.is_rfq_creation_enabled(getattr(self, "settings", None)):
+            return await self._block_rfq_creation(user, session)
         # First try to parse confirmation using the confirmation service
         confirmation_result = await self.confirmation_service.parse_confirmation(message)
         
@@ -130,6 +145,8 @@ class ConfirmationHandler:
     async def handle_optional_fields_response(self, user: User, session: ConversationSession,
                                             message: str) -> Dict[str, Any]:
         """Handle optional field responses using confirmation service."""
+        if not rfq_policy.is_rfq_creation_enabled(getattr(self, "settings", None)):
+            return await self._block_rfq_creation(user, session)
         #TODO: use ai based but from where can i use context to determine the response
         if any(keyword in message.lower() for keyword in [
             # Generic skip words
@@ -467,6 +484,14 @@ class ConfirmationHandler:
     
     async def _submit_rfq_to_backend(self, rfq_schema, user) -> dict:
         """Submit RFQ directly to backend via GMT API service."""
+        # Last line of defence: no WhatsApp path may reach the RFQ-create API while disabled
+        if not rfq_policy.is_rfq_creation_enabled(getattr(self, "settings", None)):
+            logger.warning(f"[RFQ_POLICY] Refused RFQ-create API call for user {getattr(user, 'id', None)}")
+            return {
+                "success": False,
+                "status": rfq_policy.RFQ_CREATION_DISABLED_STATUS,
+                "error": "RFQ creation via WhatsApp is disabled"
+            }
         try:
             rfq_service = getattr(self, "rfq_service", None) or RFQAPIService()
             

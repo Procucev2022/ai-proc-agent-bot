@@ -74,7 +74,7 @@ services:
       - TQDM_DISABLE=1
     volumes:
       - ./logs:/app/logs  # Log persistence for rotation and analysis
-      - /data/procucev_project/procucev_proc_agent/ssl:/app/ssl:ro  # SSL certs (read-only)
+      - ./ssl:/app/ssl:ro  # SSL certs (read-only)
     networks:
       - procucev_network
     restart: unless-stopped
@@ -148,7 +148,7 @@ services:
       - TQDM_DISABLE=1
     volumes:
       - ./logs:/app/logs
-      - /data/procucev_project/procucev_proc_agent/ssl:/app/ssl:ro
+      - ./ssl:/app/ssl:ro
     networks:
       - procucev_network
     restart: unless-stopped
