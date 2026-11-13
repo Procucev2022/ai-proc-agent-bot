@@ -332,6 +332,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Error closing WhatsApp gateway session: {e}")
 
+    # Close the shared OpenAI clients. Requests never close them (that broke
+    # concurrent requests), so this is the one place they are released.
+    try:
+        from app.services.openai_service import close_all_openai_clients
+        await close_all_openai_clients()
+    except Exception as e:
+        logger.warning(f"Error closing OpenAI clients: {e}")
+
     # Cleanup any remaining aiohttp sessions
     import aiohttp
     for obj in gc.get_objects():

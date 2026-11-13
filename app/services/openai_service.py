@@ -22,9 +22,10 @@ import logging
 import os
 import re
 import time
+import weakref
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Callable, Dict, Any, Optional, List
 from openai import AsyncOpenAI
 from openai import APIError, APITimeoutError, RateLimitError, APIConnectionError
 from app.config import get_settings
@@ -50,6 +51,87 @@ logger = logging.getLogger(__name__)
 INTENT_CLASSIFICATION_MAX_OUTPUT_TOKENS = 800
 
 
+# Shared AsyncOpenAI clients, one per event loop.
+#
+# Every OpenAIService instance used to share a single client, and both close()
+# and close_sync() closed it. ChatService.cleanup() calls close() after every
+# message, so one user's message finishing closed the connection pool that other
+# users' requests were still using, and their calls failed with
+# APIConnectionError("Connection error.") and fell back to rule-based handling.
+# Requests now never close a shared client; it is closed once, at shutdown, by
+# close_all_openai_clients().
+#
+# The client is keyed by event loop because its httpx connection pool is bound
+# to the loop it first ran on. Celery tasks drive coroutines with asyncio.run(),
+# which creates a fresh loop each time, so they must not reuse the web server's
+# client or one from an earlier task. Weak keys let an entry disappear once its
+# loop is garbage collected.
+_clients_by_loop: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, AsyncOpenAI]" = (
+    weakref.WeakKeyDictionary()
+)
+_client_without_loop: Optional[AsyncOpenAI] = None
+
+
+def _current_loop() -> Optional[asyncio.AbstractEventLoop]:
+    """Return the running event loop, or None when called from sync code."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
+def _is_closed(client: Any) -> bool:
+    """True only when the client positively reports that it is closed."""
+    is_closed = getattr(client, "is_closed", None)
+    return callable(is_closed) and is_closed() is True
+
+
+def get_shared_openai_client(factory: Callable[[], AsyncOpenAI]) -> AsyncOpenAI:
+    """Return the shared client for the running event loop, creating it once.
+
+    ``factory`` builds a new instrumented client. A client that has been closed
+    is replaced rather than handed out.
+    """
+    global _client_without_loop
+    loop = _current_loop()
+    if loop is None:
+        if _client_without_loop is None or _is_closed(_client_without_loop):
+            _client_without_loop = factory()
+            logger.debug("OpenAI client initialized (no running event loop)")
+        return _client_without_loop
+
+    client = _clients_by_loop.get(loop)
+    if client is None or _is_closed(client):
+        client = factory()
+        _clients_by_loop[loop] = client
+        logger.debug(f"OpenAI client initialized for event loop {id(loop)}")
+    return client
+
+
+async def close_all_openai_clients() -> None:
+    """Close the shared clients this loop can reach. Call only at shutdown.
+
+    Closes the running loop's client and the client created outside any loop.
+    Clients owned by other loops cannot be awaited from here; they are released
+    with their loop.
+    """
+    global _client_without_loop
+    loop = _current_loop()
+    clients = []
+    if loop is not None:
+        clients.append(_clients_by_loop.pop(loop, None))
+    clients.append(_client_without_loop)
+    _client_without_loop = None
+
+    for client in clients:
+        if client is None or _is_closed(client):
+            continue
+        try:
+            await client.close()
+        except Exception as exc:
+            logger.warning(f"Error closing OpenAI client at shutdown: {exc}")
+
+
 class OpenAIService:
     """
     OpenAI API integration service for LLM operations.
@@ -57,14 +139,13 @@ class OpenAIService:
     Provides wrapper around OpenAI API for intent classification,
     entity extraction, response generation, and validation.
     """
-    
-    _shared_client: Optional[AsyncOpenAI] = None
 
     def __init__(self):
         """Initialize OpenAI service with configuration."""
         self.settings = get_settings()
-        self._client = None  # Lazy initialization
-        self._client_closed = False  # Track if client was explicitly closed
+        # A client injected for this instance only. When None, the shared
+        # per-event-loop client is used; see get_shared_openai_client().
+        self._client: Optional[AsyncOpenAI] = None
         self.default_model = self.settings.openai_model_default
         self.advanced_model = self.settings.openai_model_advanced
         self.tools_dir = Path(__file__).parent.parent / "tools"
@@ -151,64 +232,30 @@ class OpenAIService:
     @property
     def client(self) -> AsyncOpenAI:
         """
-        Get OpenAI client with lazy initialization and persistent connection reuse.
+        Get the OpenAI client: an injected one, or the shared client for the
+        running event loop (created on first use, replaced if it was closed).
 
-        Automatically recreates the client if it was previously closed.
-        This ensures resilience when close_sync() is called between requests.
+        The shared client is looked up on every access rather than cached on the
+        instance, so an instance that outlives one event loop never hands out a
+        client bound to a loop that has since closed.
         """
-        if self._client_closed:
-            self._client = self._new_client()
-            OpenAIService._shared_client = self._client
-            self._client_closed = False
-            logger.debug("OpenAI client (re)initialized")
-        elif self._client is None:
-            if OpenAIService._shared_client is not None:
-                self._client = OpenAIService._shared_client
-            else:
-                self._client = self._new_client()
-                OpenAIService._shared_client = self._client
-                logger.debug("OpenAI client (re)initialized")
-        return self._client
+        if self._client is not None:
+            return self._client
+        return get_shared_openai_client(self._new_client)
 
     async def close(self):
-        """Close the OpenAI client and cleanup resources."""
-        try:
-            if self._client is not None:
-                if self._client is OpenAIService._shared_client:
-                    OpenAIService._shared_client = None
-                await self._client.close()
-                self._client_closed = True
-                logger.debug("OpenAI client closed successfully")
-        except Exception as e:
-            logger.warning(f"Error closing OpenAI client: {e}")
-    
+        """Release this instance's client reference.
+
+        The shared client serves every concurrent request, so it is deliberately
+        not closed here: closing it broke other users' in-flight calls with
+        "Connection error.". It is closed once at application shutdown by
+        close_all_openai_clients().
+        """
+        self._client = None
+
     def close_sync(self):
-        """Synchronous close for Celery tasks to prevent event loop errors."""
-        if self._client is None:
-            return  # Nothing to close
-
-        if self._client is OpenAIService._shared_client:
-            OpenAIService._shared_client = None
-
-        try:
-            import asyncio
-            try:
-                # Try to get existing event loop
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # If loop is running, schedule close as task
-                    asyncio.create_task(self._client.close())
-                else:
-                    # If loop exists but not running, run close
-                    loop.run_until_complete(self._client.close())
-            except RuntimeError:
-                # No event loop exists, create new one
-                asyncio.run(self._client.close())
-
-            self._client_closed = True
-            logger.debug("OpenAI client closed synchronously (will auto-reinitialize on next use)")
-        except Exception as e:
-            logger.warning(f"Error closing OpenAI client synchronously: {e}")
+        """Synchronous counterpart of close(); likewise never closes the shared client."""
+        self._client = None
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -2592,9 +2639,7 @@ Analyze their response to determine their true choice.
                     
                     logger.debug(f"Generated 3-level categorization: {result['categorization']}")
                     return result
-            
-            # Close client synchronously to prevent event loop errors
-            self.close_sync()
+
             return {
                 "success": False,
                 "error": "No function call in response",
@@ -2606,8 +2651,6 @@ Analyze their response to determine their true choice.
             processing_time = time.time() - start_time
             
             logger.error(f"3-level categorization failed: {error_msg}")
-            # Close client synchronously to prevent event loop errors
-            self.close_sync()
             return {
                 "success": False,
                 "error": error_msg,

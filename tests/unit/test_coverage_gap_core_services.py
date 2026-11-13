@@ -845,13 +845,14 @@ async def test_openai_contextual_response_and_lazy_client_paths(tmp_path, monkey
 
     made = []
     monkeypatch.setattr(openai_mod, "AsyncOpenAI", lambda **kwargs: made.append(FakeClient(**kwargs)) or made[-1])
-    lazy = bare(openai_mod.OpenAIService, _client=None, _client_closed=False)
+    lazy = bare(openai_mod.OpenAIService, _client=None)
     first = lazy.client
     assert first is made[0]
-    lazy._client_closed = True
-    assert lazy.client is made[1]
+    # A second instance on the same loop shares the client instead of building one.
+    assert bare(openai_mod.OpenAIService, _client=None).client is first
     await lazy.close()
-    assert lazy._client_closed is True
+    first.close.assert_not_awaited()
+    assert lazy.client is first and len(made) == 1
 
 
 @pytest.mark.asyncio
