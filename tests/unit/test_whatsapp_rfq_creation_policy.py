@@ -377,7 +377,7 @@ BUYER_ON = SimpleNamespace(enable_whatsapp_rfq_creation=False, enable_whatsapp_b
 def assert_portal_template(message):
     assert message.endswith(
         "Your buyer profile has just been upgraded with AI to simplify your experience. "
-        "To raise an RFQ, please email us at rfq@procucev.com or log in at https://equa.procucev.com."
+        "To raise an RFQ, please email us at rfq@procucev.com or log in at https://qua.procucev.com."
     )
     # Nothing else on WhatsApp is offered to buyers any more
     assert "ready stocks" not in message.lower() and "check rfq status" not in message.lower()
@@ -385,7 +385,7 @@ def assert_portal_template(message):
 
 def test_buyer_portal_login_address_is_configurable(monkeypatch):
     monkeypatch.delenv("BUYER_PORTAL_DISPLAY_URL", raising=False)
-    assert rfq_policy.get_buyer_portal_display(SimpleNamespace()) == "https://equa.procucev.com"
+    assert rfq_policy.get_buyer_portal_display(SimpleNamespace()) == "https://qua.procucev.com"
     monkeypatch.setenv("BUYER_PORTAL_DISPLAY_URL", " equa.procucev.com ")
     assert rfq_policy.get_buyer_portal_display(SimpleNamespace()) == "equa.procucev.com"
     assert rfq_policy.get_buyer_portal_display(SimpleNamespace(buyer_portal_display_url="portal.example")) == "portal.example"
@@ -558,7 +558,7 @@ def test_buyer_registration_message_matches_the_agreed_text(monkeypatch):
         "Username / Email: rohit@example.com\n"
         "Registered Mobile: +91 9511876403\n\n"
         "Your buyer profile has just been upgraded with AI to simplify your experience. "
-        "To raise an RFQ, please email us at rfq@procucev.com or log in at https://equa.procucev.com.\n\n"
+        "To raise an RFQ, please email us at rfq@procucev.com or log in at https://qua.procucev.com.\n\n"
         "For your login credentials, please check your registered email."
     )
 
@@ -586,5 +586,5 @@ def test_buyer_portal_message_with_details_matches_the_agreed_text(monkeypatch):
         "Username / Email: rohit@example.com\n"
         "Registered Mobile: +91 9511876403\n\n"
         "Your buyer profile has just been upgraded with AI to simplify your experience. "
-        "To raise an RFQ, please email us at rfq@procucev.com or log in at https://equa.procucev.com."
+        "To raise an RFQ, please email us at rfq@procucev.com or log in at https://qua.procucev.com."
     )

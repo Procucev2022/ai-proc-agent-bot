@@ -23,7 +23,7 @@ RFQ_EMAIL = "rfq@procucev.com"
 DEFAULT_PORTAL_URL = "https://p2pdevuiindia.azurewebsites.net/login"
 RFQ_CREATION_DISABLED_STATUS = "rfq_creation_disabled"
 # Login address named in the buyer message; BUYER_PORTAL_DISPLAY_URL overrides it.
-DEFAULT_BUYER_PORTAL_DISPLAY = "https://equa.procucev.com"
+DEFAULT_BUYER_PORTAL_DISPLAY = "https://qua.procucev.com"
 
 # Button ids that start an RFQ. Hidden from every outgoing button message
 # while WhatsApp RFQ creation is disabled.
