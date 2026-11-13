@@ -180,3 +180,84 @@ def test_new_client_is_built_through_shared_getter(monkeypatch):
 
     first, second = asyncio.run(run())
     assert first is built and second is built
+
+
+def _api_connection_error(cause):
+    import httpx
+    from openai import APIConnectionError
+
+    request = httpx.Request("POST", "https://example.invalid/openai/v1/responses")
+    try:
+        try:
+            raise cause
+        except Exception as inner:
+            raise APIConnectionError(request=request) from inner
+    except APIConnectionError as exc:
+        return exc
+
+
+def test_describe_root_cause_names_the_underlying_error():
+    exc = _api_connection_error(OSError("Name or service not known"))
+    assert svc._describe_root_cause(exc) == " | cause=OSError: Name or service not known"
+    assert svc._describe_root_cause(RuntimeError("plain")) == ""
+
+
+def test_discard_shared_client_forgets_only_that_client():
+    async def run():
+        broken = await _get()
+        svc._discard_shared_client(broken)
+        fresh = await _get()
+        svc._discard_shared_client(object())  # unknown client: nothing changes
+        return broken, fresh, await _get()
+
+    broken, fresh, again = asyncio.run(run())
+    assert fresh is not broken and again is fresh
+    assert broken.close_calls == 0  # never closed: in-flight calls may still use it
+
+    no_loop = svc.get_shared_openai_client(FakeClient)
+    svc._discard_shared_client(no_loop)
+    assert svc._client_without_loop is None
+
+
+def _instrumented_with(error):
+    # A plain coroutine, not AsyncMock: a mock reports every attribute (including
+    # the "already instrumented" marker) as truthy, so it would never be wrapped.
+    async def create(**_kwargs):
+        raise error
+
+    raw = SimpleNamespace(responses=SimpleNamespace(create=create))
+    return svc.OpenAIService._instrument_client(raw)
+
+
+def test_connection_error_logs_cause_and_replaces_shared_client(monkeypatch):
+    logger = MagicMock()
+    monkeypatch.setattr(svc, "logger", logger)
+    error = _api_connection_error(ConnectionResetError("peer reset"))
+
+    async def run():
+        client = svc.get_shared_openai_client(
+            lambda: _instrumented_with(error)
+        )
+        with pytest.raises(type(error)):
+            await client.responses.create(model="m", input="x")
+        return client, svc.get_shared_openai_client(FakeClient)
+
+    failed, replacement = asyncio.run(run())
+    assert replacement is not failed
+    message = logger.error.call_args[0][0]
+    assert "APIConnectionError" in message and "cause=ConnectionResetError: peer reset" in message
+
+
+def test_non_connection_error_keeps_shared_client(monkeypatch):
+    monkeypatch.setattr(svc, "logger", MagicMock())
+
+    async def run():
+        client = svc.get_shared_openai_client(
+            lambda: _instrumented_with(ValueError("bad request"))
+        )
+        with pytest.raises(ValueError):
+            await client.responses.create(model="m", input="x")
+        return client, svc.get_shared_openai_client(FakeClient)
+
+    client, same = asyncio.run(run())
+    assert same is client

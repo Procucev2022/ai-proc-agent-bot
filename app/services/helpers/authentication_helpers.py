@@ -21,13 +21,24 @@ _LOCAL_COMPANY_RE = re.compile(
     re.IGNORECASE,
 )
 _LOCAL_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z\s.]{1,}$")
+# Seller fields that must already be collected before a bare one-part reply is
+# taken as the products/services answer, i.e. it is the only question left.
+_SELLER_FIELDS_BEFORE_DETAILS = ("name", "companyName", "email", "zipCode", "gstin")
+# Short replies that are conversation, never a product or service.
+_LOCAL_NON_DETAILS_REPLIES = {
+    "yes", "no", "ok", "okay", "hi", "hello", "hey", "thanks", "thank you", "confirm",
+    "restart", "cancel", "exit", "stop", "back", "menu", "help", "skip",
+}
+_LOCAL_DETAILS_MAX_LENGTH = 300
 
 
 class AuthenticationHelpers:
     """Helper functions for authentication workflow."""
 
     @staticmethod
-    def parse_registration_details_locally(message: str, existing_entities: Optional[Dict] = None) -> Dict[str, str]:
+    def parse_registration_details_locally(
+        message: str, existing_entities: Optional[Dict] = None, user_type: str = "buyer"
+    ) -> Dict[str, str]:
         """Pull registration fields out of a message without the LLM.
 
         Used only when AI extraction returns nothing, so an OpenAI outage does not
@@ -35,6 +46,10 @@ class AuthenticationHelpers:
         are matched by pattern; name and company are inferred from the remaining
         comma/line separated parts, and only when the message has several parts so
         a one-word reply such as "yes" is never taken as a name.
+
+        For sellers the products/services answer ("details") is also recovered, but
+        only where it is unambiguous: the single part left over after every other
+        field is matched, or a bare reply once it is the only field still missing.
         """
         if not message or not isinstance(message, str):
             return {}
@@ -64,8 +79,41 @@ class AuthenticationHelpers:
             name = next((s for s in free if s != company and _LOCAL_NAME_RE.match(s)), None)
             if name and not existing_entities.get("name"):
                 found["name"] = name
+            leftover = [s for s in free if s not in (company, name)]
+        else:
+            leftover = []
+
+        if user_type == "seller" and not existing_entities.get("details"):
+            details = AuthenticationHelpers._local_seller_details(
+                message, segments, leftover, existing_entities, found
+            )
+            if details:
+                found["details"] = details
 
         return found
+
+    @staticmethod
+    def _local_seller_details(
+        message: str, segments: List[str], leftover: List[str], existing_entities: Dict, found: Dict[str, str]
+    ) -> Optional[str]:
+        """Return the seller's products/services from a message, or None when unsure."""
+        if len(segments) >= 2:
+            # "Name, Company, email, pincode, GSTIN, Cable": exactly one unmatched part
+            # remains and it is the last one, matching the order the bot asks in.
+            if len(leftover) == 1 and leftover[0] == segments[-1]:
+                return leftover[0][:_LOCAL_DETAILS_MAX_LENGTH]
+            return None
+
+        # A bare reply ("laptop") answers the products question only when every other
+        # seller field is already known, so a name or a city is never misread.
+        if found:
+            return None
+        if not all(existing_entities.get(field) for field in _SELLER_FIELDS_BEFORE_DETAILS):
+            return None
+        reply = message.strip()
+        if reply.lower().strip(" .!") in _LOCAL_NON_DETAILS_REPLIES or not re.search(r"[A-Za-z]", reply):
+            return None
+        return reply[:_LOCAL_DETAILS_MAX_LENGTH]
 
     @staticmethod
     def extract_user_details(api_response: List) -> Optional[Dict]:
