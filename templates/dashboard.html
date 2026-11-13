@@ -905,6 +905,58 @@
             gap: 12px;
         }
 
+        /* Chat history download bar (any past date, all users or one user) */
+        .chat-export-bar {
+            padding: 12px 24px;
+            border-bottom: 1px solid var(--border-subtle);
+            background: #f8fafc;
+            display: flex;
+            align-items: flex-end;
+            flex-wrap: wrap;
+            gap: 10px 14px;
+        }
+        .chat-export-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+        .chat-export-field input {
+            box-sizing: border-box;
+            height: 36px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 0 10px;
+            font-size: 13px;
+            color: #334155;
+            background: #ffffff;
+            min-width: 0;
+        }
+        .chat-export-field input[type="text"] { width: 190px; }
+        .chat-export-btn {
+            background: linear-gradient(135deg, #059669 0%, #047857 100%);
+            color: #ffffff;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 2px 8px rgba(5, 150, 105, 0.25);
+        }
+        .chat-export-btn:disabled { opacity: 0.6; cursor: wait; }
+        .chat-export-hint { font-size: 11px; color: var(--text-dim); flex-basis: 100%; }
+        .chat-export-hint.error { color: #dc2626; font-weight: 600; }
+        @media (max-width: 640px) {
+            .chat-export-bar { padding: 12px 16px; }
+            .chat-export-field, .chat-export-field input[type="text"], .chat-export-btn { width: 100%; }
+        }
+
         .chat-viewer-title-box {
             display: flex;
             align-items: center;
@@ -1694,6 +1746,25 @@
                 </div>
             </div>
 
+            <!-- Download chat history: any past date range, all users or one user -->
+            <div class="chat-export-bar" id="chat-export-bar">
+                <label class="chat-export-field">From
+                    <input type="date" id="chat-export-from" />
+                </label>
+                <label class="chat-export-field">To
+                    <input type="date" id="chat-export-to" />
+                </label>
+                <label class="chat-export-field">Phone number (optional)
+                    <input type="text" id="chat-export-phone" placeholder="All users" inputmode="tel" />
+                </label>
+                <button type="button" class="chat-export-btn" id="btn-export-chat-history" onclick="downloadChatHistory()">
+                    📥 Download Chat History
+                </button>
+                <span class="chat-export-hint" id="chat-export-hint">
+                    Leave the dates empty to download every date. Leave the phone number empty to download all users. Times are in IST.
+                </span>
+            </div>
+
             <div class="chat-viewer-body">
                 <!-- Left Sidebar: Today's Visited Users -->
                 <div class="chat-sidebar">
@@ -1735,6 +1806,9 @@
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px;">
                                 <span style="font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--text-dim);" id="active-chat-session-id"></span>
+                                <button type="button" class="chart-filter-btn" onclick="downloadSelectedUserChat()" title="Download this user's full chat history (all dates)">
+                                    📥 Download chat
+                                </button>
                             </div>
                         </div>
 
@@ -2468,6 +2542,78 @@
             if (!silent || wasNearBottom) {
                 container.scrollTop = container.scrollHeight;
             }
+        }
+
+        // ---- Chat history download (any past date, all users or one user) ----
+        const CHAT_EXPORT_HINT = 'Leave the dates empty to download every date. Leave the phone number empty to download all users. Times are in IST.';
+
+        function setChatExportHint(text, isError = false) {
+            const hint = document.getElementById('chat-export-hint');
+            if (!hint) return;
+            hint.textContent = text;
+            hint.classList.toggle('error', isError);
+        }
+
+        function buildChatExportUrl(fromDate, toDate, phone) {
+            const params = new URLSearchParams();
+            if (fromDate || toDate) {
+                params.set('date_preset', 'custom');
+                params.set('start_date', fromDate || toDate);
+                params.set('end_date', toDate || fromDate);
+            } else {
+                params.set('date_preset', 'all');
+            }
+            if (phone) params.set('phone', phone);
+            return `/api/dashboard/export-chat-history-csv?${params.toString()}`;
+        }
+
+        async function fetchChatExport(url, button) {
+            if (button) button.disabled = true;
+            setChatExportHint('Preparing download...');
+            try {
+                const res = await fetch(url, { credentials: 'same-origin' });
+                if (!res.ok) {
+                    let message = `Download failed (HTTP ${res.status})`;
+                    try { message = (await res.json()).message || message; } catch (e) { /* not JSON */ }
+                    setChatExportHint(message, true);
+                    return;
+                }
+                const blob = await res.blob();
+                const disposition = res.headers.get('Content-Disposition') || '';
+                const match = disposition.match(/filename="?([^";]+)"?/);
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = match ? match[1] : 'chat_history.csv';
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+                setChatExportHint(CHAT_EXPORT_HINT);
+            } catch (err) {
+                console.error('Chat history download failed:', err);
+                setChatExportHint('Download failed. Check your connection and try again.', true);
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        function downloadChatHistory() {
+            const fromDate = document.getElementById('chat-export-from')?.value || '';
+            const toDate = document.getElementById('chat-export-to')?.value || '';
+            const phone = (document.getElementById('chat-export-phone')?.value || '').trim();
+            if (fromDate && toDate && fromDate > toDate) {
+                setChatExportHint('From date must be on or before To date.', true);
+                return;
+            }
+            fetchChatExport(buildChatExportUrl(fromDate, toDate, phone), document.getElementById('btn-export-chat-history'));
+        }
+
+        function downloadSelectedUserChat() {
+            if (!selectedUserPhone) {
+                setChatExportHint('Select a user first.', true);
+                return;
+            }
+            fetchChatExport(buildChatExportUrl('', '', selectedUserPhone), null);
         }
 
         // Initial Load
