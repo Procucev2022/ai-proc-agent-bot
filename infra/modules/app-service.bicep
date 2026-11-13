@@ -96,6 +96,12 @@ param equaServicePhone string = ''
 @description('Portal linked from bot messages on EQUA (optional)')
 param equaPortalUrl string = ''
 
+@description('Custom domain bound to the ingress. Empty = none.')
+param customDomainName string = ''
+
+@description('Managed certificate name for customDomainName in the Container Apps environment')
+param customDomainCertName string = ''
+
 var appName = 'aiproc-app-${environment}'
 
 var baseSecrets = [
@@ -232,6 +238,13 @@ resource appContainer 'Microsoft.App/containerApps@2023-05-01' = {
         targetPort: 8005
         transport: 'auto'
         allowInsecure: false
+        customDomains: empty(customDomainName) ? [] : [
+          {
+            name: customDomainName
+            bindingType: 'SniEnabled'
+            certificateId: '${environmentId}/managedCertificates/${customDomainCertName}'
+          }
+        ]
       }
       registries: !empty(acrPassword) ? [
         {
