@@ -7,6 +7,8 @@ marketplace health alerts.
 """
 
 import asyncio
+import csv
+import io
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -1805,3 +1807,255 @@ class DashboardAggregationService:
             },
             "messages": formatted
         }
+
+    async def export_chat_history_csv(
+        self,
+        date_preset: str = "all",
+        start_date_str: Optional[str] = None,
+        end_date_str: Optional[str] = None,
+        phone: Optional[str] = None,
+    ) -> str:
+        """Export WhatsApp chat messages as CSV for every user or one user, for any period.
+
+        ``date_preset="all"`` exports every stored date. A ``custom`` range is read as
+        India (IST) calendar days, matching the "Date (IST)" column the file shows;
+        the other presets resolve exactly as the rest of the dashboard does (see
+        ``_resolve_date_range``). Each message is kept or dropped by its own
+        timestamp, so a conversation that spans the range boundary contributes only
+        its in-range messages. Stored (MySQL) sessions are merged with live Redis
+        sessions the same way the chat viewer does, so still-active chats are included.
+        """
+        start: Optional[datetime] = None
+        end: Optional[datetime] = None
+        ist_range = _ist_day_range(start_date_str, end_date_str) if date_preset == "custom" else None
+        if ist_range is not None:
+            start, end = ist_range
+        elif date_preset != "all":
+            start, end, _, _ = self._resolve_date_range(date_preset, start_date_str, end_date_str)
+
+        phone = (phone or "").strip() or None
+        norm = _normalize_export_phone(phone) if phone else None
+
+        def _query_db(db: Session) -> List[Dict[str, Any]]:
+            q = db.query(ConversationSession).filter(ConversationSession.external_user_id.isnot(None))
+            if phone and norm:
+                q = q.filter(ConversationSession.external_user_id.in_(_export_phone_variants(phone, norm)))
+            if start is not None and end is not None:
+                # Sessions that overlap the range; messages are filtered individually below.
+                q = q.filter(
+                    ConversationSession.created_at <= end.replace(tzinfo=None),
+                    func.coalesce(ConversationSession.last_activity_at, ConversationSession.created_at)
+                    >= start.replace(tzinfo=None),
+                )
+            sessions = q.order_by(ConversationSession.created_at.asc()).all()
+            return [
+                _export_session_snapshot(
+                    session_id=str(s.session_id),
+                    phone=s.external_user_id,
+                    user_type=s.user_type,
+                    started_at=s.started_at or s.created_at,
+                    history=s.conversation_history,
+                )
+                for s in sessions
+            ]
+
+        def _load_db_sessions() -> List[Dict[str, Any]]:
+            if self.db is not None:
+                return _query_db(self.db)
+            with get_db_session_context() as db:
+                return _query_db(db)
+
+        try:
+            db_snapshots = await asyncio.to_thread(_load_db_sessions)
+        except Exception as e:
+            logger.error(f"[DASHBOARD] DB error in export_chat_history_csv: {e}")
+            raise
+
+        sessions: Dict[str, Dict[str, Any]] = {s["session_id"]: s for s in db_snapshots}
+        for snapshot in await self._load_redis_snapshots_for_export(norm):
+            stored = sessions.get(snapshot["session_id"])
+            # Redis holds the live copy of a session; prefer it when it is at least as complete.
+            if stored is None or len(snapshot["messages"]) >= len(stored["messages"]):
+                sessions[snapshot["session_id"]] = snapshot
+
+        rows: List[Tuple[str, datetime, List[str]]] = []
+        for snapshot in sessions.values():
+            for message in snapshot["messages"]:
+                if not isinstance(message, dict):
+                    continue
+                sent_at = _parse_message_time(message.get("timestamp")) or snapshot["started_at"]
+                if start is not None and end is not None:
+                    if sent_at is None or not (start <= sent_at <= end):
+                        continue
+                text, buttons = _message_text_and_buttons(message.get("content"))
+                role = str(message.get("role") or message.get("sender") or "assistant").lower()
+                local = sent_at.astimezone(_IST) if sent_at else None
+                rows.append((
+                    _normalize_export_phone(snapshot["phone"]),
+                    sent_at or _EPOCH,
+                    [
+                        snapshot["phone"],
+                        snapshot["user_type"],
+                        snapshot["session_id"],
+                        local.strftime("%Y-%m-%d") if local else "",
+                        local.strftime("%H:%M:%S") if local else "",
+                        "User" if role == "user" else "Bot",
+                        text,
+                        buttons,
+                        str(message.get("type") or "text"),
+                    ],
+                ))
+
+        # One block per user, each in chronological order (stable for equal times).
+        rows.sort(key=lambda row: (row[0], row[1]))
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(CHAT_EXPORT_HEADERS)
+        for _, _, values in rows:
+            writer.writerow(values)
+        # The BOM lets Excel open the file as UTF-8 (₹, Hindi text, emoji).
+        return "﻿" + output.getvalue()
+
+    async def _load_redis_snapshots_for_export(self, norm: Optional[str]) -> List[Dict[str, Any]]:
+        """Live sessions from Redis, limited to one user when ``norm`` is given."""
+        snapshots: List[Dict[str, Any]] = []
+        try:
+            from app.redis_db import AsyncRedisConnectionManager
+            client = await AsyncRedisConnectionManager.get_client()
+            if not client:
+                return snapshots
+            async for key in client.scan_iter(match="session:*"):
+                try:
+                    raw = await client.get(key)
+                    if not raw:
+                        continue
+                    data = json.loads(raw)
+                    r_phone = str(data.get("external_user_id") or "").strip()
+                    if not r_phone or not data.get("session_id"):
+                        continue
+                    if norm and _normalize_export_phone(r_phone) != norm:
+                        continue
+                    snapshots.append(_export_session_snapshot(
+                        session_id=str(data["session_id"]),
+                        phone=r_phone,
+                        user_type=data.get("user_type"),
+                        started_at=data.get("started_at") or data.get("last_activity_at"),
+                        history=data.get("conversation_history"),
+                    ))
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.debug(f"[DASHBOARD] Redis unavailable for chat export: {e}")
+        return snapshots
+
+
+# ---------------------------------------------------------------- chat export helpers
+
+_IST = timezone(timedelta(hours=5, minutes=30))
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+CHAT_EXPORT_HEADERS = [
+    "Phone Number", "User Type", "Session ID", "Date (IST)", "Time (IST)",
+    "Sender", "Message", "Buttons / Options", "Message Type",
+]
+
+
+def _normalize_export_phone(phone: Any) -> str:
+    """Same normalisation as the chat viewer: digits only, Indian numbers without 91."""
+    raw = str(phone or "").lstrip("+").replace(" ", "").replace("-", "").strip()
+    if len(raw) == 12 and raw.startswith("91"):
+        return raw[2:]
+    return raw
+
+
+def _ist_day_range(start_date_str: Optional[str], end_date_str: Optional[str]) -> Optional[Tuple[datetime, datetime]]:
+    """UTC bounds of the IST calendar days from start to end inclusive, or None if invalid."""
+    try:
+        first = datetime.strptime(start_date_str or "", "%Y-%m-%d").replace(tzinfo=_IST)
+        last = datetime.strptime(end_date_str or "", "%Y-%m-%d").replace(tzinfo=_IST)
+    except ValueError:
+        return None
+    last_moment = last + timedelta(days=1) - timedelta(microseconds=1)
+    return first.astimezone(timezone.utc), last_moment.astimezone(timezone.utc)
+
+
+def _export_phone_variants(phone: str, norm: str) -> List[str]:
+    """Every spelling a stored session may use for the same number."""
+    return list(dict.fromkeys([phone, norm, f"+{norm}", f"91{norm}", f"+91{norm}"]))
+
+
+def _parse_message_time(value: Any) -> Optional[datetime]:
+    """Parse a stored message/session time (ISO string, epoch seconds, datetime) to aware UTC."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    elif isinstance(value, str) and value.strip():
+        text = value.strip()
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                return datetime.fromtimestamp(float(text), tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
+    else:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _history_messages(history: Any) -> List[Any]:
+    """Messages from a stored conversation_history (dict, bare list or JSON string)."""
+    if isinstance(history, str):
+        try:
+            history = json.loads(history)
+        except ValueError:
+            return []
+    if isinstance(history, dict):
+        history = history.get("messages")
+    return list(history) if isinstance(history, list) else []
+
+
+def _export_session_snapshot(
+    session_id: str, phone: Any, user_type: Any, started_at: Any, history: Any
+) -> Dict[str, Any]:
+    role = user_type.value if hasattr(user_type, "value") else str(user_type or "unknown")
+    return {
+        "session_id": session_id,
+        "phone": str(phone or "").strip(),
+        "user_type": role or "unknown",
+        "started_at": _parse_message_time(started_at),
+        "messages": _history_messages(history),
+    }
+
+
+def _message_text_and_buttons(content: Any) -> Tuple[str, str]:
+    """Flatten a stored message (plain text or interactive payload) to text + button titles."""
+    if not isinstance(content, dict):
+        return ("" if content is None else str(content)), ""
+
+    def _text(value: Any) -> str:
+        if isinstance(value, dict):
+            return _text(value.get("text") or value.get("body") or value.get("title") or "")
+        return "" if value is None else str(value).strip()
+
+    parts = [_text(content.get(part)) for part in ("header", "body", "footer")]
+    text = "\n".join(p for p in parts if p) or _text(content.get("text") or content.get("message"))
+
+    raw_buttons = content.get("buttons")
+    if not raw_buttons and isinstance(content.get("action"), dict):
+        raw_buttons = content["action"].get("buttons")
+    titles: List[str] = []
+    for button in raw_buttons if isinstance(raw_buttons, list) else []:
+        if isinstance(button, dict):
+            reply = button.get("reply")
+            source: Dict[str, Any] = reply if isinstance(reply, dict) else button
+            title = str(source.get("title") or source.get("id") or "").strip()
+            if title:
+                titles.append(title)
+    return text, " | ".join(titles)

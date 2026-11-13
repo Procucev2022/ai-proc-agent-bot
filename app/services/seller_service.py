@@ -243,8 +243,16 @@ class SellerService:
 
         return "\n".join(message_parts)
 
-    async def _handle_rfq_selection_response(self, user: User, session: ConversationSession,message: str) -> Dict[str, Any]:
-        """Handle seller's RFQ selection when they have credits."""
+    async def _handle_rfq_selection_response(self, user: User, session: ConversationSession, message: str,
+                                             allow_general_fallback: bool = True) -> Dict[str, Any]:
+        """Handle seller's RFQ selection when they have credits.
+
+        ``allow_general_fallback`` is False when the general handler has already
+        classified the message as an RFQ request. Handing a message with no
+        recognisable RFQ back to it would route it straight here again, an
+        endless loop that ended in the "technical issue" reply, so the seller is
+        shown the list to pick from instead.
+        """
         try:
             credits = await self._check_seller_credits(user.org_id)
             rfq_result = await self._fetch_seller_rfqs(user.org_id)
@@ -252,11 +260,10 @@ class SellerService:
             if not rfq_result.get("success"):
                 return await self._handle_rfq_fetch_error(user, session)
 
-            rfqs = rfq_result.get("rfqs")
-            credits_available= credits.get("credits_available")
+            rfqs = rfq_result.get("rfqs") or []
 
             # Check if seller still has credits
-            if credits_available <= 0:
+            if self._has_no_credits(credits):
                 return await self._handle_no_credits_response(user, session)
 
             # Extract RFQ IDs from message
@@ -264,6 +271,8 @@ class SellerService:
             logger.info(f"selected_rfqids:{selected_rfq_ids}")
 
             if not selected_rfq_ids:
+                if not allow_general_fallback:
+                    return await self._handle_invalid_rfq_selection(user, session, message, rfq_result)
                 # Check if user is asking for plan upgrade or other query
                 return await self._handle_general_seller_response(user, session, message)
 
@@ -361,11 +370,13 @@ class SellerService:
             elif intent_type == "rfq_access_request" and confidence > 0.7:
                 # Check if they have credits for RFQ access
 
-                if credits_available <= 0:
+                if self._has_no_credits(credits):
                     return await self._handle_no_credits_response(user, session)
                 else:
                     # They have credits, treat as RFQ selection attempt
-                    return await self._handle_rfq_selection_response(user, session, message)
+                    return await self._handle_rfq_selection_response(
+                        user, session, message, allow_general_fallback=False
+                    )
 
             elif intent_type == "rfq_status_check" and confidence > 0.7:
                 return await self.rfq_status_service.handle_rfq_status_inquiry(user, message, session)
@@ -459,10 +470,10 @@ class SellerService:
                 return await self._handle_plan_upgrade_request(user, session, message)
 
             elif any(keyword in last_bot_message for keyword in ["rfq", "details", "email"]):
-                # They're confirming RFQ access request
-                credits = await self._check_seller_credits(user.id)
-                credits_available = credits.get("credits_available")
-                if credits_available <= 0:
+                # They're confirming RFQ access request. Credits belong to the
+                # organisation, the same id every other credit check uses.
+                credits = await self._check_seller_credits(user.org_id)
+                if self._has_no_credits(credits):
                     return await self._handle_no_credits_response(user, session)
                 else:
                     # Treat as general RFQ interest, ask them to specify which RFQs
@@ -994,6 +1005,14 @@ class SellerService:
                     logger.info(f"mapped id:{mapped_ids}")
                     return mapped_ids[:self.settings.rfq_max_allowed]
 
+            # The list may not be the last bot message (an error reply came in
+            # between), so resolve the reply against the RFQs themselves before
+            # falling back to the language model.
+            listed_ids = self._match_listed_rfqs(message, seq_numbers, rfqs or [])
+            if listed_ids:
+                logger.info(f"matched listed RFQs:{listed_ids}")
+                return listed_ids[:self.settings.rfq_max_allowed]
+
             # Use the new OpenAI service method for RFQ ID extraction
             last_bot_content = last_bot_message.get("content", "") if last_bot_message else ""
             extraction_result = await self.openai_service.extract_rfq_ids_from_message(message, last_bot_content)
@@ -1016,12 +1035,41 @@ class SellerService:
         nums = re.findall(r"\b\d+\b", message)
         return [int(n) for n in nums if n.isdigit()]
 
+    @staticmethod
+    def _has_no_credits(credits_result: Dict[str, Any]) -> bool:
+        """True only when the credit check succeeded and reported no credits.
+
+        A failed check carries no balance at all. Reading it as a number made
+        ``None <= 0`` raise, which ended every RFQ download in the "technical
+        issue" reply. An unknown balance is not proof of zero credits, so the
+        request goes ahead and the forward call reports NO_CREDITS itself.
+        """
+        if credits_result.get("success") is False:
+            return False
+        return (credits_result.get("credits_available") or 0) <= 0
+
+    @staticmethod
+    def _match_listed_rfqs(message: str, seq_numbers: List[int], rfqs: List[Dict]) -> List[str]:
+        """Resolve a reply against the RFQs just listed, without the language model.
+
+        An RFQ ID typed out ("RFQ261311863724" or just its digits) is matched
+        first; otherwise a serial number picks the RFQ at that position, the same
+        order the list was shown in.
+        """
+        listed = [str(rfq.get("rfq_id")) for rfq in rfqs if rfq.get("rfq_id")]
+        typed = {digits for digits in re.findall(r"\d{6,}", message)}
+        by_id = [rfq_id for rfq_id in listed if re.sub(r"\D", "", rfq_id) in typed]
+        if by_id:
+            return by_id
+        return [listed[n - 1] for n in seq_numbers if 1 <= n <= len(listed)]
+
     def _map_sequence_to_rfq_ids(self, seq_numbers: List[int], bot_message: Dict) -> List[str]:
         """Map numbers like 1,2,3 to RFQ IDs extracted from last assistant message."""
         content = bot_message.get("content", "")
 
-        # Find lines containing: "1. RFQ250812508755"
-        matches = re.findall(r"\b(\d+)\. RFQ(\d{12})", content)
+        # Lines look like "1. *RFQ250812508755*": the ID is bold in WhatsApp, so
+        # the asterisks are optional.
+        matches = re.findall(r"\b(\d+)\.\s*\*?RFQ(\d{12})", content)
 
         seq_map = {int(idx): f"RFQ{rfq_id}" for idx, rfq_id in matches}
 
@@ -1165,6 +1213,39 @@ class SellerService:
         return {
             "success": False,
             "workflow_step": "invalid_rfq_selection",
+            "message": response_message,
+            "message_already_sent": False
+        }
+
+    async def _handle_rfq_selection_prompt(self, user: User, session: ConversationSession) -> Dict[str, Any]:
+        """Ask a seller who said "yes" to RFQ access which RFQs they want.
+
+        Shows the current list again, so the reply can be a serial number or an
+        RFQ ID, and keeps the session on the RFQ view so that reply is read as a
+        selection.
+        """
+        rfq_result = await self._fetch_seller_rfqs(user.org_id)
+        if not rfq_result.get("success"):
+            return await self._handle_rfq_fetch_error(user, session)
+
+        rfqs = rfq_result.get("rfqs") or []
+        total_count = rfq_result.get("total_count", 0)
+        if not rfqs or total_count == 0:
+            response_message = "You don't have any RFQs available at the moment to request."
+        else:
+            credits_result = await self._check_seller_credits(user.org_id)
+            rfq_display = self._generate_hardcoded_rfq_display(
+                rfqs, total_count, credits_result.get("credits_available") or 0, skip_intro=True
+            )
+            response_message = f"Please choose the RFQ you would like to download.\n\n{rfq_display}"
+
+        session.workflow_state = session.workflow_state or {}
+        session.workflow_state["seller_workflow_state"] = "awaiting_rfq_selection"
+        await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
+
+        return {
+            "success": True,
+            "workflow_step": "rfq_selection_prompt",
             "message": response_message,
             "message_already_sent": False
         }

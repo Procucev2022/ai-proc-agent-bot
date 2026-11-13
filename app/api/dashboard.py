@@ -10,7 +10,9 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import time
+from datetime import datetime
 from typing import Literal, Optional
 from fastapi import APIRouter, Request, Query, Depends, Header, Cookie, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse, Response
@@ -173,6 +175,58 @@ async def export_user_classification_csv(
             content={"status": "error", "message": "Failed to export CSV"}
         )
 
+
+
+CHAT_EXPORT_PRESETS = {"all", "today", "yesterday", "7d", "30d", "90d", "custom"}
+
+
+@router.get("/export-chat-history-csv")
+async def export_chat_history_csv(
+    date_preset: str = Query("all", description="all, today, yesterday, 7d, 30d, 90d, custom"),
+    start_date: Optional[str] = Query(None, description="YYYY-MM-DD, required for custom"),
+    end_date: Optional[str] = Query(None, description="YYYY-MM-DD, required for custom"),
+    phone: Optional[str] = Query(None, description="One user's phone number; omit for all users"),
+):
+    """
+    Download WhatsApp chat history as CSV, for all users or one user, for any past period.
+    """
+    if date_preset not in CHAT_EXPORT_PRESETS:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Unknown date range"})
+    if date_preset == "custom":
+        try:
+            first = datetime.strptime(start_date or "", "%Y-%m-%d")
+            last = datetime.strptime(end_date or "", "%Y-%m-%d")
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Choose a valid From and To date (YYYY-MM-DD)"},
+            )
+        if first > last:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "From date must be on or before To date"},
+            )
+
+    try:
+        service = DashboardAggregationService()
+        csv_content = await service.export_chat_history_csv(
+            date_preset=date_preset,
+            start_date_str=start_date,
+            end_date_str=end_date,
+            phone=phone,
+        )
+    except Exception as e:
+        logger.error(f"[DASHBOARD_API] Error exporting chat history: {e}", exc_info=True)
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Failed to export chat history"})
+
+    who = re.sub(r"\D", "", phone or "") or "all_users"
+    period = f"{start_date}_to_{end_date}" if date_preset == "custom" else date_preset
+    filename = f"chat_history_{who}_{period}.csv"
+    return Response(
+        content=csv_content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/user-classification-details")
