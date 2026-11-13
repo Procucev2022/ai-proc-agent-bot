@@ -811,17 +811,16 @@ async def test_openai_lifecycle_prompt_history_and_intent_paths(monkeypatch, tmp
     monkeypatch.setattr(openai_mod, "AsyncOpenAI", lambda **kwargs: constructed)
     service._client = None
     assert service.client is constructed
-    service._client_closed = True
     assert service.client is constructed
-    await service.close()
-    constructed.close.side_effect = RuntimeError("close")
     await service.close()
     service._client = None
     service.close_sync()
     service._client = client
     service.close_sync()
     await service.__aexit__(None, None, None)
-    service._client_closed = False
+    constructed.close.assert_not_awaited()
+    client.close.assert_not_awaited()
+    service._client = client
     assert await service.__aenter__() is service
 
     service._track_openai_call("x", "phone")

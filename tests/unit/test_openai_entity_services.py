@@ -86,11 +86,11 @@ async def test_openai_constructor_client_lifecycle_helpers_and_prompt_loading(mo
     assert service.default_model == "d" and service.advanced_model == "a"
     assert service.client is constructed
     assert constructed.close.await_count == 0
-    service._client_closed = True
     assert service.client is constructed
+    # close()/close_sync() must never close the client other requests share.
     await service.close()
-    assert constructed.close.await_count == 1
     service.close_sync()
+    assert constructed.close.await_count == 0
     await service.__aexit__(None, None, None)
     assert await service.__aenter__() is service
 
