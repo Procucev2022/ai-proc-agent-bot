@@ -90,6 +90,21 @@ param equaServicePhone string = ''
 @description('Portal linked from bot messages on EQUA (optional)')
 param equaPortalUrl string = ''
 
+// Custom domains bound to the app's ingress. They were added in the portal, so they
+// must be declared here too: every deploy replaces the ingress block, and a domain
+// missing from it is unbound (the site stops answering on it).
+var customDomainByEnv = {
+  prod: {
+    name: 'whatsapp.procucev.com'
+    certName: 'whatsapp.procucev.com-cae-aipr-261027032154'
+  }
+  dev: {
+    name: 'whatsapp.procucev.xyz'
+    certName: 'whatsapp.procucev.xyz-cae-aipr-261023001915'
+  }
+}
+var customDomain = customDomainByEnv[?environment] ?? { name: '', certName: '' }
+
 // Container Apps Environment
 module environmentModule 'modules/container-apps-env.bicep' = {
   name: 'env-deployment'
@@ -148,6 +163,8 @@ module appModule 'modules/app-service.bicep' = {
     equaServiceUsername: equaServiceUsername
     equaServicePhone: equaServicePhone
     equaPortalUrl: equaPortalUrl
+    customDomainName: customDomain.name
+    customDomainCertName: customDomain.certName
   }
 }
 

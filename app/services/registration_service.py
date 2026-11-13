@@ -137,7 +137,7 @@ class RegistrationService:
             ai_entities = entity_result.get("entities") or {}
             if not any(v and str(v).strip() for v in ai_entities.values()):
                 local_entities = AuthenticationHelpers.parse_registration_details_locally(
-                    message_content, existing_entities
+                    message_content, existing_entities, user_type
                 )
                 if local_entities:
                     logger.warning(

@@ -108,6 +108,32 @@ def get_shared_openai_client(factory: Callable[[], AsyncOpenAI]) -> AsyncOpenAI:
     return client
 
 
+def _discard_shared_client(client: Any) -> None:
+    """Stop handing out ``client`` so the next call builds a fresh connection pool.
+
+    Used after a connection error. The client is deliberately not closed: other
+    requests may still be awaiting it, and it is released once they finish.
+    """
+    global _client_without_loop
+    for loop, shared in list(_clients_by_loop.items()):
+        if shared is client:
+            _clients_by_loop.pop(loop, None)
+    if _client_without_loop is client:
+        _client_without_loop = None
+
+
+def _describe_root_cause(exc: BaseException) -> str:
+    """Name the low-level error behind an SDK error such as "Connection error.".
+
+    The SDK's own message never says whether DNS, TLS, a reset or a closed event
+    loop was to blame, which is exactly what is needed to diagnose an outage.
+    """
+    cause = exc.__cause__ or exc.__context__
+    if cause is None:
+        return ""
+    return f" | cause={type(cause).__name__}: {cause}"
+
+
 async def close_all_openai_clients() -> None:
     """Close the shared clients this loop can reach. Call only at shutdown.
 
@@ -188,8 +214,11 @@ class OpenAIService:
                     logger.error(
                         f"[OPENAI] [TURN:{turn_id}] model={model} FAILED after "
                         f"{(time.perf_counter() - started) * 1000:.0f}ms: "
-                        f"{type(exc).__name__}: {exc}"
+                        f"{type(exc).__name__}: {exc}{_describe_root_cause(exc)}"
                     )
+                    if isinstance(exc, APIConnectionError):
+                        # A broken connection pool must not fail every later call too.
+                        _discard_shared_client(client)
                     raise
                 elapsed_ms = (time.perf_counter() - started) * 1000
                 usage = getattr(result, "usage", None)
