@@ -36,7 +36,7 @@ SUPPORTED_PLATFORMS = (QUA, EQUA)
 
 # Portal each platform's links point to by default (PROCUCEV_PORTAL_URL overrides both).
 QUA_PORTAL_URL = "https://p2pdevuiindia.azurewebsites.net/login"
-EQUA_PORTAL_URL = "https://equa.procucev.com/login"
+EQUA_PORTAL_URL = "https://qua.procucev.com/login"
 
 # Header the EQUA bridge authenticates the bot with.
 BOT_API_KEY_HEADER = "X-Bot-Api-Key"

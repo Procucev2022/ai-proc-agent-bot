@@ -95,19 +95,16 @@ async def test_lifecycle_helpers_notifications_prompts_and_message_shapes(monkey
     obj._client = None
     assert obj.client is constructed
     assert obj.client is constructed
-    obj._client_closed = True
-    assert obj.client is constructed
     await obj.close()
-    assert constructed.close.await_count == 1
-    constructed.close.side_effect = RuntimeError('close')
-    await obj.close()
+    assert constructed.close.await_count == 0
     obj._client = None
     obj.close_sync()
 
     obj._client = client
     client.close.side_effect = None
     obj.close_sync()
-    assert obj._client_closed
+    assert obj._client is None
+    client.close.assert_not_called()
     await obj.__aexit__(None, None, None)
     assert await obj.__aenter__() is obj
     obj._client = None
@@ -425,7 +422,6 @@ async def test_excel_seller_learning_and_selection_methods(monkeypatch, service)
     client.responses.create.side_effect = RuntimeError('three')
     assert not (await obj.generate_3_level_categorization('x', []))['success']
     obj._client = client
-    obj._client_closed = False
     client.responses.create.side_effect = None
     client.responses.create.return_value = response({'is_valid': True, 'confidence_score': .8})
     assert (await obj.validate_learning_category('a', 'b', 'c', 'x'))['is_valid']

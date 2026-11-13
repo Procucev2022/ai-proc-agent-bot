@@ -121,6 +121,23 @@ def _whatsapp_rfq_creation_enabled_for_legacy_flow(monkeypatch):
         _set_flag(monkeypatch, env_name, True)
 
 
+def _reset_shared_openai_clients():
+    # Only touch the module if a test already imported it; importing it here
+    # would pull the whole service graph into every test.
+    module = sys.modules.get("app.services.openai_service")
+    if module is not None:
+        module._clients_by_loop.clear()
+        module._client_without_loop = None
+
+
+@pytest.fixture(autouse=True)
+def _isolated_shared_openai_clients():
+    """Keep one test's (mock) shared OpenAI client from leaking into the next."""
+    _reset_shared_openai_clients()
+    yield
+    _reset_shared_openai_clients()
+
+
 @pytest.fixture
 def whatsapp_rfq_creation_disabled(monkeypatch):
     """Restore the production default: RFQ creation on WhatsApp is disabled."""

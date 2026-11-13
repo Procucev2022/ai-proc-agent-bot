@@ -74,21 +74,13 @@ async def test_lifecycle_image_messages_and_surviving_prompt_loader(monkeypatch,
     obj._client = None
     await obj.close()
 
+    # close_sync() only drops the reference; it must not close a client that
+    # other requests may be using.
     obj._client = client
-    run_arguments = []
-
-    def no_event_loop():
-        raise RuntimeError("no event loop")
-
-    def fake_run(coroutine):
-        run_arguments.append(coroutine)
-        coroutine.close()
-
-    monkeypatch.setattr(asyncio, "get_event_loop", no_event_loop)
-    monkeypatch.setattr(asyncio, "run", fake_run)
     obj.close_sync()
-    assert obj._client_closed is True
-    assert len(run_arguments) == 1
+    assert obj._client is None
+    client.close.assert_not_called()
+    obj._client = client
 
     assert obj._build_messages_with_history(None, '{"mime_type":"image/png"}') == [
         {"role": "user", "content": "User sent an image attachment"}

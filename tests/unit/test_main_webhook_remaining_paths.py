@@ -457,6 +457,9 @@ async def test_main_lifespan_success_startup_and_shutdown(monkeypatch):
     api_close = AsyncMock()
     monkeypatch.setattr(api_client, "init_procucev_api_client", api_init)
     monkeypatch.setattr(api_client, "close_procucev_api_client", api_close)
+    import app.services.openai_service as openai_service
+    openai_close = AsyncMock()
+    monkeypatch.setattr(openai_service, "close_all_openai_clients", openai_close)
 
     queue = MagicMock()
     queue._background_tasks = []
@@ -497,6 +500,7 @@ async def test_main_lifespan_success_startup_and_shutdown(monkeypatch):
 
     api_init.assert_awaited_once()
     api_close.assert_awaited_once()
+    openai_close.assert_awaited_once()
     queue.shutdown.assert_awaited_once()
     monitor.stop_monitoring.assert_awaited_once()
     timeout.stop_monitoring.assert_awaited_once()
@@ -532,6 +536,8 @@ async def test_main_lifespan_shutdown_timeout_errors_and_open_session(monkeypatc
     import app.procucev_apis.procucev_api_client as api_client
     monkeypatch.setattr(api_client, "init_procucev_api_client", AsyncMock())
     monkeypatch.setattr(api_client, "close_procucev_api_client", AsyncMock(side_effect=RuntimeError("close api")))
+    import app.services.openai_service as openai_service
+    monkeypatch.setattr(openai_service, "close_all_openai_clients", AsyncMock(side_effect=RuntimeError("close openai")))
 
     queue = MagicMock()
     queue.run_batch_poller = lambda: _awaitable()
