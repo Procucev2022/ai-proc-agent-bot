@@ -622,6 +622,32 @@ class TestRegistrationPublicMethods:
         assert result["collected_entities"] == {}
 
     @pytest.mark.asyncio
+    async def test_seller_registration_keeps_products_when_ai_fails(self, registration_service):
+        """Production 13 Nov: OpenAI down, the product ("Cable", then "laptop") was dropped
+        and the seller was asked for products and services again and again."""
+        registration_service._test_entity.extract_entities.return_value = {"products": [], "success": False}
+        registration_service._check_exit_command = AsyncMock(return_value=False)
+        registration_service.authentication_helpers.validate_entities = AsyncMock(side_effect=lambda e, _s: (e, None))
+        registration_service._send_confirmation_with_buttons = AsyncMock()
+        location = AsyncMock(return_value={"city": "Bengaluru", "state": "Karnataka"})
+
+        message = "Rohit Hukkeri , AY Pvt Ltd , iam@yahoo.com , 560045 , 22AAAAA0000A1Z5 , Cable"
+        with patch.object(registration_module, "get_location_from_pincode_async", new=location):
+            result = await registration_service.handle_registration_data_collection(
+                PHONE, message, make_session({"user_type": "seller"})
+            )
+        assert result["status"] == "awaiting_confirmation"
+        assert result["collected_entities"]["details"] == "Cable"
+
+        # The follow-up answer when products was the only field still missing.
+        collected = {k: v for k, v in result["collected_entities"].items() if k != "details"}
+        session = make_session({"user_type": "seller", "registration_entities": collected})
+        with patch.object(registration_module, "get_location_from_pincode_async", new=location):
+            result = await registration_service.handle_registration_data_collection(PHONE, "laptop", session)
+        assert result["status"] == "awaiting_confirmation"
+        assert result["collected_entities"]["details"] == "laptop"
+
+    @pytest.mark.asyncio
     async def test_registration_confirmation_yes_no_unknown_exit(self, registration_service, auth_dependencies):
         session = make_session({"user_type": "buyer", "registration_entities": valid_buyer_entities()})
         registration_service._submit_registration = AsyncMock(return_value={"status": "registration_completed"})
@@ -1021,3 +1047,56 @@ def test_parse_registration_details_locally(message, existing, expected):
     from app.services.helpers.authentication_helpers import AuthenticationHelpers
 
     assert AuthenticationHelpers.parse_registration_details_locally(message, existing) == expected
+
+
+_SELLER_SO_FAR = {
+    "name": "Rohit Hukkeri", "companyName": "Ay Pvt Ltd", "email": "x@yahoo.com",
+    "zipCode": "560045", "gstin": "22AAAAA0000A1Z5",
+}
+
+
+@pytest.mark.parametrize(
+    ("message", "existing", "expected_details"),
+    [
+        # Production case: AI down, all seller fields in one message, product last.
+        ("Rohit Hukkeri , AY Pvt Ltd , x@yahoo.com , 560045 , 22AAAAA0000A1Z5 , Cable", None, "Cable"),
+        # Production case: the follow-up answer once products is the only gap.
+        ("laptop", _SELLER_SO_FAR, "laptop"),
+        ("  Copper wires and cables ", _SELLER_SO_FAR, "Copper wires and cables"),
+        # Nothing unmatched is left over, so nothing is guessed.
+        ("Rohit Hukkeri, AY Pvt Ltd, x@yahoo.com, 560045", None, None),
+        # Two unmatched parts (a city and a product) are ambiguous.
+        ("Rohit Hukkeri, AY Pvt Ltd, Mumbai, x@yahoo.com, Cable", None, None),
+        # The unmatched part is not the last one, so it is not the product answer.
+        ("Rohit Hukkeri, AY Pvt Ltd, Cable, x@yahoo.com", None, None),
+        # A bare reply while other fields are missing could be a name, not a product.
+        ("laptop", {"name": "Rohit Hukkeri"}, None),
+        ("laptop", None, None),
+        # Chatter, numbers and pattern matches are never the product.
+        ("yes", _SELLER_SO_FAR, None),
+        ("Thanks!", _SELLER_SO_FAR, None),
+        ("12345", _SELLER_SO_FAR, None),
+        ("x@yahoo.com", _SELLER_SO_FAR, None),
+        # Products already collected are not overwritten.
+        ("laptop", {**_SELLER_SO_FAR, "details": "Cable"}, None),
+    ],
+)
+def test_parse_registration_details_locally_recovers_seller_products(message, existing, expected_details):
+    from app.services.helpers.authentication_helpers import AuthenticationHelpers
+
+    result = AuthenticationHelpers.parse_registration_details_locally(message, existing, "seller")
+    assert result.get("details") == expected_details
+
+
+def test_parse_registration_details_locally_caps_seller_products_length():
+    from app.services.helpers.authentication_helpers import AuthenticationHelpers
+
+    result = AuthenticationHelpers.parse_registration_details_locally("a" * 500, _SELLER_SO_FAR, "seller")
+    assert len(result["details"]) == 300
+
+
+def test_parse_registration_details_locally_buyer_never_sets_details():
+    from app.services.helpers.authentication_helpers import AuthenticationHelpers
+
+    message = "Rohit Hukkeri , AY Pvt Ltd , x@yahoo.com , 560045 , Cable"
+    assert "details" not in AuthenticationHelpers.parse_registration_details_locally(message, None, "buyer")
