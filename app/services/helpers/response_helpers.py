@@ -343,7 +343,7 @@ class ResponseHelpers:
         """Generate error response."""
         return await self._generate_common_seller_response(
             context.get("workflow_state", "error"), "error_handling", context,
-            f"I apologize for the technical issue. Please try again or contact {self.settings.support_email} for assistance."
+            f"Sorry, I couldn't complete that just now. Please try again, or contact {self.settings.support_email} for assistance."
         )
 
     async def _generate_fallback_seller_response(self, context: Dict[str, Any]) -> str:

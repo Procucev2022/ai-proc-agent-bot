@@ -642,6 +642,10 @@ class WhatsAppService:
             combined_body = sanitize_text(combined_body)
             if header:
                 header = sanitize_text(header)
+            # WhatsApp rejects an interactive message with an empty body and the
+            # user gets no reply at all; promote the header rather than send nothing.
+            if not (combined_body or "").strip():
+                combined_body, header = (header or "How can I help you?"), None
             if footer:
                 footer = sanitize_text(footer)
 

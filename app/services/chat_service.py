@@ -3212,9 +3212,10 @@ class ChatService:
             # Get user role for appropriate menu
             user_role = user.role.value if hasattr(user.role, 'value') else user.role
             
-            # Create support message with contact info
-            support_message = ""
-            
+            # WhatsApp rejects a button message whose body is empty, so the
+            # contact details have to be the body.
+            support_message = f"For any help or queries, please reach our support team at *{support_contact}*."
+
             # Role-based button configuration
             if user_role == "buyer":
                 buttons_config = self._get_buyer_menu_buttons()
