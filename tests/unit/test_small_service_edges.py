@@ -164,8 +164,8 @@ async def test_rfq_service_seller_list_and_error_branches(rfq_service):
     with pytest.raises(RuntimeError, match="api down"):
         await service.process_rfq_status_request(SimpleNamespace(role="buyer", id="b", org_id="o", email="e"), "x")
 
-    with pytest.raises(UnboundLocalError):
-        await service.process_rfq_status_request(SimpleNamespace(role="unknown", id="b", org_id="o", email="e"), "x")
+    result = await service.process_rfq_status_request(SimpleNamespace(role="unknown", id="b", org_id="o", email="e"), "x")
+    assert "couldn't fetch your RFQ status" in result["response_message"]
 
 
 @pytest.fixture
