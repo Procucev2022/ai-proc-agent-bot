@@ -1582,7 +1582,7 @@ Analyze their response to determine their true choice.
             """
         try:
             # Build prompt inline
-            prompt = f"User context: {json.dumps(context)}\n\n"
+            prompt = f"User context: {json.dumps(context, default=str)}\n\n"
             prompt += "Generate an appropriate response for the user based on their context and any available results."
 
             # Select prompt based on user role
