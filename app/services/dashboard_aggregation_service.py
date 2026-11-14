@@ -1382,13 +1382,25 @@ class DashboardAggregationService:
             logger.error(f"[DASHBOARD] get_daily_visitors error: {e}")
             return days
 
-    async def get_today_conversations(self) -> List[Dict[str, Any]]:
+    async def get_today_conversations(
+        self,
+        start_date_str: Optional[str] = None,
+        end_date_str: Optional[str] = None,
+        phone: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
-        Retrieve all conversations from today, aggregated by unique user phone number.
+        Retrieve conversations aggregated by unique user phone number.
         Merges MySQL persistent sessions with live active Redis sessions for real-time accuracy.
+
+        With no arguments this is today's list. ``start_date_str``/``end_date_str``
+        (YYYY-MM-DD, read as IST calendar days like the chat download) narrow it to
+        that range, counting and previewing only the messages sent in it, and
+        ``phone`` narrows it to one user.
         """
         now = datetime.now(timezone.utc)
         today_start_naive = datetime(now.year, now.month, now.day, 0, 0, 0)
+        day_range = _ist_day_range(start_date_str, end_date_str) if (start_date_str or end_date_str) else None
+        only_norm = _normalize_export_phone(phone) if (phone or "").strip() else None
 
         def _norm_phone(p: str) -> str:
             raw = str(p or "").lstrip("+").replace(" ", "").replace("-", "").strip()
@@ -1434,15 +1446,30 @@ class DashboardAggregationService:
 
         # 2. Query MySQL sessions
         def _query_db(db: Session) -> List[ConversationSession]:
-            return (
-                db.query(ConversationSession)
-                .filter(
+            if day_range is not None:
+                range_start, range_end = day_range
+                # Sessions overlapping the range; their messages are filtered by time below.
+                conditions = [
+                    ConversationSession.created_at <= range_end.replace(tzinfo=None),
+                    func.coalesce(ConversationSession.last_activity_at, ConversationSession.created_at)
+                    >= range_start.replace(tzinfo=None),
+                ]
+            else:
+                conditions = [
                     or_(
                         ConversationSession.created_at >= today_start_naive,
                         ConversationSession.last_activity_at >= today_start_naive,
-                    ),
-                    ConversationSession.external_user_id.isnot(None)
+                    )
+                ]
+            conditions.append(ConversationSession.external_user_id.isnot(None))
+            if only_norm:
+                conditions.append(
+                    ConversationSession.external_user_id.in_(_export_phone_variants((phone or "").strip(), only_norm))
                 )
+            # One filter() call, built exactly as before when no range or phone is given.
+            return (
+                db.query(ConversationSession)
+                .filter(*conditions)
                 .order_by(ConversationSession.created_at.asc())
                 .all()
             )
@@ -1473,7 +1500,7 @@ class DashboardAggregationService:
 
             processed_session_ids.add(s.session_id)
             history = s.conversation_history if isinstance(s.conversation_history, dict) else {}
-            messages = history.get("messages", [])
+            messages = _messages_in_range(history.get("messages", []), day_range, s.started_at or s.created_at)
             s_msgs_count = len(messages)
 
             u_type = s.user_type.value if hasattr(s.user_type, "value") else str(s.user_type or "unknown")
@@ -1515,12 +1542,14 @@ class DashboardAggregationService:
         for rs in redis_sessions:
             r_phone = str(rs.get("external_user_id") or "").strip()
             r_norm = _norm_phone(r_phone)
-            if not r_norm:
+            if not r_norm or (only_norm and r_norm != only_norm):
                 continue
 
             r_sid = rs.get("session_id")
             r_history = rs.get("conversation_history") if isinstance(rs.get("conversation_history"), dict) else {}
-            r_messages = r_history.get("messages", [])
+            r_messages = _messages_in_range(
+                r_history.get("messages", []), day_range, rs.get("started_at") or rs.get("last_activity_at")
+            )
             r_type = rs.get("user_type") or "unknown"
             r_outcome = rs.get("outcome") or ""
             r_last_active = rs.get("last_activity_at") or rs.get("started_at")
@@ -1589,13 +1618,23 @@ class DashboardAggregationService:
         result.sort(key=lambda u: u.get("last_activity_at") or "", reverse=True)
         return result
 
-    async def get_conversation_messages(self, phone: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
+    async def get_conversation_messages(
+        self,
+        phone: Optional[str] = None,
+        session_id: Optional[str] = None,
+        start_date_str: Optional[str] = None,
+        end_date_str: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Fetch and combine the full message history across all sessions for a user/session,
         merging MySQL persistent sessions with live active Redis sessions.
+
+        ``start_date_str``/``end_date_str`` (YYYY-MM-DD, IST days) keep only the
+        messages sent in that range; without them every message is returned.
         """
         if not phone and not session_id:
             return {"status": "error", "message": "Phone number or session_id is required", "messages": []}
+        day_range = _ist_day_range(start_date_str, end_date_str) if (start_date_str or end_date_str) else None
 
         def _norm_phone(p: str) -> str:
             raw = str(p or "").lstrip("+").replace(" ", "").replace("-", "").strip()
@@ -1699,7 +1738,7 @@ class DashboardAggregationService:
                 if len(r_msgs) >= len(msgs):
                     msgs = r_msgs
 
-            raw_messages.extend(msgs)
+            raw_messages.extend(_messages_in_range(msgs, day_range, s.started_at or s.created_at))
 
         # Add any active Redis sessions not yet in MySQL
         for rs in redis_sessions:
@@ -1720,7 +1759,9 @@ class DashboardAggregationService:
                     started_time = rs.get("started_at")
 
                 r_history = rs.get("conversation_history") if isinstance(rs.get("conversation_history"), dict) else {}
-                raw_messages.extend(r_history.get("messages", []))
+                raw_messages.extend(_messages_in_range(
+                    r_history.get("messages", []), day_range, rs.get("started_at") or rs.get("last_activity_at")
+                ))
 
         def _extract_str(val: Any) -> Optional[str]:
             if val is None:
@@ -2007,6 +2048,39 @@ def _parse_message_time(value: Any) -> Optional[datetime]:
     else:
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _message_in_range(
+    message: Any,
+    day_range: Optional[Tuple[datetime, datetime]],
+    session_started: Any = None,
+) -> bool:
+    """Whether a stored message was sent inside ``day_range`` (UTC bounds).
+
+    A message without its own time is placed at its session's start, as the chat
+    download does. With neither time it cannot be placed, so it is kept rather
+    than silently hidden from the viewer.
+    """
+    if day_range is None:
+        return True
+    if not isinstance(message, dict):
+        return False
+    sent_at = _parse_message_time(message.get("timestamp")) or _parse_message_time(session_started)
+    if sent_at is None:
+        return True
+    return day_range[0] <= sent_at <= day_range[1]
+
+
+def _messages_in_range(
+    messages: Any,
+    day_range: Optional[Tuple[datetime, datetime]],
+    session_started: Any = None,
+) -> List[Any]:
+    """The messages of one session sent inside ``day_range`` (all of them without a range)."""
+    msgs = list(messages) if isinstance(messages, list) else []
+    if day_range is None:
+        return msgs
+    return [m for m in msgs if _message_in_range(m, day_range, session_started)]
 
 
 def _history_messages(history: Any) -> List[Any]:

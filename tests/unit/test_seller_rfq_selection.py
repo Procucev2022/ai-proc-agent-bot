@@ -125,6 +125,21 @@ async def test_serial_number_outside_the_list_is_left_to_the_language_model():
 
 
 @pytest.mark.asyncio
+async def test_processing_acknowledgement_is_sent_before_the_rfq_is_forwarded():
+    service = make_service()
+    order = []
+    service.whatsapp_service.send_message = AsyncMock(side_effect=lambda *a, **k: order.append("ack"))
+    service.seller_api_service.send_rfq_email = AsyncMock(
+        side_effect=lambda **k: order.append("forward") or FORWARD_OK)
+
+    result = await service._handle_rfq_selection_response(USER, make_session(listing(service)), "1")
+
+    assert order == ["ack", "forward"]
+    service.whatsapp_service.send_message.assert_awaited_once_with(USER.phone_number, "<rfq_email_processing>")
+    assert result["message"] == "<rfq_email_status_with_errors>"
+
+
+@pytest.mark.asyncio
 async def test_failed_credit_check_still_downloads_instead_of_raising():
     service = make_service(credits={"success": False, "error": "timeout"})
 
