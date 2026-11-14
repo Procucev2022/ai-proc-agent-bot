@@ -366,14 +366,46 @@ async def get_daily_visitors(
         return JSONResponse(status_code=500, content={"status": "error", "message": "Dashboard request failed"})
 
 
+def _invalid_chat_range(start_date: Optional[str], end_date: Optional[str]) -> Optional[JSONResponse]:
+    """A 400 response when an optional From/To pair is incomplete or invalid, else None."""
+    if not start_date and not end_date:
+        return None
+    try:
+        first = datetime.strptime(start_date or "", "%Y-%m-%d")
+        last = datetime.strptime(end_date or "", "%Y-%m-%d")
+    except ValueError:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Choose a valid From and To date (YYYY-MM-DD)"},
+        )
+    if first > last:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "From date must be on or before To date"},
+        )
+    return None
+
+
 @router.get("/today-conversations")
-async def get_today_conversations():
+async def get_today_conversations(
+    start_date: Optional[str] = Query(None, description="YYYY-MM-DD (IST); omit both dates for today"),
+    end_date: Optional[str] = Query(None, description="YYYY-MM-DD (IST); omit both dates for today"),
+    phone: Optional[str] = Query(None, description="One user's phone number; omit for all users"),
+):
     """
-    Return the list of users who visited or interacted today for the live chat viewer.
+    Return the users who chatted in the chosen range (today by default) for the live chat viewer.
     """
+    invalid = _invalid_chat_range(start_date, end_date)
+    if invalid is not None:
+        return invalid
     try:
         service = DashboardAggregationService()
-        conversations = await service.get_today_conversations()
+        if start_date or end_date or phone:
+            conversations = await service.get_today_conversations(
+                start_date_str=start_date, end_date_str=end_date, phone=phone
+            )
+        else:
+            conversations = await service.get_today_conversations()
         return JSONResponse(content={"status": "success", "data": conversations})
     except Exception as e:
         logger.error(f"[DASHBOARD_API] Error fetching today conversations: {e}", exc_info=True)
@@ -384,13 +416,24 @@ async def get_today_conversations():
 async def get_conversation_messages(
     phone: Optional[str] = Query(None, description="User phone number"),
     session_id: Optional[str] = Query(None, description="Specific session ID"),
+    start_date: Optional[str] = Query(None, description="YYYY-MM-DD (IST); omit both dates for every message"),
+    end_date: Optional[str] = Query(None, description="YYYY-MM-DD (IST); omit both dates for every message"),
 ):
     """
-    Return the full interactive chat message history for the selected user/session.
+    Return the interactive chat message history for the selected user/session,
+    optionally only the messages sent in a date range.
     """
+    invalid = _invalid_chat_range(start_date, end_date)
+    if invalid is not None:
+        return invalid
     try:
         service = DashboardAggregationService()
-        result = await service.get_conversation_messages(phone=phone, session_id=session_id)
+        if start_date or end_date:
+            result = await service.get_conversation_messages(
+                phone=phone, session_id=session_id, start_date_str=start_date, end_date_str=end_date
+            )
+        else:
+            result = await service.get_conversation_messages(phone=phone, session_id=session_id)
         return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"[DASHBOARD_API] Error fetching conversation messages: {e}", exc_info=True)

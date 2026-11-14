@@ -950,11 +950,37 @@
             box-shadow: 0 2px 8px rgba(5, 150, 105, 0.25);
         }
         .chat-export-btn:disabled { opacity: 0.6; cursor: wait; }
+        .chat-range-chips { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
+        .chat-range-chip {
+            border: 1px solid #cbd5e1;
+            background: #ffffff;
+            color: #334155;
+            border-radius: 999px;
+            padding: 5px 12px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .chat-range-chip:hover { border-color: #059669; color: #047857; }
+        .chat-range-chip.active { background: #ecfdf5; border-color: #059669; color: #047857; }
+        .chat-apply-btn {
+            height: 36px;
+            background: #0f172a;
+            color: #ffffff;
+            border: none;
+            border-radius: 8px;
+            padding: 0 16px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .chat-apply-btn.pending { box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.35); }
+        .chat-apply-btn:disabled { opacity: 0.6; cursor: wait; }
         .chat-export-hint { font-size: 11px; color: var(--text-dim); flex-basis: 100%; }
         .chat-export-hint.error { color: #dc2626; font-weight: 600; }
         @media (max-width: 640px) {
             .chat-export-bar { padding: 12px 16px; }
-            .chat-export-field, .chat-export-field input[type="text"], .chat-export-btn { width: 100%; }
+            .chat-export-field, .chat-export-field input[type="text"], .chat-export-btn, .chat-apply-btn { width: 100%; }
         }
 
         .chat-viewer-title-box {
@@ -1736,7 +1762,7 @@
                     <div class="chat-viewer-icon">💬</div>
                     <div>
                         <h2>Live WhatsApp Conversations <span class="period-pill" style="background:#ecfdf5; color:#059669;" id="chat-users-count-pill">0 Users Today</span></h2>
-                        <p>Real-time conversation stream for today's visitors</p>
+                        <p id="chat-viewer-subtitle">Real-time conversation stream for today's visitors</p>
                     </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:12px;">
@@ -1746,22 +1772,36 @@
                 </div>
             </div>
 
-            <!-- Download chat history: any past date range, all users or one user -->
+            <!-- Filter the live chat list (date range + phone), then view or download exactly that -->
             <div class="chat-export-bar" id="chat-export-bar">
+                <div class="chat-range-chips" id="chat-range-chips" role="group" aria-label="Quick date range">
+                    <button type="button" class="chat-range-chip active" data-range="today" onclick="pickChatRange('today')">Today</button>
+                    <button type="button" class="chat-range-chip" data-range="yesterday" onclick="pickChatRange('yesterday')">Yesterday</button>
+                    <button type="button" class="chat-range-chip" data-range="7d" onclick="pickChatRange('7d')">Last 7 days</button>
+                    <button type="button" class="chat-range-chip" data-range="30d" onclick="pickChatRange('30d')">Last 30 days</button>
+                    <button type="button" class="chat-range-chip" data-range="all" onclick="pickChatRange('all')">All dates</button>
+                </div>
                 <label class="chat-export-field">From
-                    <input type="date" id="chat-export-from" />
+                    <input type="date" id="chat-export-from" onchange="onChatDateTyped()" />
                 </label>
                 <label class="chat-export-field">To
-                    <input type="date" id="chat-export-to" />
+                    <input type="date" id="chat-export-to" onchange="onChatDateTyped()" />
                 </label>
                 <label class="chat-export-field">Phone number (optional)
-                    <input type="text" id="chat-export-phone" placeholder="All users" inputmode="tel" />
+                    <input type="text" id="chat-export-phone" placeholder="All users" inputmode="tel"
+                           onkeydown="if (event.key === 'Enter') applyChatFilter()" />
                 </label>
+                <button type="button" class="chat-apply-btn" id="btn-apply-chat-filter" onclick="applyChatFilter()">
+                    ✓ Apply
+                </button>
+                <button type="button" class="chart-filter-btn" id="btn-reset-chat-filter" onclick="resetChatFilter()" title="Back to today's live conversations">
+                    Reset
+                </button>
                 <button type="button" class="chat-export-btn" id="btn-export-chat-history" onclick="downloadChatHistory()">
                     📥 Download Chat History
                 </button>
                 <span class="chat-export-hint" id="chat-export-hint">
-                    Leave the dates empty to download every date. Leave the phone number empty to download all users. Times are in IST.
+                    Pick a range and press Apply to see those chats below. Download saves exactly what is applied. Times are in IST.
                 </span>
             </div>
 
@@ -1806,7 +1846,7 @@
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px;">
                                 <span style="font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--text-dim);" id="active-chat-session-id"></span>
-                                <button type="button" class="chart-filter-btn" onclick="downloadSelectedUserChat()" title="Download this user's full chat history (all dates)">
+                                <button type="button" class="chart-filter-btn" onclick="downloadSelectedUserChat()" title="Download this user's chat for the applied date range">
                                     📥 Download chat
                                 </button>
                             </div>
@@ -2055,7 +2095,7 @@
             refreshTimer = setTimeout(() => {
                 refreshTimer = null;
                 fetchDashboardData();
-                fetchTodayConversations();
+                refreshLiveConversations();
             }, 250);
         }
 
@@ -2314,17 +2354,193 @@
             return text;
         }
 
-        async function fetchTodayConversations() {
+        // ---- Applied chat filter: what the list shows and what Download saves ----
+        // range 'today' with no phone is the original live view: the API is called
+        // without parameters and the list auto-refreshes. Any other filter is a
+        // snapshot fetched on Apply / Refresh, so long ranges are not re-queried
+        // every few seconds.
+        const CHAT_ALL_DATES_FROM = '2020-01-01';
+        let chatFilter = { range: 'today', from: '', to: '', phone: '' };
+
+        function localYMD(d) {
+            const pad = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+        }
+
+        function chatRangeDates(range) {
+            const today = new Date();
+            const daysAgo = n => { const d = new Date(today); d.setDate(d.getDate() - n); return localYMD(d); };
+            switch (range) {
+                case 'yesterday': return { from: daysAgo(1), to: daysAgo(1) };
+                case '7d': return { from: daysAgo(6), to: localYMD(today) };
+                case '30d': return { from: daysAgo(29), to: localYMD(today) };
+                case 'all': return { from: '', to: '' };
+                default: return { from: localYMD(today), to: localYMD(today) };
+            }
+        }
+
+        function formatShortDate(ymd) {
+            if (!ymd) return '';
+            const [y, m, d] = ymd.split('-').map(Number);
+            return new Date(y, m - 1, d).toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' });
+        }
+
+        function chatFilterLabel(filter) {
+            if (filter.range === 'today') return 'Today';
+            if (filter.range === 'all') return 'All dates';
+            if (filter.from === filter.to) return formatShortDate(filter.from);
+            return `${formatShortDate(filter.from)} – ${formatShortDate(filter.to)}`;
+        }
+
+        function isLiveChatFilter() {
+            return chatFilter.range === 'today' && !chatFilter.phone;
+        }
+
+        function setActiveChip(range) {
+            document.querySelectorAll('.chat-range-chip').forEach(chip => {
+                chip.classList.toggle('active', chip.dataset.range === range);
+            });
+        }
+
+        function markChatFilterPending(pending) {
+            document.getElementById('btn-apply-chat-filter')?.classList.toggle('pending', pending);
+        }
+
+        // Quick chips fill the dates; nothing is fetched until Apply.
+        function pickChatRange(range) {
+            const { from, to } = chatRangeDates(range);
+            document.getElementById('chat-export-from').value = from;
+            document.getElementById('chat-export-to').value = to;
+            setActiveChip(range);
+            markChatFilterPending(true);
+        }
+
+        // The quick range a From/To pair corresponds to, or 'custom' / 'all'.
+        function chatRangeFor(from, to) {
+            if (!from && !to) return 'all';
+            const preset = ['today', 'yesterday', '7d', '30d'].find(r => {
+                const d = chatRangeDates(r);
+                return d.from === from && d.to === to;
+            });
+            return preset || 'custom';
+        }
+
+        // Typing a date by hand turns the selection into a custom range.
+        function onChatDateTyped() {
+            const fromEl = document.getElementById('chat-export-from');
+            const toEl = document.getElementById('chat-export-to');
+            if (fromEl.value && !toEl.value) toEl.value = fromEl.value;
+            if (toEl.value && !fromEl.value) fromEl.value = toEl.value;
+            setActiveChip(chatRangeFor(fromEl.value, toEl.value));
+            markChatFilterPending(true);
+        }
+
+        // Read the inputs into a filter, or report why they are not valid.
+        function readChatFilterInputs() {
+            let from = document.getElementById('chat-export-from')?.value || '';
+            let to = document.getElementById('chat-export-to')?.value || '';
+            const phone = (document.getElementById('chat-export-phone')?.value || '').trim();
+            if (from && !to) to = from;
+            if (to && !from) from = to;
+            if (from && to && from > to) {
+                return { error: 'From date must be on or before To date.' };
+            }
+            return { filter: { range: chatRangeFor(from, to), from, to, phone } };
+        }
+
+        function chatListQuery(filter) {
+            if (filter.range === 'today' && !filter.phone) return '';
+            const params = new URLSearchParams();
+            const today = localYMD(new Date());
+            params.set('start_date', filter.from || (filter.range === 'all' ? CHAT_ALL_DATES_FROM : today));
+            params.set('end_date', filter.to || today);
+            if (filter.phone) params.set('phone', filter.phone);
+            return `?${params.toString()}`;
+        }
+
+        function chatMessagesQuery(filter) {
+            // The original view shows each user's whole history; a chosen range shows only that range.
+            if (filter.range === 'today' || filter.range === 'all') return '';
+            const params = new URLSearchParams({ start_date: filter.from, end_date: filter.to });
+            return `&${params.toString()}`;
+        }
+
+        function updateChatFilterHeader(count) {
+            const label = chatFilterLabel(chatFilter);
+            const pill = document.getElementById('chat-users-count-pill');
+            if (pill) {
+                const users = `${count} User${count === 1 ? '' : 's'}`;
+                pill.textContent = chatFilter.range === 'today' ? `${users} Today` : `${users} · ${label}`;
+            }
+            const subtitle = document.getElementById('chat-viewer-subtitle');
+            if (subtitle) {
+                const who = chatFilter.phone ? ` for ${chatFilter.phone}` : '';
+                subtitle.textContent = isLiveChatFilter()
+                    ? "Real-time conversation stream for today's visitors"
+                    : `Conversations${who} · ${label} (IST)`;
+            }
+        }
+
+        async function applyChatFilter() {
+            const { filter, error } = readChatFilterInputs();
+            if (error) {
+                setChatExportHint(error, true);
+                return false;
+            }
+            const changed = JSON.stringify(filter) !== JSON.stringify(chatFilter);
+            chatFilter = filter;
+            setActiveChip(filter.range);
+            markChatFilterPending(false);
+            setChatExportHint(CHAT_EXPORT_HINT);
+            if (changed) {
+                // A different filter starts a fresh selection.
+                selectedUserPhone = null;
+                showEmptyChatSelection();
+            }
+            const btn = document.getElementById('btn-apply-chat-filter');
+            if (btn) btn.disabled = true;
             try {
-                const res = await fetch('/api/dashboard/today-conversations');
-                if (!res.ok) return;
+                await fetchTodayConversations();
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+            return true;
+        }
+
+        function resetChatFilter() {
+            document.getElementById('chat-export-phone').value = '';
+            pickChatRange('today');
+            applyChatFilter();
+        }
+
+        function showEmptyChatSelection() {
+            const emptyEl = document.getElementById('chat-empty-selection');
+            const activeEl = document.getElementById('chat-active-view');
+            if (emptyEl) emptyEl.style.display = '';
+            if (activeEl) activeEl.style.display = 'none';
+        }
+
+        // Timers and live events refresh only the live (today) view.
+        function refreshLiveConversations() {
+            if (isLiveChatFilter()) fetchTodayConversations();
+        }
+
+        async function fetchTodayConversations() {
+            const filterAtRequest = chatFilter;
+            try {
+                const res = await fetch(`/api/dashboard/today-conversations${chatListQuery(filterAtRequest)}`);
+                if (!res.ok) {
+                    if (res.status === 400) {
+                        try { setChatExportHint((await res.json()).message || 'Invalid filter.', true); } catch (e) { /* not JSON */ }
+                    }
+                    return;
+                }
                 const json = await res.json();
+                // Ignore a response that arrived after the filter was changed again.
+                if (filterAtRequest !== chatFilter) return;
                 if (json.status === 'success' && Array.isArray(json.data)) {
                     todayUsersList = json.data;
-                    const pill = document.getElementById('chat-users-count-pill');
-                    if (pill) {
-                        pill.textContent = `${todayUsersList.length} User${todayUsersList.length === 1 ? '' : 's'} Today`;
-                    }
+                    updateChatFilterHeader(todayUsersList.length);
                     renderTodayUsers(todayUsersList);
 
                     // Auto-select first user if none is selected, or silently refresh currently open user
@@ -2365,7 +2581,7 @@
                 listEl.innerHTML = `
                     <div style="padding: 32px 16px; text-align: center; color: var(--text-dim); font-size: 13px;">
                         <span style="font-size: 24px; display: block; margin-bottom: 6px;">💬</span>
-                        No visitors recorded today yet.
+                        ${isLiveChatFilter() ? 'No visitors recorded today yet.' : 'No conversations match this filter.'}
                     </div>
                 `;
                 return;
@@ -2431,7 +2647,7 @@
             isFetchingMessages = true;
 
             try {
-                const url = `/api/dashboard/conversation-messages?phone=${encodeURIComponent(selectedUserPhone)}`;
+                const url = `/api/dashboard/conversation-messages?phone=${encodeURIComponent(selectedUserPhone)}${chatMessagesQuery(chatFilter)}`;
                 const res = await fetch(url);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
@@ -2490,8 +2706,28 @@
                 return;
             }
 
-            let html = '<div class="chat-date-pill">Today</div>';
+            // One date pill per day, so a multi-day range reads like WhatsApp does.
+            const dayLabel = (ts) => {
+                if (!ts) return null;
+                const d = new Date(ts);
+                if (isNaN(d.getTime())) return null;
+                const ymd = localYMD(d);
+                const now = new Date();
+                const yesterday = new Date(now);
+                yesterday.setDate(now.getDate() - 1);
+                if (ymd === localYMD(now)) return 'Today';
+                if (ymd === localYMD(yesterday)) return 'Yesterday';
+                return formatShortDate(ymd);
+            };
+            const firstLabel = messages.map(m => dayLabel(m.timestamp)).find(Boolean) || 'Today';
+            let html = `<div class="chat-date-pill">${firstLabel}</div>`;
+            let currentLabel = firstLabel;
             messages.forEach(msg => {
+                const label = dayLabel(msg.timestamp);
+                if (label && label !== currentLabel) {
+                    html += `<div class="chat-date-pill">${label}</div>`;
+                    currentLabel = label;
+                }
                 const isUser = (msg.role === 'user' || msg.sender === 'user');
                 const roleClass = isUser ? 'user' : 'assistant';
                 const timeStr = formatTimeAgo(msg.timestamp);
@@ -2545,7 +2781,7 @@
         }
 
         // ---- Chat history download (any past date, all users or one user) ----
-        const CHAT_EXPORT_HINT = 'Leave the dates empty to download every date. Leave the phone number empty to download all users. Times are in IST.';
+        const CHAT_EXPORT_HINT = 'Pick a range and press Apply to see those chats below. Download saves exactly what is applied. Times are in IST.';
 
         function setChatExportHint(text, isError = false) {
             const hint = document.getElementById('chat-export-hint');
@@ -2597,23 +2833,29 @@
             }
         }
 
-        function downloadChatHistory() {
-            const fromDate = document.getElementById('chat-export-from')?.value || '';
-            const toDate = document.getElementById('chat-export-to')?.value || '';
-            const phone = (document.getElementById('chat-export-phone')?.value || '').trim();
-            if (fromDate && toDate && fromDate > toDate) {
-                setChatExportHint('From date must be on or before To date.', true);
+        // Download applies the current inputs first, so the file always matches the list on screen.
+        async function downloadChatHistory() {
+            const { filter, error } = readChatFilterInputs();
+            if (error) {
+                setChatExportHint(error, true);
                 return;
             }
-            fetchChatExport(buildChatExportUrl(fromDate, toDate, phone), document.getElementById('btn-export-chat-history'));
+            if (JSON.stringify(filter) !== JSON.stringify(chatFilter)) {
+                if (!(await applyChatFilter())) return;
+            }
+            fetchChatExport(
+                buildChatExportUrl(chatFilter.from, chatFilter.to, chatFilter.phone),
+                document.getElementById('btn-export-chat-history')
+            );
         }
 
+        // The open conversation's chat, for the applied date range.
         function downloadSelectedUserChat() {
             if (!selectedUserPhone) {
                 setChatExportHint('Select a user first.', true);
                 return;
             }
-            fetchChatExport(buildChatExportUrl('', '', selectedUserPhone), null);
+            fetchChatExport(buildChatExportUrl(chatFilter.from, chatFilter.to, selectedUserPhone), null);
         }
 
         // Initial Load
@@ -2621,6 +2863,9 @@
             initDateInputs();
             fetchDashboardData();
             fetchDailyVisitors();
+            pickChatRange('today');
+            markChatFilterPending(false);
+            chatFilter = readChatFilterInputs().filter;
             fetchTodayConversations();
             connectSSE();
             
@@ -2685,7 +2930,7 @@
             // Polling schedules
             setInterval(fetchDashboardData, 10000);
             setInterval(fetchDailyVisitors, 30000);
-            setInterval(fetchTodayConversations, 8000);
+            setInterval(refreshLiveConversations, 8000);
         });
     </script>
 </body>
