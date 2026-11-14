@@ -69,11 +69,13 @@ class RFQService:
         rfq_service = RFQAPIService()
         seller_service = SellerAPIService()
 
-        if user.role == "buyer":
+        role = getattr(user.role, "value", user.role)
+        if role == "buyer":
             result = await rfq_service.get_rfq_status(client_id=user.id, rfq_ids=rfq_ids)
-        elif user.role == "seller":
+        elif role == "seller":
             result = await seller_service.check_seller_rfq_status(seller_id=user.org_id, rfq_ids=rfq_ids)
-
+        else:
+            result = {"success": False, "error": f"No RFQ status lookup for role {role!r}"}
 
         # Handle case where data might be a list or dict
         data = result.get("data", {})
@@ -81,6 +83,26 @@ class RFQService:
             rfq_data = data.get("data", [])
         else:
             rfq_data = data if isinstance(data, list) else []
+
+        status = "rfq_status_found" if rfq_ids else "recent_rfqs_found"
+
+        # Nothing to report: answer directly. Asking the language model here
+        # only added a way to fail, and its failure text ("technical issue")
+        # reached users who simply had no RFQs yet.
+        if result.get("success") is False or all(self._is_status_placeholder(row) for row in rfq_data):
+            if result.get("success") is False:
+                logger.warning(f"RFQ status lookup failed for {role}: {result.get('error')}")
+                response_message = self._rfq_status_unavailable_message()
+            elif rfq_ids:
+                response_message = self._rfq_status_not_found_message(rfq_ids)
+            else:
+                response_message = self._no_rfqs_message(role, user.email)
+            return {
+                "status": status,
+                "rfq_ids": rfq_ids or [],
+                "rfq_statuses": rfq_data,
+                "response_message": response_message,
+            }
 
         # Step 3: Prepare context for AI message generation
         context = {
@@ -100,11 +122,72 @@ class RFQService:
             context=context
         )
         logger.info(f"user role while checking rfq status:{user.role}")
+        if not response_message or "technical issue" in response_message.lower():
+            response_message = self._format_rfq_statuses(rfq_data, rfq_ids, role, user.email)
 
         return {
-            "status": "rfq_status_found" if rfq_ids else "recent_rfqs_found",
+            "status": status,
             "rfq_ids": rfq_ids or [],
             "rfq_statuses": rfq_data,
             "response_message": response_message
         }
+
+    # ── RFQ status replies that need no language model ──────────────────────
+
+    @staticmethod
+    def _is_status_placeholder(row: Any) -> bool:
+        """The backend's "nothing here" row: no RFQ ID and status Not Found."""
+        return (
+            isinstance(row, dict)
+            and not row.get("rfqid")
+            and str(row.get("status") or "").strip().lower() == "not found"
+        )
+
+    @staticmethod
+    def _no_rfqs_message(role: str, email: Optional[str]) -> str:
+        profile = f" (*{email}*)" if email else ""
+        if role == "seller":
+            return (
+                f"Looks like you haven't requested any RFQs yet with this profile{profile}.\n\n"
+                "To see the latest RFQs in your categories, tap *Other Active RFQs*.\n"
+                "If you are looking for the status of a specific RFQ, send the RFQ ID and I shall fetch it."
+            )
+        return (
+            f"It looks like you haven't created any RFQs yet with this profile{profile}.\n\n"
+            "If you are looking for the status of a specific RFQ, send the RFQ ID and I shall fetch it."
+        )
+
+    @staticmethod
+    def _rfq_status_not_found_message(rfq_ids: List[str]) -> str:
+        ids = ", ".join(f"*{rfq_id}*" for rfq_id in rfq_ids)
+        return (
+            f"We have checked {ids}, but it is not associated with your current profile (email ID). "
+            "Please verify the RFQ ID, or exit and log in with the correct profile before trying again."
+        )
+
+    @staticmethod
+    def _rfq_status_unavailable_message() -> str:
+        return (
+            "I couldn't fetch your RFQ status right now. Please try again in a few minutes, "
+            "or send the RFQ ID to check a specific RFQ."
+        )
+
+    def _format_rfq_statuses(self, rfq_data: List[Any], rfq_ids: List[str], role: str, email: Optional[str]) -> str:
+        """Plain listing used when the language model cannot write the reply."""
+        lines = [
+            f"*{row['rfqid']}* : {row.get('status') or 'Unknown'}."
+            for row in rfq_data
+            if isinstance(row, dict) and row.get("rfqid")
+        ]
+        if not lines:
+            return self._no_rfqs_message(role, email)
+        heading = (
+            "✅ Here is the status of the RFQs you requested:" if rfq_ids
+            else "ℹ️ Here is the status of your recent RFQs:"
+        )
+        return (
+            heading + "\n\n" + "\n".join(lines) + "\n\n"
+            "If you are looking for the status of any specific RFQ please provide the RFQID "
+            "and I shall fetch the status for the same."
+        )
     
