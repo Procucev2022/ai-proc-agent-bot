@@ -30,6 +30,13 @@ from app.services.rfq_status_service import RFQStatusService
 
 logger = logging.getLogger(__name__)
 
+# The RFQ list goes out as a WhatsApp button message, whose body is capped at
+# 1024 characters (an over-long body is rejected and the seller gets nothing).
+# 960 leaves room for the longest line a reply puts in front of the list
+# ("Please choose the RFQ you would like to download." + blank line, 52 chars).
+RFQ_LIST_MAX_CHARS = 960
+RFQ_LIST_DETAIL_LEVELS = ("full", "standard", "compact", "tight", "tightest")
+
 
 class SellerService:
     """
@@ -204,7 +211,7 @@ class SellerService:
     def _generate_hardcoded_rfq_display(self, rfqs: List[Dict], total_count: int, credits_available: int, skip_intro: bool = False) -> str:
         """Generate hardcoded RFQ display message based on credits and RFQ availability."""
         
-        print("rfq", rfqs)# Case 1: No RFQs available
+        # Case 1: No RFQs available
         if not rfqs or total_count == 0:
             return ("Currently, there are no active RFQs available in your selected categories. Most RFQs typically close within 3–5 days.\n"
                    "Please continue to check this section for newly published RFQs.\n\n"
@@ -222,26 +229,71 @@ class SellerService:
         message_parts.append(f"*Available Credit:* {credits_available}")
         message_parts.append(f"*Total RFQs Available:* {total_count}")
         message_parts.append("")
-        
-        # Display RFQs with sequence numbers
+
+        footer = [
+            "",
+            f"To download RFQ’s please enter Serial Number/RFQ ID. You can also visit our QUA portal ({self.settings.procucev_rfq_details_url}) to subscribe, view and download more RFQ’s.",
+        ]
+
+        # Labelled details, trimmed level by level so the list never outgrows a
+        # WhatsApp button message. The "1. *RFQ…*" line is never changed: a
+        # serial-number reply is resolved by reading it back.
+        for level in RFQ_LIST_DETAIL_LEVELS:
+            body = []
+            for i, rfq in enumerate(rfqs, 1):
+                body.append(f"{i}. *{rfq.get('rfq_id', '')}*")
+                body.extend(self._rfq_detail_lines(rfq, level))
+            message = "\n".join(message_parts + body + footer)
+            if len(message) <= RFQ_LIST_MAX_CHARS:
+                return message
+
+        # Nothing labelled fits: the original two-line layout, unchanged.
         for i, rfq in enumerate(rfqs, 1):
             rfq_id = rfq.get("rfq_id", "")
             delivery_date = rfq.get("delivery_date", "")
             location = rfq.get("location", "")
             project_description = rfq.get("project_description", "")
             project_description = project_description[:50] + "..." if len(project_description) > 50 else project_description
-            
+
             # Format: 1. **RFQ251012730180**
             message_parts.append(f"{i}. *{rfq_id}*")
             message_parts.append(f"    • {delivery_date}, {location}")
             message_parts.append(f"    • {project_description}")
-        
-        message_parts.append("")
-        message_parts.append(
-            f"To download RFQ’s please enter Serial Number/RFQ ID. You can also visit our QUA portal ({self.settings.procucev_rfq_details_url}) to subscribe, view and download more RFQ’s."
-        )
 
-        return "\n".join(message_parts)
+        return "\n".join(message_parts + footer)
+
+    @staticmethod
+    def _rfq_detail_lines(rfq: Dict[str, Any], level: str) -> List[str]:
+        """Labelled lines under one RFQ; empty values are left out rather than shown as None."""
+        def text(key: str) -> str:
+            value = rfq.get(key)
+            return str(value).strip() if value not in (None, "") else ""
+
+        def clip(value: str, limit: int) -> str:
+            return value[:limit] + "..." if len(value) > limit else value
+
+        date, state, city = text("delivery_date"), text("location"), text("city")
+        category, project, items = text("categories"), text("project_description"), text("items_summary")
+        place = ", ".join(part for part in ((city, state) if level == "full" else (state or city,)) if part)
+
+        when_where = " | ".join(part for part in (
+            f"*Target Date:* {date}" if date else "", f"*Location:* {place}" if place else "") if part)
+        if level in ("tight", "tightest"):
+            # Long lists: date, location and project; category gives way to
+            # keep the project description sellers already rely on.
+            lines = [when_where, f"*Project:* {clip(project, 27 if level == 'tight' else 15)}" if project else ""]
+        elif level == "compact":
+            lines = [when_where, f"*Category:* {clip(category, 40)}" if category else "",
+                     f"*Project:* {clip(project, 40)}" if project else ""]
+        else:
+            lines = [
+                f"*Target Date:* {date}" if date else "",
+                f"*Location:* {place}" if place else "",
+                f"*Category:* {clip(category, 50)}" if category else "",
+                f"*Project:* {clip(project, 50)}" if project else "",
+                f"*Items:* {clip(items, 50)}" if items and level == "full" else "",
+            ]
+        return [f"    • {line}" for line in lines if line]
 
     async def _handle_rfq_selection_response(self, user: User, session: ConversationSession, message: str,
                                              allow_general_fallback: bool = True) -> Dict[str, Any]:
