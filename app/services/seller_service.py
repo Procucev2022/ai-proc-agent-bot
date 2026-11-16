@@ -435,7 +435,14 @@ class SellerService:
             }
             try:
 
-                return await self.response_helpers.generate_seller_contextual_intent_response(classification_context)
+                intent = await self.response_helpers.generate_seller_contextual_intent_response(classification_context)
+                # On failure the model layer hands back an apology string (or
+                # None) instead of an intent; reading .get() off that crashed
+                # the whole reply into "technical issue" for a plain "Hello".
+                if isinstance(intent, dict) and intent.get("intent"):
+                    return intent
+                logger.warning(f"Seller intent classification returned no intent ({type(intent).__name__}); using keywords")
+                return self._fallback_intent_classification(message, classification_context)
 
             except Exception as e:
                 logger.info("seller intent classification fallback logic triggered")

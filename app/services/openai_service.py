@@ -1620,7 +1620,7 @@ Analyze their response to determine their true choice.
         """
         try:
             # Build prompt inline
-            prompt = f"User context: {json.dumps(context)}\n\n"
+            prompt = f"User context: {json.dumps(context, default=str)}\n\n"
             prompt += "Generate an appropriate response for the user based on their context and any available results."
 
             # Load reference merging tool
@@ -1633,7 +1633,7 @@ Analyze their response to determine their true choice.
             message_type = context.get('message_type', 'general_assistance')
             credits_available = context.get('seller_credits', 0)
             support_contact_email= context.get("support_contact_info", "info@procucev.com")
-            context_data = json.dumps(context)
+            context_data = json.dumps(context, default=str)
 
             response = await self.client.responses.create(
                 model=self.default_model,

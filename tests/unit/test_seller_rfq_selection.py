@@ -257,3 +257,28 @@ async def test_selection_prompt_reports_a_failed_rfq_fetch():
 
     assert result["workflow_step"] == "rfq_fetch_error"
     service.session_manager.save_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_reply", [
+    "There seems to be a technical issue at the moment. Our team is working on it.",
+    None,
+    {"confidence": 90},
+])
+async def test_hello_gets_a_reply_when_intent_classification_fails(model_reply):
+    service = make_service()
+    service.response_helpers.generate_seller_contextual_intent_response = AsyncMock(return_value=model_reply)
+
+    result = await service._handle_general_seller_response(USER, make_session(listing(service)), "Hello")
+
+    assert result["workflow_step"] == "general_seller_response"
+    assert result["message"] == "<general_seller_response>"
+
+
+@pytest.mark.asyncio
+async def test_classified_intent_is_used_as_is():
+    service = make_service()
+    intent = {"intent": "plan_upgrade_request", "confidence": 90}
+    service.response_helpers.generate_seller_contextual_intent_response = AsyncMock(return_value=intent)
+
+    assert await service._classify_seller_intent("hi", {}, make_session()) == intent
