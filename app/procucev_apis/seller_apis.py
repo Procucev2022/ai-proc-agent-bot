@@ -12,6 +12,24 @@ from app.procucev_apis.procucev_api_client import get_procucev_api_client
 
 logger = logging.getLogger(__name__)
 
+
+def _items_summary(rfq_items: Any) -> str:
+    """'Water Pump (2 Nos) +2 more' from an RFQ's item list, or '' when it has none."""
+    items = [item for item in (rfq_items or []) if isinstance(item, dict)]
+    if not items:
+        return ""
+    first = items[0]
+    name = str(first.get("description") or "").strip()
+    quantity = first.get("quantity")
+    unit = str(first.get("unitofMeasures") or "").strip()
+    if name and quantity not in (None, ""):
+        name = f"{name} ({quantity}{f' {unit}' if unit else ''})"
+    more = len(items) - 1
+    if not name:
+        return f"{len(items)} item{'s' if len(items) != 1 else ''}"
+    return f"{name} +{more} more" if more else name
+
+
 class SellerAPIService:
     """
     Service for handling seller-specific operations.
@@ -69,12 +87,18 @@ class SellerAPIService:
                     # Get project description
                     project_desc = rfq.get("projectDesc", "")
 
+                    first_location = delivery_locations[0] if delivery_locations else {}
                     transformed_rfqs.append({
                         "rfq_id": rfq.get("rfqId"),
-                        "categories": categories_str,
+                        "categories": categories_str or (rfq.get("category") or ""),
                         "delivery_date": formatted_date,
                         "project_description": project_desc,
-                        "location": location_state
+                        "location": location_state,
+                        # Extra detail for the labelled WhatsApp list; additive only.
+                        "city": (first_location or {}).get("city") or "",
+                        "pincode": (first_location or {}).get("pincode") or "",
+                        "item_count": sum(1 for item in rfq_items or [] if isinstance(item, dict)),
+                        "items_summary": _items_summary(rfq_items),
                     })
 
                 return {
