@@ -289,7 +289,7 @@ class SellerService:
             return value[:limit] + "..." if len(value) > limit else value
 
         date, state, city = text("delivery_date"), text("location"), text("city")
-        category, project, items = text("categories"), text("project_description"), text("items_summary")
+        category, project = text("categories"), text("project_description")
         place = ", ".join(part for part in ((city, state) if level == "full" else (state or city,)) if part)
 
         when_where = " | ".join(part for part in (
@@ -306,9 +306,7 @@ class SellerService:
                 f"*Target Date:* {date}" if date else "",
                 f"*Location:* {place}" if place else "",
                 f"*Category:* {clip(category, 50)}" if category else "",
-                f"*Project:* {clip(project, 50)}" if project else "",
-                f"*Items:* {clip(items, 50)}" if items and level == "full" else "",
-            ]
+                f"*Project:* {clip(project, 50)}" if project else "",            ]
         return [f"    • {line}" for line in lines if line]
 
     def _rfq_list_sections(self, rfqs: List[Dict], total_count: int, credits_available: int,
@@ -365,8 +363,7 @@ class SellerService:
         if place and pincode:
             place = f"{place} - {pincode}"
         details = (("Target Date", text("delivery_date")), ("Location", place),
-                   ("Category", text("categories")), ("Project", text("project_description")),
-                   ("Items", text("items_summary")))
+                   ("Category", text("categories")), ("Project", text("project_description")))
         return [f"- *{label}:* {value}" for label, value in details if value]
 
     async def _handle_rfq_selection_response(self, user: User, session: ConversationSession, message: str,

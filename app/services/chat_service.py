@@ -77,6 +77,12 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+# The seller RFQ list goes out as a text message followed by a button message.
+# WhatsApp does not promise to deliver two messages in the order they were
+# sent, and the short button message can overtake the long list, so the
+# buttons wait this long after the list is accepted.
+RFQ_LIST_BUTTONS_DELAY_SECONDS = 2.0
+
 
 def get_settings():
     """Resolve settings through app.config at call time so a patched get_settings applies here too."""
@@ -4152,6 +4158,8 @@ class ChatService:
         try:
             sent = await self.whatsapp_service.send_message(phone_number, list_message)
             if getattr(sent, "success", False) is True:
+                # Let the list land first so the buttons stay at the bottom.
+                await asyncio.sleep(RFQ_LIST_BUTTONS_DELAY_SECONDS)
                 return prompt
             logger.warning(f"RFQ list text message not delivered: {getattr(sent, 'error', sent)}")
         except Exception as e:
