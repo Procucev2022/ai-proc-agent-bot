@@ -14,7 +14,7 @@ import asyncio
 import json
 import re
 from app.utils.datetime_utils import utc_now
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 from app.models import WorkflowType, ConversationSession, User
 from app.services.whatsapp_service import WhatsAppService
 from app.services.workflow_manager import WorkflowManager
@@ -36,6 +36,11 @@ logger = logging.getLogger(__name__)
 # ("Please choose the RFQ you would like to download." + blank line, 52 chars).
 RFQ_LIST_MAX_CHARS = 960
 RFQ_LIST_DETAIL_LEVELS = ("full", "standard", "compact", "tight", "tightest")
+# The full list goes out as a plain text message instead (WhatsApp allows 4096
+# characters and shows it in a wider bubble); this leaves room for a line put
+# in front of it. Long values are only shortened if a list would not fit.
+RFQ_TEXT_MAX_CHARS = 3800
+RFQ_TEXT_CLIP_LIMITS = (None, 120, 60)
 
 
 class SellerService:
@@ -188,6 +193,16 @@ class SellerService:
                 total_count=total_count,
                 credits_available=credits_available
             )
+            # With RFQs to show, the full list goes as its own text message and
+            # the buttons carry the download prompt; the short version above is
+            # kept for the buttons if that text message cannot be sent.
+            sections = self._rfq_list_sections(rfqs, total_count, credits_available)
+            extra: Dict[str, Any] = {}
+            if sections:
+                list_message, prompt = sections
+                extra = {"rfq_list_message": list_message, "rfq_list_prompt": prompt,
+                         "button_fallback_message": response_message}
+                response_message = f"{list_message}\n\n{prompt}"
 
             # Update session workflow state
             WorkflowManager.set_workflow_type(session, WorkflowType.seller_rfq_view, caller="seller_service")
@@ -201,7 +216,8 @@ class SellerService:
                 "success": True,
                 "workflow_step": "display_rfqs_to_seller",
                 "message": response_message,
-                "message_already_sent": False
+                "message_already_sent": False,
+                **extra,
             }
 
         except Exception as e:
@@ -294,6 +310,64 @@ class SellerService:
                 f"*Items:* {clip(items, 50)}" if items and level == "full" else "",
             ]
         return [f"    • {line}" for line in lines if line]
+
+    def _rfq_list_sections(self, rfqs: List[Dict], total_count: int, credits_available: int,
+                           skip_intro: bool = False) -> Optional[Tuple[str, str]]:
+        """The RFQ list as a plain text message, and the download prompt that follows it.
+
+        Every label sits on its own line and values are shown in full, since a
+        text message is not held to the 1024-character limit of a button
+        message. None when there are no RFQs, so callers keep their own reply.
+        The "1. *RFQ…*" line is the same as in the short list: a serial-number
+        reply is resolved by reading it back.
+        """
+        if not rfqs or total_count == 0:
+            return None
+
+        header = []
+        if not skip_intro:
+            if credits_available <= 0:
+                header.append("You do not have enough credits to request the RFQ. In order to request more RFQs please buy credits. Use the plans to subscribe and add credits so that you can request for RFQs")
+            else:
+                header.append("Here are some RFQs available in your selected categories. You can use your available credits to request RFQs.")
+        header.append(f"*Available Credit:* {credits_available}")
+        header.append(f"*Total RFQs Available:* {total_count}")
+
+        prompt = (f"To download RFQ’s please enter Serial Number/RFQ ID. You can also visit our QUA portal "
+                  f"({self.settings.procucev_rfq_details_url}) to subscribe, view and download more RFQ’s.")
+
+        list_message = ""
+        for limit in RFQ_TEXT_CLIP_LIMITS:
+            blocks = ["\n".join([f"{i}. *{rfq.get('rfq_id', '')}*"] + self._rfq_full_detail_lines(rfq, limit))
+                      for i, rfq in enumerate(rfqs, 1)]
+            list_message = "\n\n".join(["\n".join(header)] + blocks)
+            if len(list_message) + len(prompt) + 2 <= RFQ_TEXT_MAX_CHARS:
+                break
+        return list_message, prompt
+
+    def _full_rfq_list_text(self, rfqs: List[Dict], total_count: int, credits_available: int) -> str:
+        """Full list and download prompt in one text, for replies sent as a plain text message."""
+        sections = self._rfq_list_sections(rfqs, total_count, credits_available, skip_intro=True)
+        if not sections:
+            return self._generate_hardcoded_rfq_display(rfqs, total_count, credits_available, skip_intro=True)
+        return "\n\n".join(sections)
+
+    @staticmethod
+    def _rfq_full_detail_lines(rfq: Dict[str, Any], limit: Optional[int] = None) -> List[str]:
+        """One labelled line per detail ("- " renders as a bullet in WhatsApp); empty values are left out."""
+        def text(key: str) -> str:
+            value = rfq.get(key)
+            value = str(value).strip() if value not in (None, "") else ""
+            return value[:limit] + "..." if limit and len(value) > limit else value
+
+        place = ", ".join(part for part in (text("city"), text("location")) if part)
+        pincode = text("pincode")
+        if place and pincode:
+            place = f"{place} - {pincode}"
+        details = (("Target Date", text("delivery_date")), ("Location", place),
+                   ("Category", text("categories")), ("Project", text("project_description")),
+                   ("Items", text("items_summary")))
+        return [f"- *{label}:* {value}" for label, value in details if value]
 
     async def _handle_rfq_selection_response(self, user: User, session: ConversationSession, message: str,
                                              allow_general_fallback: bool = True) -> Dict[str, Any]:
@@ -1265,7 +1339,7 @@ class SellerService:
             credits_available = credits_result.get("credits_available", 0)
 
             # Generate invalid RFQ message using existing function
-            rfq_display = self._generate_hardcoded_rfq_display(rfqs, total_count, credits_available, skip_intro=True)
+            rfq_display = self._full_rfq_list_text(rfqs, total_count, credits_available)
             response_message = f"Please select a valid RFQ ID from the list.\n\n{rfq_display}"
         else:
             response_message = "You don't have any RFQs available at the moment to request."
@@ -1294,9 +1368,7 @@ class SellerService:
             response_message = "You don't have any RFQs available at the moment to request."
         else:
             credits_result = await self._check_seller_credits(user.org_id)
-            rfq_display = self._generate_hardcoded_rfq_display(
-                rfqs, total_count, credits_result.get("credits_available") or 0, skip_intro=True
-            )
+            rfq_display = self._full_rfq_list_text(rfqs, total_count, credits_result.get("credits_available") or 0)
             response_message = f"Please choose the RFQ you would like to download.\n\n{rfq_display}"
 
         session.workflow_state = session.workflow_state or {}
