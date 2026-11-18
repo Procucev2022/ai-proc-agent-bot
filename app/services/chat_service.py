@@ -4038,12 +4038,14 @@ class ChatService:
                 
                 msg = result.get("message")
                 logger.info(f"mg to be send:{msg}")
+                button_body = await self._send_seller_rfq_list(user.phone_number, result, msg)
                 await self.whatsapp_service.send_configurable_buttons(
                     user.phone_number,
-                    msg,
+                    button_body,
                     buttons_config
                 )
-                # Save assistant response in history
+                # Save assistant response in history (the whole list, as before,
+                # so a serial-number reply still resolves against it)
                 if msg:
                     self.session_manager.add_message_to_history(session, "assistant", msg)
                     await self.session_manager.save_session(session, WorkflowType.seller_rfq_view)
@@ -4133,6 +4135,28 @@ class ChatService:
 
             return {"status": "error", "error": str(e)}
 
+
+    async def _send_seller_rfq_list(self, phone_number: str, result: Dict[str, Any], msg: Any) -> Any:
+        """Send the full RFQ list as its own text message; return the body for the buttons.
+
+        A button message is cut off at 1024 characters, so when the seller
+        service supplies the full list it goes out first as a text message and
+        the buttons carry only the download prompt. If that text message is not
+        delivered, the buttons carry the short list instead, so the seller still
+        sees the RFQs. Results without a full list keep the original body.
+        """
+        list_message = result.get("rfq_list_message")
+        prompt = result.get("rfq_list_prompt")
+        if not (list_message and prompt):
+            return msg
+        try:
+            sent = await self.whatsapp_service.send_message(phone_number, list_message)
+            if getattr(sent, "success", False) is True:
+                return prompt
+            logger.warning(f"RFQ list text message not delivered: {getattr(sent, 'error', sent)}")
+        except Exception as e:
+            logger.error(f"Error sending RFQ list text message: {e}")
+        return result.get("button_fallback_message") or msg
 
     def _should_use_summary_aware_extraction(self, message: str) -> bool:
         """
