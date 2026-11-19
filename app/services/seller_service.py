@@ -293,7 +293,7 @@ class SellerService:
         place = ", ".join(part for part in ((city, state) if level == "full" else (state or city,)) if part)
 
         when_where = " | ".join(part for part in (
-            f"*Target Date:* {date}" if date else "", f"*Location:* {place}" if place else "") if part)
+            f"*Closing Date:* {date}" if date else "", f"*Location:* {place}" if place else "") if part)
         if level in ("tight", "tightest"):
             # Long lists: date, location and project; category gives way to
             # keep the project description sellers already rely on.
@@ -303,7 +303,7 @@ class SellerService:
                      f"*Project:* {clip(project, 40)}" if project else ""]
         else:
             lines = [
-                f"*Target Date:* {date}" if date else "",
+                f"*Closing Date:* {date}" if date else "",
                 f"*Location:* {place}" if place else "",
                 f"*Category:* {clip(category, 50)}" if category else "",
                 f"*Project:* {clip(project, 50)}" if project else "",            ]
@@ -362,7 +362,7 @@ class SellerService:
         pincode = text("pincode")
         if place and pincode:
             place = f"{place} - {pincode}"
-        details = (("Target Date", text("delivery_date")), ("Location", place),
+        details = (("Closing Date", text("delivery_date")), ("Location", place),
                    ("Category", text("categories")), ("Project", text("project_description")))
         return [f"- *{label}:* {value}" for label, value in details if value]
 

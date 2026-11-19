@@ -37,7 +37,7 @@ def test_one_rfq_shows_every_label():
     message = service()._generate_hardcoded_rfq_display([RFQ], 1, 5)
 
     assert "1. *RFQ261311863724*\n" in message
-    for line in ("    • *Target Date:* 18-Nov-2026", "    • *Location:* Bengaluru, Karnataka",
+    for line in ("    • *Closing Date:* 18-Nov-2026", "    • *Location:* Bengaluru, Karnataka",
                  "    • *Category:* Pumps & Motors",
                  "    • *Project:* Industrial Water Pump & Allied Items Procurement"):
         assert line in message
@@ -52,7 +52,7 @@ def test_missing_values_are_left_out_not_printed_as_none():
         [{"rfq_id": "RFQ261311863724", "location": None, "project_description": "Pump"}], 1, 2)
 
     assert "None" not in message
-    assert "Target Date" not in message and "Location" not in message
+    assert "Closing Date" not in message and "Location" not in message
     assert "    • *Project:* Pump" in message
 
 
@@ -62,7 +62,7 @@ def test_every_list_size_fits_and_serials_still_resolve(count):
     message = s._generate_hardcoded_rfq_display(rfqs(count), count, 5)
 
     assert len(message) <= RFQ_LIST_MAX_CHARS
-    assert "*Target Date:*" in message
+    assert "*Closing Date:*" in message
     for n in range(1, count + 1):
         assert s._map_sequence_to_rfq_ids([n], {"content": message}) == [f"RFQ26131186372{n - 1}"]
 
@@ -70,7 +70,7 @@ def test_every_list_size_fits_and_serials_still_resolve(count):
 def test_five_rfqs_keep_date_location_and_project():
     message = service()._generate_hardcoded_rfq_display(rfqs(5), 5, 5)
 
-    assert "    • *Target Date:* 18-Nov-2026 | *Location:* Karnataka" in message
+    assert "    • *Closing Date:* 18-Nov-2026 | *Location:* Karnataka" in message
     assert "    • *Project:* Industrial Water Pump & All..." in message
     assert "*Category:*" not in message
 
@@ -84,7 +84,7 @@ def test_long_state_names_still_get_labels_within_the_limit():
 
 def test_shortest_level_clips_the_project_hardest():
     assert SellerService._rfq_detail_lines(RFQ, "tightest") == [
-        "    • *Target Date:* 18-Nov-2026 | *Location:* Karnataka",
+        "    • *Closing Date:* 18-Nov-2026 | *Location:* Karnataka",
         "    • *Project:* Industrial Wate...",
     ]
 
@@ -93,7 +93,7 @@ def test_original_layout_when_no_labelled_layout_fits():
     long_place = "Karnataka " * 15
     message = service()._generate_hardcoded_rfq_display(rfqs(5, location=long_place), 5, 0)
 
-    assert "*Target Date:*" not in message
+    assert "*Closing Date:*" not in message
     assert f"1. *RFQ261311863720*\n    • 18-Nov-2026, {long_place}\n    • Industrial Water Pump & Allied Items Procurement" in message
     assert "You do not have enough credits" in message
 
@@ -113,7 +113,7 @@ def test_full_list_puts_every_label_on_its_own_line_in_full():
     list_message, prompt = service()._rfq_list_sections([FULL_RFQ] * 5, 15, 5)
 
     block = ("1. *RFQ261311863724*\n"
-             "- *Target Date:* 18-Nov-2026\n"
+             "- *Closing Date:* 18-Nov-2026\n"
              "- *Location:* Bengaluru, Karnataka - 560058\n"
              "- *Category:* Pumps & Motors\n"
              "- *Project:* Industrial Water Pump & Allied Items Procurement for the Bengaluru plant\n\n")
@@ -172,7 +172,7 @@ def test_full_list_is_none_without_rfqs():
 def test_full_list_text_for_plain_replies_and_its_fallback():
     s = service()
     assert s._full_rfq_list_text([RFQ], 1, 5).endswith("to subscribe, view and download more RFQ’s.")
-    assert "- *Target Date:* 18-Nov-2026" in s._full_rfq_list_text([RFQ], 1, 5)
+    assert "- *Closing Date:* 18-Nov-2026" in s._full_rfq_list_text([RFQ], 1, 5)
     assert s._full_rfq_list_text(None, 3, 5).startswith("Currently, there are no active RFQs")
 
 
