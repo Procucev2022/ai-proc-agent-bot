@@ -39,9 +39,9 @@ def test_one_rfq_shows_every_label():
     assert "1. *RFQ261311863724*\n" in message
     for line in ("    • *Target Date:* 18-Nov-2026", "    • *Location:* Bengaluru, Karnataka",
                  "    • *Category:* Pumps & Motors",
-                 "    • *Project:* Industrial Water Pump & Allied Items Procurement",
-                 "    • *Items:* Industrial Water Pump (2 Nos) +2 more"):
+                 "    • *Project:* Industrial Water Pump & Allied Items Procurement"):
         assert line in message
+    assert "*Items:*" not in message
     assert message.startswith("Here are some RFQs available")
     assert "*Available Credit:* 5" in message and "*Total RFQs Available:* 1" in message
     assert message.endswith("to subscribe, view and download more RFQ’s.")
@@ -116,9 +116,9 @@ def test_full_list_puts_every_label_on_its_own_line_in_full():
              "- *Target Date:* 18-Nov-2026\n"
              "- *Location:* Bengaluru, Karnataka - 560058\n"
              "- *Category:* Pumps & Motors\n"
-             "- *Project:* Industrial Water Pump & Allied Items Procurement for the Bengaluru plant\n"
-             "- *Items:* Industrial Water Pump (2 Nos) +2 more")
+             "- *Project:* Industrial Water Pump & Allied Items Procurement for the Bengaluru plant\n\n")
     assert block in list_message
+    assert "*Items:*" not in list_message
     assert "..." not in list_message
     assert list_message.startswith("Here are some RFQs available in your selected categories.")
     assert "*Available Credit:* 5\n*Total RFQs Available:* 15\n\n1. *RFQ" in list_message
@@ -153,8 +153,8 @@ def test_full_list_leaves_out_missing_values():
 
 
 @pytest.mark.parametrize("count, fields, kept", [
-    (5, ("project_description", "items_summary"), 120),
-    (8, ("project_description", "items_summary", "categories"), 60),
+    (5, ("project_description", "categories"), 120),
+    (8, ("project_description", "categories", "location", "city"), 60),
 ])
 def test_full_list_shortens_values_only_when_too_long_for_a_text_message(count, fields, kept):
     huge = [dict(RFQ, **{field: "P" * 900 for field in fields})] * count
@@ -220,13 +220,23 @@ FULL_RESULT = {"message": "LIST\n\nPROMPT", "rfq_list_message": "LIST", "rfq_lis
                "button_fallback_message": "SHORT"}
 
 
+@pytest.fixture
+def pause(monkeypatch):
+    import app.services.chat_service as chat_service
+    sleep = AsyncMock()
+    monkeypatch.setattr(chat_service.asyncio, "sleep", sleep)
+    return sleep
+
+
 @pytest.mark.asyncio
-async def test_list_sent_as_text_then_buttons_carry_the_prompt():
+async def test_list_sent_as_text_then_buttons_carry_the_prompt(pause):
     send = AsyncMock(return_value=SimpleNamespace(success=True))
     body = await chat(send)._send_seller_rfq_list("9186", FULL_RESULT, FULL_RESULT["message"])
 
     send.assert_awaited_once_with("9186", "LIST")
     assert body == "PROMPT"
+    # the buttons wait for the list to land, so they show below it
+    pause.assert_awaited_once_with(2.0)
 
 
 @pytest.mark.asyncio
@@ -234,8 +244,9 @@ async def test_list_sent_as_text_then_buttons_carry_the_prompt():
     AsyncMock(return_value=SimpleNamespace(success=False, error="down")),
     AsyncMock(side_effect=RuntimeError("boom")),
 ])
-async def test_buttons_carry_the_short_list_when_the_text_fails(send):
+async def test_buttons_carry_the_short_list_when_the_text_fails(send, pause):
     assert await chat(send)._send_seller_rfq_list("9186", FULL_RESULT, "LIST\n\nPROMPT") == "SHORT"
+    pause.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -246,10 +257,11 @@ async def test_failed_text_without_fallback_uses_the_message():
 
 
 @pytest.mark.asyncio
-async def test_other_seller_replies_keep_their_single_button_message():
+async def test_other_seller_replies_keep_their_single_button_message(pause):
     send = AsyncMock()
     assert await chat(send)._send_seller_rfq_list("9186", {"message": "Hi"}, "Hi") == "Hi"
     send.assert_not_awaited()
+    pause.assert_not_awaited()
 
 
 # ── data behind the labels ────────────────────────────────────────────────
