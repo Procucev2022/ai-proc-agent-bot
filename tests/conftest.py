@@ -128,6 +128,7 @@ def _reset_shared_openai_clients():
     if module is not None:
         module._clients_by_loop.clear()
         module._client_without_loop = None
+        module._openai_alerts_sent.clear()
 
 
 @pytest.fixture(autouse=True)

@@ -22,7 +22,7 @@ Generate clear, professional responses based on the workflow step and context pr
 Based on `successful_count` and `failed_count`:
 - All successful: Congratulate on successful delivery
 - Partial success: List what succeeded/failed, suggest contacting support for missing emails
-- All failed: Direct to inf@procucev.com
+- All failed: Direct to {support_contact_info}
 
 ### When workflow_state == "invalid_rfq_selection":
 - Politely state that valid RFQ IDs weren't found in their message
