@@ -293,8 +293,8 @@ class User(BaseModel):
         """Returns a dummy user for test environments or invalid cases."""
         return cls(
             id="1428bbb9-a0ba-459d-b1e8-23d7c49455e8",
-            name="shubham",
-            email="shubham@mohap.ai",
+            name="Support",
+            email="support@procucev.com",
             self_client=True,
             role=UserRole.UNKNOWN,
             is_registered=True,
