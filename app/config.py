@@ -332,19 +332,20 @@ class Settings:
         self.support_email = os.getenv("SUPPORT_EMAIL", "support@procucev.com")
         # "Registration attempt ... to be reviewed" email to support for buyers; off by default.
         self.notify_support_on_buyer_review = os.getenv("NOTIFY_SUPPORT_ON_BUYER_REVIEW", "false").lower() == "true"
-        self.email_report_sender = os.getenv("EMAIL_REPORT_SENDER", "shubham@mohap.ai")
+        self.email_report_sender = os.getenv("EMAIL_REPORT_SENDER", "support@procucev.com")
         self.email_signature = os.getenv("EMAIL_SIGNATURE", "Regards\nQUA")
         self.email_templates_path = os.getenv("EMAIL_TEMPLATES_PATH", os.path.join("app", "email_templates"))
         
         # Error handling configuration
         self.enable_error_notifications = os.getenv("ENABLE_ERROR_NOTIFICATIONS", "true").lower() == "true"
         self.error_notification_cooldown_minutes = int(os.getenv("ERROR_NOTIFICATION_COOLDOWN_MINUTES", "5"))
+        # One alert per OpenAI method and error type in this window; repeats are counted, not sent.
+        self.openai_error_alert_cooldown_minutes = int(os.getenv("OPENAI_ERROR_ALERT_COOLDOWN_MINUTES", "60"))
         
         # Support configuration
         self.support_contact_info = os.getenv("SUPPORT_CONTACT_INFO", "support@procucev.com")
-        self.contact_email = os.getenv("CONTACT_EMAIL", "contact@procucev.com")
-        self.support_team_email = os.getenv("SUPPORT_TEAM_EMAILS", "priya.soni@mohap.ai")
-        self.support_team_email = os.getenv("SUPPORT_TEAM_EMAILS", "priya.soni@mohap.ai")
+        self.contact_email = os.getenv("CONTACT_EMAIL", "support@procucev.com")
+        self.support_team_email = os.getenv("SUPPORT_TEAM_EMAILS", "support@procucev.com")
         self.support_team_numbers = os.getenv("SUPPORT_TEAM_NUMBERS", "8824242260").split(",")
 
         # Seller Workflow Configuration

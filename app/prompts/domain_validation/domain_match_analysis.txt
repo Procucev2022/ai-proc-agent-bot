@@ -20,7 +20,7 @@ SCORING GUIDELINES:
 - No similarity: 0-29 points
 
 EXAMPLES:
-- Email: "john@mohap.com", Company: "Mohap AI" → High match (85+ points)
+- Email: "john@acme.com", Company: "Mohap AI" → High match (85+ points)
 - Email: "user@microsoft.com", Company: "Microsoft Corporation" → Exact match (95+ points)
 - Email: "admin@abc.com", Company: "ABC Technologies" → Strong match (80+ points)
 - Email: "test@gmail.com", Company: "Mohap AI" → No match (10 points)

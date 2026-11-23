@@ -93,9 +93,9 @@ async def _send_excel_email_reports(excel_files: list, parsed_date: date) -> Dic
         
         template_variables = {
             "parsed_Date": parsed_date.strftime('%Y-%m-%d'),
-            "sender_email": settings.email_report_sender or "priyasoniy17@gmail.com",
+            "sender_email": settings.email_report_sender or settings.support_email,
             "support_email": settings.support_email or "support@procucev.com",
-            "WHATSAPP_REPORT_EMAILS": os.getenv('WHATSAPP_REPORT_EMAILS', 'priyasoniy17@gmail.com,shubham@mohap.ai'),
+            "WHATSAPP_REPORT_EMAILS": os.getenv('WHATSAPP_REPORT_EMAILS') or settings.support_email,
             "environment": settings.environment
         }
         

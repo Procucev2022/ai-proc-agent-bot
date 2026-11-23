@@ -59,18 +59,18 @@ Extracted: email: null, pincode: null
 Validation: Email format invalid, pincode invalid
 Missing: name, company_name, email, pincode
 **Example 3:**
-User: "moh@p , shubham@mohap.ai"
-Extracted: email: "shubham@mohap.ai"
+User: "acm@e , rahul@acme.ai"
+Extracted: email: "rahul@acme.ai"
 Validation: Selected best email (longer, has .ai domain)
 Missing: name, company_name, pincode
 **Example 4:**
-User: "shubham mojad, 012365"
-Extracted: name: "Shubham Mojad", zipCode: "012365"
+User: "rahul mehta, 012365"
+Extracted: name: "Rahul Mehta", zipCode: "012365"
 Validation: No errors (name formatted)
 Missing: companyName, email
 **Example 5:**
-User: "123654, shubham@mohap.ai, mohap ai"
-Extracted: zipCode: "123654", email: "shubham@mohap.ai", companyName: "Mohap AI"
+User: "123654, rahul@acme.ai, acme ai"
+Extracted: zipCode: "123654", email: "rahul@acme.ai", companyName: "Acme AI"
 Validation: No errors (company name formatted)
 Missing: name
 **Example 6:**
@@ -79,7 +79,7 @@ Extracted: name: "John Doe", companyName: "Tech Solutions Pvt Ltd"
 Validation: No errors (both formatted)
 Missing: email, zipCode
 **Example 7:**
-User: "shubham mojad, shubham@, 123456"
-Extracted: name: "Shubham Mojad", email: null, zipCode: null
+User: "rahul mehta, shubham@, 123456"
+Extracted: name: "Rahul Mehta", email: null, zipCode: null
 Validation: Email incomplete (missing domain), zipCode format invalid
 Missing: companyName, email, zipCode

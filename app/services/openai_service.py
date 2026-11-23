@@ -51,6 +51,13 @@ logger = logging.getLogger(__name__)
 INTENT_CLASSIFICATION_MAX_OUTPUT_TOKENS = 800
 
 
+# Support alerts for OpenAI errors, per process: (method, error type) -> [last sent
+# monotonic time, repeats suppressed since]. Every failed call used to email
+# support, so one outage sent thousands of identical mails and exhausted the
+# sender's daily mail quota, which also blocks RFQ and OTP emails.
+_openai_alerts_sent: Dict[tuple, list] = {}
+
+
 # Shared AsyncOpenAI clients, one per event loop.
 #
 # Every OpenAIService instance used to share a single client, and both close()
@@ -349,13 +356,27 @@ class OpenAIService:
         return True
 
     async def _notify_openai_error(self, error_type: str, error_message: str, method_name: str):
-        """Send WhatsApp notification when OpenAI service has errors."""
+        """Alert support about an OpenAI error, at most once per cooldown per method and error type."""
+        settings = getattr(self, "settings", None)
+        if not getattr(settings, "enable_error_notifications", True):
+            return
+        cooldown = 60 * getattr(settings, "openai_error_alert_cooldown_minutes", 60)
+        now = time.monotonic()
+        key = (method_name, error_type)
+        alert = _openai_alerts_sent.get(key)
+        if alert and now - alert[0] < cooldown:
+            alert[1] += 1
+            logger.info(f"Suppressed repeat OpenAI {error_type} alert for {method_name} ({alert[1]} since last sent)")
+            return
+        suppressed = alert[1] if alert else 0
+        _openai_alerts_sent[key] = [now, 0]
         try:
             error_notification_service = self._get_error_notification_service()
-            
+
+            repeats = f" ({suppressed} more since the last alert)" if suppressed else ""
             error_details = {
                 'error_type': f'OpenAI {error_type}',
-                'message': f'{method_name}: {error_message}',
+                'message': f'{method_name}: {error_message}{repeats}',
                 'service': 'OpenAI Service',
                 'timestamp': datetime.now().isoformat()
             }
@@ -1632,7 +1653,7 @@ Analyze their response to determine their true choice.
             workflow_state = context.get('workflow_state', {}).get('seller_workflow_state', 'awaiting_general_response')
             message_type = context.get('message_type', 'general_assistance')
             credits_available = context.get('seller_credits', 0)
-            support_contact_email= context.get("support_contact_info", "info@procucev.com")
+            support_contact_email= context.get("support_contact_info", self.settings.support_email)
             context_data = json.dumps(context, default=str)
 
             response = await self.client.responses.create(

@@ -248,6 +248,18 @@ def test_export_email_reports_attachments_variables_and_empty(monkeypatch, tmp_p
     assert asyncio.run(export_excel._send_excel_email_reports([], date(2024, 1, 2)))["status"] == "Failure"
 
 
+def test_export_report_without_configured_addresses_goes_to_support(monkeypatch, tmp_path):
+    monkeypatch.delenv("WHATSAPP_REPORT_EMAILS", raising=False)
+    settings = SimpleNamespace(email_report_sender="", support_email="support@procucev.com", environment="test")
+    monkeypatch.setattr(export_excel, "get_settings", lambda: settings)
+    service = SimpleNamespace(send_email_by_template=AsyncMock(return_value={"status": "Success"}))
+    monkeypatch.setattr(export_excel, "EmailService", lambda: service)
+    asyncio.run(export_excel._send_excel_email_reports([], date(2024, 1, 2)))
+    variables = service.send_email_by_template.await_args.kwargs["variables"]
+    assert variables["WHATSAPP_REPORT_EMAILS"] == "support@procucev.com"
+    assert variables["sender_email"] == "support@procucev.com"
+
+
 def test_export_api_session_init_delegate_and_close_errors(monkeypatch):
     api = importlib.import_module("app.procucev_apis.procucev_api_client")
     init = AsyncMock()
